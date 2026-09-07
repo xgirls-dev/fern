@@ -1,0 +1,15 @@
+torch>=2.4
+nncf>=2.15.0
+accelerate
+openvino>=2026.0
+git+https://github.com/openvino-dev-samples/optimum-intel.git@flux.2-klein
+diffusers
+safetensors
+pillow
+huggingface-hub
+wheel
+python-decouple
+defusedxml
+# The OpenVINO NVIDIA plugin is built from openvino_contrib/modules/nvidia_plugin
+# against this OpenVINO runtime; it is intentionally not a pip-only dependency.
+

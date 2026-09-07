@@ -1,0 +1,81 @@
+name: Publish Fern 0.1.21 installer
+
+on:
+  push:
+    branches:
+      - release-publish-v0.1.21
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    timeout-minutes: 180
+    steps:
+      - name: Check out release source
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      # Retry after regenerating package-lock.json for Fern 0.1.21.
+      - run: npm ci
+      - run: python -m venv .venv
+      - run: .venv/Scripts/python.exe -m pip install --upgrade pip
+      - run: .venv/Scripts/python.exe -m pip install -r requirements.txt
+      - run: npm run check
+      - run: npm run package
+
+      - name: Create tag, publish installer, and remove publisher branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $installers = @(Get-ChildItem -Path "apps/desktop/release" -Recurse -Filter "Fern-Setup-*.exe" -File)
+          if ($installers.Count -ne 1) {
+            $found = @(Get-ChildItem -Path "apps/desktop/release" -Recurse -File | Select-Object -ExpandProperty FullName)
+            throw "Expected exactly one Fern-Setup-*.exe, found $($installers.Count). Files: $($found -join '; ')"
+          }
+
+          $installer = $installers[0]
+          if ($installer.Length -le 0) {
+            throw "Installer is empty: $($installer.FullName)"
+          }
+
+          $sourceSha = (git rev-parse HEAD).Trim()
+          $tag = "v0.1.21"
+          $tagRef = "refs/tags/$tag"
+
+          gh api "repos/$env:GITHUB_REPOSITORY/git/ref/tags/$tag" *> $null
+          $tagExists = $LASTEXITCODE -eq 0
+          if (-not $tagExists) {
+            gh api --method POST "repos/$env:GITHUB_REPOSITORY/git/refs" -f ref=$tagRef -f sha=$sourceSha
+            if ($LASTEXITCODE -ne 0) {
+              throw "Could not create $tag at $sourceSha."
+            }
+          }
+
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag $installer.FullName --clobber
+          } else {
+            gh release create $tag $installer.FullName --generate-notes --verify-tag
+          }
+          if ($LASTEXITCODE -ne 0) {
+            throw "GitHub release upload/create failed for $tag."
+          }
+
+          gh api --method DELETE "repos/$env:GITHUB_REPOSITORY/git/refs/heads/$env:GITHUB_REF_NAME"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not remove temporary publisher branch $env:GITHUB_REF_NAME."
+          }

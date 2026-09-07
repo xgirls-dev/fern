@@ -1,0 +1,111 @@
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
+*.p12
+
+# Python environments, caches, and tooling
+.venv/
+.venv
+.cache
+.npm-cache/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+pip-wheel-metadata/
+*.egg-info/
+build/
+
+# Node / Electron dependencies and build products
+node_modules/
+apps/desktop/out/
+apps/desktop/dist/
+apps/desktop/release/
+apps/desktop/release-one-click/
+apps/desktop/release-one-click-slim/
+apps/desktop/release-installer/
+apps/desktop/release-*/
+apps/desktop/.vite/
+*.tsbuildinfo
+
+# Bundled desktop runtime and generated local configuration
+apps/desktop/resources/runtime/
+apps/desktop/resources/runtime-slim/
+apps/desktop/resources/runtime-release/
+apps/desktop/resources/runtime-release.tar
+apps/desktop/resources/runtime-release.zip
+apps/desktop/resources/runtime-release.7z
+apps/desktop/resources/7za.exe
+apps/desktop/resources/models/
+apps/desktop/resources/scripts/
+apps/desktop/resources/app-config.json
+
+# Local AI models and checkpoints
+models/
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+*.onnx
+*.gguf
+*.blob
+*.cl_cache
+
+# Generated images, app state, and personal gallery metadata
+outputs/
+data/
+artifacts/
+
+# Runtime and conversion caches
+.cache/
+cache/
+
+# Logs, temporary files, and crash dumps
+*.log
+*.out
+*.err
+*.tmp
+*.temp
+*.bak
+*.stackdump
+*.dmp
+ui-server*.log
+
+# Packaged archives and installers
+*.zip
+*.7z
+*.rar
+*.tar
+*.tar.gz
+*.tgz
+*.exe
+*.msi
+*.msix
+*.appx
+*.AppImage
+*.dmg
+
+# Local agent/terminal state
+.agents/
+terminals/
+
+# Editors and operating systems
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/

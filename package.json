@@ -1,0 +1,25 @@
+{
+  "name": "fern",
+  "version": "0.1.23",
+  "private": true,
+  "description": "Private local Flux.2 Klein 9B image generation for Windows",
+  "license": "MIT",
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace @fern/desktop",
+    "start": "npm run start --workspace @fern/desktop",
+    "build": "npm run build --workspace @fern/desktop",
+    "typecheck": "npm run typecheck --workspace @fern/desktop",
+    "check:python": "python -m compileall -q scripts",
+    "test:python": "python -m unittest discover -s tests -p \"test_*.py\"",
+    "check": "npm run typecheck && npm run check:python && npm run test:python && npm run build",
+    "package": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-installer.ps1"
+  },
+  "engines": {
+    "node": ">=22",
+    "npm": ">=10"
+  }
+}
+

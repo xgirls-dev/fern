@@ -1,0 +1,36 @@
+name: Bug report
+description: Report a reproducible problem with Fern.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please do not include prompts, reference images, generated images, model files, or other private media.
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the observed behavior and what you expected instead.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Fern version
+      placeholder: e.g. 0.1.21
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Device
+      placeholder: e.g. Intel Arc, NVIDIA RTX, or CPU
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Include the smallest safe reproduction and any relevant error text.
+    validations:
+      required: true

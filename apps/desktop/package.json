@@ -1,0 +1,89 @@
+{
+  "name": "@fern/desktop",
+  "version": "0.1.23",
+  "private": true,
+  "description": "Fern private local image studio powered by Flux.2 Klein 9B adapters",
+  "author": "Fern",
+  "main": "out/main/index.js",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "start": "node scripts/start.mjs",
+    "build": "electron-vite build",
+    "preview": "cross-env ELECTRON_RUN_AS_NODE= electron-vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
+    "package": "npm run build && electron-builder --win nsis"
+  },
+  "dependencies": {
+    "lucide-react": "^1.25.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.21",
+    "@types/react": "^19.1.4",
+    "@types/react-dom": "^19.1.5",
+    "@vitejs/plugin-react": "^4.5.0",
+    "cross-env": "^10.1.0",
+    "electron": "43.2.0",
+    "electron-builder": "^26.0.12",
+    "electron-vite": "^3.1.0",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.5"
+  },
+  "build": {
+    "appId": "ai.intel-iris.studio",
+    "productName": "Fern",
+    "compression": "normal",
+    "copyright": "Copyright (c) 2026",
+    "asar": true,
+    "directories": {
+      "buildResources": "resources",
+      "output": "release"
+    },
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "extraMetadata": {
+      "main": "out/main/index.js"
+    },
+    "extraResources": [
+      {
+        "from": "resources/runtime-release.zip",
+        "to": "runtime-release.zip"
+      },
+      {
+        "from": "resources/scripts",
+        "to": "scripts"
+      },
+      {
+        "from": "resources/icon.ico",
+        "to": "icon.ico"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "resources/icon.ico",
+      "artifactName": "Fern-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Fern",
+      "installerIcon": "resources/icon.ico",
+      "uninstallerIcon": "resources/icon.ico",
+      "installerHeaderIcon": "resources/icon.ico"
+    }
+  }
+}
+

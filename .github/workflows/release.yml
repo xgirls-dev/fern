@@ -1,0 +1,84 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to build and publish
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  windows-installer:
+    if: >-
+      github.event_name != 'push' ||
+      startsWith(github.ref_name, 'v') ||
+      contains(github.event.head_commit.message, '[publish-release]')
+    runs-on: windows-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && 'main' || github.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+      - run: npm ci
+      - run: python -m venv .venv
+      - run: .venv/Scripts/python.exe -m pip install --upgrade pip
+      - run: .venv/Scripts/python.exe -m pip install -r requirements.txt
+      - name: Use release virtualenv
+        shell: pwsh
+        run: Add-Content -Path $env:GITHUB_PATH -Value "$PWD\.venv\Scripts"
+      - run: npm run check
+      - run: npm run package
+      - name: Publish installer
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        shell: pwsh
+        run: |
+          $installers = @(Get-ChildItem -Path "apps/desktop/release" -Recurse -Filter "Fern-Setup-*.exe" -File)
+          if ($installers.Count -ne 1) {
+            $found = @(Get-ChildItem -Path "apps/desktop/release" -Recurse -File | Select-Object -ExpandProperty FullName)
+            throw "Expected exactly one Fern-Setup-*.exe, found $($installers.Count). Files: $($found -join '; ')"
+          }
+          $installer = $installers[0]
+          if ($installer.Length -le 0) { throw "Installer is empty: $($installer.FullName)" }
+
+          $package = Get-Content -Raw "package.json" | ConvertFrom-Json
+          if ($env:GITHUB_REF_TYPE -eq "tag") {
+            $tag = $env:GITHUB_REF_NAME
+          } elseif ($env:GITHUB_EVENT_NAME -eq "workflow_dispatch" -and $env:RELEASE_TAG) {
+            $tag = $env:RELEASE_TAG
+          } else {
+            $tag = "v$($package.version)"
+          }
+
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag $installer.FullName --clobber
+          } else {
+            gh release create $tag $installer.FullName --generate-notes --target $env:GITHUB_SHA
+          }
+          if ($LASTEXITCODE -ne 0) { throw "GitHub release upload/create failed for $tag." }
+
+          $releaseAssets = @(gh release view $tag --json assets --jq '.assets[] | select(.name | startswith("Fern-Setup-")) | .name')
+          if ($releaseAssets.Count -ne 1) {
+            throw "Expected exactly one Fern installer on release $tag, found $($releaseAssets.Count)."
+          }
+          Write-Host "Published $($releaseAssets[0]) to release $tag."
