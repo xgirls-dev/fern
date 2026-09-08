@@ -486,12 +486,14 @@ export function useStudio() {
             null,
         );
       }
+      return true;
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Status refresh failed";
       setConnectionError((current) =>
         current === message ? current : message,
       );
+      return false;
     } finally {
       refreshingRef.current = false;
     }
@@ -504,9 +506,10 @@ export function useStudio() {
     const deadline = Date.now() + BACKEND_CONNECT_TIMEOUT_MS;
     while (Date.now() < deadline) {
       try {
-        await refresh();
-        setConnecting(false);
-        return true;
+        if (await refresh()) {
+          setConnecting(false);
+          return true;
+        }
       } catch (err) {
         const message =
           err instanceof Error ? err.message : "Backend connection failed";

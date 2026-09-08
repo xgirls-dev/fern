@@ -9,17 +9,13 @@ try {
     0,
   );
   await button("Search threads").click();
-  const archiveBox = await page
-    .getByRole("checkbox", { name: "Show archived threads" })
-    .boundingBox();
-  assert(archiveBox && archiveBox.width <= 20 && archiveBox.height <= 20);
   await page.screenshot({ path: `${dir}/search-dialog.png` });
   assert(
     await page
       .getByRole("searchbox", { name: "Find a thread" })
       .evaluate((el) => el === document.activeElement),
   );
-  await button("Close threads").click();
+  await page.keyboard.press("Escape");
   await page.locator("#prompt").fill("New draft");
   assert.equal(
     await page.locator("#create-heading").innerText(),
@@ -63,9 +59,10 @@ try {
     "Draft after generation",
   );
   await button("Close image settings").click();
-  const image = await page.locator(".stage-image").boundingBox(),
-    metadata = await page.locator(".preview-metadata-hud").boundingBox();
-  assert(metadata.y >= image.y + image.height - 1);
+  await button("Render info").click();
+  assert.equal(await page.locator(".render-metadata").count(), 1);
+  assert.equal(await page.locator(".preview-metadata-hud").count(), 0);
+  await button("Close render info").click();
   await page.locator(".output-bar summary").click();
   await button("Open output folder").click();
   assert(
@@ -73,7 +70,8 @@ try {
   );
   assert.equal(await page.locator(".output-action-message").count(), 0);
   await button("Dismiss notification").click();
-  await button("Remix").click();
+  await page.locator(".output-bar summary").click();
+  await button("Remix in new thread").click();
   await page.waitForTimeout(400);
   const workspace = await page.evaluate(() =>
     JSON.parse(localStorage.getItem("fern-threads:v1")),
@@ -139,11 +137,8 @@ try {
   await page
     .getByRole("searchbox", { name: "Find a thread" })
     .fill("variation");
-  await button("Archive").click();
-  await page.getByLabel("Show archived threads").check();
-  assert.equal(await button("Restore").count(), 1);
-  await button("Restore").click();
-  await button("Close threads").click();
+  assert.equal(await page.locator(".thread-browser-open").count(), 1);
+  await page.keyboard.press("Escape");
   for (const [width, height] of [
     [1440, 900],
     [1080, 720],
@@ -176,7 +171,10 @@ try {
     await page.locator(".generation-progress-strip").innerText(),
     /Image 2 of 4.*preparing/,
   );
-  assert.equal(await page.locator("progress").getAttribute("value"), "25");
+  assert.equal(
+    await page.getByRole("progressbar").getAttribute("aria-valuenow"),
+    "25",
+  );
   state.runtime = {
     status: "failed",
     message: "Device unavailable",

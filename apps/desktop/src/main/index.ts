@@ -12,6 +12,7 @@ import {
   shell,
 } from "electron";
 import { PythonBackend } from "./python-backend";
+import { installEditorContextMenu } from "./editor-context-menu";
 import { ensureFirstRunSetup } from "./first-run-setup";
 import { getAppIconPath, getOutputsDir, resolveProjectRoot } from "./paths";
 
@@ -71,12 +72,15 @@ function createWindow(apiBaseUrl: string): BrowserWindow {
       nodeIntegration: false,
       sandbox: false,
       devTools: isDev,
+      spellcheck: true,
     },
   });
 
   window.once("ready-to-show", () => {
     window.show();
   });
+
+  installEditorContextMenu(window);
 
   const loadApp = async () => {
     if (isDev && process.env.ELECTRON_RENDERER_URL) {

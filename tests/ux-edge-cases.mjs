@@ -72,10 +72,13 @@ try {
     referenceUsed: true,
     referenceUrl: "/references/original.png",
   };
-  await page.waitForTimeout(3300);
+  // Wait for a listing that contains the new fixture provenance, not a lightweight status poll.
+  await page.evaluate(async () => (await import("/src/lib/api.ts")).invalidateImages());
+  await page.waitForResponse(response => response.url().includes("/api/flux2/status") && response.url().includes("images=1"));
   await button("Library").click();
   await button("Review audit-1.png").click();
-  await button("Remix").click();
+  await page.locator(".image-viewer summary").click();
+  await button("Remix in new thread").click();
   await page.locator(".composer-reference img").waitFor();
   assert.equal(
     await page.locator(".composer-reference img").getAttribute("src"),

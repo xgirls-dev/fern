@@ -136,6 +136,7 @@ export function PromptComposer({
           value={settings.prompt}
           required
           autoComplete="off"
+          spellCheck={true}
           placeholder={
             referenceImage
               ? "Describe how you want to change this image…"

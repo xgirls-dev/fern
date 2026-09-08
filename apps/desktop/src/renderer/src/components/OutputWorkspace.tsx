@@ -11,6 +11,7 @@ interface Props {
   running: boolean;
   onSelectPreview: (image: ImageRecord) => void;
   onRemix: (image: ImageRecord) => void;
+  onRemixInNewThread: (image: ImageRecord) => void;
   onOpenLightbox: () => void;
   onDelete: (image: ImageRecord) => Promise<void>;
   onToggleRenderInfo?: () => void;
@@ -60,6 +61,7 @@ export function OutputWorkspace({
   running,
   onSelectPreview,
   onRemix,
+  onRemixInNewThread,
   onOpenLightbox,
   onDelete,
   onToggleRenderInfo,
@@ -135,11 +137,16 @@ export function OutputWorkspace({
       {running ? (
         <div className="generation-progress-strip" role="status">
           <span>{progress.label}</span>
-          <progress
+          <div
+            className="render-progress-track"
+            role="progressbar"
             aria-label={progress.label}
-            max={100}
-            value={progress.percent}
-          />
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={progress.percent}
+          >
+            <span style={{ width: `${progress.percent}%` }} />
+          </div>
         </div>
       ) : null}
       {!gallery ? (
@@ -194,15 +201,23 @@ export function OutputWorkspace({
                   {preview.width} × {preview.height}
                 </span>
                 <div className="output-bar-actions">
-                  <ImageActions image={preview} onRemix={onRemix} onDelete={onDelete} />
+                  <ImageActions
+                    image={preview}
+                    onRemix={onRemix}
+                    onRemixInNewThread={onRemixInNewThread}
+                    onDelete={onDelete}
+                  />
                   {onToggleRenderInfo ? (
-                    <button type="button" className="btn btn-secondary" onClick={onToggleRenderInfo}>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={onToggleRenderInfo}
+                    >
                       Render info
                     </button>
                   ) : null}
                 </div>
               </div>
-
             </>
           ) : null}
         </div>
@@ -287,6 +302,7 @@ export function OutputWorkspace({
                       }
                     }}
                     onRemix={onRemix}
+                    onRemixInNewThread={onRemixInNewThread}
                     onDelete={onDelete}
                   />
                 ))}
@@ -311,11 +327,13 @@ function ImageCard({
   image,
   onOpen,
   onRemix,
+  onRemixInNewThread,
   onDelete,
 }: {
   image: ImageRecord;
   onOpen: () => void;
   onRemix: (image: ImageRecord) => void;
+  onRemixInNewThread: (image: ImageRecord) => void;
   onDelete: (image: ImageRecord) => Promise<void>;
 }) {
   const [failed, setFailed] = useState(false);
@@ -349,6 +367,7 @@ function ImageCard({
           compact
           image={image}
           onRemix={onRemix}
+          onRemixInNewThread={onRemixInNewThread}
           onDelete={onDelete}
         />
       </div>

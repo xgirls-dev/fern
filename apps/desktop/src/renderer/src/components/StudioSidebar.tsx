@@ -1,3 +1,5 @@
+import Archive from "lucide-react/dist/esm/icons/archive.mjs";
+import ArchiveRestore from "lucide-react/dist/esm/icons/archive-restore.mjs";
 import HardDrive from "lucide-react/dist/esm/icons/hard-drive.mjs";
 import Images from "lucide-react/dist/esm/icons/images.mjs";
 import Plus from "lucide-react/dist/esm/icons/plus.mjs";
@@ -231,7 +233,11 @@ export const StudioSidebar = memo(function StudioSidebar({
                   onClick={() => onArchiveThread(thread.id)}
                   disabled={submitting || runningThreadId === thread.id}
                 >
-                  ↥
+                  {thread.archived ? (
+                    <ArchiveRestore size={14} aria-hidden="true" />
+                  ) : (
+                    <Archive size={14} aria-hidden="true" />
+                  )}
                 </button>
                 <button
                   type="button"

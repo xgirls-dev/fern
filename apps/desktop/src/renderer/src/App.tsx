@@ -28,8 +28,23 @@ import { validateReference } from "./lib/reference";
 export function App() {
   const studio = useStudio();
   const [threadBrowserOpen, setThreadBrowserOpen] = useState(false);
-  const [inspectorOpen, setInspectorOpen] = useState(false);
-  const [renderInfoOpen, setRenderInfoOpen] = useState(false);
+  const [inspectorView, setInspectorView] = useState<
+    "settings" | "info" | null
+  >(null);
+  const inspectorOpen = inspectorView === "settings";
+  const renderInfoOpen = inspectorView === "info";
+  const setInspectorOpen = (value: boolean | ((open: boolean) => boolean)) =>
+    setInspectorView((current) =>
+      (typeof value === "function" ? value(current === "settings") : value)
+        ? "settings"
+        : null,
+    );
+  const setRenderInfoOpen = (value: boolean | ((open: boolean) => boolean)) =>
+    setInspectorView((current) =>
+      (typeof value === "function" ? value(current === "info") : value)
+        ? "info"
+        : null,
+    );
   const [lightboxImage, setLightboxImage] = useState<ImageRecord | null>(null);
   const [viewerImages, setViewerImages] = useState<ImageRecord[]>([]);
   const inspectorRef = useRef<HTMLElement>(null);
@@ -86,6 +101,17 @@ export function App() {
   );
 
   const remixImage = (image: ImageRecord) => {
+    const threadId = studio.activeThread.id;
+    const previousPrompt = studio.settings.prompt;
+    studio.updateSettings({ prompt: image.prompt ?? "" }, threadId);
+    setLightboxImage(null);
+    focusPrompt();
+    notify("Prompt added to composer.", "info", {
+      label: "Undo",
+      run: () => studio.updateSettings({ prompt: previousPrompt }, threadId),
+    });
+  };
+  const remixInNewThread = (image: ImageRecord) => {
     setLightboxImage(null);
     void studio
       .remixImage(image)
@@ -135,7 +161,7 @@ export function App() {
     };
   }, [openThread]);
   useEffect(() => {
-    if (!inspectorOpen) return;
+    if (!inspectorView) return;
     const opener = document.activeElement as HTMLElement;
     const timer = setTimeout(
       () =>
@@ -158,7 +184,7 @@ export function App() {
       clearTimeout(timer);
       window.removeEventListener("keydown", escape);
     };
-  }, [inspectorOpen]);
+  }, [inspectorView]);
   useEffect(() => {
     if (studio.notice) {
       notify(studio.notice, "info");
@@ -249,7 +275,10 @@ export function App() {
     : null;
   const startupDialogOpen =
     !runtimeDismissed &&
-    (!studio.ready || studio.connecting || studio.runtimeDialogOpen);
+    (!studio.ready ||
+      studio.connecting ||
+      (!studio.status && !studio.error) ||
+      studio.runtimeDialogOpen);
   const cpuAvailable =
     studio.status?.model.adapters?.some(
       (adapter) => adapter.id === "CPU" && adapter.available,
@@ -353,7 +382,7 @@ export function App() {
             </div>
           ) : activeSection === "create" ? (
             <section
-              className={`create-view${inspectorOpen ? " has-inspector" : ""}${renderInfoOpen ? " has-render-info" : ""}`}
+              className={`create-view${inspectorView ? " has-inspector" : ""}`}
               aria-labelledby="create-heading"
             >
               <header className="workspace-header">
@@ -455,11 +484,14 @@ export function App() {
                     running={studio.activeThreadRunning}
                     onSelectPreview={studio.setPreview}
                     onRemix={remixImage}
+                    onRemixInNewThread={remixInNewThread}
                     onOpenLightbox={() => {
                       if (studio.preview)
                         openImage(studio.preview, studio.threadImages);
                     }}
-                    onToggleRenderInfo={() => setRenderInfoOpen((open) => !open)}
+                    onToggleRenderInfo={() =>
+                      setRenderInfoOpen((open) => !open)
+                    }
                   />
                   <PromptComposer
                     onReferenceBusy={setReferenceBusy}
@@ -512,73 +544,102 @@ export function App() {
                   ref={inspectorRef}
                   id="generation-inspector"
                   className="generation-inspector"
-                  aria-label="Image settings"
-                  hidden={!inspectorOpen}
+                  aria-label={renderInfoOpen ? "Render info" : "Image settings"}
+                  hidden={!inspectorView}
+                  data-view={inspectorView ?? undefined}
                 >
-
-                  <GenerationControls
-                    errors={studio.fieldErrors}
-                    onReferenceBusy={setReferenceBusy}
-                    key={`controls-${studio.activeThread.id}-${studio.resetRevision}`}
-                    settings={studio.settings}
-                    modelStatus={studio.status?.model ?? null}
-                    referenceImage={studio.referenceImage}
-                    referenceLabel={studio.referenceLabel}
-                    onSettingsChange={(patch) =>
-                      studio.updateSettings(patch, studio.activeThread.id)
-                    }
-                    onReferenceChange={(dataUrl, label) => {
-                      studio.setReferenceImage(dataUrl);
-                      studio.setReferenceLabel(label);
-                    }}
-                    onClearReference={() => {
-                      studio.setReferenceImage("");
-                      studio.setReferenceLabel(
-                        "No reference image. Text-to-image mode.",
-                      );
-                    }}
-                    onUseOutputAsReference={async () => {
-                      if (!previewUrl || !studio.preview) return;
-                      setReferenceBusy(true);
-                      try {
-                        const response = await fetch(previewUrl);
-                        if (!response.ok)
-                          throw new Error(
-                            "Image unavailable. Retry the preview or choose another reference.",
-                          );
-                        const blob = await response.blob();
-                        const dataUrl = await new Promise<string>(
-                          (resolve, reject) => {
-                            const reader = new FileReader();
-                            reader.onload = () =>
-                              resolve(String(reader.result));
-                            reader.onerror = reject;
-                            reader.readAsDataURL(blob);
-                          },
-                        );
-                        await validateReference(dataUrl);
-                        studio.setReferenceImage(dataUrl);
-                        studio.setReferenceLabel(
-                          `${studio.preview.name} loaded as reference.`,
-                        );
-                      } finally {
-                        setReferenceBusy(false);
-                      }
-                    }}
-                    canUseOutput={Boolean(studio.preview)}
-                  />
-                </aside>
-                {renderInfoOpen && studio.preview ? (
-                  <aside className="generation-inspector render-info-inspector" aria-label="Render info">
-                    <div className="inspector-heading">
-                      <h3>Render info</h3>
-                      <button type="button" className="btn-icon btn-icon-sm" aria-label="Close render info" onClick={() => setRenderInfoOpen(false)}>
-                        <X size={15} aria-hidden="true" />
+                  <div className="inspector-heading">
+                    <div
+                      className="inspector-tabs"
+                      role="group"
+                      aria-label="Inspector view"
+                    >
+                      <button
+                        type="button"
+                        aria-pressed={inspectorOpen}
+                        onClick={() => setInspectorView("settings")}
+                      >
+                        Image settings
+                      </button>
+                      <button
+                        type="button"
+                        aria-pressed={renderInfoOpen}
+                        disabled={!studio.preview}
+                        onClick={() => setInspectorView("info")}
+                      >
+                        Render info
                       </button>
                     </div>
-                    <PreviewMetadataHud image={studio.preview} expanded onExpandedChange={() => undefined} />
-                  </aside>
-                ) : null}
+                    <button
+                      type="button"
+                      className="btn-icon"
+                      aria-label={
+                        renderInfoOpen
+                          ? "Close render info"
+                          : "Close image settings"
+                      }
+                      onClick={() => setInspectorView(null)}
+                    >
+                      <X size={16} />
+                    </button>
+                  </div>
+                  <div hidden={!inspectorOpen}>
+                    <GenerationControls
+                      errors={studio.fieldErrors}
+                      onReferenceBusy={setReferenceBusy}
+                      key={`controls-${studio.activeThread.id}-${studio.resetRevision}`}
+                      settings={studio.settings}
+                      modelStatus={studio.status?.model ?? null}
+                      referenceImage={studio.referenceImage}
+                      referenceLabel={studio.referenceLabel}
+                      onSettingsChange={(patch) =>
+                        studio.updateSettings(patch, studio.activeThread.id)
+                      }
+                      onReferenceChange={(dataUrl, label) => {
+                        studio.setReferenceImage(dataUrl);
+                        studio.setReferenceLabel(label);
+                      }}
+                      onClearReference={() => {
+                        studio.setReferenceImage("");
+                        studio.setReferenceLabel(
+                          "No reference image. Text-to-image mode.",
+                        );
+                      }}
+                      onUseOutputAsReference={async () => {
+                        if (!previewUrl || !studio.preview) return;
+                        setReferenceBusy(true);
+                        try {
+                          const response = await fetch(previewUrl);
+                          if (!response.ok)
+                            throw new Error(
+                              "Image unavailable. Retry the preview or choose another reference.",
+                            );
+                          const blob = await response.blob();
+                          const dataUrl = await new Promise<string>(
+                            (resolve, reject) => {
+                              const reader = new FileReader();
+                              reader.onload = () =>
+                                resolve(String(reader.result));
+                              reader.onerror = reject;
+                              reader.readAsDataURL(blob);
+                            },
+                          );
+                          await validateReference(dataUrl);
+                          studio.setReferenceImage(dataUrl);
+                          studio.setReferenceLabel(
+                            `${studio.preview.name} loaded as reference.`,
+                          );
+                        } finally {
+                          setReferenceBusy(false);
+                        }
+                      }}
+                      canUseOutput={Boolean(studio.preview)}
+                    />
+                  </div>
+                  {renderInfoOpen && studio.preview ? (
+                    <PreviewMetadataHud image={studio.preview} />
+                  ) : null}
+                </aside>
               </div>
             </section>
           ) : (
@@ -636,6 +697,7 @@ export function App() {
                   setLightboxImage(image);
                 }}
                 onRemix={remixImage}
+                onRemixInNewThread={remixInNewThread}
                 onOpenLightbox={() => setLightboxImage(studio.preview)}
               />
             </section>
@@ -674,6 +736,7 @@ export function App() {
           images={viewerImages}
           onSelect={setLightboxImage}
           onRemix={remixImage}
+          onRemixInNewThread={remixInNewThread}
           onDelete={deleteImage}
           onClose={() => setLightboxImage(null)}
         />

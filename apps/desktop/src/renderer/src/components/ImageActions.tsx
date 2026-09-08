@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { ImageRecord } from "../lib/types";
 import { resolveAssetUrl } from "../lib/api";
@@ -8,27 +8,73 @@ import { useModalFocus } from "../hooks/useModalFocus";
 export function ImageActions({
   image,
   onRemix,
+  onRemixInNewThread,
   onDelete,
   compact = false,
 }: {
   image: ImageRecord;
   onRemix: (image: ImageRecord) => void;
+  onRemixInNewThread: (image: ImageRecord) => void;
   onDelete: (image: ImageRecord) => Promise<void>;
   compact?: boolean;
 }) {
   const [busy, setBusy] = useState(false);
-  const [menuPosition, setMenuPosition] = useState<{ top: number; right: number } | null>(null);
+  const [menuPosition, setMenuPosition] = useState<{
+    top: number;
+    right: number;
+  } | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [confirm, setConfirm] = useState(false);
   const dialog = useRef<HTMLDivElement>(null);
   const menu = useRef<HTMLDetailsElement>(null);
+  const menuContent = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (!menuOpen || !menu.current || !menuContent.current) return;
+    const anchor = menu.current
+      .querySelector("summary")!
+      .getBoundingClientRect();
+    const bounds = menuContent.current.getBoundingClientRect();
+    const safeTop =
+      document.querySelector(".titlebar")?.getBoundingClientRect().bottom ?? 0;
+    const top =
+      anchor.bottom + 6 + bounds.height <= window.innerHeight - 12
+        ? anchor.bottom + 6
+        : Math.max(safeTop + 12, anchor.top - bounds.height - 6);
+    setMenuPosition({
+      top,
+      right: Math.max(
+        12,
+        Math.min(
+          window.innerWidth - anchor.right,
+          window.innerWidth - bounds.width - 12,
+        ),
+      ),
+    });
+  }, [menuOpen]);
   useModalFocus(confirm, dialog, () => {
     if (!busy) setConfirm(false);
   });
+  useEffect(() => {
+    if (!menuOpen) return;
+    const close = () => {
+      setMenuOpen(false);
+      setMenuPosition(null);
+    };
+    const outside = (event: PointerEvent) => {
+      if (!menu.current?.contains(event.target as Node)) close();
+    };
+    document.addEventListener("pointerdown", outside, true);
+    window.addEventListener("resize", close);
+    return () => {
+      document.removeEventListener("pointerdown", outside, true);
+      window.removeEventListener("resize", close);
+    };
+  }, [menuOpen]);
   async function run(task: () => Promise<unknown>, message: string) {
     if (busy) return;
     setBusy(true);
-    if (menu.current) menu.current.open = false;
+    setMenuOpen(false);
+    setMenuPosition(null);
     try {
       const result = await task();
       if (result !== false) notify(message);
@@ -80,28 +126,38 @@ export function ImageActions({
       ) : null}
       <details
         ref={menu}
+        open={menuOpen}
         className="image-menu"
-        onToggle={() => {
-          if (!menu.current?.open) { setMenuPosition(null); setMenuOpen(false); return; }
-          const rect = menu.current.getBoundingClientRect();
-          setMenuPosition({
-            top: Math.min(rect.bottom + 6, Math.max(12, window.innerHeight - 300)),
-            right: Math.max(12, window.innerWidth - rect.right),
-          });
-          setMenuOpen(true);
-        }}
         onKeyDown={(event) => {
           if (event.key === "Escape") {
             event.stopPropagation();
-            menu.current!.open = false;
+            setMenuOpen(false);
+            setMenuPosition(null);
             menu.current?.querySelector("summary")?.focus();
           }
         }}
       >
-        <summary className="btn btn-secondary" aria-label={`Image actions for ${image.name}`}>
+        <summary
+          onClick={(event) => {
+            event.preventDefault();
+            setMenuPosition(null);
+            setMenuOpen((open) => !open);
+          }}
+          className="btn btn-secondary"
+          aria-label={`Image actions for ${image.name}`}
+        >
           {compact ? "Actions" : "More"} ▾
         </summary>
-        <div className="image-menu-content" style={menuPosition ? { position: "fixed", top: menuPosition.top, right: menuPosition.right } : undefined}>
+        <div
+          className="image-menu-content"
+          ref={menuContent}
+          style={{
+            position: "fixed",
+            top: menuPosition?.top ?? 0,
+            right: menuPosition?.right ?? 0,
+            visibility: menuPosition ? "visible" : "hidden",
+          }}
+        >
           {compact ? (
             <>
               <button type="button" disabled={busy} onClick={() => void save()}>
@@ -111,14 +167,26 @@ export function ImageActions({
                 type="button"
                 disabled={busy}
                 onClick={() => {
-                  menu.current!.open = false;
+                  setMenuOpen(false);
+                  setMenuPosition(null);
                   onRemix(image);
                 }}
               >
-                Remix in new thread
+                Remix
               </button>
             </>
           ) : null}
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              setMenuOpen(false);
+              setMenuPosition(null);
+              onRemixInNewThread(image);
+            }}
+          >
+            Remix in new thread
+          </button>
           <button
             type="button"
             disabled={busy || !image.prompt}
@@ -191,7 +259,8 @@ export function ImageActions({
             disabled={busy}
             className="danger-text"
             onClick={() => {
-              menu.current!.open = false;
+              setMenuOpen(false);
+              setMenuPosition(null);
               setConfirm(true);
             }}
           >
@@ -199,18 +268,6 @@ export function ImageActions({
           </button>
         </div>
       </details>
-      {menuOpen
-        ? createPortal(
-            <div
-              className="image-menu-layer"
-              onMouseDown={() => {
-                if (menu.current) menu.current.open = false;
-                setMenuOpen(false);
-              }}
-            />,
-            document.body,
-          )
-        : null}
       {confirm
         ? createPortal(
             <div className="dialog-backdrop image-delete-backdrop">

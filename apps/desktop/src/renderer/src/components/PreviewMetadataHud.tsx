@@ -1,13 +1,7 @@
-import ChevronDown from "lucide-react/dist/esm/icons/chevron-down.mjs";
-import ChevronUp from "lucide-react/dist/esm/icons/chevron-up.mjs";
-import Info from "lucide-react/dist/esm/icons/info.mjs";
-import { useState } from "react";
 import type { ImageRecord } from "../lib/types";
 
 interface PreviewMetadataHudProps {
   image: ImageRecord;
-  expanded?: boolean;
-  onExpandedChange?: (expanded: boolean) => void;
 }
 
 function formatGenerationTime(seconds: number): string {
@@ -52,13 +46,11 @@ function hasMetadata(image: ImageRecord): boolean {
   );
 }
 
-export function PreviewMetadataHud({ image, expanded: expandedProp, onExpandedChange }: PreviewMetadataHudProps) {
-  const [internalExpanded, setInternalExpanded] = useState(false);
-  const expanded = expandedProp ?? internalExpanded;
-
+export function PreviewMetadataHud({ image }: PreviewMetadataHudProps) {
   if (!hasMetadata(image)) return null;
 
   const rows: Array<{ label: string; value: string }> = [];
+  if (image.prompt) rows.push({ label: "Prompt", value: image.prompt });
   rows.push({
     label: "Reference",
     value:
@@ -68,7 +60,6 @@ export function PreviewMetadataHud({ image, expanded: expandedProp, onExpandedCh
           ? "Used"
           : "None",
   });
-  if (image.prompt) rows.push({ label: "Prompt", value: image.prompt });
   if (image.seed != null)
     rows.push({ label: "Seed", value: String(image.seed) });
   if (image.steps != null)
@@ -90,43 +81,16 @@ export function PreviewMetadataHud({ image, expanded: expandedProp, onExpandedCh
     rows.push({ label: "Model", value: formatModelPath(image.modelPath) });
 
   return (
-    <div
-      className={`preview-metadata-hud${expanded ? " is-expanded" : " is-collapsed"}`}
-      onClick={(event) => event.stopPropagation()}
-      onKeyDown={(event) => event.stopPropagation()}
-    >
-      <button
-        type="button"
-        className="preview-metadata-hud-header"
-        onClick={() => {
-          const next = !expanded;
-          setInternalExpanded(next);
-          onExpandedChange?.(next);
-        }}
-        aria-expanded={expanded}
-      >
-        <div className="preview-metadata-hud-title">
-          <Info size={12} aria-hidden="true" />
-          <span>Render Info</span>
-
+    <dl className="render-metadata">
+      {rows.map((row) => (
+        <div
+          key={row.label}
+          className={row.label === "Prompt" ? "metadata-prompt" : ""}
+        >
+          <dt>{row.label}</dt>
+          <dd>{row.value}</dd>
         </div>
-        {expanded ? (
-          <ChevronDown size={13} aria-hidden="true" />
-        ) : (
-          <ChevronUp size={13} aria-hidden="true" />
-        )}
-      </button>
-
-      {expanded && (
-        <div className="preview-metadata-hud-body">
-          {rows.map((row) => (
-            <div key={row.label} className="preview-metadata-hud-row">
-              <span className="preview-metadata-hud-label">{row.label}</span>
-              <span className="preview-metadata-hud-value">{row.value}</span>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
+      ))}
+    </dl>
   );
 }
