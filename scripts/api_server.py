@@ -79,6 +79,34 @@ RUNTIME_STATUS: dict[str, Any] = {
 
 FluxGenerationCancelled = GenerationCancelled
 
+MODEL_CHECK_LOCK = threading.Lock()
+MODEL_CHECK_STARTED = False
+MODEL_CHECK_RESULTS: dict[str, Any] = {}
+
+
+def model_snapshot(device: str) -> dict[str, Any]:
+    """Hardware imports must never hold gallery/status requests hostage."""
+    global MODEL_CHECK_STARTED
+    device = normalize_device(device)
+    with MODEL_CHECK_LOCK:
+        if not MODEL_CHECK_STARTED:
+            MODEL_CHECK_STARTED = True
+            def check():
+                try:
+                    results = {key: flux2.model_status(key) for key in ("AUTO", "INTEL_GPU", "NVIDIA_GPU", "CPU")}
+                except Exception as error:
+                    results = {key: {"runtimeReady": False, "checking": False,
+                                    "runtimeNote": f"Could not check generation runtime: {error}"}
+                               for key in ("AUTO", "INTEL_GPU", "NVIDIA_GPU", "CPU")}
+                with MODEL_CHECK_LOCK:
+                    MODEL_CHECK_RESULTS.update(results)
+            threading.Thread(target=check, daemon=True).start()
+        return dict(MODEL_CHECK_RESULTS.get(device, {
+            "runtimeReady": False, "checking": True,
+            "runtimeNote": "Checking installed runtime… You can browse your library.",
+            "requestedDevice": device, "adapters": [],
+        }))
+
 
 def mark_runtime(**updates: Any) -> None:
     with RUNTIME_LOCK:
@@ -420,7 +448,7 @@ class Handler(BaseHTTPRequestHandler):
                 {
                     "job": flux_job_snapshot(),
                     "images": latest_images() if query.get("images", ["1"])[0] != "0" else None,
-                    "model": flux2.model_status(requested_device),
+                    "model": model_snapshot(requested_device),
                     "runtime": runtime_snapshot(),
                     "defaults": {
                         "device": flux2.DEFAULT_DEVICE,

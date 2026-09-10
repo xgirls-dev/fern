@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { app } from "electron";
+import { savedDataRoot } from "./data-profile";
 
 let projectRoot: string | null = null;
 
@@ -14,7 +15,7 @@ function resolveRoot(): string {
   const configured =
     process.env.FERN_ROOT?.trim() || process.env.INTEL_IRIS_ROOT?.trim();
   if (configured) return configured;
-  if (app.isPackaged) return join(app.getPath("userData"), "studio-data");
+  if (app.isPackaged) return savedDataRoot(app.getPath("userData")) ?? join(app.getPath("userData"), "studio-data");
   return join(app.getAppPath(), "..", "..");
 }
 

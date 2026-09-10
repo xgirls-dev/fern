@@ -49,7 +49,9 @@ export async function fetchStatus(
 ): Promise<FluxStatusResponse> {
   const includeImages = Date.now() - imagesFetchedAt > 3000;
   const query = `?device=${encodeURIComponent(device ?? "AUTO")}&images=${includeImages ? "1" : "0"}`;
-  const response = await fetch(`${apiBaseUrl}/api/flux2/status${query}`);
+  const response = await fetch(`${apiBaseUrl}/api/flux2/status${query}`, {
+    signal: AbortSignal.timeout(15_000),
+  });
   const data = repairMojibakeDeep(await response.json());
   if (!response.ok) {
     throw new Error(data.error || "Failed to fetch status");

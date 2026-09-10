@@ -510,7 +510,7 @@ export function useStudio() {
         setPreviewedJobId(data.job.id ?? "");
         if (output.threadId === selected.id) {
           setPreviewState(output);
-          return;
+          return true;
         }
       }
       const currentPreview = previewRef.current;

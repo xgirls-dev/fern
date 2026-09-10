@@ -715,6 +715,7 @@ export function App() {
       {runtimeDismissed &&
       !studio.running &&
       (studio.runtimeNeedsAttention ||
+        studio.status?.model.checking ||
         studio.runtimeLoading ||
         studio.connecting ||
         !studio.status ||
@@ -723,6 +724,8 @@ export function App() {
           <span>
             {!studio.status
               ? "Connecting to Fern…"
+              : studio.status.model.checking
+                ? studio.status.model.runtimeNote
               : (studio.runtimeStatus?.message ?? "Generation is unavailable.")}
           </span>
           <button type="button" onClick={() => setRuntimeDismissed(false)}>

@@ -12,6 +12,7 @@ import {
   shell,
 } from "electron";
 import { PythonBackend } from "./python-backend";
+import { resolveDataProfile } from "./data-profile";
 import { installEditorContextMenu } from "./editor-context-menu";
 import { ensureFirstRunSetup } from "./first-run-setup";
 import { getAppIconPath, getOutputsDir, resolveProjectRoot } from "./paths";
@@ -348,11 +349,7 @@ async function bootstrap(): Promise<void> {
   // Preserve the data directory used by existing installations so an in-place
   // upgrade does not redownload the model or discard local preferences.
   if (app.isPackaged) {
-    const legacyUserData = join(app.getPath("appData"), "Iris OpenVINO Studio");
-    const brandedUserData = join(app.getPath("appData"), "Fern");
-    if (existsSync(legacyUserData) && !existsSync(brandedUserData)) {
-      app.setPath("userData", legacyUserData);
-    }
+    app.setPath("userData", resolveDataProfile(app.getPath("appData")));
   }
 
   if (!app.requestSingleInstanceLock()) {

@@ -17,6 +17,7 @@ export interface ImageRecord {
 }
 
 export interface ModelStatus {
+  checking?: boolean;
   runtimeReady: boolean;
   runtimeNote?: string;
   modelId?: string;
