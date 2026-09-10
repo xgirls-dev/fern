@@ -182,7 +182,7 @@ try {
     logs: [],
   };
   await page.waitForTimeout(900);
-  await button("Continue to workspace").click();
+  assert.equal(await page.getByRole("dialog").count(), 0);
   await button("Library").click();
   assert(await page.locator("#library-view").isVisible());
   assert.deepEqual(errors, []);

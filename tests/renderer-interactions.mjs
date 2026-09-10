@@ -76,7 +76,7 @@ await page.addInitScript(
 );
 const svg =
   '<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><rect width="1024" height="1024" fill="#c9c2b5"/><rect x="240" y="100" width="500" height="800" fill="#f1ede5"/></svg>';
-const images = [0, 1, 2].map((i) => ({
+let images = [0, 1, 2].map((i) => ({
   name: `image-${i}.svg`,
   threadId: "thread-0",
   url: "data:image/svg+xml," + encodeURIComponent(svg),
@@ -121,6 +121,14 @@ await page.route("**/api/flux2/status*", (r) =>
     },
   }),
 );
+await page.route("**/api/threads/delete", (r) => {
+  const id = r.request().postDataJSON().thread_id;
+  const deleted = images
+    .filter((image) => image.threadId === id)
+    .map((image) => image.name);
+  images = images.filter((image) => image.threadId !== id);
+  return r.fulfill({ json: { deleted } });
+});
 await page.route("**/api/flux2/stop", (r) => {
   stops++;
   job = { ...job, status: "cancelled" };
@@ -228,6 +236,7 @@ try {
   await thread("Portrait revised").hover();
   await remove("Portrait revised").click();
   await thread("Delete thread").click();
+  await page.locator(".thread-delete-confirm").waitFor({ state: "detached" });
   assert.equal(await thread("Portrait revised").count(), 0);
   assert.equal(
     await page.locator("#prompt").inputValue(),
@@ -247,17 +256,19 @@ try {
   await thread("Architecture").hover();
   await remove("Architecture").click();
   await thread("Delete thread").click();
+  await page.locator(".thread-delete-confirm").waitFor({ state: "detached" });
   assert.equal(await page.locator("#prompt").inputValue(), "Landscape");
   await thread("Library").click();
   assert.equal(
     await page.locator(".thumb").count(),
-    3,
-    "Thread deletion preserves generated images",
+    0,
+    "Thread deletion removes generated images",
   );
   await thread("Landscape").click();
   await thread("Landscape").hover();
   await remove("Landscape").click();
   await thread("Delete thread").click();
+  await page.locator(".thread-delete-confirm").waitFor({ state: "detached" });
   assert.equal(await page.locator(".sidebar-thread-button").count(), 1);
   assert.equal(await page.locator("#prompt").inputValue(), "");
   await page.reload();
@@ -303,7 +314,7 @@ try {
   );
   assert.deepEqual(errors, []);
   console.log(
-    "PASS: spacing geometry; hover and keyboard action visibility; rename save/cancel; delete cancel/inactive/active/last/reload; running protection; images retained; 45-thread scroll/focus; preferences and sidebar navigation; both themes and desktop sizes.",
+    "PASS: spacing geometry; hover and keyboard action visibility; rename save/cancel; delete cancel/inactive/active/last/reload; running protection; owned images deleted; 45-thread scroll/focus; preferences and sidebar navigation; both themes and desktop sizes.",
   );
 } finally {
   await browser.close();

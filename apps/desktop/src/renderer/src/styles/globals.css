@@ -1510,9 +1510,9 @@ textarea:focus {
 .thumb-prompt {
   font-size: 11px;
   color: var(--muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow: scroll;
   white-space: nowrap;
+  width: 100%;
 }
 
 .thumb-seed {

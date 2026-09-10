@@ -130,3 +130,22 @@ export async function clearLocalData(): Promise<StorageMutationResponse> {
   invalidateImages();
   return result;
 }
+
+export async function deleteThreadAssets(
+  threadId: string,
+  imageNames: string[],
+): Promise<string[]> {
+  const result = await requestJson<{ deleted: string[] }>(
+    "/api/threads/delete",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ thread_id: threadId, image_names: imageNames }),
+    },
+  );
+  cachedImages = cachedImages.filter(
+    (image) => !result.deleted.includes(image.name),
+  );
+  invalidateImages();
+  return result.deleted;
+}

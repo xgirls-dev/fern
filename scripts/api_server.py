@@ -6,6 +6,7 @@ import io
 import json
 import mimetypes
 import os
+import shutil
 import sys
 import threading
 import time
@@ -38,6 +39,9 @@ for path in (PROJECT_SCRIPTS, SCRIPTS):
             sys.path.insert(0, value)
 
 import flux2_klein_pipeline as flux2
+from generation_worker import GenerationWorker, GenerationCancelled
+
+GENERATION_WORKER = GenerationWorker()
 import gallery_store
 import storage_manager
 from device_adapters import device_label, normalize_device
@@ -63,8 +67,8 @@ FLUX_CANCEL_EVENT: threading.Event | None = None
 
 RUNTIME_LOCK = threading.Lock()
 RUNTIME_STATUS: dict[str, Any] = {
-    "status": "pending",
-    "message": "Waiting for the Fern runtime...",
+    "status": "idle",
+    "message": "Model will load when you generate an image.",
     "device": None,
     "logs": [],
     "startedAt": None,
@@ -73,8 +77,7 @@ RUNTIME_STATUS: dict[str, Any] = {
 }
 
 
-class FluxGenerationCancelled(RuntimeError):
-    pass
+FluxGenerationCancelled = GenerationCancelled
 
 
 def mark_runtime(**updates: Any) -> None:
@@ -100,39 +103,6 @@ def runtime_snapshot() -> dict[str, Any]:
             "finishedAt": RUNTIME_STATUS["finishedAt"],
             "error": RUNTIME_STATUS["error"],
         }
-
-
-def preload_runtime() -> None:
-    started_at = time.time()
-    mark_runtime(status="loading", startedAt=started_at, error=None)
-    try:
-        status = flux2.model_status(flux2.DEFAULT_DEVICE)
-        selected_device = status["selectedDevice"]
-        mark_runtime(device=selected_device)
-        if not status["runtimeReady"]:
-            mark_runtime(
-                status="blocked",
-                message=status["runtimeNote"],
-                finishedAt=time.time(),
-                error=status["runtimeNote"],
-            )
-            return
-
-        append_runtime_log(f"Loading {device_label(selected_device)} runtime...")
-        flux2.load_pipeline(device=selected_device, log=append_runtime_log)
-        mark_runtime(
-            status="ready",
-            message=f"{device_label(selected_device)} runtime ready.",
-            finishedAt=time.time(),
-            error=None,
-        )
-    except Exception as exc:
-        mark_runtime(
-            status="failed",
-            message="Fern could not load the model runtime.",
-            finishedAt=time.time(),
-            error=str(exc),
-        )
 
 
 def latest_images() -> list[dict[str, Any]]:
@@ -284,10 +254,18 @@ def run_flux_generation(
 ) -> None:
     def log_generation(message: str) -> None:
         append_flux_log(message)
+        if message.startswith("Loading Flux"):
+            mark_runtime(status="loading", message="Loading model for generation…", error=None)
+        elif message.startswith("Seed:"):
+            mark_runtime(status="ready", device=payload["device"], message="Model ready.", error=None)
         if cancel_event.is_set():
             raise FluxGenerationCancelled("Generation stopped by user.")
 
+    stage = CACHE_DIR / ("generation-" + job_id)
     try:
+        if stage.resolve().parent != CACHE_DIR.resolve():
+            raise ValueError("Invalid generation staging path.")
+        stage.mkdir(parents=True, exist_ok=True)
         last_record = None
         for index in range(payload["batch_size"]):
             if cancel_event.is_set():
@@ -306,7 +284,8 @@ def run_flux_generation(
                 "modelPath": str(flux2.model_dir_for(payload["device"])),
                 "createdAt": time.time(),
             }
-            output_path, generation_time = flux2.generate_image(
+            output_path, generation_time = GENERATION_WORKER.generate(
+                cancel_event=cancel_event,
                 prompt=payload["prompt"],
                 width=payload["width"],
                 height=payload["height"],
@@ -315,9 +294,15 @@ def run_flux_generation(
                 seed=seed,
                 device=payload["device"],
                 reference_image=payload["reference_image"],
-                output_dir=OUTPUTS,
+                output_dir=stage,
                 log=log_generation,
             )
+            if cancel_event.is_set():
+                raise FluxGenerationCancelled("Generation stopped by user.")
+            destination = OUTPUTS / output_path.name
+            if output_path != destination:
+                output_path.replace(destination)
+            output_path = destination
             metadata["referenceUsed"] = payload["reference_image"] is not None
             if payload["reference_image"] is not None:
                 references = DATA_DIR / "references"
@@ -343,16 +328,44 @@ def run_flux_generation(
         )
         storage_manager.cleanup_cache(ROOT, CACHE_DIR)
     except FluxGenerationCancelled:
+        mark_runtime(status="idle", message="Generation stopped. Model will reload on the next generation.", error=None)
         append_flux_log("Generation stopped by user.")
         mark_flux_job(status="cancelled", finishedAt=time.time(), output=None, error=None)
     except Exception as exc:
+        mark_runtime(status="idle", message="Ready to retry generation.", error=None)
         append_flux_log(str(exc))
         mark_flux_job(status="failed", finishedAt=time.time(), output=None, error=str(exc))
     finally:
+        # Only this job's validated staging directory is removed. Cancelled/partial
+        # worker files never become anonymous images in the user's gallery.
+        if stage.resolve().parent == CACHE_DIR.resolve():
+            shutil.rmtree(stage, ignore_errors=True)
         global FLUX_CANCEL_EVENT
         with FLUX_JOB_LOCK:
             if FLUX_CANCEL_EVENT is cancel_event:
                 FLUX_CANCEL_EVENT = None
+
+
+def delete_thread_assets(thread_id: str, legacy_names: list[str]) -> list[str]:
+    if not isinstance(legacy_names, list):
+        raise ValueError("Image names must be a list.")
+    metadata = gallery_store.metadata_snapshot()
+    names = {name for name, record in metadata.items() if record.get("threadId") == thread_id}
+    for name in legacy_names:
+        if isinstance(name, str) and not metadata.get(name, {}).get("threadId"):
+            names.add(name)
+    for name in names:
+        if "/" in name or "\\" in name or not name.lower().endswith(".png") or Path(name).name != name:
+            raise ValueError("Invalid image name.")
+    for name in names:
+        (OUTPUTS / name).unlink(missing_ok=True)
+        for extension in (".png", ".jpg", ".webp"):
+            (DATA_DIR / "references" / (name + extension)).unlink(missing_ok=True)
+    gallery_store.remove_image_metadata(names)
+    with FLUX_JOB_LOCK:
+        if FLUX_JOB.get("threadId") == thread_id:
+            FLUX_JOB.update(threadId=None, output=None, logs=[], error=None)
+    return sorted(names)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -466,6 +479,22 @@ class Handler(BaseHTTPRequestHandler):
         global FLUX_CANCEL_EVENT
         parsed = urllib.parse.urlparse(self.path)
 
+        if parsed.path == "/api/threads/delete":
+            try:
+                payload = self.read_json_body()
+                thread_id = payload.get("thread_id")
+                if not isinstance(thread_id, str) or not thread_id:
+                    raise ValueError("Thread id is required.")
+                current = flux_job_snapshot()
+                if current["status"] == "running" and current.get("threadId") == thread_id:
+                    self.send_json(409, {"error": "Stop generation before deleting this thread."})
+                    return
+                names = delete_thread_assets(thread_id, payload.get("image_names", []))
+                self.send_json(200, {"deleted": names})
+            except Exception as error:
+                self.send_json(400, {"error": str(error)})
+            return
+
         if parsed.path == "/api/flux2/stop":
             current = flux_job_snapshot()
             if current["status"] != "running":
@@ -486,6 +515,7 @@ class Handler(BaseHTTPRequestHandler):
             if current["status"] == "running":
                 self.send_json(409, {"error": "Wait for the current generation to finish."})
                 return
+            GENERATION_WORKER.close()
             flux2.release_pipeline()
             result = storage_manager.cleanup_cache(ROOT, CACHE_DIR, force=True)
             self.send_json(
@@ -509,6 +539,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(409, {"error": "Wait for the current generation to finish."})
                 return
 
+            GENERATION_WORKER.close()
             flux2.release_pipeline()
             cache_result = storage_manager.cleanup_cache(ROOT, CACHE_DIR, force=True)
             output_files, output_bytes = storage_manager.clear_directory(OUTPUTS)
@@ -570,6 +601,10 @@ class Handler(BaseHTTPRequestHandler):
         job_id = str(int(time.time() * 1000))
         cancel_event = threading.Event()
         with FLUX_JOB_LOCK:
+            if FLUX_JOB["status"] == "running":
+                self.send_json(409, {"error": "A generation job is already running."})
+                return
+            FLUX_JOB["status"] = "running"
             FLUX_CANCEL_EVENT = cancel_event
         model_label = "Flux.2 Klein 9B"
         mark_flux_job(
@@ -619,12 +654,12 @@ def run_server(port: int = 8000, *, allow_cors: bool = False) -> None:
     ConfiguredHandler.allow_cors = allow_cors
     server = ThreadingHTTPServer(("127.0.0.1", port), ConfiguredHandler)
     print(f"Fern API running on http://127.0.0.1:{port}", flush=True)
-    threading.Thread(target=preload_runtime, daemon=True).start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
+        GENERATION_WORKER.close()
         server.server_close()
 
 

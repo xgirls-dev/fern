@@ -16,6 +16,7 @@ $ScriptFiles = @(
     "device_adapters.py",
     "flux2_klein_pipeline.py",
     "gallery_store.py",
+    "generation_worker.py",
     "storage_manager.py",
     "bootstrap_install.py"
 )

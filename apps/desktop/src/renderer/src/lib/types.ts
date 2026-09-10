@@ -56,7 +56,7 @@ export interface FluxJob {
 }
 
 export interface RuntimeStatus {
-  status: "pending" | "loading" | "ready" | "blocked" | "failed";
+  status: "idle" | "pending" | "loading" | "ready" | "blocked" | "failed";
   message: string;
   device: string | null;
   logs: string[];

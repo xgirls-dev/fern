@@ -48,7 +48,7 @@ export function App() {
   const [lightboxImage, setLightboxImage] = useState<ImageRecord | null>(null);
   const [viewerImages, setViewerImages] = useState<ImageRecord[]>([]);
   const inspectorRef = useRef<HTMLElement>(null);
-  const [runtimeDismissed, setRuntimeDismissed] = useState(false);
+  const [runtimeDismissed, setRuntimeDismissed] = useState(true);
   const [referenceBusy, setReferenceBusy] = useState(false);
   const lightboxOpen = Boolean(lightboxImage);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
@@ -103,10 +103,12 @@ export function App() {
   const remixImage = (image: ImageRecord) => {
     const threadId = studio.activeThread.id;
     const previousPrompt = studio.settings.prompt;
+    studio.setPreview(image);
+    setTimeout(() => window.dispatchEvent(new Event("fern-show-preview")), 0);
     studio.updateSettings({ prompt: image.prompt ?? "" }, threadId);
     setLightboxImage(null);
     focusPrompt();
-    notify("Prompt added to composer.", "info", {
+    notify("Image selected. Prompt restored to composer.", "info", {
       label: "Undo",
       run: () => studio.updateSettings({ prompt: previousPrompt }, threadId),
     });
@@ -273,12 +275,7 @@ export function App() {
   const previewUrl = studio.preview
     ? resolveAssetUrl(studio.preview.url, studio.preview.mtime)
     : null;
-  const startupDialogOpen =
-    !runtimeDismissed &&
-    (!studio.ready ||
-      studio.connecting ||
-      (!studio.status && !studio.error) ||
-      studio.runtimeDialogOpen);
+  const startupDialogOpen = !runtimeDismissed;
   const cpuAvailable =
     studio.status?.model.adapters?.some(
       (adapter) => adapter.id === "CPU" && adapter.available,
@@ -347,40 +344,7 @@ export function App() {
           />
 
           {activeSection === "preferences" ||
-          activeSection === "storage" ? null : !studio.ready ||
-            studio.connecting ? (
-            <div className="dashboard-loading" role="status" aria-live="polite">
-              <span className="spinner" aria-hidden="true" />
-              <span>
-                {!studio.ready
-                  ? "Launching Fern…"
-                  : "Connecting to Fern AI backend…"}
-              </span>
-              {studio.error ? (
-                <>
-                  <p className="dashboard-loading-error">{studio.error}</p>
-                  <button
-                    type="button"
-                    className="btn btn-secondary"
-                    onClick={() => void studio.reconnect()}
-                  >
-                    Retry connection
-                  </button>
-                </>
-              ) : null}
-            </div>
-          ) : studio.error && !studio.status ? (
-            <div className="dashboard-loading">
-              <p className="dashboard-loading-error">{studio.error}</p>
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={() => void studio.reconnect()}
-              >
-                Retry connection
-              </button>
-            </div>
-          ) : activeSection === "create" ? (
+          activeSection === "storage" ? null : activeSection === "create" ? (
             <section
               className={`create-view${inspectorView ? " has-inspector" : ""}`}
               aria-labelledby="create-heading"
@@ -510,8 +474,7 @@ export function App() {
                     stopping={studio.stopping}
                     ready={
                       studio.modelInstalled &&
-                      !studio.runtimeNeedsAttention &&
-                      !studio.runtimeLoading &&
+                      !studio.connecting &&
                       !studio.referenceLoading &&
                       !referenceBusy
                     }
@@ -750,12 +713,17 @@ export function App() {
         />
       ) : null}
       {runtimeDismissed &&
+      !studio.running &&
       (studio.runtimeNeedsAttention ||
         studio.runtimeLoading ||
+        studio.connecting ||
+        !studio.status ||
         !studio.ready) ? (
         <div className="runtime-banner" role="status">
           <span>
-            {studio.runtimeStatus?.message ?? "Generation is unavailable."}
+            {!studio.status
+              ? "Connecting to Fern…"
+              : (studio.runtimeStatus?.message ?? "Generation is unavailable.")}
           </span>
           <button type="button" onClick={() => setRuntimeDismissed(false)}>
             Generation status
@@ -764,7 +732,11 @@ export function App() {
       ) : null}
       {studio.running && activeSection !== "create" ? (
         <div className="runtime-banner">
-          <span>Rendering in another view</span>
+          <span>
+            {studio.runtimeLoading
+              ? "Loading model for generation"
+              : "Rendering in another view"}
+          </span>
           <button
             type="button"
             disabled={studio.stopping}

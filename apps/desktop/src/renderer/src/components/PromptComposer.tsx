@@ -1,8 +1,9 @@
 import ArrowUp from "lucide-react/dist/esm/icons/arrow-up.mjs";
+import Dices from "lucide-react/dist/esm/icons/dices.mjs";
 import ImagePlus from "lucide-react/dist/esm/icons/image-plus.mjs";
 import SlidersHorizontal from "lucide-react/dist/esm/icons/sliders-horizontal.mjs";
 import X from "lucide-react/dist/esm/icons/x.mjs";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { readReference } from "../lib/reference";
 import type { StudioSettings } from "../lib/types";
 
@@ -44,6 +45,20 @@ export function PromptComposer({
   onGenerate,
 }: PromptComposerProps) {
   const fileInput = useRef<HTMLInputElement>(null);
+  const [seedDraft, setSeedDraft] = useState(String(settings.seed));
+  const [seedPopoverOpen, setSeedPopoverOpen] = useState(false);
+  const seedPopover = useRef<HTMLDivElement>(null);
+  useEffect(() => setSeedDraft(String(settings.seed)), [settings.seed]);
+  useEffect(() => {
+    if (!seedPopoverOpen) return;
+    const close = (event: PointerEvent) => {
+      if (!seedPopover.current?.contains(event.target as Node)) setSeedPopoverOpen(false);
+    };
+    const escape = (event: KeyboardEvent) => { if (event.key === "Escape") setSeedPopoverOpen(false); };
+    document.addEventListener("pointerdown", close);
+    document.addEventListener("keydown", escape);
+    return () => { document.removeEventListener("pointerdown", close); document.removeEventListener("keydown", escape); };
+  }, [seedPopoverOpen]);
   const [loadingReference, setLoadingReference] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [referenceError, setReferenceError] = useState("");
@@ -184,21 +199,16 @@ export function PromptComposer({
                 {settings.width} × {settings.height}
               </span>
             </button>
-            <button
-              type="button"
-              className="composer-settings"
-              aria-pressed={settings.seedLocked}
-              onClick={() =>
-                onSettingsChange({ seedLocked: !settings.seedLocked })
-              }
-              title={
-                settings.seedLocked
-                  ? `Fixed seed: ${settings.seed}. Repeat renders preserve this seed.`
-                  : "A new random seed for each render"
-              }
-            >
-              {settings.seedLocked ? "Fixed seed" : "Random seed"}
-            </button>
+            <div className="seed-popover-anchor" ref={seedPopover}>
+              <button type="button" className="composer-settings" aria-expanded={seedPopoverOpen} onClick={() => setSeedPopoverOpen((open) => !open)} title="Seed settings">
+                <span className="seed-popover-value">Seed: {settings.seed}</span>
+              </button>
+              {seedPopoverOpen ? <div className="seed-popover" role="dialog" aria-label="Seed settings">
+                <button type="button" className="seed-mode" aria-pressed={settings.seedLocked} onClick={() => onSettingsChange({ seedLocked: !settings.seedLocked })}>{settings.seedLocked ? "Fixed seed" : "Random seed"}</button>
+                <label className="seed-popover-input"><span>Seed</span><input aria-label="Seed" inputMode="numeric" type="text" value={seedDraft} onChange={(event) => { const value = event.target.value; setSeedDraft(value); if (/^\d+$/.test(value) && Number.isSafeInteger(Number(value))) onSettingsChange({ seed: Number(value), seedLocked: true }); }} onBlur={() => setSeedDraft(String(settings.seed))} /></label>
+                <button type="button" className="btn-icon btn-icon-sm" title="Randomize seed" aria-label="Randomize seed" onClick={() => onSettingsChange({ seed: Math.floor(Math.random() * 1_000_000_000), seedLocked: true })}><Dices size={15} aria-hidden="true" /></button>
+              </div> : null}
+            </div>
             <label className="composer-batch">
               <span className="sr-only">Number of images</span>
               <select

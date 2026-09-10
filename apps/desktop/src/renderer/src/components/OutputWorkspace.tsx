@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import Check from "lucide-react/dist/esm/icons/check.mjs";
 import { resolveAssetUrl } from "../lib/api";
 import type { ImageRecord } from "../lib/types";
 import { ImageActions } from "./ImageActions";
@@ -77,6 +78,11 @@ export function OutputWorkspace({
         limit: 48,
       },
   );
+  useEffect(() => {
+    const show = () => setView((view) => ({ ...view, gallery: false }));
+    window.addEventListener("fern-show-preview", show);
+    return () => window.removeEventListener("fern-show-preview", show);
+  }, []);
   const scroll = useRef<HTMLDivElement>(null);
   const [retry, setRetry] = useState(0);
   const [failed, setFailed] = useState(false);
@@ -203,7 +209,10 @@ export function OutputWorkspace({
                 <div className="output-bar-actions">
                   <ImageActions
                     image={preview}
-                    onRemix={onRemix}
+                    onRemix={(image) => {
+                      setView((v) => ({ ...v, gallery: false }));
+                      onRemix(image);
+                    }}
                     onRemixInNewThread={onRemixInNewThread}
                     onDelete={onDelete}
                   />
@@ -301,7 +310,10 @@ export function OutputWorkspace({
                         setView((v) => ({ ...v, gallery: false }));
                       }
                     }}
-                    onRemix={onRemix}
+                    onRemix={(image) => {
+                      setView((v) => ({ ...v, gallery: false }));
+                      onRemix(image);
+                    }}
                     onRemixInNewThread={onRemixInNewThread}
                     onDelete={onDelete}
                   />
@@ -338,6 +350,7 @@ function ImageCard({
 }) {
   const [failed, setFailed] = useState(false);
   const [retry, setRetry] = useState(0);
+  const [copied, setCopied] = useState(false);
   return (
     <article className="thumb-wrap">
       <button
@@ -360,9 +373,30 @@ function ImageCard({
         )}
       </button>
       <div className="thumb-meta">
-        <span className="thumb-prompt" title={image.prompt}>
-          {image.prompt || image.name}
-        </span>
+        <div className="thumb-prompt-container">
+          <span
+            className="thumb-prompt"
+            title={image.prompt}
+          >
+            {image.prompt || image.name}
+          </span>
+          <button type="button" style={{
+            position: "absolute",
+            top: 0,
+            right: 0,
+          }} className={`prompt-copy${copied ? " is-copied" : ""}`} onClick={async (event) => {
+            event.stopPropagation();
+            navigator.clipboard.writeText(image.prompt ?? image.name);
+            setCopied(true);
+            window.setTimeout(() => setCopied(false), 1600);
+          }
+          } aria-label={copied ? "Prompt copied" : "Copy prompt to clipboard"}>
+            {copied ? <Check size={14} aria-hidden="true" /> : null}
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+              <path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z" />
+            </svg>
+          </button>
+        </div>
         <ImageActions
           compact
           image={image}

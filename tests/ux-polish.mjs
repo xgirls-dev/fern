@@ -14,16 +14,13 @@ try {
   };
   await page.route("**/api/flux2/status*", delayStatus);
   await page.reload({ waitUntil: "domcontentloaded" });
-  await page.getByRole("dialog", { name: "Preparing generation" }).waitFor();
-  await page.waitForTimeout(1200);
-  assert(
-    await page
-      .getByRole("dialog", { name: "Preparing generation" })
-      .isVisible(),
-  );
-  assert.equal(await page.locator(".creation-canvas").count(), 0);
-  release = true;
   await page.locator("#prompt").waitFor();
+  await page.waitForTimeout(1200);
+  assert.equal(await page.getByRole("dialog").count(), 0);
+  assert(await page.locator(".runtime-banner").isVisible());
+  assert.equal(await page.locator(".creation-canvas").count(), 1);
+  release = true;
+  await page.locator(".stage-image").waitFor();
   await page.unroute("**/api/flux2/status*", delayStatus);
 
   await button("Image settings").click();
@@ -43,7 +40,7 @@ try {
   assert(await page.locator("#width").isVisible());
   await button("Close image settings").click();
 
-  await button("Remix").click();
+  await button("Select").click();
   await page.waitForTimeout(300);
   const workspace = await page.evaluate(() =>
     JSON.parse(localStorage.getItem("fern-threads:v1")),
@@ -101,14 +98,19 @@ try {
     [390, 844],
   ]) {
     await page.setViewportSize({ width, height });
-    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    await page.evaluate(
+      () =>
+        new Promise((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(resolve)),
+        ),
+    );
     const closeBox = await button("Close preview").boundingBox();
     assert(
       closeBox &&
         closeBox.x >= 0 &&
         closeBox.x + closeBox.width <= width &&
         closeBox.y >= 0,
-      JSON.stringify({width, closeBox}),
+      JSON.stringify({ width, closeBox }),
     );
     await page.screenshot({ path: `${dir}/viewer-polish-${width}.png` });
   }

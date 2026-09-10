@@ -107,3 +107,11 @@ def enrich_image_record(record: dict[str, Any], metadata: dict[str, Any] | None 
 def metadata_snapshot() -> dict[str, Any]:
     with GALLERY_LOCK:
         return _read_unlocked().get("images", {})
+
+
+def remove_image_metadata(names) -> None:
+    with GALLERY_LOCK:
+        data = _read_unlocked()
+        for name in names:
+            data["images"].pop(name, None)
+        _write_unlocked(data)

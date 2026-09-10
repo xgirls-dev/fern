@@ -58,7 +58,7 @@ class UxWorkflowTests(unittest.TestCase):
                 patch.object(api_server, "DATA_DIR", root / "data"),
                 patch.object(gallery_store, "DATA_DIR", root / "data"),
                 patch.object(gallery_store, "GALLERY_PATH", root / "data" / "gallery.json"),
-                patch.object(api_server.flux2, "generate_image", side_effect=generate),
+                patch.object(api_server.GENERATION_WORKER, "generate", side_effect=generate),
                 patch.object(api_server.flux2, "model_dir_for", return_value=root / "model"),
                 patch.object(api_server.storage_manager, "cleanup_cache"),
                 patch.dict(api_server.FLUX_JOB, {"id": "test", "threadId": "original", "status": "running", "logs": [], "output": None, "startedAt": None, "finishedAt": None, "error": None}, clear=True),

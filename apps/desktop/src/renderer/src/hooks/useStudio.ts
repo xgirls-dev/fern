@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   clearLocalData,
+  deleteThreadAssets,
   invalidateImages,
   resolveAssetUrl,
   fetchStatus,
@@ -345,7 +346,13 @@ export function useStudio() {
         ...current,
         threads: current.threads.map((thread) =>
           thread.id === current.activeId
-            ? { ...thread, previewName: image?.name ?? null }
+            ? {
+                ...thread,
+                previewName: image?.name ?? null,
+                imageNames: image
+                  ? [...new Set([...thread.imageNames, image.name])]
+                  : thread.imageNames,
+              }
             : thread,
         ),
       }));
@@ -403,33 +410,70 @@ export function useStudio() {
   );
 
   const deleteThread = useCallback(
-    (id: string) => {
+    async (id: string) => {
       if (
         submitting ||
         (status?.job.status === "running" && status.job.threadId === id)
       )
         return false;
-      const current = workspaceRef.current;
-      const removed = current.threads.find((thread) => thread.id === id);
-      if (!removed) return false;
-      const remaining = current.threads.filter((thread) => thread.id !== id);
-      if (!remaining.length)
-        remaining.push(createImageThread(removed.settings));
-      const activeId =
-        current.activeId === id ? remaining[0].id : current.activeId;
-      commitWorkspace(() => ({ activeId, threads: remaining }));
-      if (current.activeId === id) {
-        setPreviewState(null);
-        setReferenceImageState("");
-        setReferenceLoading(true);
-        setError(null);
-      }
-      void writeThreadReference(id, "").catch(() =>
-        setNotice(
-          "Thread deleted, but its cached reference could not be cleared.",
-        ),
+      const removed = workspaceRef.current.threads.find(
+        (thread) => thread.id === id,
       );
-      return true;
+      if (!removed) return false;
+      try {
+        const names = await deleteThreadAssets(id, removed.imageNames);
+        await writeThreadReference(id, "");
+        commitWorkspace((current) => {
+          const remaining = current.threads
+            .filter((thread) => thread.id !== id)
+            .map((thread) => ({
+              ...thread,
+              imageNames: thread.imageNames.filter(
+                (name) => !names.includes(name),
+              ),
+              previewName: names.includes(thread.previewName ?? "")
+                ? null
+                : thread.previewName,
+            }));
+          if (!remaining.length)
+            remaining.push(
+              createImageThread({
+                ...DEFAULT_SETTINGS,
+                theme: removed.settings.theme,
+              }),
+            );
+          return {
+            activeId:
+              current.activeId === id ? remaining[0].id : current.activeId,
+            threads: remaining,
+          };
+        });
+        setStatus((current) =>
+          current
+            ? {
+                ...current,
+                images: current.images.filter(
+                  (image) => !names.includes(image.name),
+                ),
+                job:
+                  current.job.threadId === id
+                    ? { ...current.job, threadId: null, output: null, logs: [] }
+                    : current.job,
+              }
+            : current,
+        );
+        if (names.includes(previewRef.current?.name ?? ""))
+          setPreviewState(null);
+        return true;
+      } catch (error) {
+        notify(
+          error instanceof Error
+            ? error.message
+            : "Could not delete this thread. Try again.",
+          "error",
+        );
+        return false;
+      }
     },
     [commitWorkspace, status?.job.status, status?.job.threadId, submitting],
   );
@@ -778,6 +822,10 @@ export function useStudio() {
     updateThreadSettings,
   ]);
 
+  useEffect(() => {
+    if (!running) setStopping(false);
+  }, [running]);
+
   const stopGeneration = useCallback(async () => {
     if (!running || stopping) return;
     setStopping(true);
@@ -790,7 +838,6 @@ export function useStudio() {
       setError(
         err instanceof Error ? err.message : "Could not stop generation",
       );
-    } finally {
       setStopping(false);
     }
   }, [refresh, running, stopping]);

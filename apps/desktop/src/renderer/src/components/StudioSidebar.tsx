@@ -18,7 +18,7 @@ interface StudioSidebarProps {
   onSelectThread: (id: string) => void;
   onNewThread: () => void;
   onRenameThread: (id: string, title: string) => void;
-  onDeleteThread: (id: string) => boolean;
+  onDeleteThread: (id: string) => Promise<boolean>;
   onArchiveThread: (id: string) => void;
   onOpenSearch: () => void;
   submitting: boolean;
@@ -50,6 +50,7 @@ export const StudioSidebar = memo(function StudioSidebar({
   const filtered = threads.filter((thread) => !thread.archived);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [threadName, setThreadName] = useState("");
+  const [deletingBusy, setDeletingBusy] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const sidebarRef = useRef<HTMLElement>(null);
   const cancelRename = useRef(false);
@@ -231,7 +232,9 @@ export const StudioSidebar = memo(function StudioSidebar({
                   aria-label={`${thread.archived ? "Restore" : "Archive"} thread ${thread.title}`}
                   title={thread.archived ? "Restore thread" : "Archive thread"}
                   onClick={() => onArchiveThread(thread.id)}
-                  disabled={submitting || runningThreadId === thread.id}
+                  disabled={
+                    deletingBusy || submitting || runningThreadId === thread.id
+                  }
                 >
                   {thread.archived ? (
                     <ArchiveRestore size={14} aria-hidden="true" />
@@ -248,7 +251,9 @@ export const StudioSidebar = memo(function StudioSidebar({
                       ? "Stop generation before deleting this thread"
                       : "Delete thread"
                   }
-                  disabled={submitting || runningThreadId === thread.id}
+                  disabled={
+                    deletingBusy || submitting || runningThreadId === thread.id
+                  }
                   aria-expanded={deletingId === thread.id}
                   onClick={() =>
                     setDeletingId(deletingId === thread.id ? null : thread.id)
@@ -271,7 +276,8 @@ export const StudioSidebar = memo(function StudioSidebar({
                   >
                     <p>Delete this thread?</p>
                     <small>
-                      Its draft and reference will be removed. Generated images
+                      Its generated images, prompts, settings, and references
+                      will be permanently deleted. Images owned by other threads
                       stay in Library.
                     </small>
                     <div>
@@ -289,15 +295,25 @@ export const StudioSidebar = memo(function StudioSidebar({
                       <button
                         type="button"
                         className="btn btn-danger-outline"
-                        disabled={submitting || runningThreadId === thread.id}
-                        onClick={() => {
-                          if (onDeleteThread(thread.id)) {
-                            setDeletingId(null);
-                            focusThread();
+                        disabled={
+                          deletingBusy ||
+                          submitting ||
+                          runningThreadId === thread.id
+                        }
+                        onClick={async () => {
+                          if (deletingBusy) return;
+                          setDeletingBusy(true);
+                          try {
+                            if (await onDeleteThread(thread.id)) {
+                              setDeletingId(null);
+                              focusThread();
+                            }
+                          } finally {
+                            setDeletingBusy(false);
                           }
                         }}
                       >
-                        Delete thread
+                        {deletingBusy ? "Deleting…" : "Delete thread"}
                       </button>
                     </div>
                   </div>

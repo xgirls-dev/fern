@@ -101,6 +101,20 @@ export async function fixture({ imageCount = 3, threadCount = 1 } = {}) {
     imageListings: 0,
     statusCalls: 0,
   };
+  await page.route("**/api/threads/delete", (r) => {
+    const payload = r.request().postDataJSON();
+    const deleted = state.images
+      .filter((image) => image.threadId === payload.thread_id)
+      .map((image) => image.name);
+    state.images = state.images.filter(
+      (image) => !deleted.includes(image.name),
+    );
+    return r.fulfill({ json: { deleted } });
+  });
+  await page.route("**/api/flux2/stop", (r) => {
+    state.job = { ...state.job, status: "cancelled" };
+    return r.fulfill({ json: { job: state.job } });
+  });
   await page.route("**/fixture/delete", (r) => {
     state.images = state.images.filter(
       (i) => i.name !== r.request().postData(),
