@@ -58,7 +58,13 @@ export function loadThreadWorkspace(settings: StudioSettings): ThreadWorkspace {
             : threads[0].id,
           threads: threads.map((thread) => ({
             ...thread,
-            settings: { ...settings, ...thread.settings },
+            settings: {
+              ...settings,
+              ...thread.settings,
+              model: ["auto", "9b", "4b"].includes(thread.settings.model ?? "")
+                ? thread.settings.model
+                : "9b",
+            },
             imageNames: thread.imageNames ?? [],
             referenceLabel: thread.referenceLabel ?? "No reference image.",
           })),

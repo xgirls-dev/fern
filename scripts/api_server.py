@@ -42,6 +42,8 @@ import flux2_klein_pipeline as flux2
 from generation_worker import GenerationWorker, GenerationCancelled
 
 GENERATION_WORKER = GenerationWorker()
+from model_manager import ModelManager
+from model_catalog import model_spec
 import gallery_store
 import storage_manager
 from device_adapters import device_label, normalize_device
@@ -51,6 +53,7 @@ OUTPUTS = ROOT / "outputs"
 DATA_DIR = ROOT / "data"
 MODELS_DIR = ROOT / "models"
 CACHE_DIR = ROOT / ".cache"
+MODEL_MANAGER = ModelManager(MODELS_DIR)
 
 FLUX_JOB_LOCK = threading.Lock()
 FLUX_JOB: dict[str, Any] = {
@@ -84,24 +87,30 @@ MODEL_CHECK_STARTED = False
 MODEL_CHECK_RESULTS: dict[str, Any] = {}
 
 
-def model_snapshot(device: str) -> dict[str, Any]:
+def model_snapshot(device: str, model="9b") -> dict[str, Any]:
     """Hardware imports must never hold gallery/status requests hostage."""
     global MODEL_CHECK_STARTED
     device = normalize_device(device)
+    if model not in ("auto", "9b", "4b"): model = "9b"
+    requested_model = model
+    model = flux2.resolve_model(model, device)
     with MODEL_CHECK_LOCK:
         if not MODEL_CHECK_STARTED:
             MODEL_CHECK_STARTED = True
             def check():
                 try:
-                    results = {key: flux2.model_status(key) for key in ("AUTO", "INTEL_GPU", "NVIDIA_GPU", "CPU")}
+                    results = {(key, choice): flux2.model_status(key, choice) for choice in ("9b", "4b") for key in ("AUTO", "INTEL_GPU", "NVIDIA_GPU", "CPU")}
                 except Exception as error:
-                    results = {key: {"runtimeReady": False, "checking": False,
+                    results = {(key, choice): {"runtimeReady": False, "checking": False,
                                     "runtimeNote": f"Could not check generation runtime: {error}"}
-                               for key in ("AUTO", "INTEL_GPU", "NVIDIA_GPU", "CPU")}
+                               for choice in ("9b", "4b") for key in ("AUTO", "INTEL_GPU", "NVIDIA_GPU", "CPU")}
                 with MODEL_CHECK_LOCK:
                     MODEL_CHECK_RESULTS.update(results)
             threading.Thread(target=check, daemon=True).start()
-        return dict(MODEL_CHECK_RESULTS.get(device, {
+        cached = MODEL_CHECK_RESULTS.get((device, model))
+        if cached and not cached.get("runtimeNote", "").startswith("Could not check"):
+            return flux2.model_status(device, requested_model)
+        return dict(MODEL_CHECK_RESULTS.get((device, model), {
             "runtimeReady": False, "checking": True,
             "runtimeNote": "Checking installed runtime… You can browse your library.",
             "requestedDevice": device, "adapters": [],
@@ -183,6 +192,7 @@ def flux_job_snapshot() -> dict[str, Any]:
         return {
             "id": FLUX_JOB["id"],
             "threadId": FLUX_JOB.get("threadId"),
+            "model": FLUX_JOB.get("model"),
             "status": FLUX_JOB["status"],
             "logs": list(FLUX_JOB["logs"]),
             "startedAt": FLUX_JOB["startedAt"],
@@ -216,6 +226,8 @@ def decode_flux_reference_image(value: Any) -> Image.Image | None:
 
 
 def validate_flux_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    model = payload.get("model", "9b")
+    if model != "auto": model_spec(model)
     prompt = str(payload.get("prompt", "")).strip()
     if not prompt:
         raise ValueError("Prompt is required.")
@@ -271,6 +283,7 @@ def validate_flux_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "batch_size": batch_size,
         "thread_id": thread_id,
         "reference_image": reference_image,
+        "model": model,
         "reference_source": payload.get("reference_image") if reference_image is not None else None,
     }
 
@@ -309,11 +322,14 @@ def run_flux_generation(
                 "steps": payload["steps"],
                 "guidance": payload["guidance"],
                 "device": payload["device"],
-                "modelPath": str(flux2.model_dir_for(payload["device"])),
+                "modelPath": str(flux2.model_dir_for(payload["device"], payload.get("model", "9b"))),
+                "model": payload.get("model", "9b"),
+                "modelRevision": payload.get("modelRevision", "legacy-unverified"),
                 "createdAt": time.time(),
             }
             output_path, generation_time = GENERATION_WORKER.generate(
                 cancel_event=cancel_event,
+                model=payload.get("model", "9b"),
                 prompt=payload["prompt"],
                 width=payload["width"],
                 height=payload["height"],
@@ -436,6 +452,10 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         parsed = urllib.parse.urlparse(self.path)
 
+        if parsed.path == "/api/models":
+            self.send_json(200, {"models": MODEL_MANAGER.snapshot()})
+            return
+
         if parsed.path == "/api/health":
             self.send_json(200, {"ok": True, "service": "fern"})
             return
@@ -448,7 +468,7 @@ class Handler(BaseHTTPRequestHandler):
                 {
                     "job": flux_job_snapshot(),
                     "images": latest_images() if query.get("images", ["1"])[0] != "0" else None,
-                    "model": model_snapshot(requested_device),
+                    "model": model_snapshot(requested_device, query.get("model", ["9b"])[0]),
                     "runtime": runtime_snapshot(),
                     "defaults": {
                         "device": flux2.DEFAULT_DEVICE,
@@ -602,6 +622,21 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
+        if parsed.path in ("/api/models/install", "/api/models/pause", "/api/models/remove"):
+            try:
+                model = self.read_json_body().get("model")
+                model_spec(model)
+                if parsed.path.endswith("install"): MODEL_MANAGER.start(model)
+                elif parsed.path.endswith("pause"): MODEL_MANAGER.cancel(model)
+                else:
+                    with FLUX_JOB_LOCK:
+                        if FLUX_JOB["status"] == "running": raise ValueError("Stop generation before removing a model.")
+                        GENERATION_WORKER.close()
+                        MODEL_MANAGER.remove(model)
+                self.send_json(200, {"models": MODEL_MANAGER.snapshot()})
+            except Exception as error: self.send_json(400, {"error": str(error)})
+            return
+
         if parsed.path != "/api/flux2/generate":
             self.send_error(404)
             return
@@ -617,7 +652,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(400, {"error": str(exc)})
             return
 
-        status = flux2.model_status(payload["device"])
+        status = flux2.model_status(payload["device"], payload["model"])
         if not status["runtimeReady"]:
             self.send_json(400, {"error": status["runtimeNote"], "model": status})
             return
@@ -625,6 +660,8 @@ class Handler(BaseHTTPRequestHandler):
         # Resolve Auto-select once at queue time so generation, logs, and saved
         # metadata all describe the adapter that actually ran.
         payload["device"] = status["selectedDevice"]
+        payload["model"] = status["selectedModel"]
+        payload["modelRevision"] = status["modelRevision"]
 
         job_id = str(int(time.time() * 1000))
         cancel_event = threading.Event()
@@ -634,10 +671,11 @@ class Handler(BaseHTTPRequestHandler):
                 return
             FLUX_JOB["status"] = "running"
             FLUX_CANCEL_EVENT = cancel_event
-        model_label = "Flux.2 Klein 9B"
+        model_label = model_spec(payload["model"])["label"]
         mark_flux_job(
             id=job_id,
             threadId=payload.get("thread_id"),
+            model=payload["model"],
             status="running",
             logs=[
                 format_flux_log(

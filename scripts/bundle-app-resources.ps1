@@ -13,6 +13,10 @@ New-Item -ItemType Directory -Force -Path $ScriptsTarget | Out-Null
 
 $ScriptFiles = @(
     "api_server.py",
+    "model_catalog.py",
+    "model_catalog.json",
+    "model_manager.py",
+    "model_capabilities.py",
     "device_adapters.py",
     "flux2_klein_pipeline.py",
     "gallery_store.py",

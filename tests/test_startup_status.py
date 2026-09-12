@@ -11,7 +11,7 @@ class StartupStatusTests(unittest.TestCase):
     def test_slow_check_does_not_block_gallery_status_and_recovers(self):
         entered = threading.Event()
         release = threading.Event()
-        def slow(device):
+        def slow(device, model="9b"):
             entered.set()
             release.wait(5)
             return {'runtimeReady': True, 'requestedDevice': device}

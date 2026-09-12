@@ -1,3 +1,4 @@
+import { ModelLibrary } from "./ModelLibrary";
 import Check from "lucide-react/dist/esm/icons/check.mjs";
 import Command from "lucide-react/dist/esm/icons/command.mjs";
 import Cpu from "lucide-react/dist/esm/icons/cpu.mjs";
@@ -61,6 +62,7 @@ export function PreferencesView({
       </header>
 
       <div className="shell-page-body preferences-body">
+        <ModelLibrary status={modelStatus} />
         <section
           className="preferences-section"
           aria-labelledby="preferences-appearance"

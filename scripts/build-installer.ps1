@@ -28,7 +28,7 @@ if ($LASTEXITCODE -ne 0 -or -not (Test-Path $RuntimeZip)) {
 }
 
 Write-Host "Building one-click installer..."
-Write-Host "  Python and OpenVINO are bundled. The shared model downloads on first launch; the NVIDIA plugin is bundled when installed in the build environment."
+Write-Host "  Python and OpenVINO are bundled. Optional models download from Preferences; the NVIDIA plugin is bundled when installed in the build environment."
 
 Push-Location $Desktop
 Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue

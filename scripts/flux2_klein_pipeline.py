@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Any, Callable
 
 import storage_manager
+from model_catalog import CATALOG, model_spec, installed, revision
+from model_capabilities import device_memory, weights_bytes, choose_model
 from device_adapters import (
     AUTO,
     CPU,
@@ -100,9 +102,11 @@ def _openvino_dependency_status() -> dict[str, Any]:
         import openvino as ov
         from optimum.intel import OVFlux2KleinPipeline  # noqa: F401
 
-        devices = [str(device) for device in ov.Core().available_devices]
+        core = ov.Core()
+        devices = [str(device) for device in core.available_devices]
         _OPENVINO_DEPENDENCY_STATUS = {
             "installed": True,
+            "memory": {"CPU": device_memory(core, "CPU"), "INTEL_GPU": device_memory(core, "GPU")},
             "devices": devices,
             "hasGpu": any(device == "GPU" or device.startswith("GPU.") for device in devices),
             "message": "OpenVINO Flux.2 Klein runtime is available.",
@@ -132,12 +136,14 @@ def _nvidia_dependency_status() -> dict[str, Any]:
         import openvino_nvidia  # noqa: F401
         import openvino as ov
 
-        devices = [str(device) for device in ov.Core().available_devices]
+        core = ov.Core()
+        devices = [str(device) for device in core.available_devices]
         nvidia_devices = [
             device for device in devices if device == "NVIDIA" or device.startswith("NVIDIA.")
         ]
         _NVIDIA_DEPENDENCY_STATUS = {
             "installed": True,
+            "memory": {"NVIDIA_GPU": device_memory(core, "NVIDIA")},
             "devices": devices,
             "cudaAvailable": bool(nvidia_devices),
             "deviceName": nvidia_devices[0] if nvidia_devices else "",
@@ -183,8 +189,8 @@ def _openvino_model_ready() -> bool:
     return all(path.exists() for path in expected)
 
 
-def pipeline_class_name(device: str = DEFAULT_DEVICE) -> str:
-    index_path = MODEL_DIR / "model_index.json"
+def pipeline_class_name(device: str = DEFAULT_DEVICE, model="9b") -> str:
+    index_path = model_dir_for(device, model) / "model_index.json"
     if not index_path.exists():
         return ""
     try:
@@ -193,14 +199,14 @@ def pipeline_class_name(device: str = DEFAULT_DEVICE) -> str:
         return ""
 
 
-def model_dir_for(device: str = DEFAULT_DEVICE) -> Path:
-    return MODEL_DIR
+def model_dir_for(device: str = DEFAULT_DEVICE, model="9b") -> Path:
+    return MODEL_DIR if model == "9b" else MODELS_ROOT / model_spec(model)["folder"]
 
 
-def _adapter_statuses() -> list[dict[str, Any]]:
+def _adapter_statuses(model="9b") -> list[dict[str, Any]]:
     nvidia = _nvidia_dependency_status()
     openvino = _openvino_dependency_status()
-    openvino_model_ready = _openvino_model_ready()
+    openvino_model_ready = _openvino_model_ready() if model == "9b" else installed(MODELS_ROOT, model)
     shared_model_ready = openvino_model_ready
 
     return [
@@ -267,23 +273,65 @@ def _select_device(requested: str, statuses: list[dict[str, Any]]) -> str:
         return normalized
     by_id = {item["id"]: item for item in statuses}
     return select_auto_device(
-        nvidia_available=bool(by_id[NVIDIA_GPU]["available"]),
+        nvidia_available=bool(by_id[NVIDIA_GPU]["runtimeReady"]),
         intel_available=bool(by_id[INTEL_GPU]["available"]),
         cpu_available=bool(by_id[CPU]["available"]),
     )
 
 
-def model_status(device: str = DEFAULT_DEVICE) -> dict[str, Any]:
-    statuses = _adapter_statuses()
-    selected = _select_device(device, statuses)
+def resolve_model(model="auto", device="AUTO"):
+    if model != "auto":
+        model_spec(model)
+        return model
+    memory = {}
+    for state in (_OPENVINO_DEPENDENCY_STATUS, _NVIDIA_DEPENDENCY_STATUS):
+        if state: memory.update(state.get("memory", {}))
+    if device == "AUTO":
+        candidates = [v for k,v in memory.items() if k != "CPU" and v]
+        budget = max(candidates) if candidates else memory.get("CPU")
+    else: budget = memory.get(device)
+    available = [key for key in CATALOG if (_openvino_model_ready() if key == "9b" else installed(MODELS_ROOT,key))]
+    return choose_model(model, available, budget, CATALOG)
+
+
+def model_status(device: str = DEFAULT_DEVICE, model="9b") -> dict[str, Any]:
+    requested_model = model
+    statuses = _adapter_statuses("9b")
+    memory = {}
+    for state in (_OPENVINO_DEPENDENCY_STATUS, _NVIDIA_DEPENDENCY_STATUS):
+        if state: memory.update(state.get("memory", {}))
+    devices = [normalize_device(device)] if normalize_device(device) != AUTO else [NVIDIA_GPU, INTEL_GPU, CPU]
+    choices = [model] if model != "auto" else ["9b", "4b"]
+    chosen = None
+    pairs = [(choice, candidate) for choice in choices for candidate in devices]
+    if model == "auto" and normalize_device(device) == AUTO:
+        pairs = [(choice, candidate) for choice in choices for candidate in devices if candidate != CPU]
+        pairs += [(choice, CPU) for choice in reversed(choices)]
+    for choice, candidate in pairs:
+        candidates = {item["id"]: item for item in _adapter_statuses(choice)}
+        budget = memory.get(candidate)
+        if candidates[candidate]["runtimeReady"] and (budget is None or weights_bytes(model_spec(choice)) < budget):
+            chosen = (choice, candidate)
+            break
+    model, selected = chosen or (resolve_model(model, device), _select_device(device, statuses))
+    statuses = _adapter_statuses(model)
     selected_status = next(item for item in statuses if item["id"] == selected)
-    runtime_ready = bool(selected_status["runtimeReady"])
+    budget = memory.get(selected)
+    too_large = budget is not None and weights_bytes(model_spec(model)) >= budget
+    runtime_ready = bool(selected_status["runtimeReady"]) and not too_large
+    for adapter in statuses:
+        adapter["modelId"] = model_spec(model)["repo"]
+        adapter["modelDir"] = str(model_dir_for(adapter["id"], model))
     return {
         "runtimeReady": runtime_ready,
-        "runtimeNote": selected_status["note"],
-        "modelId": selected_status["modelId"],
-        "modelDir": selected_status["modelDir"],
-        "pipelineClass": pipeline_class_name(selected),
+        "selectedModel": model,
+        "modelRevision": revision(MODELS_ROOT, model),
+        "runtimeNote": "Model weights exceed the detected memory budget. Choose Klein 4B or another device." if too_large else selected_status["note"],
+        "compatibility": "insufficient-memory" if too_large else "unmeasured",
+        "memoryBytes": budget,
+        "modelId": model_spec(model)["repo"],
+        "modelDir": str(model_dir_for(device, model)),
+        "pipelineClass": pipeline_class_name(selected, model),
         "runtimeBackend": selected_status["runtimeBackend"],
         "supportsReferenceImage": selected_status["supportsReferenceImage"],
         "requestedDevice": normalize_device(device),
@@ -310,26 +358,27 @@ def release_pipeline() -> None:
         pass
 
 
-def load_pipeline(*, device: str = DEFAULT_DEVICE, log: Callable[[str], None] | None = None):
-    selected = _select_device(device, _adapter_statuses())
-    status = model_status(selected)
+def load_pipeline(*, device: str = DEFAULT_DEVICE, model="9b", log: Callable[[str], None] | None = None):
+    selected = _select_device(device, _adapter_statuses(model))
+    status = model_status(selected, model)
     if not status["runtimeReady"]:
         raise Flux2KleinNotReady(status["runtimeNote"])
 
-    model_dir = model_dir_for(selected)
+    model_dir = model_dir_for(selected, model)
     cache_key = (selected, str(model_dir))
     if _PIPELINE_CACHE["key"] == cache_key and _PIPELINE_CACHE["pipeline"] is not None:
-        _log(log, f"Using cached Flux.2 Klein 9B pipeline on {device_label(selected)}.")
+        _log(log, f"Using cached Flux.2 Klein {model.upper()} pipeline on {device_label(selected)}.")
         return _PIPELINE_CACHE["pipeline"]
 
+    cache_dir = OPENVINO_CACHE_DIR if model == "9b" else OPENVINO_CACHE_DIR.parent / "flux2-klein-4b"
     release_pipeline()
-    cleanup = storage_manager.cleanup_cache(ROOT, OPENVINO_CACHE_DIR)
+    cleanup = storage_manager.cleanup_cache(ROOT, cache_dir)
     if cleanup["removedFiles"]:
         _log(
             log,
             f"Cleaned {cleanup['removedFiles']} expired or oversized cache file(s).",
         )
-    _log(log, f"Loading Flux.2 Klein 9B: {model_dir}")
+    _log(log, f"Loading Flux.2 Klein {model.upper()}: {model_dir}")
     _log(log, f"Adapter: {device_label(selected)}")
 
     if selected == NVIDIA_GPU:
@@ -345,9 +394,9 @@ def load_pipeline(*, device: str = DEFAULT_DEVICE, log: Callable[[str], None] | 
     cache_enabled = cleanup["freeBytes"] >= policy["reserveBytes"] + policy["maxBytes"]
     ov_config: dict[str, str] = {}
     if cache_enabled:
-        OPENVINO_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        ov.Core().set_property({"CACHE_DIR": str(OPENVINO_CACHE_DIR)})
-        ov_config["CACHE_DIR"] = str(OPENVINO_CACHE_DIR)
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        ov.Core().set_property({"CACHE_DIR": str(cache_dir)})
+        ov_config["CACHE_DIR"] = str(cache_dir)
     else:
         _log(log, "Generation cache disabled to protect free disk space.")
 
@@ -358,7 +407,7 @@ def load_pipeline(*, device: str = DEFAULT_DEVICE, log: Callable[[str], None] | 
         ov_config=ov_config,
     )
     if cache_enabled:
-        storage_manager.touch_cache(OPENVINO_CACHE_DIR)
+        storage_manager.touch_cache(cache_dir)
 
     _PIPELINE_CACHE["key"] = cache_key
     _PIPELINE_CACHE["pipeline"] = pipeline
@@ -375,6 +424,7 @@ def generate_image(
     guidance: float = DEFAULT_GUIDANCE,
     seed: int = 42,
     device: str = DEFAULT_DEVICE,
+    model: str = "9b",
     reference_image: Any | None = None,
     log: Callable[[str], None] | None = None,
 ) -> tuple[Path, float]:
@@ -385,7 +435,7 @@ def generate_image(
         raise ValueError("Steps must be 1 to 50.")
     if guidance < 0 or guidance > 10:
         raise ValueError("Guidance must be 0 to 10.")
-    selected = _select_device(device, _adapter_statuses())
+    selected = _select_device(device, _adapter_statuses(model))
     if selected not in {INTEL_GPU, NVIDIA_GPU, CPU}:
         raise ValueError("Device must be Auto-select, Intel GPU, NVIDIA GPU, or CPU.")
 
@@ -393,7 +443,7 @@ def generate_image(
 
     import torch
 
-    pipeline = load_pipeline(device=selected, log=log)
+    pipeline = load_pipeline(device=selected, model=model, log=log)
     # OpenVINO executes the model on the selected plugin device; the pipeline
     # uses a CPU torch generator for deterministic scheduler inputs on all
     # adapters, including the NVIDIA plugin.
@@ -426,7 +476,7 @@ def generate_image(
     )
 
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    output_path = output_dir / f"flux2-klein-9b-{stamp}-seed{seed}.png"
+    output_path = output_dir / f"flux2-klein-{model}-{stamp}-seed{seed}.png"
     save_image_atomic(result.images[0], output_path)
     elapsed = time.perf_counter() - started
     _log(log, f"Saved: {output_path}")

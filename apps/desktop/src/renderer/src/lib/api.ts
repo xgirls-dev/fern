@@ -46,9 +46,10 @@ export function resolveAssetUrl(
 
 export async function fetchStatus(
   device?: DeviceId,
+  model = "9b",
 ): Promise<FluxStatusResponse> {
   const includeImages = Date.now() - imagesFetchedAt > 3000;
-  const query = `?device=${encodeURIComponent(device ?? "AUTO")}&images=${includeImages ? "1" : "0"}`;
+  const query = `?device=${encodeURIComponent(device ?? "AUTO")}&model=${encodeURIComponent(model)}&images=${includeImages ? "1" : "0"}`;
   const response = await fetch(`${apiBaseUrl}/api/flux2/status${query}`, {
     signal: AbortSignal.timeout(15_000),
   });

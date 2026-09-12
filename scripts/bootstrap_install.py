@@ -3,6 +3,9 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
+from model_catalog import model_spec
+from model_manager import ModelManager
 from pathlib import Path
 
 
@@ -72,15 +75,17 @@ def main() -> int:
         default="auto",
         help="Runtime device to prepare; auto prefers OpenVINO NVIDIA, then Intel, then CPU.",
     )
+    parser.add_argument("--model", choices=("9b", "4b"), default="9b")
     parser.add_argument("--model-dir", default="")
     parser.add_argument("--models-root", default="")
     args = parser.parse_args()
 
+    spec = model_spec(args.model)
     adapter = resolve_adapter(args.adapter)
     if args.model_dir:
         model_dir = Path(args.model_dir).resolve()
     elif args.models_root:
-        model_dir = (Path(args.models_root) / MODEL_FOLDER).resolve()
+        model_dir = (Path(args.models_root) / spec["folder"]).resolve()
     else:
         parser.error("one of --model-dir or --models-root is required")
     model_dir.parent.mkdir(parents=True, exist_ok=True)
@@ -88,7 +93,6 @@ def main() -> int:
     emit("runtime", f"Verifying the Fern {adapter} runtime...")
     import openvino  # noqa: F401
     from optimum.intel import OVFlux2KleinPipeline  # noqa: F401
-    from huggingface_hub import snapshot_download
 
     if adapter == "nvidia":
         if not nvidia_available():
@@ -104,16 +108,16 @@ def main() -> int:
         emit("complete", f"The shared {adapter} OpenVINO model is ready.")
         return 0
 
-    emit("download", "Downloading Flux.2 Klein 9B INT4 OpenVINO model (about 8 GB)...")
-    snapshot_download(
-        repo_id=MODEL_ID,
-        local_dir=str(model_dir),
-        resume_download=True,
-    )
-
-    if not openvino_model_ready(model_dir):
-        emit("error", "The model download finished but required OpenVINO files are missing.")
-        return 2
+    if model_dir.name != spec["folder"]:
+        raise ValueError("Use the catalog model folder under --models-root.")
+    manager = ModelManager(model_dir.parent)
+    manager.start(args.model)
+    while True:
+        status = next(item for item in manager.snapshot() if item["id"] == args.model)
+        emit(status["state"], f"{spec['label']}: {status['downloaded'] / 1e9:.2f} GB downloaded")
+        if status["state"] == "installed": break
+        if status["state"] in ("failed", "paused"): raise RuntimeError(status.get("error", "Download paused."))
+        time.sleep(1)
 
     emit("complete", "Setup complete. Starting Fern...")
     return 0

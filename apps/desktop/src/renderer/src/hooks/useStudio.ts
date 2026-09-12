@@ -36,6 +36,7 @@ const LEGACY_SETTINGS_KEYS = [
 
 const DEFAULT_SETTINGS: StudioSettings = {
   prompt: "",
+  model: "auto",
   device: "AUTO",
   width: 1024,
   height: 1024,
@@ -83,6 +84,9 @@ function loadSettings(): StudioSettings {
     const merged = { ...DEFAULT_SETTINGS, ...parsed };
     const settings: StudioSettings = {
       prompt: merged.prompt,
+      model: ["auto", "9b", "4b"].includes(parsed.model ?? "")
+        ? parsed.model
+        : "9b",
       device: normalizeDevice(merged.device),
       width: merged.width,
       height: merged.height,
@@ -483,7 +487,10 @@ export function useStudio() {
     refreshingRef.current = true;
 
     try {
-      const data = await fetchStatus(settingsRef.current.device);
+      const data = await fetchStatus(
+        settingsRef.current.device,
+        settingsRef.current.model,
+      );
       setStatus(data);
       setConnectionError(null);
 
@@ -631,7 +638,7 @@ export function useStudio() {
 
   useEffect(() => {
     if (ready) void refresh();
-  }, [ready, refresh, settings.device, activeThread.id]);
+  }, [ready, refresh, settings.device, settings.model, activeThread.id]);
 
   useEffect(() => {
     if (running) return;
@@ -775,6 +782,7 @@ export function useStudio() {
     const payload: GenerationPayload = {
       thread_id: generationThreadId,
       prompt: settings.prompt.trim(),
+      model: settings.model ?? "9b",
       device: settings.device,
       width: settings.width,
       height: settings.height,
@@ -860,6 +868,7 @@ export function useStudio() {
         height: image.height ?? 1024,
         steps: image.steps ?? 4,
         guidance: image.guidance ?? 1,
+        model: image.model ?? (image.modelPath?.includes("4b") ? "4b" : "9b"),
         device: normalizeDevice(image.device),
         batchSize: 1,
       });

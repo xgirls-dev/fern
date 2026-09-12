@@ -77,6 +77,13 @@ export function PreviewMetadataHud({ image }: PreviewMetadataHudProps) {
     rows.push({ label: "Guidance", value: String(image.guidance) });
   if (image.device)
     rows.push({ label: "Device", value: formatDevice(image.device) });
+  if (image.model)
+    rows.push({
+      label: "Model used",
+      value: `Klein ${image.model.toUpperCase()}`,
+    });
+  if (image.modelRevision)
+    rows.push({ label: "Model revision", value: image.modelRevision });
   if (image.modelPath)
     rows.push({ label: "Model", value: formatModelPath(image.modelPath) });
 

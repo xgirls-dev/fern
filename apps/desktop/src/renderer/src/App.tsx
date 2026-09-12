@@ -155,9 +155,12 @@ export function App() {
         field?.scrollIntoView({ block: "center" });
       }, 30);
     };
+    const models = () => setActiveSection("preferences");
+    window.addEventListener("fern-models", models);
     window.addEventListener("fern-open-thread", open);
     window.addEventListener("fern-validation", invalid);
     return () => {
+      window.removeEventListener("fern-models", models);
       window.removeEventListener("fern-open-thread", open);
       window.removeEventListener("fern-validation", invalid);
     };
@@ -378,7 +381,11 @@ export function App() {
                   >
                     /
                   </span>
-                  <span>Flux.2 Klein 9B</span>
+                  <span>
+                    {studio.status?.model.selectedModel
+                      ? `Flux.2 Klein ${studio.status.model.selectedModel.toUpperCase()}`
+                      : "Flux.2 Klein"}
+                  </span>
                 </div>
                 <div className="workspace-header-actions">
                   {studio.activeThreadRunning ? (
@@ -457,7 +464,25 @@ export function App() {
                       setRenderInfoOpen((open) => !open)
                     }
                   />
+                  {studio.status &&
+                  !studio.status.model.checking &&
+                  !studio.modelInstalled ? (
+                    <div className="runtime-install-hint" role="status">
+                      <span>
+                        {studio.status.model.runtimeNote ??
+                          "Choose a model to start generating. You can browse your library now."}
+                      </span>
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        onClick={openPreferences}
+                      >
+                        Manage models
+                      </button>
+                    </div>
+                  ) : null}
                   <PromptComposer
+                    resolvedModel={studio.status?.model.selectedModel}
                     onReferenceBusy={setReferenceBusy}
                     key={`composer-${studio.activeThread.id}`}
                     busyElsewhere={
@@ -669,6 +694,19 @@ export function App() {
           {studio.error && !startupDialogOpen && (
             <div className="dashboard-error" role="alert">
               {studio.error}
+              {studio.status?.job.model === "9b" &&
+              /memory|allocation|out of resources/i.test(studio.error) ? (
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => {
+                    studio.updateSettings({ model: "4b" });
+                    studio.dismissError();
+                  }}
+                >
+                  Use Klein 4B for retry
+                </button>
+              ) : null}
               <button
                 type="button"
                 onClick={studio.dismissError}
@@ -726,7 +764,8 @@ export function App() {
               ? "Connecting to Fern…"
               : studio.status.model.checking
                 ? studio.status.model.runtimeNote
-              : (studio.runtimeStatus?.message ?? "Generation is unavailable.")}
+                : (studio.runtimeStatus?.message ??
+                  "Generation is unavailable.")}
           </span>
           <button type="button" onClick={() => setRuntimeDismissed(false)}>
             Generation status

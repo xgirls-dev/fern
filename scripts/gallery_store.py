@@ -91,6 +91,8 @@ def enrich_image_record(record: dict[str, Any], metadata: dict[str, Any] | None 
         "guidance",
         "device",
         "modelPath",
+        "model",
+        "modelRevision",
         "generationTime",
     ):
         if key in meta and meta[key] is not None:

@@ -1,4 +1,6 @@
 export interface ImageRecord {
+  model?: "9b" | "4b";
+  modelRevision?: string;
   referenceUsed?: boolean;
   referenceUrl?: string;
   threadId?: string;
@@ -17,6 +19,9 @@ export interface ImageRecord {
 }
 
 export interface ModelStatus {
+  selectedModel?: "9b" | "4b";
+  memoryBytes?: number | null;
+  compatibility?: string;
   checking?: boolean;
   runtimeReady: boolean;
   runtimeNote?: string;
@@ -46,6 +51,7 @@ export interface DeviceAdapter {
 }
 
 export interface FluxJob {
+  model?: "9b" | "4b";
   threadId?: string | null;
   id: string | null;
   status: "idle" | "running" | "complete" | "cancelled" | "failed";
@@ -81,6 +87,7 @@ export interface FluxStatusResponse {
 }
 
 export interface GenerationPayload {
+  model?: "auto" | "9b" | "4b";
   thread_id?: string;
   prompt: string;
   device: DeviceId;
@@ -94,6 +101,7 @@ export interface GenerationPayload {
 }
 
 export interface StudioSettings {
+  model?: "auto" | "9b" | "4b";
   prompt: string;
   device: DeviceId;
   width: number;
