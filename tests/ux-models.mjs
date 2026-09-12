@@ -5,10 +5,12 @@ let models=[{id:'9b',label:'Klein 9B',bytes:9624762465,downloaded:0,installed:tr
 try {
  await page.route('**/api/models',route=>route.fulfill({json:{models}}));
  await page.route('**/api/models/*',route=>{const op=route.request().url().split('/').at(-1);models[1].state=op==='install'?'downloading':op==='pause'?'paused':'not-installed';return route.fulfill({json:{models}});});
- await page.getByRole('combobox',{name:'Model',exact:true}).selectOption('4b');
+ state.installedModels=[{id:'9b',label:'Klein 9B'},{id:'4b',label:'Klein 4B'}];
+ await page.getByRole('button',{name:'Choose model',exact:true}).click();
+ await page.getByRole('menuitemradio',{name:/Klein 4B/}).click();
  await page.getByRole('button',{name:'Generate image',exact:true}).click();
  assert.equal(state.payloads.at(-1).model,'4b');
- await page.getByRole('button',{name:'Models',exact:true}).click();
+ await page.getByRole('button',{name:'Preferences',exact:true}).click();
  const card=page.locator('.model-library-card').filter({has:page.getByRole('heading',{name:/Klein 4B/})});
  await card.getByRole('button',{name:'Install',exact:true}).click();
  await card.getByRole('button',{name:'Pause',exact:true}).click();

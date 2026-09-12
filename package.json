@@ -1,6 +1,6 @@
 {
   "name": "fern",
-  "version": "0.1.24",
+  "version": "0.1.25",
   "private": true,
   "description": "Fern private local image studio with optional Flux.2 Klein 4B and 9B models",
   "license": "MIT",

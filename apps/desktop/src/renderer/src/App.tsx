@@ -464,25 +464,9 @@ export function App() {
                       setRenderInfoOpen((open) => !open)
                     }
                   />
-                  {studio.status &&
-                  !studio.status.model.checking &&
-                  !studio.modelInstalled ? (
-                    <div className="runtime-install-hint" role="status">
-                      <span>
-                        {studio.status.model.runtimeNote ??
-                          "Choose a model to start generating. You can browse your library now."}
-                      </span>
-                      <button
-                        type="button"
-                        className="btn btn-secondary"
-                        onClick={openPreferences}
-                      >
-                        Manage models
-                      </button>
-                    </div>
-                  ) : null}
                   <PromptComposer
                     resolvedModel={studio.status?.model.selectedModel}
+                    installedModels={studio.status?.installedModels}
                     onReferenceBusy={setReferenceBusy}
                     key={`composer-${studio.activeThread.id}`}
                     busyElsewhere={

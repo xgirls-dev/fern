@@ -1671,25 +1671,38 @@ code {
 }
 .runtime-banner {
   position: fixed;
-  top: 46px;
-  left: 50%;
-  transform: translateX(-50%);
+  top: 6px;
+  left: 64px;
+  right: 360px;
+  margin-inline: auto;
   z-index: 60;
   display: flex;
   align-items: center;
-  gap: 12px;
-  max-width: 90vw;
-  padding: 8px 12px;
+  gap: 8px;
+  width: fit-content;
+  max-width: calc(100vw - 424px);
+  height: 32px;
+  box-sizing: border-box;
+  padding: 0 8px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 7px;
   background: var(--card);
   font-size: 12px;
+  -webkit-app-region: no-drag;
 }
 .runtime-banner span {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 320px;
+}
+.runtime-banner button {
+  flex: 0 0 auto;
+  height: 24px;
+  min-height: 24px;
+  padding: 0 7px;
+  line-height: 24px;
+  white-space: nowrap;
 }
 .delete-image-dialog {
   padding: 24px;
@@ -1855,7 +1868,7 @@ code {
   font-size: 12px;
 }
 .composer-options {
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
 }
 @media (max-width: 1000px) {
   .generation-inspector {
@@ -1870,8 +1883,8 @@ code {
     padding: 5px 7px;
   }
   .runtime-banner {
-    top: 44px;
-    width: calc(100vw - 16px);
+    right: 180px;
+    max-width: calc(100vw - 244px);
   }
   .notifications {
     bottom: 8px;
@@ -2396,18 +2409,20 @@ code {
   padding: 3px 7px;
   font-size: 12px;
 }
-.seed-popover-anchor { position: relative; }
+.seed-popover-anchor { position: static; }
 .seed-popover-value { color: var(--muted); font-variant-numeric: tabular-nums; }
 .seed-popover {
   position: absolute;
-  right: 0;
+  left: 0;
   bottom: calc(100% + 8px);
   z-index: 40;
   display: grid;
   grid-template-columns: 1fr auto;
   gap: 8px;
   align-items: end;
-  min-width: 240px;
+  box-sizing: border-box;
+  width: 262px;
+  max-width: 100%;
   padding: 10px;
   border: 1px solid var(--border-strong);
   border-radius: 10px;
@@ -2446,4 +2461,19 @@ code {
 .model-library-card progress { width:100%; }
 .model-library-actions { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
 
-.runtime-install-hint { display:flex; gap:12px; align-items:center; justify-content:space-between; padding:12px 16px; color:var(--muted-foreground); font-size:12px; }
+
+.composer-toolbar { position: relative; flex-wrap: nowrap; }
+.composer-options { flex: 0 0 auto; }
+.composer-send-tools { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.composer-model-anchor { position: static; min-width: 0; }
+.composer-model-trigger { display:flex; align-items:center; gap:5px; height:32px; max-width:150px; padding:0 6px; border:0; border-radius:7px; background:transparent; color:var(--muted); font:inherit; font-size:12px; cursor:pointer; }
+.composer-model-trigger span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.composer-model-trigger svg { flex-shrink:0; }
+.composer-model-trigger:hover, .composer-model-trigger[aria-expanded="true"] { background:var(--secondary-bg); color:var(--foreground); }
+.composer-model-trigger:focus-visible, .composer-model-menu button:focus-visible { outline:2px solid var(--foreground); outline-offset:2px; }
+.composer-model-menu { position:absolute; bottom:calc(100% + 8px); right:0; z-index:80; box-sizing:border-box; width:220px; max-width:100%; padding:5px; border:1px solid var(--border-strong); border-radius:12px; background:var(--card); box-shadow:var(--shadow-card); }
+.composer-model-menu button { display:flex; align-items:center; justify-content:space-between; width:100%; min-height:46px; padding:8px 10px; border:0; border-radius:7px; background:transparent; color:var(--foreground); text-align:left; cursor:pointer; }
+.composer-model-menu button:hover, .composer-model-menu button:focus { background:var(--secondary-bg); }
+.composer-model-menu strong, .composer-model-menu small { display:block; }
+.composer-model-menu strong { font-size:12px; font-weight:500; }
+.composer-model-menu small { margin-top:2px; font-size:11px; color:var(--muted); }

@@ -70,10 +70,6 @@ export function ModelLibrary({ status }: { status: ModelStatus | null }) {
       setBusy(false);
     }
   };
-  const recommended =
-    status?.selectedDevice !== "CPU" && (status?.memoryBytes ?? 0) > 9624762465
-      ? "9b"
-      : "4b";
   const downloading = models.some((model) =>
     ["downloading", "verifying", "removing"].includes(model.state),
   );
@@ -96,10 +92,7 @@ export function ModelLibrary({ status }: { status: ModelStatus | null }) {
       <div className="model-library-grid">
         {models.map((model) => (
           <article className="model-library-card" key={model.id}>
-            <h4>
-              {model.label}
-              {model.id === recommended ? " · Suggested" : ""}
-            </h4>
+            <h4>{model.label}</h4>
             <p>
               {(model.bytes / 1e9).toFixed(2)} GB ·{" "}
               {model.id === "4b"
@@ -184,13 +177,9 @@ export function ModelLibrary({ status }: { status: ModelStatus | null }) {
         ))}
       </div>
       <p>
-        {status?.checking
-          ? "Checking hardware. "
-          : recommended === "4b"
-            ? "Start with the smaller model; memory capacity for 9B has not been established. "
-            : "The detected GPU memory clears the 9B weight-size check; generation still needs additional memory. "}
-        Auto uses an installed model. Hardware capacity may vary with image
-        size; an untested device is not a guarantee of compatibility.
+        {status?.checking ? "Checking runtime. " : ""}
+        Auto chooses an installed model on a usable device. Choose Klein 4B for a
+        smaller model.
       </p>
     </section>
   );

@@ -468,6 +468,7 @@ class Handler(BaseHTTPRequestHandler):
                 {
                     "job": flux_job_snapshot(),
                     "images": latest_images() if query.get("images", ["1"])[0] != "0" else None,
+                    "installedModels": [{"id": item["id"], "label": item["label"]} for item in MODEL_MANAGER.snapshot() if item["installed"]],
                     "model": model_snapshot(requested_device, query.get("model", ["9b"])[0]),
                     "runtime": runtime_snapshot(),
                     "defaults": {

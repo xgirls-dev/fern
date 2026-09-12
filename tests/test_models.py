@@ -1,10 +1,11 @@
 import sys, tempfile, unittest, hashlib, io, time
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import model_manager as mm
 import flux2_klein_pipeline as flux
+import model_capabilities as capabilities
 from model_catalog import CATALOG
 
 
@@ -13,6 +14,25 @@ class Response(io.BytesIO):
 
 
 class ModelsTests(unittest.TestCase):
+    def test_memory_telemetry_keeps_host_and_gpu_capacity_separate(self):
+        with patch.object(
+            capabilities,
+            "system_memory",
+            return_value={"totalBytes": 32 * 1024**3, "availableBytes": 1024**3},
+        ):
+            self.assertEqual(capabilities.device_memory(None, "CPU"), 32 * 1024**3)
+            for capacity in (8 * 1024**3, 16 * 1024**3):
+                core = Mock()
+                core.get_property.return_value = capacity
+                self.assertEqual(capabilities.device_memory(core, "GPU"), capacity)
+            core.get_property.side_effect = RuntimeError("Unsupported property")
+            self.assertIsNone(capabilities.device_memory(core, "GPU"))
+
+    def test_auto_uses_installed_models(self):
+        self.assertEqual(capabilities.choose_model("auto", ["9b"]), "9b")
+        self.assertEqual(capabilities.choose_model("auto", ["4b"]), "4b")
+        self.assertEqual(capabilities.choose_model("auto", ["4b", "9b"]), "9b")
+
     def test_pinned_catalog_and_isolation(self):
         self.assertNotEqual(CATALOG["9b"]["folder"], CATALOG["4b"]["folder"])
         for spec in CATALOG.values():
@@ -86,7 +106,7 @@ class ModelsTests(unittest.TestCase):
             self.assertEqual(manager.jobs["4b"]["state"], "failed")
             self.assertFalse((Path(tmp) / "model4").exists())
 
-    def test_auto_gpu_4b_before_cpu_9b(self):
+    def test_memory_estimate_does_not_disable_installed_model(self):
         def adapters(model="9b"):
             return [
                 {
@@ -113,11 +133,20 @@ class ModelsTests(unittest.TestCase):
             flux, "_NVIDIA_DEPENDENCY_STATUS", None
         ):
             result = flux.model_status("AUTO", "auto")
-            self.assertEqual(result["selectedModel"], "4b")
+            self.assertEqual(result["selectedModel"], "9b")
             self.assertNotEqual(result["selectedDevice"], "CPU")
             explicit = flux.model_status("INTEL_GPU", "9b")
-            self.assertFalse(explicit["runtimeReady"])
+            self.assertTrue(explicit["runtimeReady"])
             self.assertEqual(explicit["selectedModel"], "9b")
+            for reading in (0, 1, None):
+                state["memory"]["INTEL_GPU"] = reading
+                self.assertTrue(flux.model_status("INTEL_GPU", "9b")["runtimeReady"])
+            unavailable = adapters()
+            for adapter in unavailable:
+                adapter["runtimeReady"] = False
+                adapter["note"] = "Model or runtime missing"
+            with patch.object(flux, "_adapter_statuses", return_value=unavailable):
+                self.assertFalse(flux.model_status("INTEL_GPU", "9b")["runtimeReady"])
 
     def test_pause_and_resume_keeps_verified_install_atomic(self):
         import threading

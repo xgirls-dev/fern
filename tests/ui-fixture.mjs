@@ -97,6 +97,7 @@ export async function fixture({ imageCount = 3, threadCount = 1 } = {}) {
       generationTime: 65,
       device: "CPU",
     })),
+    installedModels: [{ id: "9b", label: "Klein 9B" }],
     payloads: [],
     imageListings: 0,
     statusCalls: 0,
@@ -131,8 +132,9 @@ export async function fixture({ imageCount = 3, threadCount = 1 } = {}) {
         job: state.job,
         images: include ? state.images : null,
         runtime: state.runtime,
+        installedModels: state.installedModels,
         model: {
-          runtimeReady: true,
+          runtimeReady: state.modelReady ?? true,
           selectedDevice: "CPU",
           runtimeBackend: "OpenVINO",
           supportsReferenceImage: true,

@@ -73,6 +73,7 @@ export interface RuntimeStatus {
 }
 
 export interface FluxStatusResponse {
+  installedModels?: { id: "9b" | "4b"; label: string }[];
   job: FluxJob;
   images: ImageRecord[];
   model: ModelStatus;

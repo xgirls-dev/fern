@@ -1,15 +1,23 @@
-"""Conservative memory evidence. File weights are a rejection floor, not a fit guarantee."""
+"""Memory telemetry, never an admission test for model loading.
+
+Free host RAM and GPU-reported capacity are different measurements. Neither
+checkpoint size nor a cached free-memory sample predicts an OpenVINO workload.
+"""
 
 import ctypes
 import os
 
 
-def available_ram():
+def system_memory():
     if os.name != "nt":
         try:
-            return os.sysconf("SC_AVPHYS_PAGES") * os.sysconf("SC_PAGE_SIZE")
+            page = os.sysconf("SC_PAGE_SIZE")
+            return {
+                "totalBytes": os.sysconf("SC_PHYS_PAGES") * page,
+                "availableBytes": os.sysconf("SC_AVPHYS_PAGES") * page,
+            }
         except (ValueError, OSError):
-            return None
+            return {"totalBytes": None, "availableBytes": None}
 
     class Memory(ctypes.Structure):
         _fields_ = [("length", ctypes.c_ulong), ("load", ctypes.c_ulong)] + [
@@ -27,40 +35,24 @@ def available_ram():
 
     state = Memory()
     state.length = ctypes.sizeof(state)
-    return (
-        int(state.available)
-        if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(state))
-        else None
-    )
+    if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(state)):
+        return {"totalBytes": None, "availableBytes": None}
+    return {"totalBytes": int(state.total), "availableBytes": int(state.available)}
 
 
 def device_memory(core, device):
-    ram = available_ram()
     if device == "CPU":
-        return ram
+        return system_memory()["totalBytes"]
     try:
-        kind = str(core.get_property(device, "DEVICE_TYPE")).lower()
-        if "integrated" in kind:
-            return ram
-        total = int(core.get_property(device, "GPU_DEVICE_TOTAL_MEM_SIZE"))
-        return min(total, ram) if ram else total
+        # On integrated GPUs this is shared-memory telemetry, not dedicated VRAM.
+        # Never substitute free host RAM or clamp discrete VRAM to free host RAM.
+        reported = int(core.get_property(device, "GPU_DEVICE_TOTAL_MEM_SIZE"))
+        return reported if reported > 0 else None
     except Exception:
         return None
 
 
-def weights_bytes(spec):
-    return sum(file["size"] for file in spec["files"] if file["path"].endswith(".bin"))
-
-
-def choose_model(preference, installed_models, memory, specs):
+def choose_model(preference, installed_models):
     if preference != "auto":
         return preference
-    eligible = [
-        key
-        for key in ("9b", "4b")
-        if key in installed_models
-        and (memory is None or weights_bytes(specs[key]) < memory)
-    ]
-    if eligible:
-        return eligible[0]
-    return "4b"
+    return next((key for key in ("9b", "4b") if key in installed_models), "4b")

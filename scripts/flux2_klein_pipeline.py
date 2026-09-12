@@ -10,7 +10,7 @@ from typing import Any, Callable
 
 import storage_manager
 from model_catalog import CATALOG, model_spec, installed, revision
-from model_capabilities import device_memory, weights_bytes, choose_model
+from model_capabilities import device_memory, system_memory, choose_model
 from device_adapters import (
     AUTO,
     CPU,
@@ -283,19 +283,11 @@ def resolve_model(model="auto", device="AUTO"):
     if model != "auto":
         model_spec(model)
         return model
-    memory = {}
-    for state in (_OPENVINO_DEPENDENCY_STATUS, _NVIDIA_DEPENDENCY_STATUS):
-        if state: memory.update(state.get("memory", {}))
-    if device == "AUTO":
-        candidates = [v for k,v in memory.items() if k != "CPU" and v]
-        budget = max(candidates) if candidates else memory.get("CPU")
-    else: budget = memory.get(device)
     available = [key for key in CATALOG if (_openvino_model_ready() if key == "9b" else installed(MODELS_ROOT,key))]
-    return choose_model(model, available, budget, CATALOG)
+    return choose_model(model, available)
 
 
 def model_status(device: str = DEFAULT_DEVICE, model="9b") -> dict[str, Any]:
-    requested_model = model
     statuses = _adapter_statuses("9b")
     memory = {}
     for state in (_OPENVINO_DEPENDENCY_STATUS, _NVIDIA_DEPENDENCY_STATUS):
@@ -309,16 +301,14 @@ def model_status(device: str = DEFAULT_DEVICE, model="9b") -> dict[str, Any]:
         pairs += [(choice, CPU) for choice in reversed(choices)]
     for choice, candidate in pairs:
         candidates = {item["id"]: item for item in _adapter_statuses(choice)}
-        budget = memory.get(candidate)
-        if candidates[candidate]["runtimeReady"] and (budget is None or weights_bytes(model_spec(choice)) < budget):
+        if candidates[candidate]["runtimeReady"]:
             chosen = (choice, candidate)
             break
     model, selected = chosen or (resolve_model(model, device), _select_device(device, statuses))
     statuses = _adapter_statuses(model)
     selected_status = next(item for item in statuses if item["id"] == selected)
-    budget = memory.get(selected)
-    too_large = budget is not None and weights_bytes(model_spec(model)) >= budget
-    runtime_ready = bool(selected_status["runtimeReady"]) and not too_large
+    reported_memory = memory.get(selected)
+    runtime_ready = bool(selected_status["runtimeReady"])
     for adapter in statuses:
         adapter["modelId"] = model_spec(model)["repo"]
         adapter["modelDir"] = str(model_dir_for(adapter["id"], model))
@@ -326,9 +316,10 @@ def model_status(device: str = DEFAULT_DEVICE, model="9b") -> dict[str, Any]:
         "runtimeReady": runtime_ready,
         "selectedModel": model,
         "modelRevision": revision(MODELS_ROOT, model),
-        "runtimeNote": "Model weights exceed the detected memory budget. Choose Klein 4B or another device." if too_large else selected_status["note"],
-        "compatibility": "insufficient-memory" if too_large else "unmeasured",
-        "memoryBytes": budget,
+        "runtimeNote": selected_status["note"],
+        "compatibility": "unmeasured",
+        "systemMemory": system_memory(),
+        "memoryBytes": reported_memory,
         "modelId": model_spec(model)["repo"],
         "modelDir": str(model_dir_for(device, model)),
         "pipelineClass": pipeline_class_name(selected, model),

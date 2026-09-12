@@ -1,3 +1,4 @@
+import { ComposerModelMenu, type ComposerModel } from "./ComposerModelMenu";
 import ArrowUp from "lucide-react/dist/esm/icons/arrow-up.mjs";
 import Dices from "lucide-react/dist/esm/icons/dices.mjs";
 import ImagePlus from "lucide-react/dist/esm/icons/image-plus.mjs";
@@ -11,6 +12,7 @@ interface PromptComposerProps {
   onReferenceBusy: (busy: boolean) => void;
   settings: StudioSettings;
   resolvedModel?: string;
+  installedModels?: ComposerModel[];
   referenceImage: string;
   referenceLabel: string;
   supportsReference: boolean;
@@ -31,6 +33,7 @@ export function PromptComposer({
   onReferenceBusy,
   settings,
   resolvedModel,
+  installedModels = [],
   referenceImage,
   referenceLabel,
   supportsReference,
@@ -196,43 +199,14 @@ export function PromptComposer({
             ) : null}
             <button
               type="button"
-              className="composer-settings"
+              className="composer-tool"
               onClick={onToggleInspector}
               aria-expanded={inspectorOpen}
               aria-controls="generation-inspector"
               title="Image settings"
+              aria-label="Image settings"
             >
               <SlidersHorizontal size={14} aria-hidden="true" />
-              <span>
-                {settings.width} × {settings.height}
-              </span>
-            </button>
-            <select
-              aria-label="Model"
-              className="composer-settings"
-              value={settings.model ?? "9b"}
-              disabled={running || submitting}
-              onChange={(event) =>
-                onSettingsChange({
-                  model: event.target.value as StudioSettings["model"],
-                })
-              }
-            >
-              <option value="auto">
-                Auto
-                {resolvedModel
-                  ? ` · Klein ${resolvedModel.toUpperCase()}`
-                  : " model"}
-              </option>
-              <option value="9b">Klein 9B</option>
-              <option value="4b">Klein 4B</option>
-            </select>
-            <button
-              type="button"
-              className="composer-settings"
-              onClick={() => window.dispatchEvent(new Event("fern-models"))}
-            >
-              Models
             </button>
             <div className="seed-popover-anchor" ref={seedPopover}>
               <button
@@ -240,11 +214,10 @@ export function PromptComposer({
                 className="composer-settings"
                 aria-expanded={seedPopoverOpen}
                 onClick={() => setSeedPopoverOpen((open) => !open)}
-                title="Seed settings"
+                title={`Seed settings · ${settings.seedLocked ? settings.seed : "Random"}`}
+                aria-label="Seed settings"
               >
-                <span className="seed-popover-value">
-                  Seed: {settings.seed}
-                </span>
+                <Dices size={17} aria-hidden="true" />
               </button>
               {seedPopoverOpen ? (
                 <div
@@ -301,49 +274,44 @@ export function PromptComposer({
                 </div>
               ) : null}
             </div>
-            <label className="composer-batch">
-              <span className="sr-only">Number of images</span>
-              <select
-                value={settings.batchSize}
-                onChange={(event) =>
-                  onSettingsChange({ batchSize: Number(event.target.value) })
-                }
-              >
-                {[1, 2, 3, 4].map((count) => (
-                  <option key={count} value={count}>
-                    {count} {count === 1 ? "image" : "images"}
-                  </option>
-                ))}
-              </select>
-            </label>
           </div>
 
-          <button
-            type="submit"
-            className="composer-submit"
-            disabled={
-              running ||
-              submitting ||
-              !ready ||
-              busyElsewhere ||
-              !settings.prompt.trim()
-            }
-            aria-busy={running || submitting}
-            aria-label={
-              running
-                ? "Generation in progress"
-                : submitting
-                  ? "Starting generation"
-                  : "Generate image"
-            }
-            title="Generate image · Ctrl Enter"
-          >
-            {running || submitting ? (
-              <span className="spinner" aria-hidden="true" />
-            ) : (
-              <ArrowUp size={20} aria-hidden="true" />
-            )}
-          </button>
+          <div className="composer-send-tools">
+            <ComposerModelMenu
+              models={installedModels}
+              value={settings.model ?? "9b"}
+              resolvedModel={resolvedModel}
+              disabled={running || submitting || busyElsewhere}
+              onChange={(model) => onSettingsChange({ model })}
+              onOpen={() => setSeedPopoverOpen(false)}
+            />
+            <button
+              type="submit"
+              className="composer-submit"
+              disabled={
+                running ||
+                submitting ||
+                !ready ||
+                busyElsewhere ||
+                !settings.prompt.trim()
+              }
+              aria-busy={running || submitting}
+              aria-label={
+                running
+                  ? "Generation in progress"
+                  : submitting
+                    ? "Starting generation"
+                    : "Generate image"
+              }
+              title="Generate image · Ctrl Enter"
+            >
+              {running || submitting ? (
+                <span className="spinner" aria-hidden="true" />
+              ) : (
+                <ArrowUp size={20} aria-hidden="true" />
+              )}
+            </button>
+          </div>
         </div>
       </form>
       {referenceError ? (
