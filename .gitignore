@@ -50,6 +50,9 @@ apps/desktop/resources/models/
 apps/desktop/resources/scripts/
 apps/desktop/resources/app-config.json
 
+# Local docs
+docs/
+
 # Local AI models and checkpoints
 models/
 *.safetensors
