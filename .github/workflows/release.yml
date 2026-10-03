@@ -40,7 +40,10 @@ jobs:
       - run: npm ci
       - run: python -m venv .venv
       - run: .venv/Scripts/python.exe -m pip install --upgrade pip
-      - run: .venv/Scripts/python.exe -m pip install -r requirements-release.txt
+      # Install the complete lock directly: Optimum Intel's branch URL conflicts
+      # with our exact commit URL for the same Optimum ONNX source.
+      - run: .venv/Scripts/python.exe -m pip install --no-deps -r requirements-release.txt
+      - run: .venv/Scripts/python.exe -m pip check
       - name: Use release virtualenv
         shell: pwsh
         run: Add-Content -Path $env:GITHUB_PATH -Value "$PWD\.venv\Scripts"
