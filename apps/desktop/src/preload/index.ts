@@ -44,6 +44,7 @@ function waitForApiBaseUrl(timeoutMs = 90_000): Promise<string> {
 const studioApi: StudioApi = {
   platform: process.platform,
   getApiBaseUrl: () => waitForApiBaseUrl(),
+  adjustZoom: (action) => ipcRenderer.invoke("studio:adjust-zoom", action),
 
   onApiBaseUrl: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, url: string) =>
@@ -87,6 +88,14 @@ const studioApi: StudioApi = {
     ipcRenderer.invoke("studio:open-output-image", imageName),
   deleteOutputImage: (imageName) =>
     ipcRenderer.invoke("studio:delete-output-image", imageName),
+  openOutputAudio: (audioName) =>
+    ipcRenderer.invoke("studio:open-output-audio", audioName),
+  revealOutputAudio: (audioName) =>
+    ipcRenderer.invoke("studio:reveal-output-audio", audioName),
+  deleteOutputAudio: (audioName) =>
+    ipcRenderer.invoke("studio:delete-output-audio", audioName),
+  saveOutputAudio: (audioName) =>
+    ipcRenderer.invoke("studio:save-output-audio", audioName),
   showImageInFolder: (filePath) =>
     ipcRenderer.invoke("studio:show-image-in-folder", filePath),
   pickReferenceImage: () => ipcRenderer.invoke("studio:pick-reference-image"),

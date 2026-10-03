@@ -10,6 +10,8 @@
 # Python environments, caches, and tooling
 .venv/
 .venv
+.venv-qwen3-tts/
+.venv-*/
 .cache
 .npm-cache/
 venv/
@@ -25,6 +27,7 @@ htmlcov/
 pip-wheel-metadata/
 *.egg-info/
 build/
+tmp/
 
 # Node / Electron dependencies and build products
 node_modules/
@@ -44,17 +47,23 @@ apps/desktop/resources/runtime-slim/
 apps/desktop/resources/runtime-release/
 apps/desktop/resources/runtime-release.tar
 apps/desktop/resources/runtime-release.zip
+apps/desktop/resources/runtime-release.zip.part
+apps/desktop/resources/runtime-release.json
 apps/desktop/resources/runtime-release.7z
 apps/desktop/resources/7za.exe
 apps/desktop/resources/models/
 apps/desktop/resources/scripts/
+apps/desktop/resources/licenses/
 apps/desktop/resources/app-config.json
 
-# Local docs
-docs/
+# Local docs, with the reproducible Qwen Image experiment report kept in source
+docs/*
+!docs/experiments/
+docs/experiments/*
+!docs/experiments/QWEN-IMAGE-2.1-EXPERIMENT-REPORT.md
 
 # Local AI models and checkpoints
-models/
+/models/
 *.safetensors
 *.ckpt
 *.pt

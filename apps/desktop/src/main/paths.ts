@@ -66,6 +66,7 @@ export function getPythonEnvironment(): NodeJS.ProcessEnv {
   return {
     ...process.env,
     PYTHONUNBUFFERED: "1",
+    PYTHONDONTWRITEBYTECODE: "1",
     PYTHONIOENCODING: "utf-8",
     PYTHONUTF8: "1",
     FERN_ROOT: getProjectRoot(),

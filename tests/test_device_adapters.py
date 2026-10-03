@@ -53,6 +53,9 @@ class DeviceAdapterTests(unittest.TestCase):
             NVIDIA_GPU,
         )
 
+    def test_auto_never_silently_falls_back_to_cpu(self) -> None:
+        self.assertEqual(select_auto_device(nvidia_available=False, intel_available=False, cpu_available=True), INTEL_GPU)
+
     def test_openvino_model_readiness_requires_all_components(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

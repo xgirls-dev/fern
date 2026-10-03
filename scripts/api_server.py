@@ -8,6 +8,7 @@ import mimetypes
 import os
 import shutil
 import sys
+import subprocess
 import threading
 import time
 import urllib.parse
@@ -40,11 +41,15 @@ for path in (PROJECT_SCRIPTS, SCRIPTS):
 
 import flux2_klein_pipeline as flux2
 from generation_worker import GenerationWorker, GenerationCancelled
+from tts_generation_worker import TtsGenerationWorker
+from tts_model_download import model_ready as tts_export_ready
 
 GENERATION_WORKER = GenerationWorker()
+TTS_GENERATION_WORKER = TtsGenerationWorker()
 from model_manager import ModelManager
 from model_catalog import model_spec
 import gallery_store
+from media_http import byte_range
 import storage_manager
 from device_adapters import device_label, normalize_device
 
@@ -53,7 +58,256 @@ OUTPUTS = ROOT / "outputs"
 DATA_DIR = ROOT / "data"
 MODELS_DIR = ROOT / "models"
 CACHE_DIR = ROOT / ".cache"
+TTS_MODEL_ROOT = Path(os.environ.get("FERN_TTS_MODEL_ROOT", MODELS_DIR / "qwen3-tts")).resolve()
+TTS_ENV = Path(os.environ.get("FERN_TTS_ENV", ROOT / ".venv-qwen3-tts")).resolve()
 MODEL_MANAGER = ModelManager(MODELS_DIR)
+
+TTS_MODELS = {
+    "custom-0.6b": {"label": "Custom Voice · 0.6B", "kind": "custom_voice"},
+    "custom-1.7b": {"label": "Custom Voice · 1.7B", "kind": "custom_voice"},
+    "base-0.6b": {"label": "Voice Clone · 0.6B", "kind": "base"},
+    "base-1.7b": {"label": "Voice Clone · 1.7B", "kind": "base"},
+    "voice-design-1.7b": {"label": "Voice Design · 1.7B", "kind": "voice_design"},
+}
+TTS_JOB_LOCK = threading.Lock()
+TTS_PROCESS_LOCK = threading.Lock()
+TTS_ACTIVE_PROCESS: subprocess.Popen[str] | None = None
+TTS_CANCEL_EVENT: threading.Event | None = None
+TTS_JOB: dict[str, Any] = {
+    "id": None, "threadId": None, "model": None, "status": "idle",
+    "operation": None, "logs": [], "startedAt": None, "finishedAt": None,
+    "output": None, "error": None, "diagnostics": [], "phase": None,
+}
+IMAGE_LIST_LOCK = threading.Lock()
+IMAGE_LIST_CACHE: dict[str, Any] = {"key": None, "checkedAt": 0.0, "records": []}
+
+
+def tts_model_ready(model: str) -> bool:
+    if not tts_environment_ready():
+        return False
+    return tts_export_ready(TTS_MODEL_ROOT / f"{model}-OV", model)
+
+
+def tts_environment_ready() -> bool:
+    python = TTS_ENV / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    runtime_present = (
+        python.is_file()
+        and (SCRIPTS / "tts_runtime" / "qwen_3_tts_helper.py").is_file()
+        and (SCRIPTS / "tts_runtime" / "qwen_tts").is_dir()
+    )
+    if not runtime_present:
+        return False
+    marker = TTS_ENV / ".fern-runtime.json"
+    if marker.is_file():
+        try:
+            import hashlib
+            metadata = json.loads(marker.read_text(encoding="utf-8-sig"))
+            expected = hashlib.sha256((SCRIPTS / "requirements-qwen3-tts-runtime.txt").read_bytes()).hexdigest()
+            return metadata.get("requirementsSha256") == expected
+        except (OSError, ValueError):
+            return False
+    # Existing converted installations already completed the old dependency setup.
+    # A newly created or interrupted venv alone is never considered ready.
+    return (TTS_MODEL_ROOT / "qwen_3_tts_helper.py").is_file() and (TTS_MODEL_ROOT / "Qwen3-TTS" / "qwen_tts").is_dir()
+
+
+def tts_snapshot() -> dict[str, Any]:
+    with TTS_JOB_LOCK:
+        job = dict(TTS_JOB)
+        job["logs"] = list(TTS_JOB["logs"])
+        job["diagnostics"] = list(TTS_JOB.get("diagnostics", []))
+    job["models"] = [
+        {"id": key, **spec, "installed": tts_model_ready(key)}
+        for key, spec in TTS_MODELS.items()
+    ]
+    job["environmentReady"] = tts_environment_ready()
+    return job
+
+
+def tts_job_running() -> bool:
+    with TTS_JOB_LOCK:
+        return TTS_JOB["status"] in ("running", "setting_up", "stopping")
+
+
+class TtsJobCancelled(Exception):
+    pass
+
+
+def terminate_tts_process(process: subprocess.Popen[str] | None) -> None:
+    if process is None or process.poll() is not None:
+        return
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/pid", str(process.pid), "/t", "/f"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    else:
+        process.terminate()
+
+
+def mark_tts_stopped(job_id: str) -> None:
+    with TTS_JOB_LOCK:
+        if TTS_JOB["id"] == job_id:
+            TTS_JOB.update(status="stopped", finishedAt=time.time(), output=None, error=None)
+            TTS_JOB["logs"].append(f"[{time.strftime('%H:%M:%S')}] Audio job stopped.")
+            TTS_JOB["logs"] = TTS_JOB["logs"][-120:]
+
+
+def append_tts_log(message: str) -> None:
+    # Only our explicit progress messages enter the user-facing timeline.
+    # Library warnings, tracebacks and conversion output remain inspectable.
+    progress_prefix = "FERN_TTS_PROGRESS:"
+    is_progress = message.startswith(progress_prefix)
+    if is_progress:
+        message = message[len(progress_prefix):]
+    with TTS_JOB_LOCK:
+        elapsed = max(0, time.time() - (TTS_JOB.get("startedAt") or time.time()))
+        stamp = f"[{time.strftime('%H:%M:%S')} +{elapsed:.1f}s]"
+        key = "logs" if is_progress else "diagnostics"
+        TTS_JOB.setdefault(key, []).append(f"{stamp} {message}")
+        TTS_JOB[key] = TTS_JOB[key][-120:]
+        if is_progress:
+            TTS_JOB["phase"] = message
+
+
+def tts_child_env(clean_python_env: bool = True) -> dict[str, str]:
+    child_env = os.environ.copy()
+    if clean_python_env:
+        child_env.pop("PYTHONHOME", None)
+        child_env.pop("PYTHONPATH", None)
+    child_env["PYTHONUNBUFFERED"] = "1"
+    child_env["PYTHONUTF8"] = "1"
+    child_env["PYTHONIOENCODING"] = "utf-8"
+    tts_hf_cache = TTS_MODEL_ROOT / "huggingface-cache"
+    child_env["HF_HOME"] = str(tts_hf_cache)
+    child_env["HF_HUB_CACHE"] = str(tts_hf_cache / "hub")
+    return child_env
+
+
+def run_tts_process(
+    command: list[str], stdin_data: str | None = None, clean_python_env: bool = True,
+    cancel_event: threading.Event | None = None,
+) -> tuple[int, str]:
+    global TTS_ACTIVE_PROCESS
+    if cancel_event is not None and cancel_event.is_set():
+        raise TtsJobCancelled()
+    process = subprocess.Popen(
+        command, cwd=str(ROOT), stdin=subprocess.PIPE if stdin_data is not None else subprocess.DEVNULL,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
+        bufsize=1, env=tts_child_env(clean_python_env), creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    with TTS_PROCESS_LOCK:
+        TTS_ACTIVE_PROCESS = process
+    try:
+        if cancel_event is not None and cancel_event.is_set():
+            terminate_tts_process(process)
+            raise TtsJobCancelled()
+        if stdin_data is not None and process.stdin:
+            process.stdin.write(stdin_data)
+            process.stdin.close()
+        lines: list[str] = []
+        assert process.stdout is not None
+        for line in process.stdout:
+            line = line.rstrip()
+            if line:
+                lines.append(line)
+                append_tts_log(line)
+        code = process.wait()
+        if cancel_event is not None and cancel_event.is_set():
+            raise TtsJobCancelled()
+        return code, "\n".join(lines)
+    finally:
+        with TTS_PROCESS_LOCK:
+            if TTS_ACTIVE_PROCESS is process:
+                TTS_ACTIVE_PROCESS = None
+
+
+def run_tts_setup(model: str, job_id: str, cancel_event: threading.Event) -> None:
+    try:
+        append_tts_log("FERN_TTS_PROGRESS:Preparing the local speech environment.")
+        if cancel_event.is_set():
+            raise TtsJobCancelled()
+        TTS_GENERATION_WORKER.close()
+        if not tts_environment_ready():
+            install_script = SCRIPTS / "install-qwen3-tts.ps1"
+            powershell = shutil.which("powershell.exe") or shutil.which("powershell") or shutil.which("pwsh")
+            if not powershell:
+                raise RuntimeError("PowerShell is required to set up the separate Qwen3-TTS environment.")
+            install_code, install_output = run_tts_process([
+                powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(install_script),
+                "-BasePython", sys.executable, "-ModelRoot", str(TTS_MODEL_ROOT),
+            ], clean_python_env=False, cancel_event=cancel_event)
+            if install_code:
+                raise RuntimeError("Speech runtime installation failed. Retry setup; Technical diagnostics contain the installer error.")
+        python = TTS_ENV / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+        code, output = run_tts_process([
+            str(python), str(SCRIPTS / "qwen3_tts_worker.py"), "setup", "--model", model,
+            "--model-root", str(TTS_MODEL_ROOT),
+        ], cancel_event=cancel_event)
+        if code:
+            try:
+                message = json.loads(output.strip().splitlines()[-1]).get("error")
+            except (ValueError, IndexError, AttributeError):
+                message = None
+            raise RuntimeError(message or "Could not download the OpenVINO speech model. Retry setup to resume the download.")
+        with TTS_JOB_LOCK:
+            if cancel_event.is_set():
+                raise TtsJobCancelled()
+            if TTS_JOB["id"] == job_id:
+                TTS_JOB.update(status="complete", finishedAt=time.time(), error=None)
+        append_tts_log("FERN_TTS_PROGRESS:Model setup complete. Ready to generate speech.")
+    except TtsJobCancelled:
+        mark_tts_stopped(job_id)
+    except Exception as error:
+        if cancel_event.is_set():
+            mark_tts_stopped(job_id)
+            return
+        append_tts_log(str(error))
+        summary = str(error).splitlines()[-1][:500] or "Model setup failed. Open Technical diagnostics for details."
+        with TTS_JOB_LOCK:
+            if TTS_JOB["id"] == job_id:
+                TTS_JOB.update(status="failed", finishedAt=time.time(), error=summary)
+        append_tts_log(f"FERN_TTS_PROGRESS:Setup failed: {summary}")
+
+
+def run_tts_generation(payload: dict[str, Any], job_id: str, cancel_event: threading.Event | None = None) -> None:
+    cancel_event = cancel_event or threading.Event()
+    try:
+        if cancel_event.is_set():
+            raise TtsJobCancelled()
+        append_tts_log("FERN_TTS_PROGRESS:Preparing a new audio take.")
+        python = TTS_ENV / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+        output_name = f"qwen3-tts-{job_id}.wav"
+        request = dict(payload, outputName=output_name)
+        result = TTS_GENERATION_WORKER.generate(key=(payload["model"], payload["device"]), command=[
+            str(python), "-u", str(SCRIPTS / "qwen3_tts_worker.py"), "serve", "--model", payload["model"],
+            "--model-root", str(TTS_MODEL_ROOT), "--outputs", str(OUTPUTS), "--device", payload["device"],
+        ], request=request, cwd=ROOT, env=tts_child_env(), log=append_tts_log)
+        if cancel_event.is_set():
+            raise TtsJobCancelled()
+        with TTS_JOB_LOCK:
+            if cancel_event.is_set():
+                raise TtsJobCancelled()
+            if TTS_JOB["id"] == job_id:
+                elapsed = time.time() - (TTS_JOB.get("startedAt") or time.time())
+                result["generationSeconds"] = elapsed
+                TTS_JOB.update(status="complete", finishedAt=time.time(), output=result, error=None)
+        append_tts_log(f"FERN_TTS_PROGRESS:Take saved · {result.get('duration', 0):.1f}s audio · {elapsed:.1f}s total.")
+    except TtsJobCancelled:
+        TTS_GENERATION_WORKER.close()
+        (OUTPUTS / f"qwen3-tts-{job_id}.wav").unlink(missing_ok=True)
+        mark_tts_stopped(job_id)
+    except Exception as error:
+        if cancel_event.is_set():
+            TTS_GENERATION_WORKER.close()
+            (OUTPUTS / f"qwen3-tts-{job_id}.wav").unlink(missing_ok=True)
+            mark_tts_stopped(job_id)
+            return
+        with TTS_JOB_LOCK:
+            if TTS_JOB["id"] == job_id:
+                TTS_JOB.update(status="failed", finishedAt=time.time(), error=str(error))
+        append_tts_log(f"FERN_TTS_PROGRESS:Generation failed: {error}")
 
 FLUX_JOB_LOCK = threading.Lock()
 FLUX_JOB: dict[str, Any] = {
@@ -93,7 +347,7 @@ def model_snapshot(device: str, model="9b") -> dict[str, Any]:
     device = normalize_device(device)
     if model not in ("auto", "9b", "4b"): model = "9b"
     requested_model = model
-    model = flux2.resolve_model(model, device)
+    resolved_model = flux2.resolve_model(model, device)
     with MODEL_CHECK_LOCK:
         if not MODEL_CHECK_STARTED:
             MODEL_CHECK_STARTED = True
@@ -103,14 +357,15 @@ def model_snapshot(device: str, model="9b") -> dict[str, Any]:
                 except Exception as error:
                     results = {(key, choice): {"runtimeReady": False, "checking": False,
                                     "runtimeNote": f"Could not check generation runtime: {error}"}
-                               for choice in ("9b", "4b") for key in ("AUTO", "INTEL_GPU", "NVIDIA_GPU", "CPU")}
+                               for choice in ("9b", "4b")
+                               for key in ("AUTO", "INTEL_GPU", "NVIDIA_GPU", "CPU")}
                 with MODEL_CHECK_LOCK:
                     MODEL_CHECK_RESULTS.update(results)
             threading.Thread(target=check, daemon=True).start()
-        cached = MODEL_CHECK_RESULTS.get((device, model))
+        cached = MODEL_CHECK_RESULTS.get((device, resolved_model))
         if cached and not cached.get("runtimeNote", "").startswith("Could not check"):
             return flux2.model_status(device, requested_model)
-        return dict(MODEL_CHECK_RESULTS.get((device, model), {
+        return dict(MODEL_CHECK_RESULTS.get((device, resolved_model), {
             "runtimeReady": False, "checking": True,
             "runtimeNote": "Checking installed runtime… You can browse your library.",
             "requestedDevice": device, "adapters": [],
@@ -144,19 +399,31 @@ def runtime_snapshot() -> dict[str, Any]:
 
 def latest_images() -> list[dict[str, Any]]:
     OUTPUTS.mkdir(parents=True, exist_ok=True)
-    metadata = gallery_store.metadata_snapshot()
-    records = []
-    for path in OUTPUTS.glob("*.png"):
-        try:
-            modified = path.stat().st_mtime
-        except FileNotFoundError:
-            continue  # An image can be moved to Recycle Bin during a listing.
-        records.append(gallery_store.enrich_image_record({
-            "name": path.name,
-            "url": f"/outputs/{urllib.parse.quote(path.name)}",
-            "mtime": modified,
-        }, metadata))
-    return sorted(records, key=lambda record: record["mtime"], reverse=True)
+    metadata_path = gallery_store.GALLERY_PATH
+    try:
+        metadata_mtime = metadata_path.stat().st_mtime_ns
+    except FileNotFoundError:
+        metadata_mtime = 0
+    key = (OUTPUTS.stat().st_mtime_ns, metadata_mtime)
+    now = time.monotonic()
+    with IMAGE_LIST_LOCK:
+        if IMAGE_LIST_CACHE["key"] == key and now - IMAGE_LIST_CACHE["checkedAt"] < 30:
+            return list(IMAGE_LIST_CACHE["records"])
+        metadata = gallery_store.metadata_snapshot()
+        records = []
+        for path in OUTPUTS.glob("*.png"):
+            try:
+                modified = path.stat().st_mtime
+            except FileNotFoundError:
+                continue  # An image can be moved to Recycle Bin during a listing.
+            records.append(gallery_store.enrich_image_record({
+                "name": path.name,
+                "url": f"/outputs/{urllib.parse.quote(path.name)}",
+                "mtime": modified,
+            }, metadata))
+        records.sort(key=lambda record: record["mtime"], reverse=True)
+        IMAGE_LIST_CACHE.update(key=key, checkedAt=now, records=records)
+        return list(records)
 
 
 def image_record(path: Path, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -246,10 +513,11 @@ def validate_flux_payload(payload: dict[str, Any]) -> dict[str, Any]:
     }:
         raise ValueError("Device must be Auto-select, Intel GPU, NVIDIA GPU, or CPU.")
     device = normalize_device(raw_device)
-    width = int(payload.get("width", flux2.DEFAULT_WIDTH))
-    height = int(payload.get("height", flux2.DEFAULT_HEIGHT))
-    steps = int(payload.get("steps", flux2.DEFAULT_STEPS))
-    guidance = float(payload.get("guidance", flux2.DEFAULT_GUIDANCE))
+    backend = flux2
+    width = int(payload.get("width", backend.DEFAULT_WIDTH))
+    height = int(payload.get("height", backend.DEFAULT_HEIGHT))
+    steps = int(payload.get("steps", backend.DEFAULT_STEPS))
+    guidance = float(payload.get("guidance", backend.DEFAULT_GUIDANCE))
     seed = int(payload.get("seed", 42))
     batch_size = int(payload.get("batch_size", 1))
     thread_id = payload.get("thread_id")
@@ -261,12 +529,14 @@ def validate_flux_payload(payload: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("Thread ID must contain 1 to 128 letters, numbers, hyphens, or underscores.")
     reference_image = decode_flux_reference_image(payload.get("reference_image"))
 
-    if width < 256 or width > 1920 or width % 16 != 0:
-        raise ValueError("Width must be 256 to 1920 and divisible by 16.")
-    if height < 256 or height > 1920 or height % 16 != 0:
-        raise ValueError("Height must be 256 to 1920 and divisible by 16.")
+    maximum = 1920
+    dimension_multiple = 16
+    if width < 256 or width > maximum or width % dimension_multiple != 0:
+        raise ValueError(f"Width must be 256 to {maximum} and divisible by {dimension_multiple}.")
+    if height < 256 or height > maximum or height % dimension_multiple != 0:
+        raise ValueError(f"Height must be 256 to {maximum} and divisible by {dimension_multiple}.")
     if steps < 1 or steps > 50:
-        raise ValueError("Steps must be 1 to 50.")
+        raise ValueError("Steps are outside the supported range.")
     if guidance < 0 or guidance > 10:
         raise ValueError("Guidance must be 0 to 10.")
     if batch_size < 1 or batch_size > 4:
@@ -295,9 +565,9 @@ def run_flux_generation(
 ) -> None:
     def log_generation(message: str) -> None:
         append_flux_log(message)
-        if message.startswith("Loading Flux"):
+        if message.startswith(("Loading Flux", "Loading Qwen")):
             mark_runtime(status="loading", message="Loading model for generation…", error=None)
-        elif message.startswith("Seed:"):
+        elif message.startswith(("Seed:", "Qwen denoising step")):
             mark_runtime(status="ready", device=payload["device"], message="Model ready.", error=None)
         if cancel_event.is_set():
             raise FluxGenerationCancelled("Generation stopped by user.")
@@ -324,7 +594,7 @@ def run_flux_generation(
                 "device": payload["device"],
                 "modelPath": str(flux2.model_dir_for(payload["device"], payload.get("model", "9b"))),
                 "model": payload.get("model", "9b"),
-                "modelRevision": payload.get("modelRevision", "legacy-unverified"),
+                "modelRevision": payload.get("modelRevision", model_spec(payload.get("model", "9b"))["revision"]),
                 "createdAt": time.time(),
             }
             output_path, generation_time = GENERATION_WORKER.generate(
@@ -452,6 +722,10 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         parsed = urllib.parse.urlparse(self.path)
 
+        if parsed.path == "/api/tts/status":
+            self.send_json(200, tts_snapshot())
+            return
+
         if parsed.path == "/api/models":
             self.send_json(200, {"models": MODEL_MANAGER.snapshot()})
             return
@@ -513,20 +787,118 @@ class Handler(BaseHTTPRequestHandler):
                 return
 
             content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
-            data = path.read_bytes()
-            self.send_response(200)
+            size = path.stat().st_size
+            try:
+                requested = byte_range(self.headers.get("Range"), size)
+            except ValueError:
+                self.send_response(416)
+                self.send_header("Content-Range", f"bytes */{size}")
+                self.send_header("Content-Length", "0")
+                self.send_cors_headers()
+                self.end_headers()
+                return
+            start, end = requested if requested else (0, size - 1)
+            self.send_response(206 if requested else 200)
             self.send_header("Content-Type", content_type)
-            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Accept-Ranges", "bytes")
+            self.send_header("Content-Length", str(end - start + 1))
+            if requested:
+                self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
             self.send_cors_headers()
             self.end_headers()
-            self.wfile.write(data)
+            try:
+                with path.open("rb") as media:
+                    media.seek(start)
+                    remaining = end - start + 1
+                    while remaining > 0:
+                        chunk = media.read(min(remaining, 256 * 1024))
+                        if not chunk:
+                            break
+                        self.wfile.write(chunk)
+                        remaining -= len(chunk)
+            except (BrokenPipeError, ConnectionResetError):
+                pass  # Seeking or navigating away cancels the old media request.
             return
 
         self.send_error(404)
 
     def do_POST(self) -> None:
-        global FLUX_CANCEL_EVENT
+        global FLUX_CANCEL_EVENT, TTS_CANCEL_EVENT
         parsed = urllib.parse.urlparse(self.path)
+
+        if parsed.path == "/api/tts/stop":
+            with TTS_JOB_LOCK:
+                if TTS_JOB["status"] not in ("running", "setting_up", "stopping"):
+                    self.send_json(409, {"error": "No Qwen3-TTS job is running."})
+                    return
+                TTS_JOB["status"] = "stopping"
+                cancel_event = TTS_CANCEL_EVENT
+            if cancel_event is not None:
+                cancel_event.set()
+            with TTS_PROCESS_LOCK:
+                process = TTS_ACTIVE_PROCESS
+            terminate_tts_process(process)
+            TTS_GENERATION_WORKER.interrupt()
+            self.send_json(202, {"job": tts_snapshot()})
+            return
+
+        if parsed.path in ("/api/tts/setup", "/api/tts/generate"):
+            try:
+                payload = self.read_json_body()
+                model = payload.get("model")
+                if model not in TTS_MODELS:
+                    raise ValueError("Choose a supported Qwen3-TTS model.")
+                generation = None
+                if parsed.path.endswith("generate"):
+                    if not tts_model_ready(model):
+                        raise ValueError("Set up this Qwen3-TTS model before generating speech.")
+                    text = payload.get("text")
+                    if not isinstance(text, str) or not text.strip() or len(text) > 10_000:
+                        raise ValueError("Enter text between 1 and 10,000 characters.")
+                    language = payload.get("language", "Auto")
+                    if language not in ("Auto", "Chinese", "English", "Japanese", "Korean", "French", "German", "Spanish", "Portuguese", "Russian", "Italian"):
+                        raise ValueError("Choose a supported language or Auto.")
+                    speaker = payload.get("speaker", "Vivian")
+                    if speaker not in ("Aiden", "Dylan", "Eric", "Ono_anna", "Ryan", "Serena", "Sohee", "Uncle_fu", "Vivian"):
+                        raise ValueError("Choose a supported preset speaker.")
+                    reference_audio = payload.get("referenceAudio")
+                    if reference_audio is not None and (not isinstance(reference_audio, str) or len(reference_audio) > 16 * 1024 * 1024):
+                        raise ValueError("Reference audio must be smaller than 12 MB.")
+                    if TTS_MODELS[model]["kind"] == "base" and not reference_audio:
+                        raise ValueError("Voice cloning requires a reference audio clip.")
+                    device = payload.get("device", "AUTO")
+                    if device not in ("CPU", "GPU", "AUTO"):
+                        raise ValueError("Choose CPU, GPU, or Auto for OpenVINO.")
+                    generation = {
+                        "model": model, "text": text.strip(), "language": language,
+                        "speaker": speaker, "instruction": str(payload.get("instruction", ""))[:2000],
+                        "referenceText": str(payload.get("referenceText", ""))[:5000],
+                        "referenceAudio": reference_audio, "device": device,
+                        "max_new_tokens": payload.get("maxNewTokens", 2048),
+                    }
+                with TTS_JOB_LOCK:
+                    if TTS_JOB["status"] in ("running", "setting_up", "stopping"):
+                        self.send_json(409, {"error": "A Qwen3-TTS job is already running."})
+                        return
+                    job_id = str(int(time.time() * 1000))
+                    cancel_event = threading.Event()
+                    TTS_CANCEL_EVENT = cancel_event
+                    TTS_JOB.update(
+                        id=job_id, threadId=payload.get("threadId"), model=model,
+                        status="setting_up" if parsed.path.endswith("setup") else "running",
+                        operation="setup" if parsed.path.endswith("setup") else "generate",
+                        logs=[], diagnostics=[], phase="Starting…", startedAt=time.time(), finishedAt=None, output=None, error=None,
+                    )
+                if parsed.path.endswith("setup"):
+                    threading.Thread(target=run_tts_setup, args=(model, job_id, cancel_event), daemon=True).start()
+                    self.send_json(202, {"job": tts_snapshot()})
+                    return
+                assert generation is not None
+                threading.Thread(target=run_tts_generation, args=(generation, job_id, cancel_event), daemon=True).start()
+                self.send_json(202, {"job": tts_snapshot()})
+            except Exception as error:
+                self.send_json(400, {"error": str(error)})
+            return
 
         if parsed.path == "/api/threads/delete":
             try:
@@ -561,8 +933,8 @@ class Handler(BaseHTTPRequestHandler):
 
         if parsed.path == "/api/storage/cleanup-cache":
             current = flux_job_snapshot()
-            if current["status"] == "running":
-                self.send_json(409, {"error": "Wait for the current generation to finish."})
+            if current["status"] == "running" or tts_job_running():
+                self.send_json(409, {"error": "Wait for the current generation or Qwen3-TTS setup to finish."})
                 return
             GENERATION_WORKER.close()
             flux2.release_pipeline()
@@ -584,8 +956,8 @@ class Handler(BaseHTTPRequestHandler):
 
         if parsed.path == "/api/storage/clear-local-data":
             current = flux_job_snapshot()
-            if current["status"] == "running":
-                self.send_json(409, {"error": "Wait for the current generation to finish."})
+            if current["status"] == "running" or tts_job_running():
+                self.send_json(409, {"error": "Wait for the current generation or Qwen3-TTS setup to finish."})
                 return
 
             GENERATION_WORKER.close()
@@ -727,6 +1099,7 @@ def run_server(port: int = 8000, *, allow_cors: bool = False) -> None:
         pass
     finally:
         GENERATION_WORKER.close()
+        TTS_GENERATION_WORKER.close()
         server.server_close()
 
 

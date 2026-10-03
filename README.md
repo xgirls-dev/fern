@@ -1,17 +1,25 @@
 # Fern
 
-Fern is a private Windows image studio for running **Flux.2 Klein 9B** locally
-with one shared model and a hardware-specific OpenVINO device. Intel, NVIDIA,
+Fern is a private Windows image and audio studio for running **Flux.2 Klein 9B** locally
+with one shared image model and a hardware-specific OpenVINO device. Intel, NVIDIA,
 and CPU execution all use the same xgirls INT4 OpenVINO release at
 [`xgirls/FLUX.2-klein-9B-ov-int4`](https://huggingface.co/xgirls/FLUX.2-klein-9B-ov-int4).
 NVIDIA execution uses the `NVIDIA` device from the
 [OpenVINO NVIDIA plugin](https://github.com/openvinotoolkit/openvino_contrib/tree/master/modules/nvidia_plugin).
 
+Fern also provides audio threads for **Qwen3-TTS with OpenVINO**. Audio threads keep speech settings and WAV outputs separate
+from image threads. The Qwen3-TTS workspace supports preset voices, voice
+design, and reference-audio voice cloning. **Set up** installs a pinned speech
+runtime and downloads the selected ready-made OpenVINO export from
+[xgirls on Hugging Face](https://huggingface.co/xgirls). New installations do
+not export source checkpoints. Downloads are verified and can resume after
+interruption; the first take still compiles the downloaded model on the GPU.
+
 The app supports text-to-image and image-guided generation, a local gallery,
 repeatable seeds, batch generation, and CPU, Intel GPU, or NVIDIA GPU execution. Prompts,
 reference images, and generated images stay on the local machine.
 
-Use **New thread** (Ctrl+N) to start an image workspace. Threads in the sidebar
+Use **New image thread** (Ctrl+N) to start an image workspace, or **New audio thread** (Ctrl+Shift+N) for speech. Threads in the sidebar
 keep their own prompt, settings, reference image, and generated images across
 app restarts. Select a thread to continue it, or open **Library** to browse all
 images. Images appear as large thumbnails in the main workspace.
@@ -20,8 +28,9 @@ images. Images appear as large thumbnails in the main workspace.
 
 Download `Fern-Setup-*.exe` from the project's GitHub Releases
 page and run it. The installer contains the desktop app, Python, OpenVINO, and
-the OpenVINO NVIDIA plugin. On first launch, Fern detects the machine and
-downloads the shared Flux.2 Klein 9B OpenVINO model from Hugging Face. On
+the OpenVINO NVIDIA plugin when included in the build environment. On first
+launch, Fern installs its bundled runtime. Optional Klein 4B/9B models can be
+downloaded from Preferences; Qwen3-TTS models are downloaded from the audio workspace. On
 hybrid laptops with both Intel integrated graphics and an NVIDIA GPU,
 Auto-select gives the NVIDIA GPU priority when the NVIDIA driver reports it.
 If the NVIDIA plugin is not ready, Fern reports that directly instead of
@@ -49,13 +58,13 @@ installation.
 
 Open **Data** in the Fern title bar to review disk usage, clear the compiled
 generation cache, or reset local creative data. A local-data reset removes
-generated images, gallery metadata, saved prompts, and preferences while
-preserving the downloaded model and bundled runtime.
+generated images and WAV takes, thread/gallery metadata, saved prompts, and preferences while
+preserving downloaded models and bundled runtimes.
 
 Fern automatically prunes generation-cache files that have not been
-used for 30 days. The cache is also limited dynamically between 1 GB and 4 GB
+used for 30 days. The cache is also limited dynamically between 1 GiB and 40 GiB
 based on drive capacity, with a disk-relative free-space reserve of 5–20 GB.
-Generated images are never deleted automatically.
+Generated images and WAV takes are never deleted automatically.
 
 ## Development
 
@@ -127,18 +136,24 @@ installers are ignored by Git and must not be committed.
 
 ## Build the one-click installer
 
-Create a clean development environment first, then run:
+Prepare a clean build environment, keeping model experiment dependencies separate:
 
 ```powershell
+python -m venv .venv-release
+.\.venv-release\Scripts\python.exe -m pip install -r requirements-release.txt
 npm run package
 ```
 
+The build uses `.venv-release` when present, otherwise `.venv`, and rejects retired
+Qwen Image dependencies or an Optimum Intel checkout that does not match
+the locked `requirements-release.txt`. An explicit environment can be selected with
+`scripts/build-installer.ps1 -SourceVenv <folder>`. Build the optional NVIDIA plugin
+against that same environment before packaging if NVIDIA support is required.
 The build script creates a self-contained runtime and writes the one-click NSIS
-installer to `apps/desktop/release/`. The model is deliberately not embedded;
-it downloads on first launch so the installer remains distributable through
-GitHub Releases.
+installer to `apps/desktop/release/`. Image and speech model weights are not embedded;
+they download on demand from Hugging Face.
 
-The runtime builder detects the base Python installation used by `.venv`. You
+The runtime builder detects the base Python installation used by the selected environment. You
 can override it when needed:
 
 ```powershell
@@ -167,3 +182,5 @@ model family or checkpoint selector are outside this project's scope.
 
 MIT. See [LICENSE](LICENSE).
 
+
+The retired Qwen Image 2.1 attempts, self-contained recreation instructions, and removal record are documented in [the experiment report](docs/experiments/QWEN-IMAGE-2.1-EXPERIMENT-REPORT.md).

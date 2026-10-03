@@ -64,9 +64,8 @@ def select_auto_device(
         return NVIDIA_GPU
     if intel_available:
         return INTEL_GPU
-    if cpu_available:
-        return CPU
-    return CPU
+    # Auto requires a GPU; CPU inference requires explicit selection.
+    return INTEL_GPU
 
 LEGACY_DEVICE_ALIASES = {
     "": AUTO,

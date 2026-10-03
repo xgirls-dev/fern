@@ -1,6 +1,6 @@
 import { randomInt } from "node:crypto";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import {
   app,
   BrowserWindow,
@@ -14,7 +14,7 @@ import {
 import { PythonBackend } from "./python-backend";
 import { resolveDataProfile } from "./data-profile";
 import { installEditorContextMenu } from "./editor-context-menu";
-import { ensureFirstRunSetup } from "./first-run-setup";
+import { ensureFirstRunSetup, RuntimeSetupCancelled } from "./first-run-setup";
 import { getAppIconPath, getOutputsDir, resolveProjectRoot } from "./paths";
 
 const isDev = !app.isPackaged;
@@ -81,6 +81,37 @@ function createWindow(apiBaseUrl: string): BrowserWindow {
     window.show();
   });
 
+  window.webContents.on("before-input-event", (event, input) => {
+    if (input.type !== "keyDown" || !(input.control || input.meta) || input.alt) {
+      return;
+    }
+
+    const key = input.key.toLowerCase();
+    const zoomIn =
+      input.code === "Equal" ||
+      input.code === "NumpadAdd" ||
+      key === "+" ||
+      key === "=";
+    const zoomOut =
+      input.code === "Minus" ||
+      input.code === "NumpadSubtract" ||
+      key === "-" ||
+      key === "_";
+    const resetZoom =
+      input.code === "Digit0" || input.code === "Numpad0" || key === "0";
+
+    if (!zoomIn && !zoomOut && !resetZoom) return;
+
+    event.preventDefault();
+    if (resetZoom) {
+      window.webContents.setZoomLevel(0);
+      return;
+    }
+
+    const currentLevel = window.webContents.getZoomLevel();
+    window.webContents.setZoomLevel(currentLevel + (zoomIn ? 0.5 : -0.5));
+  });
+
   installEditorContextMenu(window);
 
   const loadApp = async () => {
@@ -138,9 +169,9 @@ function buildMenu(): void {
         { role: "forceReload" },
         { role: "toggleDevTools" },
         { type: "separator" },
-        { role: "resetZoom" },
-        { role: "zoomIn" },
-        { role: "zoomOut" },
+        { role: "resetZoom", accelerator: "CommandOrControl+0" },
+        { role: "zoomIn", accelerator: "CommandOrControl+=" },
+        { role: "zoomOut", accelerator: "CommandOrControl+-" },
       ],
     },
     {
@@ -153,6 +184,23 @@ function buildMenu(): void {
 }
 
 function registerIpc(): void {
+  ipcMain.handle(
+    "studio:adjust-zoom",
+    (event, action: "in" | "out" | "reset") => {
+      const contents = event.sender;
+      if (action === "reset") {
+        contents.setZoomLevel(0);
+      } else if (action === "in" || action === "out") {
+        contents.setZoomLevel(
+          contents.getZoomLevel() + (action === "in" ? 0.5 : -0.5),
+        );
+      } else {
+        throw new Error("Invalid zoom action.");
+      }
+      return contents.getZoomLevel();
+    },
+  );
+
   ipcMain.handle("studio:get-theme", () => {
     return nativeTheme.shouldUseDarkColors ? "dark" : "light";
   });
@@ -235,6 +283,44 @@ function registerIpc(): void {
       await shell.trashItem(join(getOutputsDir(), imageName));
     },
   );
+
+  const audioOutputPath = (audioName: unknown) => {
+    if (typeof audioName !== "string" || !/^qwen3-tts-\d+\.wav$/i.test(audioName))
+      throw new Error("Invalid audio output name.");
+    return join(getOutputsDir(), audioName);
+  };
+
+  ipcMain.handle("studio:open-output-audio", async (_event, audioName: unknown) => {
+    const error = await shell.openPath(audioOutputPath(audioName));
+    if (error) throw new Error(error);
+    return "";
+  });
+
+  ipcMain.handle("studio:reveal-output-audio", (_event, audioName: unknown) => {
+    shell.showItemInFolder(audioOutputPath(audioName));
+  });
+
+  ipcMain.handle("studio:delete-output-audio", async (_event, audioName: unknown) => {
+    const path = audioOutputPath(audioName);
+    if (existsSync(path)) await shell.trashItem(path);
+  });
+
+  ipcMain.handle("studio:save-output-audio", async (event, audioName: unknown) => {
+    const sourcePath = audioOutputPath(audioName);
+    const window = BrowserWindow.fromWebContents(event.sender) ?? undefined;
+    const options = {
+      title: "Save audio take",
+      defaultPath: audioName as string,
+      filters: [{ name: "WAV Audio", extensions: ["wav"] }],
+    };
+    const result = window ? await dialog.showSaveDialog(window, options) : await dialog.showSaveDialog(options);
+    if (result.canceled || !result.filePath) return null;
+    if (resolve(result.filePath).toLowerCase() !== resolve(sourcePath).toLowerCase()) {
+      const { copyFile } = await import("node:fs/promises");
+      await copyFile(sourcePath, result.filePath);
+    }
+    return result.filePath;
+  });
 
   ipcMain.handle(
     "studio:show-image-in-folder",
@@ -346,9 +432,12 @@ async function bootstrap(): Promise<void> {
   app.setName("Fern");
   app.setAppUserModelId("ai.intel-iris.studio");
 
-  // Preserve the data directory used by existing installations so an in-place
-  // upgrade does not redownload the model or discard local preferences.
-  if (app.isPackaged) {
+  // Honor an explicit profile for isolated runs; normal upgrades preserve the
+  // existing data profile and its models, outputs, and preferences.
+  const profileOverride = app.commandLine.getSwitchValue("user-data-dir");
+  if (profileOverride) {
+    app.setPath("userData", resolve(profileOverride));
+  } else if (app.isPackaged) {
     app.setPath("userData", resolveDataProfile(app.getPath("appData")));
   }
 
@@ -366,14 +455,17 @@ async function bootstrap(): Promise<void> {
 
   await app.whenReady();
 
+  let setupWindow: BrowserWindow | null = null;
   try {
     await resolveProjectRoot();
     // Development uses the repository's .venv directly. The first-run
     // installer only applies to packaged builds with runtime-release.zip.
     if (app.isPackaged) {
-      await ensureFirstRunSetup();
+      setupWindow = await ensureFirstRunSetup();
     }
   } catch (error) {
+    if (error instanceof RuntimeSetupCancelled) { app.quit(); return; }
+    console.error("Fern runtime setup failed:", error);
     await dialog.showErrorBox(
       "Fern",
       error instanceof Error
@@ -392,6 +484,7 @@ async function bootstrap(): Promise<void> {
   const pendingBaseUrl = `http://127.0.0.1:${port}`;
 
   mainWindow = createWindow(pendingBaseUrl);
+  if (setupWindow && !setupWindow.isDestroyed()) setupWindow.close();
 
   void (async () => {
     try {

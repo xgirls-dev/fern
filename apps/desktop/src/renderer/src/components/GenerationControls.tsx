@@ -206,6 +206,16 @@ export function GenerationControls({
   canUseOutput,
 }: GenerationControlsProps) {
   const [customSize, setCustomSize] = useState(false);
+  const dimensionMultiple = 16;
+  const availableSizePresets = useMemo(
+    () =>
+      SIZE_PRESETS.filter((preset) => {
+        if (preset.value === "custom") return true;
+        const [width, height] = preset.value.split("x").map(Number);
+        return width % dimensionMultiple === 0 && height % dimensionMultiple === 0;
+      }),
+    [dimensionMultiple],
+  );
   const [referenceBusy, setReferenceBusy] = useState(false);
   const activeChips = new Set(
     STYLE_CHIPS.filter((chip) => settings.prompt.includes(chip.suffix)).map(
@@ -239,10 +249,10 @@ export function GenerationControls({
 
   const sizePreset = useMemo(() => {
     const value = `${settings.width}x${settings.height}`;
-    return SIZE_PRESETS.some((preset) => preset.value === value)
+    return availableSizePresets.some((preset) => preset.value === value)
       ? value
       : "custom";
-  }, [settings.height, settings.width]);
+  }, [availableSizePresets, settings.height, settings.width]);
 
   const applySizePreset = (value: string) => {
     setCustomSize(value === "custom");
@@ -427,7 +437,7 @@ export function GenerationControls({
                 value={customSize ? "custom" : sizePreset}
                 onChange={(event) => applySizePreset(event.target.value)}
               >
-                {SIZE_PRESETS.map((preset) => (
+                {availableSizePresets.map((preset) => (
                   <option key={preset.value} value={preset.value}>
                     {preset.label}
                   </option>
@@ -445,7 +455,7 @@ export function GenerationControls({
                   type="number"
                   min={256}
                   max={1920}
-                  step={16}
+                  step={dimensionMultiple}
                   value={settings.width}
                   onChange={(event) =>
                     onSettingsChange({ width: Number(event.target.value) })
@@ -470,7 +480,7 @@ export function GenerationControls({
                   type="number"
                   min={256}
                   max={1920}
-                  step={16}
+                  step={dimensionMultiple}
                   value={settings.height}
                   onChange={(event) =>
                     onSettingsChange({ height: Number(event.target.value) })

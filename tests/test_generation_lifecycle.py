@@ -4,6 +4,7 @@ import tempfile
 import threading
 import unittest
 import urllib.request
+import json
 from pathlib import Path
 from unittest.mock import patch
 from http.server import ThreadingHTTPServer
@@ -26,6 +27,59 @@ def stalled_inference(connection):
 
 
 class GenerationLifecycleTests(unittest.TestCase):
+    def test_tts_stop_discards_partial_wav_and_allows_next_job(self):
+        with tempfile.TemporaryDirectory() as directory:
+            outputs = Path(directory)
+            started = threading.Event()
+            interrupted = threading.Event()
+            def generate(**kwargs):
+                name = kwargs["request"]["outputName"]
+                (outputs / name).write_bytes(b"partial wav")
+                started.set()
+                interrupted.wait(5)
+                return {"name": name, "url": f"/outputs/{name}", "duration": 1, "sampleRate": 24000}
+            server = ThreadingHTTPServer(("127.0.0.1", 0), api_server.Handler)
+            serving = threading.Thread(target=server.serve_forever, daemon=True)
+            serving.start()
+            with api_server.TTS_JOB_LOCK:
+                previous = dict(api_server.TTS_JOB)
+                previous["logs"] = list(api_server.TTS_JOB["logs"])
+            previous_cancel = api_server.TTS_CANCEL_EVENT
+            base = f"http://127.0.0.1:{server.server_port}"
+            def post(path):
+                body = json.dumps({"model": "custom-0.6b", "threadId": "test-audio", "text": "Hello", "device": "CPU"}).encode()
+                return json.load(urllib.request.urlopen(urllib.request.Request(base + path, data=body, headers={"Content-Type": "application/json"})))
+            try:
+                with patch.object(api_server, "OUTPUTS", outputs), patch.object(api_server, "tts_model_ready", return_value=True), patch.object(api_server.TTS_GENERATION_WORKER, "generate", side_effect=generate), patch.object(api_server.TTS_GENERATION_WORKER, "interrupt", side_effect=interrupted.set), patch.object(api_server.TTS_GENERATION_WORKER, "close"):
+                    first = post("/api/tts/generate")["job"]["id"]
+                    self.assertTrue(started.wait(5))
+                    self.assertIn(post("/api/tts/stop")["job"]["status"], ("stopping", "stopped"))
+                    for _ in range(50):
+                        status = json.load(urllib.request.urlopen(base + "/api/tts/status"))
+                        if status["status"] == "stopped":
+                            break
+                        time.sleep(0.02)
+                    self.assertEqual(status["id"], first)
+                    self.assertEqual(status["status"], "stopped")
+                    self.assertEqual(status["output"], None)
+                    self.assertFalse((outputs / f"qwen3-tts-{first}.wav").exists())
+                    with patch.object(api_server.TTS_GENERATION_WORKER, "generate", return_value={"name": "second.wav", "url": "/outputs/second.wav", "duration": 1, "sampleRate": 24000}):
+                        second = post("/api/tts/generate")["job"]["id"]
+                        for _ in range(50):
+                            status = json.load(urllib.request.urlopen(base + "/api/tts/status"))
+                            if status["status"] == "complete":
+                                break
+                            time.sleep(0.02)
+                        self.assertEqual(status["id"], second)
+                        self.assertEqual(status["status"], "complete")
+            finally:
+                server.shutdown()
+                server.server_close()
+                with api_server.TTS_JOB_LOCK:
+                    api_server.TTS_JOB.clear()
+                    api_server.TTS_JOB.update(previous)
+                api_server.TTS_CANCEL_EVENT = previous_cancel
+
     def test_cancelled_result_is_not_published_to_gallery(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

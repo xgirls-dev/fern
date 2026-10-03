@@ -11,6 +11,10 @@ $SitePackages = Join-Path $VenvPath "Lib\site-packages"
 $RuntimeDir = Join-Path $Root "apps\desktop\resources\runtime-release"
 $PythonHomeTarget = Join-Path $RuntimeDir "python-home"
 $SitePackagesTarget = Join-Path $RuntimeDir "site-packages"
+$RuntimeDir = [IO.Path]::GetFullPath($RuntimeDir)
+if (-not $RuntimeDir.StartsWith([IO.Path]::GetFullPath($Root) + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+    throw "Runtime target is outside the workspace: $RuntimeDir"
+}
 
 if (-not (Test-Path (Join-Path $VenvPath "Scripts\python.exe"))) {
     throw "Source venv not found at $VenvPath. Create it and install requirements first."
@@ -27,6 +31,10 @@ if (-not (Test-Path $PythonHome)) {
 if (-not (Test-Path $SitePackages)) {
     throw "site-packages not found at $SitePackages"
 }
+
+# Reject the retired image experiment environment before copying any files.
+& (Join-Path $VenvPath 'Scripts/python.exe') (Join-Path $PSScriptRoot 'check-release-runtime.py')
+if ($LASTEXITCODE -ne 0) { throw 'Release runtime verification failed. Prepare a clean environment from requirements.txt.' }
 
 Write-Host "Bundling portable Python runtime..."
 Write-Host "  Python home: $PythonHome"
@@ -53,7 +61,7 @@ if (Test-Path $DuplicateSitePackages) {
     Remove-Item $DuplicateSitePackages -Recurse -Force
 }
 
-$SiteExcludeDirs = @("__pycache__", "pip", "setuptools", "pkg_resources")
+$SiteExcludeDirs = @("__pycache__", "pip")
 $SiteExcludeArgs = $SiteExcludeDirs | ForEach-Object { "/XD", $_ }
 
 robocopy $SitePackages $SitePackagesTarget /E /NFL /NDL /NJH /NJS /nc /ns /np @SiteExcludeArgs /XF *.pdb *.lib | Out-Null
@@ -69,9 +77,11 @@ sys.path.insert(0, r'$SitePackagesTarget')
 import PIL
 import openvino
 import torch
+from optimum.intel import OVFlux2KleinPipeline
 print('bundled-python-ok', sys.version)
 print('openvino', openvino.__version__)
 print('torch', torch.__version__)
+print('OVFlux2KleinPipeline ready')
 try:
     import openvino_nvidia
     print('openvino-nvidia', openvino_nvidia.__file__)
@@ -79,7 +89,7 @@ except Exception as exc:
     print('openvino-nvidia-not-bundled', exc)
 "@
 
-& $PythonExe -c $VerifyScript
+& $PythonExe -B -c $VerifyScript
 if ($LASTEXITCODE -ne 0) {
     throw "Bundled Python verification failed."
 }

@@ -292,13 +292,12 @@ def model_status(device: str = DEFAULT_DEVICE, model="9b") -> dict[str, Any]:
     memory = {}
     for state in (_OPENVINO_DEPENDENCY_STATUS, _NVIDIA_DEPENDENCY_STATUS):
         if state: memory.update(state.get("memory", {}))
-    devices = [normalize_device(device)] if normalize_device(device) != AUTO else [NVIDIA_GPU, INTEL_GPU, CPU]
+    devices = [normalize_device(device)] if normalize_device(device) != AUTO else [NVIDIA_GPU, INTEL_GPU]
     choices = [model] if model != "auto" else ["9b", "4b"]
     chosen = None
     pairs = [(choice, candidate) for choice in choices for candidate in devices]
     if model == "auto" and normalize_device(device) == AUTO:
         pairs = [(choice, candidate) for choice in choices for candidate in devices if candidate != CPU]
-        pairs += [(choice, CPU) for choice in reversed(choices)]
     for choice, candidate in pairs:
         candidates = {item["id"]: item for item in _adapter_statuses(choice)}
         if candidates[candidate]["runtimeReady"]:

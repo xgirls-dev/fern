@@ -1219,6 +1219,8 @@ code {
   min-height: 30px;
   font-weight: 400;
 }
+.sidebar-new-button > span:not(.sidebar-shortcut) { white-space: nowrap; }
+.sidebar-new-button .sidebar-shortcut { display: none; }
 .sidebar-new-divider {
   flex: 0 0 auto;
   height: 1px;

@@ -3,6 +3,15 @@ import type { StudioSettings } from "./types";
 const THREADS_KEY = "fern-threads:v1";
 const REFERENCES_DB = "fern-thread-references";
 
+// Retired model IDs can remain in old threads and gallery metadata.
+export function normalizeImageSettings(settings: StudioSettings): StudioSettings {
+  if (["auto", "9b", "4b"].includes(settings.model ?? "auto")) return settings;
+  const dimension = (value: number) =>
+    Number.isFinite(value) ? Math.max(256, Math.min(1920, Math.round(value / 16) * 16)) : 1024;
+  return { ...settings, model: "auto", width: dimension(settings.width),
+    height: dimension(settings.height), steps: 4, guidance: 1 };
+}
+
 export interface ImageThread {
   archived?: boolean;
   id: string;
@@ -52,23 +61,26 @@ export function loadThreadWorkspace(settings: StudioSettings): ThreadWorkspace {
           typeof thread.settings?.prompt === "string",
       );
       if (threads.length) {
-        return {
+        const workspace: ThreadWorkspace = {
           activeId: threads.some((thread) => thread.id === value.activeId)
             ? value.activeId
             : threads[0].id,
           threads: threads.map((thread) => ({
             ...thread,
-            settings: {
+            settings: normalizeImageSettings({
               ...settings,
               ...thread.settings,
-              model: ["auto", "9b", "4b"].includes(thread.settings.model ?? "")
-                ? thread.settings.model
-                : "9b",
-            },
+            }),
             imageNames: thread.imageNames ?? [],
             referenceLabel: thread.referenceLabel ?? "No reference image.",
           })),
         };
+        if (threads.some((thread) => !["auto", "9b", "4b"].includes(thread.settings.model ?? "auto"))) {
+          try { saveThreadWorkspace(workspace); } catch {
+            // Keep the migrated draft usable even if local storage is full.
+          }
+        }
+        return workspace;
       }
     }
   } catch {

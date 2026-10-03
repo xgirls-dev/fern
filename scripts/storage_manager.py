@@ -11,7 +11,7 @@ from typing import Any, Iterable
 GIB = 1024**3
 MIB = 1024**2
 CACHE_RETENTION_DAYS = 30
-CACHE_HARD_MAX_BYTES = 4 * GIB
+CACHE_HARD_MAX_BYTES = 40 * GIB
 CACHE_MIN_BYTES = 1 * GIB
 MIN_FREE_FLOOR_BYTES = 5 * GIB
 MIN_FREE_CEILING_BYTES = 20 * GIB
@@ -181,6 +181,8 @@ def storage_status(
     cache_bytes = _size(cache_files)
     outputs = _files(outputs_dir)
     output_bytes = _size(outputs)
+    images = [path for path in outputs if path.suffix.lower() == ".png"]
+    audio = [path for path in outputs if path.suffix.lower() == ".wav"]
     data_files = _files(data_dir)
     model_files = _files(models_dir)
     data_bytes = _size(data_files)
@@ -196,6 +198,8 @@ def storage_status(
             "bytes": output_bytes,
             "fileCount": len(outputs),
         },
+        "images": {"bytes": _size(images), "fileCount": len(images)},
+        "audio": {"bytes": _size(audio), "fileCount": len(audio)},
         "metadata": {
             "bytes": data_bytes,
         },

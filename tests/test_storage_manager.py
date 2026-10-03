@@ -84,6 +84,7 @@ class StorageManagerTests(unittest.TestCase):
                 path.mkdir()
             (cache / "cache.bin").write_bytes(b"12")
             (outputs / "image.png").write_bytes(b"345")
+            (outputs / "take.wav").write_bytes(b"audio")
             (data / "gallery.json").write_bytes(b"6789")
             (models / "model.bin").write_bytes(b"model")
 
@@ -95,7 +96,9 @@ class StorageManagerTests(unittest.TestCase):
                 models_dir=models,
             )
 
-            self.assertEqual(status["managedBytes"], 9)
+            self.assertEqual(status["managedBytes"], 14)
+            self.assertEqual(status["images"], {"bytes": 3, "fileCount": 1})
+            self.assertEqual(status["audio"], {"bytes": 5, "fileCount": 1})
             self.assertEqual(status["models"]["bytes"], 5)
             self.assertTrue(status["models"]["preservedOnReset"])
 

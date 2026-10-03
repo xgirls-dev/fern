@@ -1,5 +1,5 @@
 export interface ImageRecord {
-  model?: "9b" | "4b";
+  model?: string;
   modelRevision?: string;
   referenceUsed?: boolean;
   referenceUrl?: string;
@@ -126,6 +126,8 @@ export interface StorageStatus {
     bytes: number;
     fileCount: number;
   };
+  images: { bytes: number; fileCount: number };
+  audio: { bytes: number; fileCount: number };
   metadata: {
     bytes: number;
   };

@@ -1,0 +1,5 @@
+Qwen3-TTS source: Alibaba Qwen team, Apache-2.0.
+Source commit: 1ab0dd75353392f28a0d05d9ca960c9954b13c83.
+OpenVINO helper: OpenVINO notebooks contributors, Apache-2.0.
+Original helper SHA-256: d054da021f701707072d0b8c7b68fe476a2db20555a5f8b5bbd723af496991c8.
+Vendored for reproducible Fern inference; conversion is not used during installation.

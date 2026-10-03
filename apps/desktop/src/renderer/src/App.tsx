@@ -1,6 +1,6 @@
 import Square from "lucide-react/dist/esm/icons/square.mjs";
 import FolderOpen from "lucide-react/dist/esm/icons/folder-open.mjs";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import Plus from "lucide-react/dist/esm/icons/plus.mjs";
 import SlidersHorizontal from "lucide-react/dist/esm/icons/sliders-horizontal.mjs";
 import type { ImageRecord } from "./lib/types";
@@ -8,14 +8,13 @@ import { PromptComposer } from "./components/PromptComposer";
 import X from "lucide-react/dist/esm/icons/x.mjs";
 import { resolveAssetUrl } from "./lib/api";
 import { useStudio } from "./hooks/useStudio";
+import { useQwen3Tts } from "./hooks/useQwen3Tts";
 import { ActivityTerminal } from "./components/ActivityTerminal";
 import { CommandPalette } from "./components/CommandPalette";
-import { StorageView } from "./components/StorageView";
 import { GenerationControls } from "./components/GenerationControls";
 import { PreviewMetadataHud } from "./components/PreviewMetadataHud";
 import { Lightbox } from "./components/Lightbox";
 import { OutputWorkspace } from "./components/OutputWorkspace";
-import { PreferencesView } from "./components/PreferencesView";
 import { RuntimeLoadingDialog } from "./components/RuntimeLoadingDialog";
 import { StudioSidebar } from "./components/StudioSidebar";
 import { TitleBar } from "./components/TitleBar";
@@ -25,8 +24,13 @@ import { ThreadBrowser } from "./components/ThreadBrowser";
 import { notify } from "./lib/notifications";
 import { validateReference } from "./lib/reference";
 
+const StorageView = lazy(() => import("./components/StorageView").then((module) => ({ default: module.StorageView })));
+const PreferencesView = lazy(() => import("./components/PreferencesView").then((module) => ({ default: module.PreferencesView })));
+const Qwen3TtsWorkspace = lazy(() => import("./components/Qwen3TtsWorkspace").then((module) => ({ default: module.Qwen3TtsWorkspace })));
+
 export function App() {
   const studio = useStudio();
+  const tts = useQwen3Tts(studio.ready);
   const [threadBrowserOpen, setThreadBrowserOpen] = useState(false);
   const [inspectorView, setInspectorView] = useState<
     "settings" | "info" | null
@@ -53,8 +57,14 @@ export function App() {
   const lightboxOpen = Boolean(lightboxImage);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [activeSection, setActiveSection] = useState<
-    "create" | "library" | "preferences" | "storage"
+    "create" | "tts" | "library" | "preferences" | "storage"
   >("create");
+  useEffect(() => {
+    if (!studio.ready) return;
+    const imageActive = activeSection === "create" || activeSection === "library";
+    studio.setImagePollingActive(imageActive);
+    if (imageActive) void studio.refresh();
+  }, [activeSection, studio.ready, studio.refresh, studio.setImagePollingActive]);
   const [promptFocusRequest, setPromptFocusRequest] = useState(0);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     try {
@@ -91,13 +101,29 @@ export function App() {
     focusPrompt();
   }, [studio.newThread, focusPrompt]);
 
+  const newAudioThread = useCallback(() => {
+    tts.newThread();
+    setActiveSection("tts");
+  }, [tts.newThread]);
+
+  const selectAudioThread = useCallback((id: string) => {
+    tts.selectThread(id);
+    setActiveSection("tts");
+  }, [tts.selectThread]);
+
   const openThread = useCallback(
     (id: string) => {
+      if (id.startsWith("audio-thread-")) {
+        tts.selectThread(id);
+        setActiveSection("tts");
+        setLightboxImage(null);
+        return;
+      }
       studio.selectThread(id);
       setActiveSection("create");
       setLightboxImage(null);
     },
-    [studio.selectThread],
+    [studio.selectThread, tts.selectThread],
   );
 
   const remixImage = (image: ImageRecord) => {
@@ -252,6 +278,9 @@ export function App() {
       if (key === "k") {
         event.preventDefault();
         setCommandPaletteOpen(true);
+      } else if (key === "n" && event.shiftKey) {
+        event.preventDefault();
+        newAudioThread();
       } else if (key === "n") {
         event.preventDefault();
         newThread();
@@ -265,7 +294,7 @@ export function App() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [newThread, openLibrary]);
+  }, [newThread, newAudioThread, openLibrary]);
 
   useEffect(() => {
     try {
@@ -306,14 +335,26 @@ export function App() {
       >
         <StudioSidebar
           threads={studio.threads}
+          audioThreads={tts.threads}
           onArchiveThread={studio.archiveThread}
           onOpenSearch={openThreadSearch}
           activeThreadId={studio.activeThread.id}
+          activeAudioThreadId={tts.activeThread.id}
+          runningAudioThreadId={
+            tts.status.status === "running" || tts.status.status === "setting_up" || tts.status.status === "stopping"
+              ? tts.status.threadId
+              : null
+          }
           runningThreadId={
             studio.running ? (studio.status?.job.threadId ?? null) : null
           }
           onSelectThread={openThread}
           onNewThread={newThread}
+          onSelectAudioThread={selectAudioThread}
+          onNewAudioThread={newAudioThread}
+          onRenameAudioThread={tts.renameThread}
+          onArchiveAudioThread={tts.archiveThread}
+          onDeleteAudioThread={tts.deleteThread}
           onRenameThread={studio.renameThread}
           onDeleteThread={studio.deleteThread}
           submitting={studio.submitting}
@@ -328,26 +369,32 @@ export function App() {
           id="main-content"
           className={`dashboard dashboard--${activeSection}`}
         >
-          <StorageView
+          {activeSection === "storage" ? <Suspense fallback={<div className="dashboard-loading" role="status">Opening storage…</div>}><StorageView
             active={activeSection === "storage"}
-            running={studio.running}
-            onResetLocalData={studio.resetLocalData}
-          />
-          <PreferencesView
+            running={studio.running || tts.status.status === "running" || tts.status.status === "setting_up" || tts.status.status === "stopping"}
+            onResetLocalData={async () => { await studio.resetLocalData(); tts.resetWorkspace(); }}
+          /></Suspense> : null}
+          {activeSection === "preferences" ? <Suspense fallback={<div className="dashboard-loading" role="status">Opening preferences…</div>}><PreferencesView
             active={activeSection === "preferences"}
             theme={studio.settings.theme}
             sidebarCollapsed={sidebarCollapsed}
             modelStatus={studio.status?.model ?? null}
+            audioModels={tts.status.models}
+            audioStatusLoaded={tts.statusLoaded}
+            audioStatusError={tts.statusError}
+            onOpenAudio={() => setActiveSection("tts")}
             onToggleTheme={() =>
               studio.updateSettings({
                 theme: studio.settings.theme === "dark" ? "light" : "dark",
               })
             }
             onToggleSidebar={() => setSidebarCollapsed((value) => !value)}
-          />
+          /></Suspense> : null}
 
           {activeSection === "preferences" ||
-          activeSection === "storage" ? null : activeSection === "create" ? (
+          activeSection === "storage" ? null : activeSection === "tts" ? (
+            <Suspense fallback={<div className="dashboard-loading" role="status">Opening audio workspace…</div>}><Qwen3TtsWorkspace studio={tts} /></Suspense>
+          ) : activeSection === "create" ? (
             <section
               className={`create-view${inspectorView ? " has-inspector" : ""}`}
               aria-labelledby="create-heading"
@@ -383,7 +430,7 @@ export function App() {
                   </span>
                   <span>
                     {studio.status?.model.selectedModel
-                      ? `Flux.2 Klein ${studio.status.model.selectedModel.toUpperCase()}`
+                        ? `Flux.2 Klein ${studio.status.model.selectedModel.toUpperCase()}`
                       : "Flux.2 Klein"}
                   </span>
                 </div>
@@ -675,7 +722,7 @@ export function App() {
             </section>
           )}
 
-          {studio.error && !startupDialogOpen && (
+          {studio.error && activeSection !== "tts" && !startupDialogOpen && (
             <div className="dashboard-error" role="alert">
               {studio.error}
               {studio.status?.job.model === "9b" &&
@@ -729,12 +776,12 @@ export function App() {
       <Notifications />
       {threadBrowserOpen ? (
         <ThreadBrowser
-          threads={studio.threads}
+          threads={[...studio.threads, ...tts.threads]}
           onOpen={openThread}
           onClose={() => setThreadBrowserOpen(false)}
         />
       ) : null}
-      {runtimeDismissed &&
+      {activeSection !== "tts" && runtimeDismissed &&
       !studio.running &&
       (studio.runtimeNeedsAttention ||
         studio.status?.model.checking ||
@@ -784,9 +831,12 @@ export function App() {
       <CommandPalette
         open={commandPaletteOpen}
         running={studio.running}
+        audioRunning={tts.status.status === "running" || tts.status.status === "setting_up" || tts.status.status === "stopping"}
         sidebarCollapsed={sidebarCollapsed}
         onClose={() => setCommandPaletteOpen(false)}
         onNewRender={newThread}
+        onNewAudio={newAudioThread}
+        onOpenAudio={() => setActiveSection("tts")}
         onOpenLibrary={openLibrary}
         onOpenData={openStorage}
         onOpenPreferences={openPreferences}
@@ -797,6 +847,7 @@ export function App() {
         }
         onToggleSidebar={() => setSidebarCollapsed((value) => !value)}
         onStop={() => void studio.stopGeneration()}
+        onStopAudio={() => void tts.stopJob()}
       />
     </div>
   );

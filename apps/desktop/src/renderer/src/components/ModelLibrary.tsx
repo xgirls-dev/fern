@@ -77,10 +77,9 @@ export function ModelLibrary({ status }: { status: ModelStatus | null }) {
     <section className="preferences-section" aria-labelledby="models-title">
       <div className="preferences-section-heading">
         <div>
-          <h3 id="models-title">Models</h3>
+          <h3 id="models-title">Image models</h3>
           <p>
-            Install either model or keep both. Models load only when you
-            generate.
+            Install the image models you need. They load when you generate.
           </p>
         </div>
       </div>
@@ -94,7 +93,7 @@ export function ModelLibrary({ status }: { status: ModelStatus | null }) {
           <article className="model-library-card" key={model.id}>
             <h4>{model.label}</h4>
             <p>
-              {(model.bytes / 1e9).toFixed(2)} GB ·{" "}
+              {model.bytes > 0 ? `${(model.bytes / 1e9).toFixed(2)} GB · ` : ""}
               {model.id === "4b"
                 ? "Smaller download and lower memory use"
                 : "Larger model"}
@@ -178,8 +177,7 @@ export function ModelLibrary({ status }: { status: ModelStatus | null }) {
       </div>
       <p>
         {status?.checking ? "Checking runtime. " : ""}
-        Auto chooses an installed model on a usable device. Choose Klein 4B for a
-        smaller model.
+        Auto chooses an installed model on a usable device.
       </p>
     </section>
   );

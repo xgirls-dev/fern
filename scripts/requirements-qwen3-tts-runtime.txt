@@ -1,0 +1,13 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.8.0
+torchaudio==2.8.0
+openvino==2026.4.0
+transformers==4.57.3
+accelerate==1.12.0
+numpy==2.4.6
+soundfile==0.14.0
+librosa==1.0.0
+einops==0.8.2
+huggingface_hub==0.36.2
+sox==1.5.0
+onnxruntime==1.30.0

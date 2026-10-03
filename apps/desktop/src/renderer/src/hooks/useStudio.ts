@@ -12,6 +12,7 @@ import {
 import {
   createImageThread,
   loadThreadWorkspace,
+  normalizeImageSettings,
   readThreadReference,
   saveThreadWorkspace,
   threadTitle,
@@ -81,12 +82,10 @@ function loadSettings(): StudioSettings {
       );
     if (!raw) return DEFAULT_SETTINGS;
     const parsed = JSON.parse(raw) as Partial<StudioSettings>;
-    const merged = { ...DEFAULT_SETTINGS, ...parsed };
+    const merged = normalizeImageSettings({ ...DEFAULT_SETTINGS, ...parsed });
     const settings: StudioSettings = {
       prompt: merged.prompt,
-      model: ["auto", "9b", "4b"].includes(parsed.model ?? "")
-        ? parsed.model
-        : "9b",
+      model: merged.model,
       device: normalizeDevice(merged.device),
       width: merged.width,
       height: merged.height,
@@ -192,6 +191,7 @@ export function useStudio() {
   const previewedJobIdRef = useRef(previewedJobId);
   const previousJobStatusRef = useRef<string>("idle");
   const refreshingRef = useRef(false);
+  const imagePollingActiveRef = useRef(true);
   settingsRef.current = settings;
   previewRef.current = preview;
   previewedJobIdRef.current = previewedJobId;
@@ -275,13 +275,14 @@ export function useStudio() {
       patch: Partial<StudioSettings>,
       threadId = workspaceRef.current.activeId,
     ) => {
+      const nextPatch = { ...patch };
       setFieldErrors((current) =>
         Object.fromEntries(
-          Object.entries(current).filter(([key]) => !(key in patch)),
+          Object.entries(current).filter(([key]) => !(key in nextPatch)),
         ),
       );
       setError(null);
-      updateThreadSettings(threadId, patch);
+      updateThreadSettings(threadId, nextPatch);
     },
     [updateThreadSettings],
   );
@@ -490,6 +491,7 @@ export function useStudio() {
       const data = await fetchStatus(
         settingsRef.current.device,
         settingsRef.current.model,
+        imagePollingActiveRef.current,
       );
       setStatus(data);
       setConnectionError(null);
@@ -549,6 +551,12 @@ export function useStudio() {
       refreshingRef.current = false;
     }
   }, [commitWorkspace]);
+
+  const setImagePollingActive = useCallback((active: boolean) => {
+    if (imagePollingActiveRef.current === active) return;
+    imagePollingActiveRef.current = active;
+    if (active) invalidateImages();
+  }, []);
 
   const connectBackend = useCallback(async () => {
     setConnecting(true);
@@ -736,19 +744,21 @@ export function useStudio() {
       return;
     }
     const invalid: Record<string, string> = {};
+    const dimensionMultiple = 16;
     for (const key of ["width", "height"] as const) {
       const value = settings[key];
       if (
         !Number.isInteger(value) ||
         value < 256 ||
         value > 1920 ||
-        value % 16 !== 0
+        value % dimensionMultiple !== 0
       )
-        invalid[key] = "Use a multiple of 16 between 256 and 1920.";
+        invalid[key] = `Use a multiple of ${dimensionMultiple} between 256 and 1920.`;
     }
+    const minimumSteps = 1;
     if (
       !Number.isInteger(settings.steps) ||
-      settings.steps < 1 ||
+      settings.steps < minimumSteps ||
       settings.steps > 50
     )
       invalid.steps = "Use 1–50 whole steps.";
@@ -859,7 +869,7 @@ export function useStudio() {
       const source = workspaceRef.current.threads.find(
         (thread) => thread.id === image.threadId,
       );
-      const thread = createImageThread({
+      const thread = createImageThread(normalizeImageSettings({
         ...settingsRef.current,
         prompt: image.prompt ?? "",
         seed: image.seed ?? 42,
@@ -868,10 +878,10 @@ export function useStudio() {
         height: image.height ?? 1024,
         steps: image.steps ?? 4,
         guidance: image.guidance ?? 1,
-        model: image.model ?? (image.modelPath?.includes("4b") ? "4b" : "9b"),
+        model: (image.model ?? (image.modelPath?.includes("4b") ? "4b" : "9b")) as StudioSettings["model"],
         device: normalizeDevice(image.device),
         batchSize: 1,
-      });
+      }));
       thread.settings.prompt = image.prompt ?? "";
       thread.title = `${threadTitle(image.prompt ?? source?.title ?? "Image")} · variation`;
       thread.renamed = true;
@@ -1093,6 +1103,7 @@ export function useStudio() {
     resetLocalData,
     resetRevision,
     refresh,
+    setImagePollingActive,
     retryRuntime,
     chooseDevice,
     reconnect: connectBackend,

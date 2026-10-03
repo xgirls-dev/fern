@@ -125,9 +125,9 @@ export function ComposerModelMenu({
             {
               id: "auto" as const,
               label: "Auto",
-              detail: "Choose from installed models",
+              detail: "Select an installed model automatically",
             },
-            ...models.map((model) => ({ ...model, detail: "Installed" })),
+            ...models.map((model) => ({ ...model, detail: model.id === "4b" ? "Faster and lighter · lower memory use" : "More capable · larger and slower" })),
           ].map((model) => (
             <button
               type="button"

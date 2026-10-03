@@ -180,10 +180,14 @@ export function StorageView({
                   <HardDrive size={16} aria-hidden="true" />
                 </span>
                 <div>
-                  <span>Generated Images</span>
-                  <strong>{formatBytes(storage.outputs.bytes)}</strong>
-                  <small>{storage.outputs.fileCount} local files</small>
+                  <span>Generated images</span>
+                  <strong>{formatBytes(storage.images.bytes)}</strong>
+                  <small>{storage.images.fileCount} PNG files</small>
                 </div>
+              </article>
+              <article className="storage-card">
+                <span className="storage-icon"><HardDrive size={16} aria-hidden="true" /></span>
+                <div><span>Audio takes</span><strong>{formatBytes(storage.audio.bytes)}</strong><small>{storage.audio.fileCount} WAV files</small></div>
               </article>
               <article className="storage-card">
                 <span className="storage-icon">
@@ -200,7 +204,7 @@ export function StorageView({
                   <Database size={16} aria-hidden="true" />
                 </span>
                 <div>
-                  <span>Downloaded Model</span>
+                  <span>Downloaded models</span>
                   <strong>{formatBytes(storage.models.bytes)}</strong>
                   <small>Preserved when local data is cleared</small>
                 </div>
@@ -234,7 +238,7 @@ export function StorageView({
         <div className="data-actions data-actions-danger">
           <div>
             <strong>Clear Local Data</strong>
-            <p>Deletes generated images, cache, prompts, gallery history, and preferences.</p>
+            <p>Deletes generated images, audio takes, cache, thread history, prompts, and preferences.</p>
           </div>
           {confirmingReset ? (
             <div className="confirm-actions">
@@ -269,10 +273,9 @@ export function StorageView({
         </div>
 
         <footer className="data-dialog-footer">
-          The model and bundled runtime stay installed, so Fern remains ready to generate.
+          Downloaded models and bundled runtimes stay installed.
         </footer>
         </div>
       </section>
   );
 }
-

@@ -43,7 +43,7 @@ export function ThreadBrowser({
             <article key={thread.id}>
               <button type="button" className="thread-browser-open" onClick={() => { onOpen(thread.id); onClose(); }}>
                 <span>{thread.title}</span>
-                <small>{thread.archived ? "Archived" : "Open thread"}</small>
+                <small>{thread.id.startsWith("audio-thread-") ? "Audio thread" : "Image thread"}{thread.archived ? " · Archived" : ""}</small>
               </button>
             </article>
           ))}

@@ -19,25 +19,29 @@ class ModelManager:
 
     def folder(self, model, staging=False):
         path = (
-            self.root / (model_spec(model)["folder"] + (".download" if staging else ""))
+            self.root / model_spec(model)["folder"]
         ).resolve()
-        if path.parent != self.root:
+        if staging:
+            path = path.with_name(path.name + ".download")
+        if path == self.root or not path.is_relative_to(self.root):
             raise ValueError("Invalid model folder")
         return path
 
     def snapshot(self):
         with self.lock:
-            return [
-                {
+            result = []
+            for key, spec in CATALOG.items():
+                is_installed = installed(self.root, key)
+                result.append({
                     **{k: v for k, v in spec.items() if k != "files"},
                     "bytes": sum(f["size"] for f in spec["files"]),
-                    "installed": installed(self.root, key),
+                    "installed": is_installed,
                     **self.jobs.get(
                         key,
                         {
                             "state": (
                                 "installed"
-                                if installed(self.root, key)
+                                if is_installed
                                 else (
                                     "repair-needed"
                                     if self.folder(key).exists()
@@ -51,9 +55,8 @@ class ModelManager:
                             "downloaded": 0,
                         },
                     ),
-                }
-                for key, spec in CATALOG.items()
-            ]
+                })
+            return result
 
     def start(self, model):
         model_spec(model)
@@ -95,7 +98,8 @@ class ModelManager:
                     if path.exists():
                         shutil.rmtree(path)
                 cache_root = (self.root.parent / ".cache" / "openvino").resolve()
-                cache = (cache_root / f"flux2-klein-{model}").resolve()
+                cache_name = f"flux2-klein-{model}"
+                cache = (cache_root / cache_name).resolve()
                 if cache.parent != cache_root:
                     raise ValueError("Invalid model cache folder")
                 if cache.exists():

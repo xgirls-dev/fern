@@ -1,0 +1,687 @@
+{
+  "custom-0.6b": {
+    "repo": "xgirls/Qwen3-TTS-12Hz-0.6B-CustomVoice-OpenVINO",
+    "revision": "56999806c869a759c3923de3f2ffc6021c94d582",
+    "folder": "custom-0.6b-OV",
+    "bytes": 2174455357,
+    "files": [
+      {
+        "path": "added_tokens.json",
+        "size": 939,
+        "sha256": "766b0099e5b62b88da89bf689545d38ccde3d50927822badc48d3e0d6b70b281"
+      },
+      {
+        "path": "config.json",
+        "size": 5611,
+        "sha256": "ab5737095bc7cabf3381304a2716692c4d9228b2bddcb925d2620e9ebf49c1f0"
+      },
+      {
+        "path": "merges.txt",
+        "size": 1671853,
+        "sha256": "8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5"
+      },
+      {
+        "path": "openvino_talker_code_predictor_embedding_model.bin",
+        "size": 62914572,
+        "sha256": "aeabfe905ab3d9cb8aa6e34efd045bbf6913483e93c3a5c8e9c44cb7443b7ba2"
+      },
+      {
+        "path": "openvino_talker_code_predictor_embedding_model.xml",
+        "size": 43176,
+        "sha256": "b1c955b445d4ec0fb6f1b363b109e9c0e0b6d94cb4bb2474d27223428d5a2988"
+      },
+      {
+        "path": "openvino_talker_code_predictor_model.bin",
+        "size": 220226441,
+        "sha256": "36ffacfc6a9a473ced2b71006467457ee851dbb687d1488f96f00c157698e2fc"
+      },
+      {
+        "path": "openvino_talker_code_predictor_model.xml",
+        "size": 594088,
+        "sha256": "0fb5c0892a3973dea49bf712519f6bacf9971cb80cadd43202a0a04ea3451a80"
+      },
+      {
+        "path": "openvino_talker_embedding_model.bin",
+        "size": 6291460,
+        "sha256": "28a768e5d14d32c7b9505194cd62114ef4968566a8cea88e3bdafac201dfb971"
+      },
+      {
+        "path": "openvino_talker_embedding_model.xml",
+        "size": 3145,
+        "sha256": "bf42c7d99dad8d5cf5a72ac4f4ca24234b00453fbab9f3a5588f4a832d8d87a9"
+      },
+      {
+        "path": "openvino_talker_language_model.bin",
+        "size": 887226813,
+        "sha256": "31816d63a5187fb5d841f554ddc885fe124811f5b04532592b2ce25275d3c386"
+      },
+      {
+        "path": "openvino_talker_language_model.xml",
+        "size": 2913227,
+        "sha256": "28ae3b465b820d20950cb5f02b5bfbe518d2c3e4524c0102f1cf7da58d48cacb"
+      },
+      {
+        "path": "openvino_talker_text_embedding_model.bin",
+        "size": 622329860,
+        "sha256": "cb2a560caffb0eaebfe217d1646b3b76b84f8f7dc7407f9145a5e296db54ee72"
+      },
+      {
+        "path": "openvino_talker_text_embedding_model.xml",
+        "size": 3162,
+        "sha256": "9b7271fe0e8636bbafb4628408a6c3dfcd0199f200125ef36d1b5f8efe236fb0"
+      },
+      {
+        "path": "openvino_talker_text_projection_model.bin",
+        "size": 12589056,
+        "sha256": "7614b396a96f5440200ead34b6688465b4e9557aaa0127c78d7ef664f3cf8b45"
+      },
+      {
+        "path": "openvino_talker_text_projection_model.xml",
+        "size": 7412,
+        "sha256": "b90c165d53436301a6fc302e18cb3c36e597fa05b5442990696619bcd3694910"
+      },
+      {
+        "path": "special_tokens_map.json",
+        "size": 1052,
+        "sha256": "93dabd1cc62f5c4442c243aca7cf9e9a252f4fa051c0eb1429089cbbcefd0a43"
+      },
+      {
+        "path": "speech_tokenizer/config.json",
+        "size": 2484,
+        "sha256": "d867900432740f4526b943d1fc163868e2eabc302a363efbad6ef973319f921d"
+      },
+      {
+        "path": "speech_tokenizer/openvino_speech_tokenizer_decoder_model.bin",
+        "size": 228056887,
+        "sha256": "1e2b5bd84797fe099d4ad0d4cfaa3ce2b818a3d95a6b6c7206f0406f841f4bca"
+      },
+      {
+        "path": "speech_tokenizer/openvino_speech_tokenizer_decoder_model.xml",
+        "size": 1254024,
+        "sha256": "9157b76e07d0de133e499a33f913cbf1641d6bf169e075a14e5e9d7909ca9608"
+      },
+      {
+        "path": "speech_tokenizer/openvino_speech_tokenizer_encoder_model.bin",
+        "size": 112862185,
+        "sha256": "1ca8bed1b70d1941e5b06738f7f2d8afe51c7bfd068d37da29308a35d730b305"
+      },
+      {
+        "path": "speech_tokenizer/openvino_speech_tokenizer_encoder_model.xml",
+        "size": 1249143,
+        "sha256": "b22d57901388f689a8d295161471450cc85e042fff3f4ed120adfddeaf278956"
+      },
+      {
+        "path": "speech_tokenizer/preprocessor_config.json",
+        "size": 244,
+        "sha256": "a498909ba41de0b1c778822a2c5e631eef651ddbad19612a3beb7a3754bf9b5b"
+      },
+      {
+        "path": "tokenizer.json",
+        "size": 11423986,
+        "sha256": "09267689b8362020b9763b65dd5be7e086b31e28d72e02837a9e781de9a91bc7"
+      },
+      {
+        "path": "tokenizer_config.json",
+        "size": 7704,
+        "sha256": "ecf02957464048e97366cdc21712e8446e80fc44bb96ec179990ad92582e961a"
+      },
+      {
+        "path": "vocab.json",
+        "size": 2776833,
+        "sha256": "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910"
+      }
+    ]
+  },
+  "custom-1.7b": {
+    "repo": "xgirls/Qwen3-TTS-12Hz-1.7B-CustomVoice-OpenVINO",
+    "revision": "b9c30496dc5bdb0a2d00eca00d6f866ab940bb57",
+    "folder": "custom-1.7b-OV",
+    "bytes": 4196234229,
+    "files": [
+      {
+        "path": "added_tokens.json",
+        "size": 939,
+        "sha256": "766b0099e5b62b88da89bf689545d38ccde3d50927822badc48d3e0d6b70b281"
+      },
+      {
+        "path": "config.json",
+        "size": 5611,
+        "sha256": "12f24bf3c11a9e6df6a9bf0cef6620fc6602e265e4d3fb3353ed9d1e3e828e4d"
+      },
+      {
+        "path": "merges.txt",
+        "size": 1671853,
+        "sha256": "8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5"
+      },
+      {
+        "path": "openvino_talker_code_predictor_embedding_model.bin",
+        "size": 125829132,
+        "sha256": "8b2e9a4202e3428e38ba7e477736cb8308436626be24226fdba3a53ec9230907"
+      },
+      {
+        "path": "openvino_talker_code_predictor_embedding_model.xml",
+        "size": 43181,
+        "sha256": "b8f834be12cda9912060c27d947df73998a20b845c7f9ea66353e73ff39f8c73"
+      },
+      {
+        "path": "openvino_talker_code_predictor_model.bin",
+        "size": 224422793,
+        "sha256": "0102c53dae66286795c2c38656ef333bdfc2742519d50f235411b76cf79e645f"
+      },
+      {
+        "path": "openvino_talker_code_predictor_model.xml",
+        "size": 597099,
+        "sha256": "0bc17e40413043089514f2d0b32672ee884c1df29d24c329c341a8fb60829ee3"
+      },
+      {
+        "path": "openvino_talker_embedding_model.bin",
+        "size": 12582916,
+        "sha256": "602f2ee79a478084ab57e484dce9ede891b587381024f97c3abe3f450a444add"
+      },
+      {
+        "path": "openvino_talker_embedding_model.xml",
+        "size": 3147,
+        "sha256": "022c186a367b5f1999f6e26c059621b296a2cb6a3fb53b2a52d4e9d8e1bd51b3"
+      },
+      {
+        "path": "openvino_talker_language_model.bin",
+        "size": 2831403453,
+        "sha256": "d712df1c40940da1e44206454ca34464150ae39972098947bb09008280e09cfa"
+      },
+      {
+        "path": "openvino_talker_language_model.xml",
+        "size": 2913721,
+        "sha256": "aaaa717c565193f72e8844f40f9f611a360cc236becee233939f2c26f44cfeb2"
+      },
+      {
+        "path": "openvino_talker_text_embedding_model.bin",
+        "size": 622329860,
+        "sha256": "87170742219ffe9e14ae4dea752a95173eae82c87406236a6e96058c0623de77"
+      },
+      {
+        "path": "openvino_talker_text_embedding_model.xml",
+        "size": 3162,
+        "sha256": "9b7271fe0e8636bbafb4628408a6c3dfcd0199f200125ef36d1b5f8efe236fb0"
+      },
+      {
+        "path": "openvino_talker_text_projection_model.bin",
+        "size": 16785408,
+        "sha256": "595f4baf15eaf8b479e4a48e8a01bdf8189226ab86283dad41b09181e30d0d0e"
+      },
+      {
+        "path": "openvino_talker_text_projection_model.xml",
+        "size": 7412,
+        "sha256": "a6b51fabe6f532caa2404e2ac8f1868faa27847cbbee07b73950ebc70af56a88"
+      },
+      {
+        "path": "special_tokens_map.json",
+        "size": 1052,
+        "sha256": "93dabd1cc62f5c4442c243aca7cf9e9a252f4fa051c0eb1429089cbbcefd0a43"
+      },
+      {
+        "path": "speech_tokenizer/config.json",
+        "size": 2484,
+        "sha256": "d867900432740f4526b943d1fc163868e2eabc302a363efbad6ef973319f921d"
+      },
+      {
+        "path": "speech_tokenizer/openvino_speech_tokenizer_decoder_model.bin",
+        "size": 228056887,
+        "sha256": "1e2b5bd84797fe099d4ad0d4cfaa3ce2b818a3d95a6b6c7206f0406f841f4bca"
+      },
+      {
+        "path": "speech_tokenizer/openvino_speech_tokenizer_decoder_model.xml",
+        "size": 1254024,
+        "sha256": "7edd31f8eeff5fa8c1dab5c38a57d45f65fa762e63fcc2267f1a5c0b21e816ce"
+      },
+      {
+        "path": "speech_tokenizer/openvino_speech_tokenizer_encoder_model.bin",
+        "size": 112862185,
+        "sha256": "1ca8bed1b70d1941e5b06738f7f2d8afe51c7bfd068d37da29308a35d730b305"
+      },
+      {
+        "path": "speech_tokenizer/openvino_speech_tokenizer_encoder_model.xml",
+        "size": 1249143,
+        "sha256": "3b380552ce072827e3b91800d24af76e829a748d5e3fc1f196345d502a1da531"
+      },
+      {
+        "path": "speech_tokenizer/preprocessor_config.json",
+        "size": 244,
+        "sha256": "a498909ba41de0b1c778822a2c5e631eef651ddbad19612a3beb7a3754bf9b5b"
+      },
+      {
+        "path": "tokenizer.json",
+        "size": 11423986,
+        "sha256": "09267689b8362020b9763b65dd5be7e086b31e28d72e02837a9e781de9a91bc7"
+      },
+      {
+        "path": "tokenizer_config.json",
+        "size": 7704,
+        "sha256": "ecf02957464048e97366cdc21712e8446e80fc44bb96ec179990ad92582e961a"
+      },
+      {
+        "path": "vocab.json",
+        "size": 2776833,
+        "sha256": "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910"
+      }
+    ]
+  },
+  "base-0.6b": {
+    "repo": "xgirls/Qwen3-TTS-12Hz-0.6B-Base-OpenVINO",
+    "revision": "e1b0f4cc4958cb6b2a9e9e1c7a2faf07b6b97af8",
+    "folder": "base-0.6b-OV",
+    "bytes": 2192439518,
+    "files": [
+      {
+        "path": "added_tokens.json",
+        "size": 939,
+        "sha256": "766b0099e5b62b88da89bf689545d38ccde3d50927822badc48d3e0d6b70b281"
+      },
+      {
+        "path": "config.json",
+        "size": 5088,
+        "sha256": "9189df7c92a21e1086c27f82a033257c251b3e7eda2c0366f93a8547eaa05db0"
+      },
+      {
+        "path": "merges.txt",
+        "size": 1671853,
+        "sha256": "8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5"
+      },
+      {
+        "path": "openvino_speaker_encoder_model.bin",
+        "size": 17708820,
+        "sha256": "349e5bedf6ee3b272df131e63dd482b277778a10614071b91f31155acaa14835"
+      },
+      {
+        "path": "openvino_speaker_encoder_model.xml",
+        "size": 275864,
+        "sha256": "dc359a08d16e5f85f72cebd4024b23c8f3e7675607485bbb6caca0223ff71eed"
+      },
+      {
+        "path": "openvino_talker_code_predictor_embedding_model.bin",
+        "size": 62914572,
+        "sha256": "8385a9aa3dbbd24defc5b793bebecb5ca85afb9ba96db60b327dddacc1fd0182"
+      },
+      {
+        "path": "openvino_talker_code_predictor_embedding_model.xml",
+        "size": 43176,
+        "sha256": "b1c955b445d4ec0fb6f1b363b109e9c0e0b6d94cb4bb2474d27223428d5a2988"
+      },
+      {
+        "path": "openvino_talker_code_predictor_model.bin",
+        "size": 220226441,
+        "sha256": "7af4984ebeb7cdbfb94f519cd5999399b9b7541c791cdf0c8c95954510dbbed8"
+      },
+      {
+        "path": "openvino_talker_code_predictor_model.xml",
+        "size": 594088,
+        "sha256": "0fb5c0892a3973dea49bf712519f6bacf9971cb80cadd43202a0a04ea3451a80"
+      },
+      {
+        "path": "openvino_talker_embedding_model.bin",
+        "size": 6291460,
+        "sha256": "17b9eebca1ec64e65c48608f431a685dd2f76318c12ae05f5cdcf391bcfe8822"
+      },
+      {
+        "path": "openvino_talker_embedding_model.xml",
+        "size": 3145,
+        "sha256": "bf42c7d99dad8d5cf5a72ac4f4ca24234b00453fbab9f3a5588f4a832d8d87a9"
+      },
+      {
+        "path": "openvino_talker_language_model.bin",
+        "size": 887226813,
+        "sha256": "00d100d97f599bbdc794bb17d9f90600840b38765f058237b19c807585ec9bf5"
+      },
+      {
+        "path": "openvino_talker_language_model.xml",
+        "size": 2913227,
+        "sha256": "28ae3b465b820d20950cb5f02b5bfbe518d2c3e4524c0102f1cf7da58d48cacb"
+      },
+      {
+        "path": "openvino_talker_text_embedding_model.bin",
+        "size": 622329860,
+        "sha256": "f58503063e4d5cea235695efb369cc1244675111c54617345b17692b415abe10"
+      },
+      {
+        "path": "openvino_talker_text_embedding_model.xml",
+        "size": 3162,
+        "sha256": "9b7271fe0e8636bbafb4628408a6c3dfcd0199f200125ef36d1b5f8efe236fb0"
+      },
+      {
+        "path": "openvino_talker_text_projection_model.bin",
+        "size": 12589056,
+        "sha256": "f48f515493406184e6449d4ccf687a5a0aa6ef8dadef62738f8a626c5e61dd29"
+      },
+      {
+        "path": "openvino_talker_text_projection_model.xml",
+        "size": 7412,
+        "sha256": "b90c165d53436301a6fc302e18cb3c36e597fa05b5442990696619bcd3694910"
+      },
+      {
+        "path": "special_tokens_map.json",
+        "size": 1052,
+        "sha256": "93dabd1cc62f5c4442c243aca7cf9e9a252f4fa051c0eb1429089cbbcefd0a43"
+      },
+      {
+        "path": "speech_tokenizer/config.json",
+        "size": 2484,
+        "sha256": "d867900432740f4526b943d1fc163868e2eabc302a363efbad6ef973319f921d"
+      },
+      {
+        "path": "speech_tokenizer/openvino_speech_tokenizer_decoder_model.bin",
+        "size": 228056887,
+        "sha256": "1e2b5bd84797fe099d4ad0d4cfaa3ce2b818a3d95a6b6c7206f0406f841f4bca"
+      },
+      {
+        "path": "speech_tokenizer/openvino_speech_tokenizer_decoder_model.xml",
+        "size": 1254024,
+        "sha256": "b3226621789f4469fdfd534dc7159999ef261cb356e7da7b6d283ea653a5c178"
+      },
+      {
+        "path": "speech_tokenizer/openvino_speech_tokenizer_encoder_model.bin",
+        "size": 112862185,
+        "sha256": "1ca8bed1b70d1941e5b06738f7f2d8afe51c7bfd068d37da29308a35d730b305"
+      },
+      {
+        "path": "speech_tokenizer/openvino_speech_tokenizer_encoder_model.xml",
+        "size": 1249143,
+        "sha256": "522a9ea66258f532abe899b8f23b45c6b53e6ebaa9b5ae95ab07abf5dafa40f3"
+      },
+      {
+        "path": "speech_tokenizer/preprocessor_config.json",
+        "size": 244,
+        "sha256": "a498909ba41de0b1c778822a2c5e631eef651ddbad19612a3beb7a3754bf9b5b"
+      },
+      {
+        "path": "tokenizer.json",
+        "size": 11423986,
+        "sha256": "09267689b8362020b9763b65dd5be7e086b31e28d72e02837a9e781de9a91bc7"
+      },
+      {
+        "path": "tokenizer_config.json",
+        "size": 7704,
+        "sha256": "ecf02957464048e97366cdc21712e8446e80fc44bb96ec179990ad92582e961a"
+      },
+      {
+        "path": "vocab.json",
+        "size": 2776833,
+        "sha256": "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910"
+      }
+    ]
+  },
+  "base-1.7b": {
+    "repo": "xgirls/Qwen3-TTS-12Hz-1.7B-Base-OpenVINO",
+    "revision": "30e4e8d546f820fe30a7d854fdd7bca6087f5d0f",
+    "folder": "base-1.7b-OV",
+    "bytes": 4220511895,
+    "files": [
+      {
+        "path": "added_tokens.json",
+        "size": 939,
+        "sha256": "766b0099e5b62b88da89bf689545d38ccde3d50927822badc48d3e0d6b70b281"
+      },
+      {
+        "path": "config.json",
+        "size": 5088,
+        "sha256": "d3607f7a94bd4a39d00ba6fa630bef99521ff85cc3ac0d3f6329fb32564e552c"
+      },
+      {
+        "path": "merges.txt",
+        "size": 1671853,
+        "sha256": "8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5"
+      },
+      {
+        "path": "openvino_speaker_encoder_model.bin",
+        "size": 24002324,
+        "sha256": "f24f85b10cee647e24f0dd9eec694a4b74ec1f7569feba2b609d460989041f7a"
+      },
+      {
+        "path": "openvino_speaker_encoder_model.xml",
+        "size": 275865,
+        "sha256": "8ad6e00e15e9acc7fc98c432090bb97d3f0f03915ce55f714100d0e948c1457b"
+      },
+      {
+        "path": "openvino_talker_code_predictor_embedding_model.bin",
+        "size": 125829132,
+        "sha256": "eabf967d8d20e99940cc760e180446ed3cac3087248ffb58024ab03ad219ed35"
+      },
+      {
+        "path": "openvino_talker_code_predictor_embedding_model.xml",
+        "size": 43181,
+        "sha256": "b8f834be12cda9912060c27d947df73998a20b845c7f9ea66353e73ff39f8c73"
+      },
+      {
+        "path": "openvino_talker_code_predictor_model.bin",
+        "size": 224422793,
+        "sha256": "b70b0ece212011a825e457c588b8ac2a47b96bee5440c5fa5fdfe3430e4c6dae"
+      },
+      {
+        "path": "openvino_talker_code_predictor_model.xml",
+        "size": 597099,
+        "sha256": "0bc17e40413043089514f2d0b32672ee884c1df29d24c329c341a8fb60829ee3"
+      },
+      {
+        "path": "openvino_talker_embedding_model.bin",
+        "size": 12582916,
+        "sha256": "4adace64e40f1b125a3a7fd88a3794b41de504dd8dcfd190376e91285e5d9d94"
+      },
+      {
+        "path": "openvino_talker_embedding_model.xml",
+        "size": 3147,
+        "sha256": "022c186a367b5f1999f6e26c059621b296a2cb6a3fb53b2a52d4e9d8e1bd51b3"
+      },
+      {
+        "path": "openvino_talker_language_model.bin",
+        "size": 2831403453,
+        "sha256": "63545d493132399dc7a2c6d0877a05f21e85fd218cc7133a8753aa74efd4162b"
+      },
+      {
+        "path": "openvino_talker_language_model.xml",
+        "size": 2913721,
+        "sha256": "aaaa717c565193f72e8844f40f9f611a360cc236becee233939f2c26f44cfeb2"
+      },
+      {
+        "path": "openvino_talker_text_embedding_model.bin",
+        "size": 622329860,
+        "sha256": "aeec847da6d596b95ccfbc965ba78546ef87f966d3e5904a972ac13e56d8225a"
+      },
+      {
+        "path": "openvino_talker_text_embedding_model.xml",
+        "size": 3162,
+        "sha256": "9b7271fe0e8636bbafb4628408a6c3dfcd0199f200125ef36d1b5f8efe236fb0"
+      },
+      {
+        "path": "openvino_talker_text_projection_model.bin",
+        "size": 16785408,
+        "sha256": "c47179ba26d7098abb5379672dadb58a82664708214d4160f9ec8b68a6832ea6"
+      },
+      {
+        "path": "openvino_talker_text_projection_model.xml",
+        "size": 7412,
+        "sha256": "a6b51fabe6f532caa2404e2ac8f1868faa27847cbbee07b73950ebc70af56a88"
+      },
+      {
+        "path": "special_tokens_map.json",
+        "size": 1052,
+        "sha256": "93dabd1cc62f5c4442c243aca7cf9e9a252f4fa051c0eb1429089cbbcefd0a43"
+      },
+      {
+        "path": "speech_tokenizer/config.json",
+        "size": 2484,
+        "sha256": "d867900432740f4526b943d1fc163868e2eabc302a363efbad6ef973319f921d"
+      },
+      {
+        "path": "speech_tokenizer/openvino_speech_tokenizer_decoder_model.bin",
+        "size": 228056887,
+        "sha256": "1e2b5bd84797fe099d4ad0d4cfaa3ce2b818a3d95a6b6c7206f0406f841f4bca"
+      },
+      {
+        "path": "speech_tokenizer/openvino_speech_tokenizer_decoder_model.xml",
+        "size": 1254024,
+        "sha256": "c173ed3cdebeb5bcf2ef8fd6ac817a096aa4dce19df78a9e9340a261d6562863"
+      },
+      {
+        "path": "speech_tokenizer/openvino_speech_tokenizer_encoder_model.bin",
+        "size": 112862185,
+        "sha256": "1ca8bed1b70d1941e5b06738f7f2d8afe51c7bfd068d37da29308a35d730b305"
+      },
+      {
+        "path": "speech_tokenizer/openvino_speech_tokenizer_encoder_model.xml",
+        "size": 1249143,
+        "sha256": "f622d737cf849946977732c82b475ce10bd55058b933b4baeda6696fb6d5444e"
+      },
+      {
+        "path": "speech_tokenizer/preprocessor_config.json",
+        "size": 244,
+        "sha256": "a498909ba41de0b1c778822a2c5e631eef651ddbad19612a3beb7a3754bf9b5b"
+      },
+      {
+        "path": "tokenizer.json",
+        "size": 11423986,
+        "sha256": "09267689b8362020b9763b65dd5be7e086b31e28d72e02837a9e781de9a91bc7"
+      },
+      {
+        "path": "tokenizer_config.json",
+        "size": 7704,
+        "sha256": "ecf02957464048e97366cdc21712e8446e80fc44bb96ec179990ad92582e961a"
+      },
+      {
+        "path": "vocab.json",
+        "size": 2776833,
+        "sha256": "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910"
+      }
+    ]
+  },
+  "voice-design-1.7b": {
+    "repo": "xgirls/Qwen3-TTS-12Hz-1.7B-VoiceDesign-OpenVINO",
+    "revision": "df812dd3c6572ab04efdced462259f68e70ee615",
+    "folder": "voice-design-1.7b-OV",
+    "bytes": 4196233714,
+    "files": [
+      {
+        "path": "added_tokens.json",
+        "size": 939,
+        "sha256": "766b0099e5b62b88da89bf689545d38ccde3d50927822badc48d3e0d6b70b281"
+      },
+      {
+        "path": "config.json",
+        "size": 5096,
+        "sha256": "fc2fcd3bd9d00ed9ee224ae680a6dd6964a2ece90854e7a3b6f2321cbcc5b324"
+      },
+      {
+        "path": "merges.txt",
+        "size": 1671853,
+        "sha256": "8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5"
+      },
+      {
+        "path": "openvino_talker_code_predictor_embedding_model.bin",
+        "size": 125829132,
+        "sha256": "bb4907187a63e4dfc990e5f61aaf6268e766420f9524cc2bbb1d0c59dd4b13b0"
+      },
+      {
+        "path": "openvino_talker_code_predictor_embedding_model.xml",
+        "size": 43181,
+        "sha256": "b8f834be12cda9912060c27d947df73998a20b845c7f9ea66353e73ff39f8c73"
+      },
+      {
+        "path": "openvino_talker_code_predictor_model.bin",
+        "size": 224422793,
+        "sha256": "f90b71c781783e777df5f72fe5d915aaed4a899f1bf61a220de211b1da4f8b19"
+      },
+      {
+        "path": "openvino_talker_code_predictor_model.xml",
+        "size": 597099,
+        "sha256": "0bc17e40413043089514f2d0b32672ee884c1df29d24c329c341a8fb60829ee3"
+      },
+      {
+        "path": "openvino_talker_embedding_model.bin",
+        "size": 12582916,
+        "sha256": "a223375af0b640464ab8c04f7330bcbcf88b1173eb23042e57eda4781f5b072e"
+      },
+      {
+        "path": "openvino_talker_embedding_model.xml",
+        "size": 3147,
+        "sha256": "022c186a367b5f1999f6e26c059621b296a2cb6a3fb53b2a52d4e9d8e1bd51b3"
+      },
+      {
+        "path": "openvino_talker_language_model.bin",
+        "size": 2831403453,
+        "sha256": "f7baadb545a368a2c8f19929888c258c6a12279d491834385fe10081158a1d45"
+      },
+      {
+        "path": "openvino_talker_language_model.xml",
+        "size": 2913721,
+        "sha256": "aaaa717c565193f72e8844f40f9f611a360cc236becee233939f2c26f44cfeb2"
+      },
+      {
+        "path": "openvino_talker_text_embedding_model.bin",
+        "size": 622329860,
+        "sha256": "b13a9125986638fe6bcec8fb627557a9d776d0b93f1086ea78b72337e2e6ae66"
+      },
+      {
+        "path": "openvino_talker_text_embedding_model.xml",
+        "size": 3162,
+        "sha256": "9b7271fe0e8636bbafb4628408a6c3dfcd0199f200125ef36d1b5f8efe236fb0"
+      },
+      {
+        "path": "openvino_talker_text_projection_model.bin",
+        "size": 16785408,
+        "sha256": "b9aa304d9e0604b9caabbea48eb5bb535c59687282df6ce7d587846f008ce815"
+      },
+      {
+        "path": "openvino_talker_text_projection_model.xml",
+        "size": 7412,
+        "sha256": "a6b51fabe6f532caa2404e2ac8f1868faa27847cbbee07b73950ebc70af56a88"
+      },
+      {
+        "path": "special_tokens_map.json",
+        "size": 1052,
+        "sha256": "93dabd1cc62f5c4442c243aca7cf9e9a252f4fa051c0eb1429089cbbcefd0a43"
+      },
+      {
+        "path": "speech_tokenizer/config.json",
+        "size": 2484,
+        "sha256": "d867900432740f4526b943d1fc163868e2eabc302a363efbad6ef973319f921d"
+      },
+      {
+        "path": "speech_tokenizer/openvino_speech_tokenizer_decoder_model.bin",
+        "size": 228056887,
+        "sha256": "1e2b5bd84797fe099d4ad0d4cfaa3ce2b818a3d95a6b6c7206f0406f841f4bca"
+      },
+      {
+        "path": "speech_tokenizer/openvino_speech_tokenizer_decoder_model.xml",
+        "size": 1254024,
+        "sha256": "7edd31f8eeff5fa8c1dab5c38a57d45f65fa762e63fcc2267f1a5c0b21e816ce"
+      },
+      {
+        "path": "speech_tokenizer/openvino_speech_tokenizer_encoder_model.bin",
+        "size": 112862185,
+        "sha256": "1ca8bed1b70d1941e5b06738f7f2d8afe51c7bfd068d37da29308a35d730b305"
+      },
+      {
+        "path": "speech_tokenizer/openvino_speech_tokenizer_encoder_model.xml",
+        "size": 1249143,
+        "sha256": "3b380552ce072827e3b91800d24af76e829a748d5e3fc1f196345d502a1da531"
+      },
+      {
+        "path": "speech_tokenizer/preprocessor_config.json",
+        "size": 244,
+        "sha256": "a498909ba41de0b1c778822a2c5e631eef651ddbad19612a3beb7a3754bf9b5b"
+      },
+      {
+        "path": "tokenizer.json",
+        "size": 11423986,
+        "sha256": "09267689b8362020b9763b65dd5be7e086b31e28d72e02837a9e781de9a91bc7"
+      },
+      {
+        "path": "tokenizer_config.json",
+        "size": 7704,
+        "sha256": "ecf02957464048e97366cdc21712e8446e80fc44bb96ec179990ad92582e961a"
+      },
+      {
+        "path": "vocab.json",
+        "size": 2776833,
+        "sha256": "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910"
+      }
+    ]
+  }
+}

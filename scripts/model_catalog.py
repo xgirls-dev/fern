@@ -13,7 +13,8 @@ def model_spec(model="9b"):
 
 
 def installed(root, model):
-    folder = Path(root) / model_spec(model)["folder"]
+    spec = model_spec(model)
+    folder = Path(root) / spec["folder"]
     # Legacy exports can differ in byte size. Preserve them, but require all
     # generation/edit components rather than confusing a partial install with ready.
     required = [

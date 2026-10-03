@@ -1,6 +1,6 @@
 {
   "name": "@fern/desktop",
-  "version": "0.1.25",
+  "version": "0.1.26",
   "private": true,
   "description": "Fern private local image studio with optional Flux.2 Klein 4B and 9B models",
   "author": "Fern",
@@ -11,7 +11,7 @@
     "build": "electron-vite build",
     "preview": "cross-env ELECTRON_RUN_AS_NODE= electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
-    "package": "npm run build && electron-builder --win nsis"
+    "package": "npm run build && electron-builder --win nsis --publish never"
   },
   "dependencies": {
     "lucide-react": "^1.25.0",
@@ -42,12 +42,22 @@
     },
     "files": [
       "out/**/*",
-      "package.json"
+      "package.json",
+      "!node_modules/**/*"
     ],
     "extraMetadata": {
       "main": "out/main/index.js"
     },
     "extraResources": [
+      {
+        "from": "resources/licenses",
+        "to": "licenses",
+        "filter": ["*.txt"]
+      },
+      {
+        "from": "resources/runtime-release.json",
+        "to": "runtime-release.json"
+      },
       {
         "from": "resources/runtime-release.zip",
         "to": "runtime-release.zip"

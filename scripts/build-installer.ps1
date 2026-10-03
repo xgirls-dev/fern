@@ -1,3 +1,5 @@
+param([string] $SourceVenv = "")
+
 $ErrorActionPreference = "Stop"
 
 $Root = (Resolve-Path (Split-Path -Parent $PSScriptRoot)).Path
@@ -9,20 +11,16 @@ if (-not (Test-Path (Join-Path $Desktop "resources\icon.ico"))) {
 }
 
 Write-Host "Preparing self-contained runtime and backend scripts..."
-& (Join-Path $Root "scripts\bundle-python-runtime.ps1")
+if (-not $SourceVenv) {
+    $SourceVenv = if (Test-Path -LiteralPath (Join-Path $Root '.venv-release/Scripts/python.exe')) { '.venv-release' } else { '.venv' }
+}
+& (Join-Path $Root "scripts\bundle-python-runtime.ps1") -SourceVenv $SourceVenv
 & (Join-Path $Root "scripts\bundle-app-resources.ps1")
+$BuildPython = Join-Path (Join-Path $Root $SourceVenv) 'Scripts/python.exe'
+& $BuildPython (Join-Path $Root 'scripts/audit-release-resources.py') (Join-Path $Desktop 'resources/scripts')
+if ($LASTEXITCODE -ne 0) { throw 'Release backend payload verification failed.' }
 $RuntimeZip = Join-Path $Desktop "resources\runtime-release.zip"
-if (Test-Path $RuntimeZip) {
-    Remove-Item $RuntimeZip -Force
-}
-$SevenZip = Get-ChildItem "$env:LOCALAPPDATA\electron-builder\Cache\7zip@*" `
-    -Recurse -Filter "7za.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
-if ($SevenZip) {
-    & $SevenZip.FullName a -tzip -mx=0 -y $RuntimeZip `
-        (Join-Path $Desktop "resources\runtime-release\*")
-} else {
-    tar -a -cf $RuntimeZip -C (Join-Path $Desktop "resources\runtime-release") .
-}
+& $BuildPython (Join-Path $Root 'scripts/create-runtime-archive.py') (Join-Path $Desktop 'resources/runtime-release') $RuntimeZip
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path $RuntimeZip)) {
     throw "Failed to create the bundled runtime ZIP."
 }
