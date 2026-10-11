@@ -1,4 +1,4 @@
-"""Keep one Qwen3-TTS inference process warm between requests."""
+"""Keep one long-running inference process warm between requests."""
 from __future__ import annotations
 
 import json
@@ -79,6 +79,8 @@ class TtsGenerationWorker:
     def generate(
         self, *, key: tuple[str, str], command: list[str], request: dict[str, Any],
         cwd: Path, env: dict[str, str], log: Callable[[str], None],
+        runtime_label: str = "Qwen3-TTS",
+        progress_prefix: str = PROGRESS_PREFIX,
     ) -> dict[str, Any]:
         with self._lock:
             self._epoch += 1
@@ -94,9 +96,9 @@ class TtsGenerationWorker:
                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                 )
                 self._key = key
-                log(PROGRESS_PREFIX + "Starting Qwen3-TTS runtime.")
+                log(progress_prefix + f"Starting {runtime_label} runtime.")
             else:
-                log(PROGRESS_PREFIX + "Reusing the loaded Qwen3-TTS model.")
+                log(progress_prefix + f"Reusing the loaded {runtime_label} model.")
 
             process = self._process
             assert process.stdin is not None and process.stdout is not None
@@ -107,17 +109,19 @@ class TtsGenerationWorker:
                     line = raw.rstrip()
                     if not line:
                         continue
-                    if line.startswith(EVENT_PREFIX):
-                        event = json.loads(line[len(EVENT_PREFIX):])
+                    qwen_prefix = "FERN_QWEN_EVENT:"
+                    if line.startswith(EVENT_PREFIX) or line.startswith(qwen_prefix):
+                        prefix = EVENT_PREFIX if line.startswith(EVENT_PREFIX) else qwen_prefix
+                        event = json.loads(line[len(prefix):])
                         if isinstance(event, dict) and "error" in event:
                             if event.get("traceback"):
                                 log(str(event["traceback"]))
                             raise RuntimeError(str(event["error"]))
-                        if isinstance(event, dict) and "url" in event:
+                        if isinstance(event, dict) and ("url" in event or "path" in event):
                             return event
-                        raise RuntimeError("Qwen3-TTS sent an invalid result.")
+                        raise RuntimeError("The generation worker sent an invalid result.")
                     log(line)
-                raise RuntimeError("The Qwen3-TTS worker exited before returning audio.")
+                raise RuntimeError("The generation worker exited before returning a result.")
             except (BrokenPipeError, OSError, json.JSONDecodeError):
                 self._stop_unlocked()
                 raise

@@ -4,20 +4,28 @@ import Check from "lucide-react/dist/esm/icons/check.mjs";
 import type { StudioSettings } from "../lib/types";
 
 export interface ComposerModel {
-  id: "9b" | "4b";
+  id: "9b" | "4b" | "qwen21-turbo";
   label: string;
 }
+
+const MODEL_LABELS: Record<ComposerModel["id"], string> = {
+  "9b": "Klein 9B",
+  "4b": "Klein 4B",
+  "qwen21-turbo": "Qwen Image 2.1 Turbo",
+};
+const MODEL_CHOICES: ComposerModel["id"][] = ["9b", "4b", "qwen21-turbo"];
+
 export function ComposerModelMenu({
   models,
+  loading = false,
   value,
-  resolvedModel,
   disabled,
   onChange,
   onOpen,
 }: {
   models: ComposerModel[];
+  loading?: boolean;
   value: StudioSettings["model"];
-  resolvedModel?: string;
   disabled: boolean;
   onChange: (model: StudioSettings["model"]) => void;
   onOpen: () => void;
@@ -27,10 +35,20 @@ export function ComposerModelMenu({
   const trigger = useRef<HTMLButtonElement>(null);
   const menu = useRef<HTMLDivElement>(null);
   const id = useId();
-  const available = models.length > 1;
+  const selectedId = value === "4b" || value === "qwen21-turbo" ? value : "9b";
+  const current = models.find((model) => model.id === selectedId);
+  const triggerLabel = loading
+    ? "Checking…"
+    : current
+      ? MODEL_LABELS[current.id]
+      : models.length
+        ? `${MODEL_LABELS[selectedId]} · Missing`
+        : "No models";
+
   useEffect(() => {
-    if (!available || disabled) setOpen(false);
-  }, [available, disabled]);
+    if (disabled) setOpen(false);
+  }, [disabled]);
+
   useEffect(() => {
     if (!open) return;
     const outside = (event: PointerEvent) => {
@@ -38,22 +56,20 @@ export function ComposerModelMenu({
     };
     document.addEventListener("pointerdown", outside);
     const first =
-      menu.current?.querySelector<HTMLButtonElement>('[aria-checked="true"]') ??
-      menu.current?.querySelector<HTMLButtonElement>("button");
-    first?.focus();
+      menu.current?.querySelector<HTMLButtonElement>('[aria-checked="true"]:not(:disabled)') ??
+      menu.current?.querySelector<HTMLButtonElement>("button:not(:disabled)");
+    if (first) first.focus();
+    else menu.current?.focus();
     return () => document.removeEventListener("pointerdown", outside);
   }, [open]);
-  if (!available) return null;
-  const current = models.find(
-    (model) => model.id === (value === "auto" ? resolvedModel : value),
-  );
+
   return (
     <div className="composer-model-anchor" ref={root}>
       <button
         ref={trigger}
         type="button"
         className="composer-model-trigger"
-        aria-label="Choose model"
+        aria-label={`Image model: ${triggerLabel}`}
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? id : undefined}
@@ -70,11 +86,8 @@ export function ComposerModelMenu({
           }
         }}
       >
-        <span>
-          {current?.label ?? "Choose model"}
-          {value === "auto" ? " · Auto" : ""}
-        </span>
-        <ChevronDown size={12} aria-hidden="true" />
+        <span>{triggerLabel}</span>
+        <ChevronDown size={13} aria-hidden="true" />
       </button>
       {open ? (
         <div
@@ -82,7 +95,8 @@ export function ComposerModelMenu({
           ref={menu}
           className="composer-model-menu"
           role="menu"
-          aria-label="Model"
+          aria-label="Image model"
+          tabIndex={-1}
           onBlur={(event) => {
             if (!root.current?.contains(event.relatedTarget as Node))
               setOpen(false);
@@ -99,12 +113,13 @@ export function ComposerModelMenu({
               trigger.current?.focus();
             }
             if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
-              event.preventDefault();
               const items = Array.from(
                 event.currentTarget.querySelectorAll<HTMLButtonElement>(
-                  "button",
+                  "button:not(:disabled)",
                 ),
               );
+              if (!items.length) return;
+              event.preventDefault();
               const index = items.indexOf(
                 document.activeElement as HTMLButtonElement,
               );
@@ -113,43 +128,37 @@ export function ComposerModelMenu({
                   ? 0
                   : event.key === "End"
                     ? items.length - 1
-                    : (index +
-                        (event.key === "ArrowDown" ? 1 : -1) +
-                        items.length) %
-                      items.length;
+                    : (index + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
               items[next]?.focus();
             }
           }}
         >
-          {[
-            {
-              id: "auto" as const,
-              label: "Auto",
-              detail: "Select an installed model automatically",
-            },
-            ...models.map((model) => ({ ...model, detail: model.id === "4b" ? "Faster and lighter · lower memory use" : "More capable · larger and slower" })),
-          ].map((model) => (
-            <button
-              type="button"
-              tabIndex={-1}
-              key={model.id}
-              role="menuitemradio"
-              aria-checked={value === model.id}
-              onClick={() => {
-                onChange(model.id);
-                setOpen(false);
-                trigger.current?.focus();
-              }}
-            >
-              <span>
-                <strong>{model.label}</strong>
-                <small>{model.detail}</small>
-              </span>
-              {value === model.id ? (
-                <Check size={15} aria-hidden="true" />
-              ) : null}
-            </button>
-          ))}
+          {MODEL_CHOICES.map((modelId) => {
+            const installed = models.some((model) => model.id === modelId);
+            return (
+              <button
+                type="button"
+                tabIndex={-1}
+                key={modelId}
+                role="menuitemradio"
+                aria-checked={selectedId === modelId}
+                disabled={!installed}
+                title={installed ? undefined : "Not installed"}
+                onClick={() => {
+                  onChange(modelId);
+                  setOpen(false);
+                  trigger.current?.focus();
+                }}
+              >
+                <span>{MODEL_LABELS[modelId]}</span>
+                {installed && selectedId === modelId ? (
+                  <Check size={14} aria-hidden="true" />
+                ) : !installed ? (
+                  <span className="composer-model-unavailable">Not installed</span>
+                ) : null}
+              </button>
+            );
+          })}
         </div>
       ) : null}
     </div>

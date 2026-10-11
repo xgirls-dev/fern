@@ -274,8 +274,8 @@ def _select_device(requested: str, statuses: list[dict[str, Any]]) -> str:
     by_id = {item["id"]: item for item in statuses}
     return select_auto_device(
         nvidia_available=bool(by_id[NVIDIA_GPU]["runtimeReady"]),
-        intel_available=bool(by_id[INTEL_GPU]["available"]),
-        cpu_available=bool(by_id[CPU]["available"]),
+        intel_available=bool(by_id[INTEL_GPU]["runtimeReady"]),
+        cpu_available=bool(by_id[CPU]["runtimeReady"]),
     )
 
 
@@ -288,7 +288,6 @@ def resolve_model(model="auto", device="AUTO"):
 
 
 def model_status(device: str = DEFAULT_DEVICE, model="9b") -> dict[str, Any]:
-    statuses = _adapter_statuses("9b")
     memory = {}
     for state in (_OPENVINO_DEPENDENCY_STATUS, _NVIDIA_DEPENDENCY_STATUS):
         if state: memory.update(state.get("memory", {}))
@@ -303,7 +302,11 @@ def model_status(device: str = DEFAULT_DEVICE, model="9b") -> dict[str, Any]:
         if candidates[candidate]["runtimeReady"]:
             chosen = (choice, candidate)
             break
-    model, selected = chosen or (resolve_model(model, device), _select_device(device, statuses))
+    resolved_model = resolve_model(model, device)
+    model, selected = chosen or (
+        resolved_model,
+        _select_device(device, _adapter_statuses(resolved_model)),
+    )
     statuses = _adapter_statuses(model)
     selected_status = next(item for item in statuses if item["id"] == selected)
     reported_memory = memory.get(selected)

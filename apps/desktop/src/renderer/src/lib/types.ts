@@ -19,7 +19,7 @@ export interface ImageRecord {
 }
 
 export interface ModelStatus {
-  selectedModel?: "9b" | "4b";
+  selectedModel?: "9b" | "4b" | "qwen21-turbo";
   memoryBytes?: number | null;
   compatibility?: string;
   checking?: boolean;
@@ -30,6 +30,7 @@ export interface ModelStatus {
   pipelineClass?: string;
   runtimeBackend?: string;
   supportsReferenceImage?: boolean;
+  supportsKvCache?: boolean;
   requestedDevice?: DeviceId;
   selectedDevice?: Exclude<DeviceId, "AUTO">;
   adapters?: DeviceAdapter[];
@@ -51,7 +52,7 @@ export interface DeviceAdapter {
 }
 
 export interface FluxJob {
-  model?: "9b" | "4b";
+  model?: "9b" | "4b" | "qwen21-turbo";
   threadId?: string | null;
   id: string | null;
   status: "idle" | "running" | "complete" | "cancelled" | "failed";
@@ -73,7 +74,7 @@ export interface RuntimeStatus {
 }
 
 export interface FluxStatusResponse {
-  installedModels?: { id: "9b" | "4b"; label: string }[];
+  installedModels?: { id: "9b" | "4b" | "qwen21-turbo"; label: string }[];
   job: FluxJob;
   images: ImageRecord[];
   model: ModelStatus;
@@ -88,7 +89,7 @@ export interface FluxStatusResponse {
 }
 
 export interface GenerationPayload {
-  model?: "auto" | "9b" | "4b";
+  model?: "auto" | "9b" | "4b" | "qwen21-turbo";
   thread_id?: string;
   prompt: string;
   device: DeviceId;
@@ -102,7 +103,7 @@ export interface GenerationPayload {
 }
 
 export interface StudioSettings {
-  model?: "auto" | "9b" | "4b";
+  model?: "auto" | "9b" | "4b" | "qwen21-turbo";
   prompt: string;
   device: DeviceId;
   width: number;

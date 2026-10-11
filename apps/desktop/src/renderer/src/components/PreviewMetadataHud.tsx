@@ -80,7 +80,7 @@ export function PreviewMetadataHud({ image }: PreviewMetadataHudProps) {
   if (image.model)
     rows.push({
       label: "Model used",
-      value: `Klein ${image.model.toUpperCase()}`,
+      value: image.model === "qwen21-turbo" ? "Qwen Image 2.1 Turbo · official" : `Klein ${image.model.toUpperCase()}`,
     });
   if (image.modelRevision)
     rows.push({ label: "Model revision", value: image.modelRevision });

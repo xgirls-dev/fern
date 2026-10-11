@@ -5,10 +5,16 @@ const REFERENCES_DB = "fern-thread-references";
 
 // Retired model IDs can remain in old threads and gallery metadata.
 export function normalizeImageSettings(settings: StudioSettings): StudioSettings {
-  if (["auto", "9b", "4b"].includes(settings.model ?? "auto")) return settings;
+  if (settings.model === "qwen21-turbo") {
+    const dimension = (value: number) =>
+      Number.isFinite(value) ? Math.max(256, Math.min(1920, Math.round(value / 16) * 16)) : 1024;
+    const device: StudioSettings["device"] = ["AUTO", "INTEL_GPU", "CPU"].includes(settings.device) ? settings.device : "AUTO";
+    return { ...settings, model: "qwen21-turbo", width: dimension(settings.width), height: dimension(settings.height), steps: 8, guidance: 1, batchSize: 1, device };
+  }
+  if (settings.model === "9b" || settings.model === "4b") return settings;
   const dimension = (value: number) =>
     Number.isFinite(value) ? Math.max(256, Math.min(1920, Math.round(value / 16) * 16)) : 1024;
-  return { ...settings, model: "auto", width: dimension(settings.width),
+  return { ...settings, model: "9b", width: dimension(settings.width),
     height: dimension(settings.height), steps: 4, guidance: 1 };
 }
 
@@ -75,7 +81,7 @@ export function loadThreadWorkspace(settings: StudioSettings): ThreadWorkspace {
             referenceLabel: thread.referenceLabel ?? "No reference image.",
           })),
         };
-        if (threads.some((thread) => !["auto", "9b", "4b"].includes(thread.settings.model ?? "auto"))) {
+        if (threads.some((thread) => !["9b", "4b", "qwen21-turbo"].includes(thread.settings.model ?? "9b"))) {
           try { saveThreadWorkspace(workspace); } catch {
             // Keep the migrated draft usable even if local storage is full.
           }

@@ -429,9 +429,11 @@ export function App() {
                     /
                   </span>
                   <span>
-                    {studio.status?.model.selectedModel
+                    {studio.status?.model.selectedModel === "qwen21-turbo"
+                      ? "Qwen Image 2.1 Turbo"
+                      : studio.status?.model.selectedModel
                         ? `Flux.2 Klein ${studio.status.model.selectedModel.toUpperCase()}`
-                      : "Flux.2 Klein"}
+                        : "Flux.2 Klein"}
                   </span>
                 </div>
                 <div className="workspace-header-actions">
@@ -512,7 +514,6 @@ export function App() {
                     }
                   />
                   <PromptComposer
-                    resolvedModel={studio.status?.model.selectedModel}
                     installedModels={studio.status?.installedModels}
                     onReferenceBusy={setReferenceBusy}
                     key={`composer-${studio.activeThread.id}`}

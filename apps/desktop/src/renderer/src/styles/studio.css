@@ -2461,21 +2461,31 @@ code {
 .model-library-card { padding:16px; border:1px solid var(--border); border-radius:12px; min-width:0; }
 .model-library-card h4 { margin:0 0 8px; }
 .model-library-card progress { width:100%; }
+.model-library-card-qwen { display:flex; flex-direction:column; gap:10px; border-color:var(--border-strong); background:var(--card); }
+.model-library-card-qwen > p { margin:0; color:var(--muted); font-size:12px; line-height:1.5; overflow-wrap:anywhere; }
+.model-library-card-qwen > .model-library-status { color:var(--foreground); font-weight:500; }
+.model-library-card-qwen > .model-library-note { font-size:11px; }
+.model-library-card-qwen > progress { height:4px; accent-color:var(--accent); }
+.model-library-card-qwen details { min-width:0; font-size:12px; }
+.model-library-card-qwen details summary { width:max-content; max-width:100%; color:var(--muted); cursor:pointer; }
+.model-library-card-qwen details ul { max-height:180px; margin:8px 0 0; padding-left:18px; overflow:auto; color:var(--muted); }
+.model-library-card-qwen details li { padding:2px 0; overflow-wrap:anywhere; }
 .model-library-actions { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
 
 
 .composer-toolbar { position: relative; flex-wrap: nowrap; }
 .composer-options { flex: 0 0 auto; }
 .composer-send-tools { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.composer-model-anchor { position: static; min-width: 0; }
-.composer-model-trigger { display:flex; align-items:center; gap:5px; height:32px; max-width:150px; padding:0 6px; border:0; border-radius:7px; background:transparent; color:var(--muted); font:inherit; font-size:12px; cursor:pointer; }
+.composer-model-anchor { position: relative; min-width: 0; }
+.composer-model-trigger { display:flex; align-items:center; gap:5px; height:32px; max-width:150px; padding:0 7px; border:1px solid transparent; border-radius:6px; background:transparent; color:var(--muted); font:inherit; font-size:12px; cursor:pointer; }
 .composer-model-trigger span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .composer-model-trigger svg { flex-shrink:0; }
-.composer-model-trigger:hover, .composer-model-trigger[aria-expanded="true"] { background:var(--secondary-bg); color:var(--foreground); }
+.composer-model-trigger:hover, .composer-model-trigger[aria-expanded="true"] { background:color-mix(in srgb, var(--foreground) 7%, transparent); color:var(--foreground); }
+.composer-model-trigger:disabled { opacity:.55; cursor:not-allowed; }
 .composer-model-trigger:focus-visible, .composer-model-menu button:focus-visible { outline:2px solid var(--foreground); outline-offset:2px; }
-.composer-model-menu { position:absolute; bottom:calc(100% + 8px); right:0; z-index:80; box-sizing:border-box; width:220px; max-width:100%; padding:5px; border:1px solid var(--border-strong); border-radius:12px; background:var(--card); box-shadow:var(--shadow-card); }
-.composer-model-menu button { display:flex; align-items:center; justify-content:space-between; width:100%; min-height:46px; padding:8px 10px; border:0; border-radius:7px; background:transparent; color:var(--foreground); text-align:left; cursor:pointer; }
-.composer-model-menu button:hover, .composer-model-menu button:focus { background:var(--secondary-bg); }
-.composer-model-menu strong, .composer-model-menu small { display:block; }
-.composer-model-menu strong { font-size:12px; font-weight:500; }
-.composer-model-menu small { margin-top:2px; font-size:11px; color:var(--muted); }
+.composer-model-menu { position:absolute; bottom:calc(100% + 6px); left:0; z-index:80; box-sizing:border-box; width:172px; max-width:calc(100vw - 24px); padding:4px; border:1px solid var(--border); border-radius:8px; background:var(--card); box-shadow:0 8px 24px color-mix(in srgb, #000 18%, transparent); }
+.composer-model-menu button { display:flex; align-items:center; justify-content:space-between; width:100%; min-height:32px; padding:0 8px; border:0; border-radius:5px; background:transparent; color:var(--foreground); text-align:left; font:inherit; font-size:12px; cursor:pointer; }
+.composer-model-menu button:not(:disabled):hover, .composer-model-menu button:focus-visible { background:color-mix(in srgb, var(--foreground) 7%, transparent); }
+.composer-model-menu button svg { flex:0 0 auto; color:var(--muted); }
+.composer-model-menu button:disabled { color:var(--muted); opacity:.48; cursor:not-allowed; }
+.composer-model-unavailable { color:var(--muted); font-size:10px; }

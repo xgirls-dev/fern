@@ -11,7 +11,6 @@ import type { StudioSettings } from "../lib/types";
 interface PromptComposerProps {
   onReferenceBusy: (busy: boolean) => void;
   settings: StudioSettings;
-  resolvedModel?: string;
   installedModels?: ComposerModel[];
   referenceImage: string;
   referenceLabel: string;
@@ -32,8 +31,7 @@ interface PromptComposerProps {
 export function PromptComposer({
   onReferenceBusy,
   settings,
-  resolvedModel,
-  installedModels = [],
+  installedModels,
   referenceImage,
   referenceLabel,
   supportsReference,
@@ -50,6 +48,7 @@ export function PromptComposer({
   onGenerate,
 }: PromptComposerProps) {
   const fileInput = useRef<HTMLInputElement>(null);
+  const preQwenSettings = useRef<Pick<StudioSettings, "steps" | "guidance" | "batchSize" | "device"> | null>(null);
   const [seedDraft, setSeedDraft] = useState(String(settings.seed));
   const [seedPopoverOpen, setSeedPopoverOpen] = useState(false);
   const seedPopover = useRef<HTMLDivElement>(null);
@@ -278,11 +277,29 @@ export function PromptComposer({
 
           <div className="composer-send-tools">
             <ComposerModelMenu
-              models={installedModels}
+              models={installedModels ?? []}
+              loading={installedModels === undefined}
               value={settings.model ?? "9b"}
-              resolvedModel={resolvedModel}
               disabled={running || submitting || busyElsewhere}
-              onChange={(model) => onSettingsChange({ model })}
+              onChange={(model) => {
+                if (model === "qwen21-turbo") {
+                  if (settings.model !== "qwen21-turbo") {
+                    preQwenSettings.current = {
+                      steps: settings.steps,
+                      guidance: settings.guidance,
+                      batchSize: settings.batchSize,
+                      device: settings.device,
+                    };
+                  }
+                  onSettingsChange({ model, steps: 8, guidance: 1, batchSize: 1, device: "AUTO" });
+                  return;
+                }
+                const restore = settings.model === "qwen21-turbo"
+                  ? preQwenSettings.current ?? { steps: 4, guidance: 1, batchSize: 1, device: "AUTO" }
+                  : undefined;
+                preQwenSettings.current = null;
+                onSettingsChange({ model, ...restore });
+              }}
               onOpen={() => setSeedPopoverOpen(false)}
             />
             <button

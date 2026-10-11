@@ -37,7 +37,7 @@ const LEGACY_SETTINGS_KEYS = [
 
 const DEFAULT_SETTINGS: StudioSettings = {
   prompt: "",
-  model: "auto",
+  model: "9b",
   device: "AUTO",
   width: 1024,
   height: 1024,
@@ -191,6 +191,7 @@ export function useStudio() {
   const previewedJobIdRef = useRef(previewedJobId);
   const previousJobStatusRef = useRef<string>("idle");
   const refreshingRef = useRef(false);
+  const refreshQueuedRef = useRef(false);
   const imagePollingActiveRef = useRef(true);
   settingsRef.current = settings;
   previewRef.current = preview;
@@ -484,15 +485,28 @@ export function useStudio() {
   );
 
   const refresh = useCallback(async () => {
-    if (refreshingRef.current) return;
+    if (refreshingRef.current) {
+      refreshQueuedRef.current = true;
+      return;
+    }
     refreshingRef.current = true;
+    refreshQueuedRef.current = false;
+    const requestedDevice = settingsRef.current.device;
+    const requestedModel = settingsRef.current.model;
 
     try {
       const data = await fetchStatus(
-        settingsRef.current.device,
-        settingsRef.current.model,
+        requestedDevice,
+        requestedModel,
         imagePollingActiveRef.current,
       );
+      if (
+        requestedDevice !== settingsRef.current.device ||
+        requestedModel !== settingsRef.current.model
+      ) {
+        refreshQueuedRef.current = true;
+        return false;
+      }
       setStatus(data);
       setConnectionError(null);
 
@@ -543,12 +557,23 @@ export function useStudio() {
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Status refresh failed";
+      if (
+        (err instanceof DOMException && err.name === "TimeoutError") ||
+        message.toLowerCase().includes("signal timed out")
+      ) {
+        setConnectionError(null);
+        return false;
+      }
       setConnectionError((current) =>
         current === message ? current : message,
       );
       return false;
     } finally {
       refreshingRef.current = false;
+      if (refreshQueuedRef.current) {
+        refreshQueuedRef.current = false;
+        queueMicrotask(() => void refresh());
+      }
     }
   }, [commitWorkspace]);
 

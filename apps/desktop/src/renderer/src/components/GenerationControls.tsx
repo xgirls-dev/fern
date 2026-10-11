@@ -206,6 +206,7 @@ export function GenerationControls({
   canUseOutput,
 }: GenerationControlsProps) {
   const [customSize, setCustomSize] = useState(false);
+  const isQwenTurbo = settings.model === "qwen21-turbo";
   const dimensionMultiple = 16;
   const availableSizePresets = useMemo(
     () =>
@@ -424,9 +425,14 @@ export function GenerationControls({
         <div className="control-sections">
           <ControlSection
             title="Canvas & device"
-            summary={`${settings.width} x ${settings.height} | ${settings.batchSize} image${settings.batchSize === 1 ? "" : "s"}`}
+            summary={`${settings.width} × ${settings.height} | ${isQwenTurbo ? "1 image" : `${settings.batchSize} image${settings.batchSize === 1 ? "" : "s"}`}`}
             defaultOpen
           >
+            {isQwenTurbo ? (
+              <p className="model-note field-note">
+                Official Turbo runs 8 fixed steps and generates 1 image per request. Auto-select prefers Intel GPU; choose CPU only as a fallback. This OpenVINO graph does not use the checkpoint’s KV cache, so it can be slower than CUDA Turbo. Larger canvases need more memory and take longer.
+              </p>
+            ) : null}
             <div className="field">
               <div className="field-header">
                 <label htmlFor="size-preset">Resolution</label>
@@ -519,7 +525,8 @@ export function GenerationControls({
                 <select
                   id="batch-size"
                   name="batch-size"
-                  value={settings.batchSize}
+                  value={isQwenTurbo ? 1 : settings.batchSize}
+                  disabled={isQwenTurbo}
                   onChange={(event) =>
                     onSettingsChange({ batchSize: Number(event.target.value) })
                   }
@@ -529,6 +536,7 @@ export function GenerationControls({
                   <option value={3}>3 images</option>
                   <option value={4}>4 images</option>
                 </select>
+                {isQwenTurbo ? <small className="field-note">Qwen Turbo generates one image per request.</small> : null}
               </div>
             </div>
             <p
@@ -748,7 +756,7 @@ export function GenerationControls({
 
           <ControlSection
             title="Advanced"
-            summary={`${settings.steps} steps | guidance ${settings.guidance}`}
+            summary={settings.model === "qwen21-turbo" ? "8 steps | guidance 1.0 (fixed)" : `${settings.steps} steps | guidance ${settings.guidance}`}
           >
             <div className="field">
               <label htmlFor="seed">Seed</label>
@@ -795,7 +803,7 @@ export function GenerationControls({
               </div>
             </div>
 
-            <div className="field">
+            <div className="field" hidden={settings.model === "qwen21-turbo"}>
               <label htmlFor="steps">Steps</label>
               <div className="range-pair">
                 <input
@@ -830,7 +838,7 @@ export function GenerationControls({
               </div>
             </div>
 
-            <div className="field">
+            <div className="field" hidden={settings.model === "qwen21-turbo"}>
               <label htmlFor="guidance">Guidance</label>
               <div className="range-pair">
                 <input

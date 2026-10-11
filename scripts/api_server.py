@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import io
 import json
+import math
+from contextlib import nullcontext
 import mimetypes
 import os
 import shutil
@@ -52,6 +55,7 @@ import gallery_store
 from media_http import byte_range
 import storage_manager
 from device_adapters import device_label, normalize_device
+from qwen21_turbo_download import download_model as download_qwen_turbo_model
 
 
 OUTPUTS = ROOT / "outputs"
@@ -60,6 +64,16 @@ MODELS_DIR = ROOT / "models"
 CACHE_DIR = ROOT / ".cache"
 TTS_MODEL_ROOT = Path(os.environ.get("FERN_TTS_MODEL_ROOT", MODELS_DIR / "qwen3-tts")).resolve()
 TTS_ENV = Path(os.environ.get("FERN_TTS_ENV", ROOT / ".venv-qwen3-tts")).resolve()
+QWEN_TURBO_MODEL_ID = "qwen21-turbo"
+QWEN_TURBO_MODEL_ROOT = Path(os.environ.get("FERN_QWEN_TURBO_MODEL_ROOT", MODELS_DIR / "qwen-image-2.1-turbo-openvino-int8")).resolve()
+QWEN_TURBO_PARTIAL_ROOT = QWEN_TURBO_MODEL_ROOT.with_name(QWEN_TURBO_MODEL_ROOT.name + ".partial")
+QWEN_TURBO_DOWNLOAD_ROOT = QWEN_TURBO_MODEL_ROOT.with_name(QWEN_TURBO_MODEL_ROOT.name + ".download")
+QWEN_TURBO_QUANT_CATALOG = SCRIPTS / "qwen21_turbo_model_catalog.json"
+QWEN_TURBO_SOURCE_ROOT = Path(os.environ.get("FERN_QWEN_TURBO_SOURCE_ROOT", CACHE_DIR / "openvino" / "hub")).resolve()
+QWEN_TURBO_HF_CACHE = QWEN_TURBO_SOURCE_ROOT
+QWEN_TURBO_BASE_RUNTIME = ROOT / ".venv-qwen21-export"
+QWEN_TURBO_OVERLAY_RUNTIME = ROOT / ".venv-qwen21-turbo-export"
+QWEN_TURBO_PYTHON = Path(sys.executable)
 MODEL_MANAGER = ModelManager(MODELS_DIR)
 
 TTS_MODELS = {
@@ -78,6 +92,27 @@ TTS_JOB: dict[str, Any] = {
     "operation": None, "logs": [], "startedAt": None, "finishedAt": None,
     "output": None, "error": None, "diagnostics": [], "phase": None,
 }
+QWEN_JOB_LOCK = threading.Lock()
+QWEN_PROCESS_LOCK = threading.Lock()
+QWEN_ACTIVE_PROCESS: subprocess.Popen[str] | None = None
+QWEN_CANCEL_EVENT: threading.Event | None = None
+QWEN_GENERATION_WORKER = TtsGenerationWorker()
+QWEN_JOB: dict[str, Any] = {
+    "status": "idle", "logs": [], "phase": None, "error": None,
+    "downloaded": 0, "bytes": 23_201_764_848,
+    "startedAt": None, "finishedAt": None,
+}
+QWEN_RUNTIME_LOCK = threading.Lock()
+QWEN_RUNTIME_CHECK_LOCK = threading.Lock()
+QWEN_MODEL_OPERATION_LOCK = threading.Lock()
+QWEN_RUNTIME_READY: bool | None = None
+QWEN_RUNTIME_CHECK_STARTED = False
+QWEN_RUNTIME_CHECK_COMPLETE = False
+QWEN_RUNTIME_CHECK_VERSION = 0
+QWEN_RUNTIME_DEVICES: set[str] = set()
+QWEN_MODEL_READY_LOCK = threading.Lock()
+QWEN_MODEL_READY_SIGNATURE: tuple[Any, ...] | None = None
+QWEN_MODEL_READY_RESULT = False
 IMAGE_LIST_LOCK = threading.Lock()
 IMAGE_LIST_CACHE: dict[str, Any] = {"key": None, "checkedAt": 0.0, "records": []}
 
@@ -86,6 +121,233 @@ def tts_model_ready(model: str) -> bool:
     if not tts_environment_ready():
         return False
     return tts_export_ready(TTS_MODEL_ROOT / f"{model}-OV", model)
+
+
+def qwen_turbo_runtime_ready() -> bool:
+    global QWEN_RUNTIME_READY
+    if QWEN_RUNTIME_READY is not None:
+        return QWEN_RUNTIME_READY
+    with QWEN_RUNTIME_LOCK:
+        if QWEN_RUNTIME_READY is not None:
+            return QWEN_RUNTIME_READY
+        try:
+            probe = subprocess.run(
+                [str(QWEN_TURBO_PYTHON), "-c", (
+                    "import transformers.models.qwen2_vl.modeling_qwen2_vl as q2; "
+                    "q2.VisionRotaryEmbedding=q2.Qwen2VLRotaryEmbedding; "
+                    "import transformers.models.qwen3_vl.modeling_qwen3_vl as q3; "
+                    "import transformers.models.qwen3_5.modeling_qwen3_5 as q35; "
+                    "from transformers.vision_utils import get_vision_position_ids; "
+                    "rot=lambda self,grid:(get_vision_position_ids(grid,self.spatial_merge_size).unsqueeze(-1)*self.rotary_pos_emb.inv_freq).flatten(1); "
+                    "q3.Qwen3VLVisionModel.rot_pos_emb=rot; q35.Qwen3_5VisionModel.rot_pos_emb=rot; "
+                    "from optimum.intel import OVQwenImage21Pipeline; assert OVQwenImage21Pipeline"
+                )],
+                cwd=ROOT, env=qwen_turbo_child_env(), capture_output=True,
+                text=True, encoding="utf-8", errors="replace", timeout=90, check=False,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            QWEN_RUNTIME_READY = probe.returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            QWEN_RUNTIME_READY = False
+        return QWEN_RUNTIME_READY
+
+
+def qwen_turbo_quant_bytes() -> int:
+    try:
+        catalog = json.loads(QWEN_TURBO_QUANT_CATALOG.read_text(encoding="utf-8-sig"))
+        size = catalog.get("bytes")
+        if isinstance(size, int) and size > 0:
+            return size
+    except (OSError, ValueError, TypeError):
+        pass
+    return 23_201_764_848
+
+
+def _check_qwen_turbo_runtime(version: int) -> None:
+    global QWEN_RUNTIME_CHECK_STARTED, QWEN_RUNTIME_CHECK_COMPLETE, QWEN_RUNTIME_DEVICES
+    devices: set[str] = set()
+    try:
+        if qwen_turbo_runtime_ready():
+            probe = subprocess.run(
+                [str(QWEN_TURBO_PYTHON), "-c", (
+                    "import json, openvino as ov; "
+                    "print(json.dumps(ov.Core().available_devices))"
+                )],
+                cwd=ROOT, env=qwen_turbo_child_env(), capture_output=True,
+                text=True, encoding="utf-8", errors="replace", timeout=60,
+                check=False, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            if probe.returncode == 0:
+                parsed = json.loads(probe.stdout.strip().splitlines()[-1])
+                if isinstance(parsed, list):
+                    devices = {item for item in parsed if isinstance(item, str)}
+    except Exception:
+        devices = set()
+    finally:
+        with QWEN_RUNTIME_CHECK_LOCK:
+            if version == QWEN_RUNTIME_CHECK_VERSION:
+                QWEN_RUNTIME_DEVICES = devices
+                QWEN_RUNTIME_CHECK_COMPLETE = True
+                QWEN_RUNTIME_CHECK_STARTED = False
+
+
+def _check_qwen_turbo_runtime_with_lock(version: int) -> None:
+    with QWEN_MODEL_OPERATION_LOCK:
+        _check_qwen_turbo_runtime(version)
+
+
+def qwen_turbo_runtime_status() -> tuple[bool | None, set[str]]:
+    global QWEN_RUNTIME_CHECK_STARTED
+    with QWEN_RUNTIME_CHECK_LOCK:
+        if not QWEN_RUNTIME_CHECK_COMPLETE and not QWEN_RUNTIME_CHECK_STARTED:
+            QWEN_RUNTIME_CHECK_STARTED = True
+            version = QWEN_RUNTIME_CHECK_VERSION
+            threading.Thread(target=_check_qwen_turbo_runtime_with_lock, args=(version,), daemon=True).start()
+        if not QWEN_RUNTIME_CHECK_COMPLETE:
+            return None, set()
+        return QWEN_RUNTIME_READY, set(QWEN_RUNTIME_DEVICES)
+
+
+def invalidate_qwen_turbo_runtime_status() -> None:
+    global QWEN_RUNTIME_READY, QWEN_RUNTIME_CHECK_STARTED
+    global QWEN_RUNTIME_CHECK_COMPLETE, QWEN_RUNTIME_CHECK_VERSION, QWEN_RUNTIME_DEVICES
+    with QWEN_RUNTIME_LOCK:
+        QWEN_RUNTIME_READY = None
+    with QWEN_RUNTIME_CHECK_LOCK:
+        QWEN_RUNTIME_CHECK_VERSION += 1
+        QWEN_RUNTIME_CHECK_STARTED = False
+        QWEN_RUNTIME_CHECK_COMPLETE = False
+        QWEN_RUNTIME_DEVICES = set()
+
+
+def qwen_turbo_model_ready() -> bool:
+    global QWEN_MODEL_READY_SIGNATURE, QWEN_MODEL_READY_RESULT
+    components = (
+        "transformer", "text_encoder", "text_encoder_i2i",
+        "vision_encoder", "vae_encoder", "vae_decoder",
+    )
+    required = (
+        ".fern-qwen21-turbo-openvino.json", "model_index.json",
+        ".fern-validation.png", ".fern-validation.json", ".fern-sample-sigmas.json",
+        *(f"{component}/openvino_model.{extension}" for component in components for extension in ("xml", "bin")),
+    )
+    signature_items: list[Any] = []
+    for name in required:
+        path = QWEN_TURBO_MODEL_ROOT / name
+        try:
+            stat = path.stat()
+            signature_items.append((name, stat.st_size, stat.st_mtime_ns))
+        except OSError:
+            signature_items.append((name, None, None))
+    signature = tuple(signature_items)
+    with QWEN_MODEL_READY_LOCK:
+        if signature == QWEN_MODEL_READY_SIGNATURE:
+            return QWEN_MODEL_READY_RESULT
+        QWEN_MODEL_READY_SIGNATURE = signature
+        QWEN_MODEL_READY_RESULT = False
+        if any(size is None or size <= 0 for _, size, _ in signature_items):
+            return False
+    try:
+        marker = json.loads((QWEN_TURBO_MODEL_ROOT / ".fern-qwen21-turbo-openvino.json").read_text(encoding="utf-8-sig"))
+        if not (
+            marker.get("repo") == "Qwen/Qwen-Image-2.1-Turbo"
+            and marker.get("revision") == "84d3f71fff32fc6c4740b89f5556657d0c65af27"
+            and marker.get("format") == "openvino-int8"
+            and marker.get("weightBits") == 8
+        ):
+            return False
+        model_index = json.loads((QWEN_TURBO_MODEL_ROOT / "model_index.json").read_text(encoding="utf-8-sig"))
+        sidecar = json.loads((QWEN_TURBO_MODEL_ROOT / ".fern-sample-sigmas.json").read_text(encoding="utf-8-sig"))
+        sigmas = model_index.get("sample_sigmas")
+        if not isinstance(sigmas, list) or len(sigmas) != 8 or sigmas != sidecar.get("sample_sigmas"):
+            return False
+        if not all(isinstance(value, (int, float)) and math.isfinite(value) for value in sigmas):
+            return False
+        evidence_path = QWEN_TURBO_MODEL_ROOT / ".fern-validation.json"
+        image_path = QWEN_TURBO_MODEL_ROOT / ".fern-validation.png"
+        evidence = json.loads(evidence_path.read_text(encoding="utf-8-sig"))
+        if not (
+            evidence.get("device") == "GPU"
+            and evidence.get("steps") == 8
+            and evidence.get("useKvCache") is False
+            and evidence.get("width") == 512
+            and evidence.get("height") == 512
+            and evidence.get("sampleSigmas") == sigmas
+            and isinstance(evidence.get("pixelStdDev"), (int, float))
+            and evidence["pixelStdDev"] >= 0.5
+            and evidence.get("sha256") == hashlib.sha256(image_path.read_bytes()).hexdigest()
+        ):
+            return False
+        with Image.open(image_path) as image:
+            image.verify()
+        with Image.open(image_path) as image:
+            if image.size != (512, 512):
+                return False
+    except (OSError, ValueError, TypeError, KeyError):
+        QWEN_MODEL_READY_RESULT = False
+        return False
+    QWEN_MODEL_READY_RESULT = True
+    return True
+
+
+def resolve_qwen_turbo_device(device: str) -> str:
+    if device == "CPU":
+        return "CPU"
+    try:
+        import openvino as ov
+        if "GPU" in ov.Core().available_devices:
+            return "GPU"
+    except Exception:
+        pass
+    raise ValueError("OpenVINO GPU is unavailable. Select CPU explicitly to continue.")
+
+
+def qwen_turbo_snapshot() -> dict[str, Any]:
+    with QWEN_JOB_LOCK:
+        job = dict(QWEN_JOB)
+        job["logs"] = list(QWEN_JOB["logs"])
+    model_ready = qwen_turbo_model_ready()
+    runtime_ready, _ = qwen_turbo_runtime_status() if model_ready else (False, set())
+    installed = runtime_ready is True and model_ready
+    active = job["status"] in ("setting_up", "downloading")
+    partial_is_resumable = (QWEN_TURBO_PARTIAL_ROOT / ".openvino_export_complete").is_file()
+    download_is_resumable = QWEN_TURBO_DOWNLOAD_ROOT.is_dir()
+    has_incomplete_files = QWEN_TURBO_MODEL_ROOT.exists() or (
+        QWEN_TURBO_PARTIAL_ROOT.exists() and not partial_is_resumable
+    )
+    state = (
+        "installed" if installed else
+        "installing" if active else
+        "paused" if job["status"] == "paused" or (job["status"] == "idle" and (download_is_resumable or partial_is_resumable)) else
+        "checking-runtime" if model_ready and runtime_ready is None else
+        "runtime-unavailable" if model_ready and not runtime_ready else
+        "repair-needed" if has_incomplete_files else
+        "failed" if job["status"] == "failed" else
+        "not-installed"
+    )
+    return {
+        "id": QWEN_TURBO_MODEL_ID,
+        "label": "Qwen Image 2.1 Turbo · official",
+        "bytes": qwen_turbo_quant_bytes(),
+        "downloaded": int(job.get("downloaded") or 0),
+        "installed": installed,
+        "state": state,
+        "error": job.get("error"),
+        "phase": job.get("phase"),
+        "logs": job["logs"],
+        "runtimeReady": runtime_ready is True,
+        "supportsReferenceImage": True,
+    }
+
+
+def cleanup_cache_when_model_idle() -> dict[str, Any] | None:
+    # Qwen's pinned source snapshot lives under CACHE_DIR. Serialize the check
+    # with install/remove so cleanup cannot erase source files during export.
+    with QWEN_MODEL_OPERATION_LOCK:
+        with QWEN_JOB_LOCK:
+            if QWEN_JOB["status"] in ("setting_up", "downloading"):
+                return None
+        return storage_manager.cleanup_cache(ROOT, CACHE_DIR)
 
 
 def tts_environment_ready() -> bool:
@@ -183,6 +445,187 @@ def tts_child_env(clean_python_env: bool = True) -> dict[str, str]:
     child_env["HF_HOME"] = str(tts_hf_cache)
     child_env["HF_HUB_CACHE"] = str(tts_hf_cache / "hub")
     return child_env
+
+
+def qwen_turbo_child_env() -> dict[str, str]:
+    child_env = os.environ.copy()
+    child_env.pop("PYTHONHOME", None)
+    python_paths = [
+        QWEN_TURBO_OVERLAY_RUNTIME / "Lib" / "site-packages",
+        QWEN_TURBO_BASE_RUNTIME / "Lib" / "site-packages",
+        Path(child_env["PYTHONPATH"]) if child_env.get("PYTHONPATH") else None,
+    ]
+    child_env["PYTHONPATH"] = os.pathsep.join(str(path) for path in python_paths if path)
+    child_env["PYTHONUNBUFFERED"] = "1"
+    child_env["PYTHONUTF8"] = "1"
+    child_env["PYTHONIOENCODING"] = "utf-8"
+    child_env["HF_HOME"] = str(QWEN_TURBO_HF_CACHE)
+    child_env["HF_HUB_CACHE"] = str(QWEN_TURBO_HF_CACHE / "hub")
+    return child_env
+
+
+def append_qwen_turbo_log(message: str) -> None:
+    with QWEN_JOB_LOCK:
+        QWEN_JOB["logs"].append(message)
+        QWEN_JOB["logs"] = QWEN_JOB["logs"][-100:]
+        QWEN_JOB["phase"] = message
+
+
+def terminate_qwen_turbo_process(process: subprocess.Popen[str] | None) -> None:
+    if process is None or process.poll() is not None:
+        return
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/pid", str(process.pid), "/t", "/f"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    else:
+        process.terminate()
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=5)
+
+
+def run_qwen_turbo_process(command: list[str], cancel_event: threading.Event) -> tuple[int, str]:
+    global QWEN_ACTIVE_PROCESS
+    process = subprocess.Popen(
+        command, cwd=str(ROOT), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
+        bufsize=1, env=qwen_turbo_child_env(),
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    with QWEN_PROCESS_LOCK:
+        QWEN_ACTIVE_PROCESS = process
+    lines: list[str] = []
+    try:
+        assert process.stdout is not None
+        for line in process.stdout:
+            line = line.rstrip()
+            if line:
+                lines.append(line)
+                append_qwen_turbo_log(line)
+            if cancel_event.is_set():
+                terminate_qwen_turbo_process(process)
+                raise TtsJobCancelled()
+        code = process.wait()
+        if cancel_event.is_set():
+            raise TtsJobCancelled()
+        return code, "\n".join(lines)
+    finally:
+        with QWEN_PROCESS_LOCK:
+            if QWEN_ACTIVE_PROCESS is process:
+                QWEN_ACTIVE_PROCESS = None
+
+
+def _run_qwen_turbo_setup(job_id: str, cancel_event: threading.Event) -> None:
+    try:
+        model_ready = qwen_turbo_model_ready()
+        if not model_ready:
+            if QWEN_TURBO_MODEL_ROOT.exists():
+                raise RuntimeError("Incomplete Qwen Turbo files are present. Remove them before reinstalling.")
+            legacy_export_ready = (QWEN_TURBO_PARTIAL_ROOT / ".openvino_export_complete").is_file()
+            if legacy_export_ready:
+                append_qwen_turbo_log("Validating the preserved local OpenVINO INT8 export.")
+                command = [
+                    sys.executable, "-u", str(SCRIPTS / "qwen21_turbo_openvino.py"),
+                    "setup", str(QWEN_TURBO_SOURCE_ROOT), str(QWEN_TURBO_MODEL_ROOT),
+                ]
+                code, output = run_qwen_turbo_process(command, cancel_event)
+                if code:
+                    raise RuntimeError(output.splitlines()[-1] if output else "Qwen Turbo validation failed.")
+            else:
+                if not QWEN_TURBO_QUANT_CATALOG.is_file():
+                    raise RuntimeError("The pinned public Qwen Turbo model catalog is not configured.")
+                append_qwen_turbo_log("Downloading the pinned Fern OpenVINO INT8 model from Hugging Face.")
+                last_file = ""
+
+                def report_download(downloaded: int, total: int, path: str) -> None:
+                    nonlocal last_file
+                    with QWEN_JOB_LOCK:
+                        QWEN_JOB["downloaded"] = downloaded
+                        QWEN_JOB["bytes"] = total
+                        QWEN_JOB["phase"] = f"Downloading {Path(path).name}"
+                    if path != last_file:
+                        append_qwen_turbo_log(f"Downloading {path}")
+                        last_file = path
+
+                download_qwen_turbo_model(
+                    QWEN_TURBO_QUANT_CATALOG,
+                    QWEN_TURBO_DOWNLOAD_ROOT,
+                    cancel_event,
+                    report_download,
+                )
+                if cancel_event.is_set():
+                    raise TtsJobCancelled()
+                if QWEN_TURBO_MODEL_ROOT.exists():
+                    raise RuntimeError("Qwen Turbo files appeared during installation; refusing to overwrite them.")
+                QWEN_TURBO_DOWNLOAD_ROOT.replace(QWEN_TURBO_MODEL_ROOT)
+                if not qwen_turbo_model_ready():
+                    raise RuntimeError("The downloaded Qwen Turbo model failed Fern's export and validation checks.")
+
+        runtime_ready = qwen_turbo_runtime_ready()
+        if not runtime_ready:
+            append_qwen_turbo_log("Repairing the OpenVINO runtime for the existing export.")
+            command = [sys.executable, "-u", str(SCRIPTS / "qwen21_turbo_openvino.py"), "repair-runtime"]
+            code, output = run_qwen_turbo_process(command, cancel_event)
+            if code:
+                raise RuntimeError(output.splitlines()[-1] if output else "Qwen Turbo OpenVINO setup failed.")
+            invalidate_qwen_turbo_runtime_status()
+        if cancel_event.is_set():
+            raise TtsJobCancelled()
+        if not qwen_turbo_model_ready():
+            raise RuntimeError("The OpenVINO INT8 export did not pass the required component checks.")
+        with QWEN_JOB_LOCK:
+            if QWEN_JOB.get("id") == job_id:
+                QWEN_JOB.update(status="complete", finishedAt=time.time(), error=None, phase="Official Qwen Turbo OpenVINO INT8 export is ready.")
+    except (TtsJobCancelled, InterruptedError):
+        with QWEN_JOB_LOCK:
+            if QWEN_JOB.get("id") == job_id:
+                QWEN_JOB.update(status="paused", finishedAt=time.time(), phase="Setup paused. Resume to continue.")
+    except Exception as error:
+        with QWEN_JOB_LOCK:
+            if QWEN_JOB.get("id") == job_id:
+                QWEN_JOB.update(status="failed", finishedAt=time.time(), error=str(error), phase="Setup failed.")
+
+
+def run_qwen_turbo_setup(job_id: str, cancel_event: threading.Event) -> None:
+    with QWEN_MODEL_OPERATION_LOCK:
+        _run_qwen_turbo_setup(job_id, cancel_event)
+
+
+def start_qwen_turbo_setup() -> dict[str, Any]:
+    global QWEN_CANCEL_EVENT
+    with QWEN_MODEL_OPERATION_LOCK:
+        if qwen_turbo_model_ready() and qwen_turbo_runtime_ready():
+            raise ValueError("Official Qwen Turbo is already installed.")
+        with QWEN_JOB_LOCK:
+            if QWEN_JOB["status"] in ("setting_up", "downloading"):
+                raise ValueError("Qwen Turbo setup is already running.")
+            job_id = str(int(time.time() * 1000))
+            cancel_event = threading.Event()
+            QWEN_CANCEL_EVENT = cancel_event
+            QWEN_JOB.update(
+                status="setting_up", id=job_id, logs=[], phase="Starting setup…", error=None,
+                downloaded=0, bytes=qwen_turbo_quant_bytes(), startedAt=time.time(), finishedAt=None,
+            )
+        threading.Thread(target=run_qwen_turbo_setup, args=(job_id, cancel_event), daemon=True).start()
+    return qwen_turbo_snapshot()
+
+
+def cancel_qwen_turbo_setup() -> dict[str, Any]:
+    with QWEN_JOB_LOCK:
+        if QWEN_JOB["status"] not in ("setting_up", "downloading"):
+            raise ValueError("No Qwen Turbo setup is running.")
+        cancel_event = QWEN_CANCEL_EVENT
+    if cancel_event is not None:
+        cancel_event.set()
+    with QWEN_PROCESS_LOCK:
+        process = QWEN_ACTIVE_PROCESS
+    terminate_qwen_turbo_process(process)
+    return qwen_turbo_snapshot()
 
 
 def run_tts_process(
@@ -345,6 +788,31 @@ def model_snapshot(device: str, model="9b") -> dict[str, Any]:
     """Hardware imports must never hold gallery/status requests hostage."""
     global MODEL_CHECK_STARTED
     device = normalize_device(device)
+    if model == QWEN_TURBO_MODEL_ID:
+        model_ready = qwen_turbo_model_ready()
+        runtime_ready, devices = qwen_turbo_runtime_status() if model_ready else (False, set())
+        checking = model_ready and runtime_ready is None
+        installed = model_ready and runtime_ready is True
+        selected = "INTEL_GPU" if device in ("AUTO", "INTEL_GPU") and "GPU" in devices else "CPU" if device == "CPU" and "CPU" in devices else None
+        runtime_ready_for_device = bool(installed and selected is not None)
+        return {
+            "selectedModel": QWEN_TURBO_MODEL_ID, "runtimeReady": runtime_ready_for_device,
+            "checking": checking,
+            "runtimeNote": "Checking the OpenVINO runtime and available devices…" if checking else
+                "Official Qwen Turbo uses the OpenVINO INT8 export." if runtime_ready_for_device else
+                "OpenVINO GPU is unavailable. Select CPU explicitly to try it." if installed and device in ("AUTO", "INTEL_GPU") else
+                "OpenVINO runtime is unavailable. Repair it in Preferences." if model_ready else
+                "Install the official checkpoint and OpenVINO INT8 export before generating.",
+            "modelId": "Qwen/Qwen-Image-2.1-Turbo", "modelDir": str(QWEN_TURBO_MODEL_ROOT),
+            "pipelineClass": "OVQwenImage21Pipeline", "runtimeBackend": "OpenVINO · INT8",
+            "supportsReferenceImage": True, "requestedDevice": device, "selectedDevice": selected,
+            "supportsKvCache": False,
+            "modelRevision": "84d3f71fff32fc6c4740b89f5556657d0c65af27",
+            "adapters": [
+                {"id": "INTEL_GPU", "label": "Intel GPU", "available": "GPU" in devices, "runtimeReady": bool(installed and "GPU" in devices), "note": "Checking OpenVINO devices…" if checking else None, "supportsReferenceImage": True},
+                {"id": "CPU", "label": "CPU", "available": "CPU" in devices, "runtimeReady": bool(installed and "CPU" in devices), "note": "Checking OpenVINO devices…" if checking else None, "supportsReferenceImage": True},
+            ],
+        }
     if model not in ("auto", "9b", "4b"): model = "9b"
     requested_model = model
     resolved_model = flux2.resolve_model(model, device)
@@ -494,7 +962,7 @@ def decode_flux_reference_image(value: Any) -> Image.Image | None:
 
 def validate_flux_payload(payload: dict[str, Any]) -> dict[str, Any]:
     model = payload.get("model", "9b")
-    if model != "auto": model_spec(model)
+    if model not in ("auto", QWEN_TURBO_MODEL_ID): model_spec(model)
     prompt = str(payload.get("prompt", "")).strip()
     if not prompt:
         raise ValueError("Prompt is required.")
@@ -513,6 +981,11 @@ def validate_flux_payload(payload: dict[str, Any]) -> dict[str, Any]:
     }:
         raise ValueError("Device must be Auto-select, Intel GPU, NVIDIA GPU, or CPU.")
     device = normalize_device(raw_device)
+    if model == QWEN_TURBO_MODEL_ID:
+        if device not in ("AUTO", "INTEL_GPU", "CPU"):
+            raise ValueError("Official Qwen Turbo uses the OpenVINO Intel GPU or an explicitly selected CPU.")
+        if not (qwen_turbo_runtime_ready() and qwen_turbo_model_ready()):
+            raise ValueError("Install the official Qwen Turbo OpenVINO INT8 model from Preferences before generating.")
     backend = flux2
     width = int(payload.get("width", backend.DEFAULT_WIDTH))
     height = int(payload.get("height", backend.DEFAULT_HEIGHT))
@@ -541,14 +1014,16 @@ def validate_flux_payload(payload: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("Guidance must be 0 to 10.")
     if batch_size < 1 or batch_size > 4:
         raise ValueError("Batch size must be 1 to 4.")
+    if model == QWEN_TURBO_MODEL_ID and batch_size != 1:
+        raise ValueError("Official Qwen Turbo currently supports one image per generation.")
 
     return {
         "prompt": prompt,
         "device": device,
         "width": width,
         "height": height,
-        "steps": steps,
-        "guidance": guidance,
+        "steps": 8 if model == QWEN_TURBO_MODEL_ID else steps,
+        "guidance": 1.0 if model == QWEN_TURBO_MODEL_ID else guidance,
         "seed": seed,
         "batch_size": batch_size,
         "thread_id": thread_id,
@@ -564,11 +1039,25 @@ def run_flux_generation(
     cancel_event: threading.Event,
 ) -> None:
     def log_generation(message: str) -> None:
-        append_flux_log(message)
-        if message.startswith(("Loading Flux", "Loading Qwen")):
+        display_message = message
+        for prefix in ("FERN_QWEN_PROGRESS:", "FERN_TTS_PROGRESS:"):
+            if display_message.startswith(prefix):
+                display_message = display_message[len(prefix):].strip()
+                break
+        append_flux_log(display_message)
+        if message.startswith(("Loading Flux", "Loading Qwen", "Loading the OpenVINO")):
             mark_runtime(status="loading", message="Loading model for generation…", error=None)
         elif message.startswith(("Seed:", "Qwen denoising step")):
             mark_runtime(status="ready", device=payload["device"], message="Model ready.", error=None)
+        elif message.startswith("FERN_QWEN_PROGRESS:"):
+            progress = message.removeprefix("FERN_QWEN_PROGRESS:").strip()
+            if progress.startswith("Step "):
+                mark_runtime(
+                    status="ready", device=payload["device"],
+                    message=f"Qwen Turbo · {progress}", error=None,
+                )
+            elif progress.lower().startswith(("loading", "compiling", "preparing")):
+                mark_runtime(status="loading", device=payload["device"], message=progress, error=None)
         if cancel_event.is_set():
             raise FluxGenerationCancelled("Generation stopped by user.")
 
@@ -577,6 +1066,15 @@ def run_flux_generation(
         if stage.resolve().parent != CACHE_DIR.resolve():
             raise ValueError("Invalid generation staging path.")
         stage.mkdir(parents=True, exist_ok=True)
+        if payload["model"] == QWEN_TURBO_MODEL_ID:
+            mark_runtime(
+                status="loading", device=payload["device"], error=None,
+                message="Preparing Qwen Turbo on the selected OpenVINO device…",
+            )
+        qwen_reference_path = None
+        if payload["model"] == QWEN_TURBO_MODEL_ID and payload["reference_image"] is not None:
+            qwen_reference_path = stage / "reference.png"
+            payload["reference_image"].save(qwen_reference_path, format="PNG")
         last_record = None
         for index in range(payload["batch_size"]):
             if cancel_event.is_set():
@@ -591,26 +1089,75 @@ def run_flux_generation(
                 "height": payload["height"],
                 "steps": payload["steps"],
                 "guidance": payload["guidance"],
-                "device": payload["device"],
-                "modelPath": str(flux2.model_dir_for(payload["device"], payload.get("model", "9b"))),
+                "device": resolve_qwen_turbo_device(payload["device"]) if payload["model"] == QWEN_TURBO_MODEL_ID else payload["device"],
+                "modelPath": str(QWEN_TURBO_MODEL_ROOT if payload["model"] == QWEN_TURBO_MODEL_ID else flux2.model_dir_for(payload["device"], payload.get("model", "9b"))),
                 "model": payload.get("model", "9b"),
-                "modelRevision": payload.get("modelRevision", model_spec(payload.get("model", "9b"))["revision"]),
+                "modelRevision": (
+                    "84d3f71fff32fc6c4740b89f5556657d0c65af27"
+                    if payload["model"] == QWEN_TURBO_MODEL_ID
+                    else payload.get("modelRevision", model_spec(payload.get("model", "9b"))["revision"])
+                ),
                 "createdAt": time.time(),
             }
-            output_path, generation_time = GENERATION_WORKER.generate(
-                cancel_event=cancel_event,
-                model=payload.get("model", "9b"),
-                prompt=payload["prompt"],
-                width=payload["width"],
-                height=payload["height"],
-                steps=payload["steps"],
-                guidance=payload["guidance"],
-                seed=seed,
-                device=payload["device"],
-                reference_image=payload["reference_image"],
-                output_dir=stage,
-                log=log_generation,
-            )
+            if payload["model"] == QWEN_TURBO_MODEL_ID:
+                python = sys.executable
+                output_name = f"qwen21-turbo-{job_id}-{index + 1}.png"
+                result = QWEN_GENERATION_WORKER.generate(
+                    key=(QWEN_TURBO_MODEL_ID, resolve_qwen_turbo_device(payload["device"])),
+                    command=[
+                        str(QWEN_TURBO_PYTHON), "-u", str(SCRIPTS / "qwen21_turbo_openvino.py"),
+                        "serve", str(QWEN_TURBO_MODEL_ROOT), str(stage),
+                        "--device", resolve_qwen_turbo_device(payload["device"]),
+                    ],
+                    request={
+                        "prompt": payload["prompt"], "width": payload["width"],
+                        "height": payload["height"], "seed": seed, "outputName": output_name,
+                        "referencePath": str(qwen_reference_path) if qwen_reference_path else None,
+                    },
+                    cwd=ROOT, env=qwen_turbo_child_env(), log=log_generation,
+                    runtime_label="Qwen Image 2.1 Turbo",
+                    progress_prefix="FERN_QWEN_PROGRESS:",
+                )
+                output_path = Path(result["path"])
+                if output_path.resolve().parent != stage.resolve() or output_path.name != output_name:
+                    raise RuntimeError("Qwen Turbo returned an image outside its generation workspace.")
+                if not output_path.is_file() or output_path.stat().st_size <= 0:
+                    raise RuntimeError("Qwen Turbo did not create a valid output image.")
+                generation_time = float(result["generationTime"])
+                if not math.isfinite(generation_time) or generation_time < 0:
+                    raise RuntimeError("Qwen Turbo returned an invalid generation duration.")
+                evidence_path = output_path.with_suffix(".json")
+                evidence = json.loads(evidence_path.read_text(encoding="utf-8-sig"))
+                if not (
+                    evidence.get("modelRevision") == "84d3f71fff32fc6c4740b89f5556657d0c65af27"
+                    and evidence.get("width") == payload["width"]
+                    and evidence.get("height") == payload["height"]
+                    and evidence.get("steps") == 8
+                    and evidence.get("useKvCache") is False
+                    and evidence.get("seed") == seed
+                    and evidence.get("sha256") == hashlib.sha256(output_path.read_bytes()).hexdigest()
+                ):
+                    raise RuntimeError("Qwen Turbo output metadata failed validation.")
+                with Image.open(output_path) as output_image:
+                    output_image.verify()
+                with Image.open(output_path) as output_image:
+                    if output_image.size != (payload["width"], payload["height"]):
+                        raise RuntimeError("Qwen Turbo output dimensions do not match the request.")
+            else:
+                output_path, generation_time = GENERATION_WORKER.generate(
+                    cancel_event=cancel_event,
+                    model=payload.get("model", "9b"),
+                    prompt=payload["prompt"],
+                    width=payload["width"],
+                    height=payload["height"],
+                    steps=payload["steps"],
+                    guidance=payload["guidance"],
+                    seed=seed,
+                    device=payload["device"],
+                    reference_image=payload["reference_image"],
+                    output_dir=stage,
+                    log=log_generation,
+                )
             if cancel_event.is_set():
                 raise FluxGenerationCancelled("Generation stopped by user.")
             destination = OUTPUTS / output_path.name
@@ -640,12 +1187,23 @@ def run_flux_generation(
             output=last_record,
             error=None,
         )
-        storage_manager.cleanup_cache(ROOT, CACHE_DIR)
+        if payload["model"] == QWEN_TURBO_MODEL_ID:
+            mark_runtime(status="ready", device=payload["device"], message="Qwen Turbo is ready for another image.", error=None)
+        cleanup_cache_when_model_idle()
     except FluxGenerationCancelled:
+        QWEN_GENERATION_WORKER.close()
         mark_runtime(status="idle", message="Generation stopped. Model will reload on the next generation.", error=None)
         append_flux_log("Generation stopped by user.")
         mark_flux_job(status="cancelled", finishedAt=time.time(), output=None, error=None)
     except Exception as exc:
+        if cancel_event.is_set():
+            QWEN_GENERATION_WORKER.close()
+            mark_runtime(status="idle", message="Generation stopped. Model will reload on the next generation.", error=None)
+            append_flux_log("Generation stopped by user.")
+            mark_flux_job(status="cancelled", finishedAt=time.time(), output=None, error=None)
+            return
+        if payload.get("model") == QWEN_TURBO_MODEL_ID:
+            QWEN_GENERATION_WORKER.close()
         mark_runtime(status="idle", message="Ready to retry generation.", error=None)
         append_flux_log(str(exc))
         mark_flux_job(status="failed", finishedAt=time.time(), output=None, error=str(exc))
@@ -727,7 +1285,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if parsed.path == "/api/models":
-            self.send_json(200, {"models": MODEL_MANAGER.snapshot()})
+            self.send_json(200, {"models": MODEL_MANAGER.snapshot() + [qwen_turbo_snapshot()]})
             return
 
         if parsed.path == "/api/health":
@@ -737,12 +1295,15 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/flux2/status":
             query = urllib.parse.parse_qs(parsed.query)
             requested_device = query.get("device", [flux2.DEFAULT_DEVICE])[0]
+            qwen_model_ready = qwen_turbo_model_ready()
+            qwen_runtime_ready, _ = qwen_turbo_runtime_status() if qwen_model_ready else (False, set())
             self.send_json(
                 200,
                 {
                     "job": flux_job_snapshot(),
                     "images": latest_images() if query.get("images", ["1"])[0] != "0" else None,
-                    "installedModels": [{"id": item["id"], "label": item["label"]} for item in MODEL_MANAGER.snapshot() if item["installed"]],
+                    "installedModels": [{"id": item["id"], "label": item["label"]} for item in MODEL_MANAGER.snapshot() if item["installed"]]
+                    + ([{"id": QWEN_TURBO_MODEL_ID, "label": "Qwen Image 2.1 Turbo · official"}] if qwen_model_ready and qwen_runtime_ready is not False else []),
                     "model": model_snapshot(requested_device, query.get("model", ["9b"])[0]),
                     "runtime": runtime_snapshot(),
                     "defaults": {
@@ -927,18 +1488,24 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(409, {"error": "The generation job cannot be stopped.", "job": current})
                 return
             cancel_event.set()
+            if FLUX_JOB.get("model") == QWEN_TURBO_MODEL_ID:
+                QWEN_GENERATION_WORKER.interrupt()
             append_flux_log("Stopping generation...")
             self.send_json(202, {"job": flux_job_snapshot()})
             return
 
         if parsed.path == "/api/storage/cleanup-cache":
-            current = flux_job_snapshot()
-            if current["status"] == "running" or tts_job_running():
-                self.send_json(409, {"error": "Wait for the current generation or Qwen3-TTS setup to finish."})
-                return
-            GENERATION_WORKER.close()
-            flux2.release_pipeline()
-            result = storage_manager.cleanup_cache(ROOT, CACHE_DIR, force=True)
+            with QWEN_MODEL_OPERATION_LOCK:
+                current = flux_job_snapshot()
+                with QWEN_JOB_LOCK:
+                    qwen_setup_active = QWEN_JOB["status"] in ("setting_up", "downloading")
+                if current["status"] == "running" or tts_job_running() or qwen_setup_active:
+                    self.send_json(409, {"error": "Wait for the current generation or model setup to finish."})
+                    return
+                GENERATION_WORKER.close()
+                QWEN_GENERATION_WORKER.close()
+                flux2.release_pipeline()
+                result = storage_manager.cleanup_cache(ROOT, CACHE_DIR, force=True)
             self.send_json(
                 200,
                 {
@@ -955,25 +1522,29 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if parsed.path == "/api/storage/clear-local-data":
-            current = flux_job_snapshot()
-            if current["status"] == "running" or tts_job_running():
-                self.send_json(409, {"error": "Wait for the current generation or Qwen3-TTS setup to finish."})
-                return
+            with QWEN_MODEL_OPERATION_LOCK:
+                current = flux_job_snapshot()
+                with QWEN_JOB_LOCK:
+                    qwen_setup_active = QWEN_JOB["status"] in ("setting_up", "downloading")
+                if current["status"] == "running" or tts_job_running() or qwen_setup_active:
+                    self.send_json(409, {"error": "Wait for the current generation or model setup to finish."})
+                    return
 
-            GENERATION_WORKER.close()
-            flux2.release_pipeline()
-            cache_result = storage_manager.cleanup_cache(ROOT, CACHE_DIR, force=True)
-            output_files, output_bytes = storage_manager.clear_directory(OUTPUTS)
-            metadata_files, metadata_bytes = storage_manager.clear_directory(DATA_DIR)
-            mark_flux_job(
-                id=None,
-                status="idle",
-                logs=[],
-                startedAt=None,
-                finishedAt=None,
-                output=None,
-                error=None,
-            )
+                GENERATION_WORKER.close()
+                QWEN_GENERATION_WORKER.close()
+                flux2.release_pipeline()
+                cache_result = storage_manager.cleanup_cache(ROOT, CACHE_DIR, force=True)
+                output_files, output_bytes = storage_manager.clear_directory(OUTPUTS)
+                metadata_files, metadata_bytes = storage_manager.clear_directory(DATA_DIR)
+                mark_flux_job(
+                    id=None,
+                    status="idle",
+                    logs=[],
+                    startedAt=None,
+                    finishedAt=None,
+                    output=None,
+                    error=None,
+                )
             self.send_json(
                 200,
                 {
@@ -998,6 +1569,36 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path in ("/api/models/install", "/api/models/pause", "/api/models/remove"):
             try:
                 model = self.read_json_body().get("model")
+                if model == QWEN_TURBO_MODEL_ID:
+                    if parsed.path.endswith("install"):
+                        start_qwen_turbo_setup()
+                    elif parsed.path.endswith("pause"):
+                        cancel_qwen_turbo_setup()
+                    else:
+                        with QWEN_MODEL_OPERATION_LOCK:
+                            with FLUX_JOB_LOCK:
+                                if FLUX_JOB["status"] == "running":
+                                    raise ValueError("Stop generation before removing a model.")
+                            with QWEN_JOB_LOCK:
+                                if QWEN_JOB["status"] in ("setting_up", "downloading"):
+                                    raise ValueError("Cancel setup before removing Qwen Turbo.")
+                            QWEN_GENERATION_WORKER.close()
+                            source_repo = QWEN_TURBO_SOURCE_ROOT / "models--Qwen--Qwen-Image-2.1-Turbo"
+                            source_locks = QWEN_TURBO_SOURCE_ROOT / ".locks" / "models--Qwen--Qwen-Image-2.1-Turbo"
+                            for target in (
+                                QWEN_TURBO_MODEL_ROOT, QWEN_TURBO_PARTIAL_ROOT,
+                                QWEN_TURBO_DOWNLOAD_ROOT, source_repo, source_locks,
+                            ):
+                                if target.exists() and target.resolve().is_relative_to(ROOT.resolve()):
+                                    shutil.rmtree(target)
+                            with QWEN_JOB_LOCK:
+                                QWEN_JOB.update(
+                                    status="idle", logs=[], phase=None, error=None,
+                                    downloaded=0, bytes=qwen_turbo_quant_bytes(),
+                                    startedAt=None, finishedAt=None,
+                                )
+                    self.send_json(200, {"models": MODEL_MANAGER.snapshot() + [qwen_turbo_snapshot()]})
+                    return
                 model_spec(model)
                 if parsed.path.endswith("install"): MODEL_MANAGER.start(model)
                 elif parsed.path.endswith("pause"): MODEL_MANAGER.cancel(model)
@@ -1025,26 +1626,40 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(400, {"error": str(exc)})
             return
 
-        status = flux2.model_status(payload["device"], payload["model"])
-        if not status["runtimeReady"]:
-            self.send_json(400, {"error": status["runtimeNote"], "model": status})
-            return
-
-        # Resolve Auto-select once at queue time so generation, logs, and saved
-        # metadata all describe the adapter that actually ran.
-        payload["device"] = status["selectedDevice"]
-        payload["model"] = status["selectedModel"]
-        payload["modelRevision"] = status["modelRevision"]
-
-        job_id = str(int(time.time() * 1000))
-        cancel_event = threading.Event()
-        with FLUX_JOB_LOCK:
-            if FLUX_JOB["status"] == "running":
-                self.send_json(409, {"error": "A generation job is already running."})
+        operation_lock = (
+            QWEN_MODEL_OPERATION_LOCK
+            if payload["model"] == QWEN_TURBO_MODEL_ID
+            else nullcontext()
+        )
+        with operation_lock:
+            status = (
+                model_snapshot(payload["device"], payload["model"])
+                if payload["model"] == QWEN_TURBO_MODEL_ID
+                else flux2.model_status(payload["device"], payload["model"])
+            )
+            if not status["runtimeReady"]:
+                self.send_json(400, {"error": status["runtimeNote"], "model": status})
                 return
-            FLUX_JOB["status"] = "running"
-            FLUX_CANCEL_EVENT = cancel_event
-        model_label = model_spec(payload["model"])["label"]
+
+            # Resolve Auto-select once at queue time so generation, logs, and saved
+            # metadata all describe the adapter that actually ran.
+            payload["device"] = status["selectedDevice"]
+            payload["model"] = status["selectedModel"]
+            payload["modelRevision"] = status["modelRevision"]
+
+            job_id = str(int(time.time() * 1000))
+            cancel_event = threading.Event()
+            with FLUX_JOB_LOCK:
+                if FLUX_JOB["status"] == "running":
+                    self.send_json(409, {"error": "A generation job is already running."})
+                    return
+                FLUX_JOB["status"] = "running"
+                FLUX_CANCEL_EVENT = cancel_event
+        model_label = (
+            "Qwen Image 2.1 Turbo · official"
+            if payload["model"] == QWEN_TURBO_MODEL_ID
+            else model_spec(payload["model"])["label"]
+        )
         mark_flux_job(
             id=job_id,
             threadId=payload.get("thread_id"),
@@ -1100,6 +1715,7 @@ def run_server(port: int = 8000, *, allow_cors: bool = False) -> None:
     finally:
         GENERATION_WORKER.close()
         TTS_GENERATION_WORKER.close()
+        QWEN_GENERATION_WORKER.close()
         server.server_close()
 
 

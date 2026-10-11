@@ -1,0 +1,18 @@
+# Isolated reproduction of the Qwen Image 2.1 OpenVINO notebook runtime.
+git+https://github.com/huggingface/diffusers.git@8b3c707ebd3ec4881f4190cf42931da07eaf3b65
+git+https://github.com/huggingface/optimum-intel.git@c7e9f387b3beac5d507136f35c98743ca0805d54
+torch==2.14.0+cpu
+transformers==5.10.4
+accelerate==1.15.0
+nncf==3.4.0
+numpy==2.4.6
+pillow==12.3.0
+huggingface-hub==1.32.0
+safetensors==0.8.0
+tqdm
+--extra-index-url https://download.pytorch.org/whl/cpu
+--pre
+openvino==2026.5.0.dev20260919
+openvino-tokenizers==2026.5.0.0.dev20260919
+openvino-genai==2026.5.0.0.dev20260919
+--extra-index-url https://storage.openvinotoolkit.org/simple/wheels/nightly

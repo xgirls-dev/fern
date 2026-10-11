@@ -1,0 +1,5 @@
+# New Turbo pipeline/config support layered over the notebook-pinned exporter.
+git+https://github.com/huggingface/diffusers.git@da1d3829cf08d4f329b526d89e17cc035c049d8d
+transformers==5.17.0
+huggingface-hub==1.33.0
+tokenizers==0.23.1
