@@ -58,12 +58,10 @@ apps/desktop/resources/scripts/
 apps/desktop/resources/licenses/
 apps/desktop/resources/app-config.json
 
-# Local docs, with the reproducible Qwen Image experiment report kept in source
+# Local docs
 docs/*
-!docs/experiments/
+docs/experiments/
 docs/experiments/*
-!docs/experiments/QWEN-IMAGE-2.1-EXPERIMENT-REPORT.md
-!docs/experiments/HY-MT2-1.8B-OPENVINO-INT4.md
 
 # Local AI models and checkpoints
 /models/
