@@ -5,6 +5,7 @@ import ImagePlus from "lucide-react/dist/esm/icons/image-plus.mjs";
 import SlidersHorizontal from "lucide-react/dist/esm/icons/sliders-horizontal.mjs";
 import X from "lucide-react/dist/esm/icons/x.mjs";
 import { useEffect, useRef, useState } from "react";
+import { normalizeQwenDimension } from "../lib/imageDimensions";
 import { readReference } from "../lib/reference";
 import type { StudioSettings } from "../lib/types";
 
@@ -48,7 +49,7 @@ export function PromptComposer({
   onGenerate,
 }: PromptComposerProps) {
   const fileInput = useRef<HTMLInputElement>(null);
-  const preQwenSettings = useRef<Pick<StudioSettings, "steps" | "guidance" | "batchSize" | "device"> | null>(null);
+  const preSpecialSettings = useRef<Pick<StudioSettings, "width" | "height" | "steps" | "guidance" | "batchSize" | "device"> | null>(null);
   const [seedDraft, setSeedDraft] = useState(String(settings.seed));
   const [seedPopoverOpen, setSeedPopoverOpen] = useState(false);
   const seedPopover = useRef<HTMLDivElement>(null);
@@ -282,22 +283,57 @@ export function PromptComposer({
               value={settings.model ?? "9b"}
               disabled={running || submitting || busyElsewhere}
               onChange={(model) => {
-                if (model === "qwen21-turbo") {
-                  if (settings.model !== "qwen21-turbo") {
-                    preQwenSettings.current = {
+                if (model === "qwen21-turbo" || model === "flux3-klein" || model === "tame-pony-v25-sdxl" || model === "tame-pony-v25-sdxl-int8") {
+                  const currentIsSpecial = settings.model === "qwen21-turbo" || settings.model === "flux3-klein" || settings.model === "tame-pony-v25-sdxl" || settings.model === "tame-pony-v25-sdxl-int8";
+                  if (!currentIsSpecial && preSpecialSettings.current === null) {
+                    preSpecialSettings.current = {
+                      width: settings.width,
+                      height: settings.height,
                       steps: settings.steps,
                       guidance: settings.guidance,
                       batchSize: settings.batchSize,
                       device: settings.device,
                     };
                   }
-                  onSettingsChange({ model, steps: 8, guidance: 1, batchSize: 1, device: "AUTO" });
+                  if (model === "qwen21-turbo") {
+                    onSettingsChange({
+                      model,
+                      width: normalizeQwenDimension(settings.width),
+                      height: normalizeQwenDimension(settings.height),
+                      steps: 8,
+                      guidance: 1,
+                      batchSize: 1,
+                      device: "AUTO",
+                    });
+                  } else if (model === "flux3-klein") {
+                    onSettingsChange({
+                      model,
+                      width: 1024,
+                      height: 1024,
+                      steps: 16,
+                      guidance: 0,
+                      batchSize: 1,
+                      device: "AUTO",
+                    });
+                    if (referenceImage) onClearReference();
+                  } else {
+                    onSettingsChange({
+                      model,
+                      width: 1024,
+                      height: 1024,
+                      steps: 30,
+                      guidance: 7,
+                      batchSize: 1,
+                      device: "AUTO",
+                    });
+                    if (referenceImage) onClearReference();
+                  }
                   return;
                 }
-                const restore = settings.model === "qwen21-turbo"
-                  ? preQwenSettings.current ?? { steps: 4, guidance: 1, batchSize: 1, device: "AUTO" }
+                const restore = settings.model === "qwen21-turbo" || settings.model === "flux3-klein" || settings.model === "tame-pony-v25-sdxl" || settings.model === "tame-pony-v25-sdxl-int8"
+                  ? preSpecialSettings.current ?? { steps: 4, guidance: 1, batchSize: 1, device: "AUTO" }
                   : undefined;
-                preQwenSettings.current = null;
+                preSpecialSettings.current = null;
                 onSettingsChange({ model, ...restore });
               }}
               onOpen={() => setSeedPopoverOpen(false)}

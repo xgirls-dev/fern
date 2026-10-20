@@ -1,7 +1,7 @@
 import { createServer } from "vite";
 import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-export async function fixture({ imageCount = 3, threadCount = 1 } = {}) {
+export async function fixture({ imageCount = 3, threadCount = 1, textStatus = null } = {}) {
   const server = await createServer({
     configFile: false,
     root: fileURLToPath(
@@ -101,7 +101,22 @@ export async function fixture({ imageCount = 3, threadCount = 1 } = {}) {
     payloads: [],
     imageListings: 0,
     statusCalls: 0,
+    textStatus: textStatus ?? { models: [], runtimeAvailable: true, runtimeError: null, devices: ['AUTO', 'GPU', 'CPU'], job: { id: null, status: 'idle' } },
+    textRequests: [],
+    rejectText: null,
   };
+  await page.route('**/api/text/status', r => r.fulfill({ json: state.textStatus }));
+  await page.route('**/api/text/generate', async r => {
+    const payload = r.request().postDataJSON();
+    state.textRequests.push(payload);
+    if (state.rejectText) return r.fulfill({ status: 400, json: { error: state.rejectText } });
+    state.textStatus.job = { id: payload.requestId, threadId: payload.threadId, modelId: payload.modelId, status: 'running', partialText: '', phase: 'Loading model', startedAt: Date.now() / 1000, result: null, error: null };
+    return r.fulfill({ status: 202, json: { job: state.textStatus } });
+  });
+  await page.route('**/api/text/stop', r => {
+    state.textStatus.job = { ...state.textStatus.job, status: 'stopped', finishedAt: Date.now() / 1000 };
+    return r.fulfill({ status: 202, json: { job: state.textStatus } });
+  });
   await page.route("**/api/threads/delete", (r) => {
     const payload = r.request().postDataJSON();
     const deleted = state.images

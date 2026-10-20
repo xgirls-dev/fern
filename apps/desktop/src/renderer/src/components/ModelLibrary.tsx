@@ -11,6 +11,7 @@ interface InstalledModel {
   phase?: string;
   logs?: string[];
   runtimeReady?: boolean;
+  supportsReferenceImage?: boolean;
   error?: string;
 }
 export function ModelLibrary({ status }: { status: ModelStatus | null }) {
@@ -106,7 +107,7 @@ export function ModelLibrary({ status }: { status: ModelStatus | null }) {
       <div className="model-library-grid">
         {models.map((model) => (
           <article
-            className={`model-library-card${model.id === "qwen21-turbo" ? " model-library-card-qwen" : ""}`}
+            className={`model-library-card${model.id === "qwen21-turbo" ? " model-library-card-qwen" : model.id === "flux3-klein" ? " model-library-card-flux3" : model.id.startsWith("tame-pony-") ? " model-library-card-sdxl" : ""}`}
             key={model.id}
             aria-busy={["installing", "checking-runtime"].includes(model.state) || undefined}
           >
@@ -114,8 +115,15 @@ export function ModelLibrary({ status }: { status: ModelStatus | null }) {
             <p>
               {model.id === "qwen21-turbo"
               ? `Official 8-step checkpoint · OpenVINO INT8 · ${model.bytes > 0 ? `about ${(model.bytes / 1e9).toFixed(1)} GB download · ` : ""}compiled GPU caches add disk use after first launch`
-                : `${model.bytes > 0 ? `${(model.bytes / 1e9).toFixed(2)} GB · ` : ""}${model.id === "4b" ? "Smaller download and lower memory use" : "Larger model"}`}
+                : model.id === "flux3-klein"
+                  ? `OpenVINO mixed INT4/INT8 · 16 steps · text-to-image · ${model.bytes > 0 ? `about ${(model.bytes / 1e9).toFixed(2)} GB download` : ""}`
+                  : model.id.startsWith("tame-pony-")
+                    ? `SDXL · OpenVINO ${model.id.endsWith("-int8") ? "INT8 quantized" : "export"} · text-to-image · ${model.bytes > 0 ? `about ${(model.bytes / 1e9).toFixed(2)} GB download` : ""}`
+                    : `${model.bytes > 0 ? `${(model.bytes / 1e9).toFixed(2)} GB · ` : ""}${model.id === "4b" ? "Smaller download and lower memory use" : "Larger model"}`}
             </p>
+            {model.id.startsWith("tame-pony-") ? (
+              <p className="model-library-note">Text-to-image only. Starts at 1024 × 1024, 30 steps, guidance 7.0; resolution and sampling remain adjustable. Licensed under FAIPL-1.0-SD.</p>
+            ) : null}
             {model.id === "qwen21-turbo" ? (
               <>
                 <p className="model-library-note">
@@ -126,21 +134,39 @@ export function ModelLibrary({ status }: { status: ModelStatus | null }) {
                 </p>
               </>
             ) : null}
+            {model.id === "flux3-klein" ? (
+              <>
+                <p className="model-library-note">FLUX Kommunity License · the model card includes the required license and attribution notice.</p>
+                <p className="model-library-note">Fern prepares a separate Diffusers compatibility layer during setup. Text-to-image only; 1024 × 1024 is the published end-to-end validation size.</p>
+                <p className="model-library-note">The updated runner requests FP32 transformer inference on OpenVINO GPU. Fern's previous GPU runs were blank; output quality is being rechecked with the updated runner.</p>
+              </>
+            ) : null}
             <p className="model-library-status" role="status" aria-live="polite">
               {model.state === "not-installed"
                 ? "Not installed"
                 : model.state === "installed"
-                  ? "Installed · OpenVINO runtime ready"
+                  ? model.id.startsWith("tame-pony-")
+                    ? "Installed · OpenVINO SDXL files present"
+                    : "Installed · OpenVINO runtime ready"
                   : model.state === "installing"
-                    ? model.phase?.replace("FERN_QWEN_PROGRESS:", "") || "Setting up official Qwen Turbo…"
+                    ? model.id === "flux3-klein"
+                      ? model.phase || "Preparing FLUX.3 runtime…"
+                      : model.phase?.replace("FERN_QWEN_PROGRESS:", "") || "Setting up official Qwen Turbo…"
                     : model.state === "checking-runtime"
                       ? "Checking OpenVINO runtime and available devices…"
                     : model.state === "repair-needed"
                       ? "Incomplete model files. Remove them, then install again."
                       : model.state === "runtime-unavailable"
-                        ? "Model files are present, but this Fern runtime cannot load OpenVINO Qwen."
+                        ? model.id === "flux3-klein"
+                          ? "Model files are present, but the FLUX.3 Diffusers runtime is unavailable."
+                          : model.id.startsWith("tame-pony-")
+                            ? "Model files are present, but this Fern runtime cannot load OpenVINO SDXL."
+                            : "Model files are present, but this Fern runtime cannot load OpenVINO Qwen."
                     : model.state}
             </p>
+            {model.id === "flux3-klein" && model.state === "installing" ? (
+              <progress className="model-library-indeterminate" aria-label="Preparing FLUX.3 runtime" />
+            ) : null}
             {model.id === "qwen21-turbo" && model.state === "installing" ? (
               model.downloaded > 0 && model.downloaded < model.bytes ? (
                 <>
@@ -183,13 +209,29 @@ export function ModelLibrary({ status }: { status: ModelStatus | null }) {
               </details>
             ) : null}
             <div className="model-library-actions">
-              {model.state === "installing" && model.id === "qwen21-turbo" ? (
+              {model.state === "installing" && model.id === "flux3-klein" ? (
                 <button
                   className="btn btn-secondary"
                   disabled={actionsUnavailable}
                   onClick={() => void action(model.id, "pause")}
                 >
                   Cancel setup
+                </button>
+              ) : model.state === "installing" && model.id === "qwen21-turbo" ? (
+                <button
+                  className="btn btn-secondary"
+                  disabled={actionsUnavailable}
+                  onClick={() => void action(model.id, "pause")}
+                >
+                  Cancel setup
+                </button>
+              ) : model.id === "flux3-klein" && model.state === "runtime-unavailable" ? (
+                <button
+                  className="btn btn-secondary"
+                  disabled={actionsUnavailable || downloading}
+                  onClick={() => void action(model.id, "install")}
+                >
+                  Repair runtime
                 </button>
               ) : ["downloading", "verifying"].includes(model.state) ? (
                 <button
@@ -205,9 +247,17 @@ export function ModelLibrary({ status }: { status: ModelStatus | null }) {
                   disabled={actionsUnavailable || downloading}
                   onClick={() => void action(model.id, "install")}
                 >
-                  {model.id === "qwen21-turbo"
-                    ? model.state === "paused" ? "Resume setup" : model.state === "failed" ? "Retry setup" : model.state === "runtime-unavailable" ? "Repair runtime" : "Install"
-                    : ["paused", "failed"].includes(model.state) ? "Resume download" : "Install"}
+                  {model.id === "qwen21-turbo" || model.id === "flux3-klein"
+                    ? model.state === "paused"
+                      ? "Resume setup"
+                      : model.state === "failed"
+                        ? "Retry setup"
+                        : model.state === "runtime-unavailable"
+                          ? "Repair runtime"
+                          : "Install"
+                    : ["paused", "failed"].includes(model.state)
+                      ? "Resume download"
+                      : "Install"}
                 </button>
               ) : null}
               {model.installed ||

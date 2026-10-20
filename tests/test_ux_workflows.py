@@ -34,6 +34,22 @@ class UxWorkflowTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             api_server.validate_flux_payload({"prompt": "test", "width": 1080})
 
+    def test_qwen_requires_dimensions_on_its_32_pixel_grid(self):
+        with (
+            patch.object(api_server, "qwen_turbo_runtime_ready", return_value=True),
+            patch.object(api_server, "qwen_turbo_model_ready", return_value=True),
+        ):
+            result = api_server.validate_flux_payload({
+                "prompt": "test", "model": api_server.QWEN_TURBO_MODEL_ID,
+                "width": 736, "height": 1280,
+            })
+            self.assertEqual((result["width"], result["height"]), (736, 1280))
+            with self.assertRaisesRegex(ValueError, "divisible by 32"):
+                api_server.validate_flux_payload({
+                    "prompt": "test", "model": api_server.QWEN_TURBO_MODEL_ID,
+                    "width": 720, "height": 1280,
+                })
+
     def test_reference_provenance_survives_batch_and_preserves_original_bytes(self):
         buffer = io.BytesIO()
         Image.new("RGB", (32, 32), "green").save(buffer, format="JPEG")

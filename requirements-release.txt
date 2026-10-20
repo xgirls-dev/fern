@@ -33,8 +33,9 @@ onnx==1.23.1
 onnx-ir==1.0.0
 onnxscript==0.7.2
 openvino==2026.4.1
-openvino-telemetry==2025.2.0
+openvino-genai==2026.4.1.0
 openvino-tokenizers==2026.4.1.0
+openvino-telemetry==2025.2.0
 optimum @ git+https://github.com/huggingface/optimum@86f0ba219a4e4fd320aab87d60ca9f4773f68078
 optimum-intel @ git+https://github.com/openvino-dev-samples/optimum-intel.git@72342141a3967d9d071571492fb5d43ed994ab4f
 optimum-onnx @ git+https://github.com/huggingface/optimum-onnx.git@d16609c333b65c082aaf699cf3c492e4d8772245

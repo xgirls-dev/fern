@@ -110,8 +110,13 @@ class TtsGenerationWorker:
                     if not line:
                         continue
                     qwen_prefix = "FERN_QWEN_EVENT:"
-                    if line.startswith(EVENT_PREFIX) or line.startswith(qwen_prefix):
-                        prefix = EVENT_PREFIX if line.startswith(EVENT_PREFIX) else qwen_prefix
+                    flux3_prefix = "FERN_FLUX3_EVENT:"
+                    if line.startswith((EVENT_PREFIX, qwen_prefix, flux3_prefix)):
+                        prefix = next(
+                            prefix
+                            for prefix in (EVENT_PREFIX, qwen_prefix, flux3_prefix)
+                            if line.startswith(prefix)
+                        )
                         event = json.loads(line[len(prefix):])
                         if isinstance(event, dict) and "error" in event:
                             if event.get("traceback"):

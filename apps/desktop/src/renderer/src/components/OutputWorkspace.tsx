@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Check from "lucide-react/dist/esm/icons/check.mjs";
 import { resolveAssetUrl } from "../lib/api";
 import type { ImageRecord } from "../lib/types";
+import { notify } from "../lib/notifications";
 import { ImageActions } from "./ImageActions";
 interface Props {
   mode: "create" | "library";
@@ -351,6 +352,8 @@ function ImageCard({
   const [failed, setFailed] = useState(false);
   const [retry, setRetry] = useState(0);
   const [copied, setCopied] = useState(false);
+  const copyTimer = useRef<number | null>(null);
+  useEffect(() => () => { if (copyTimer.current !== null) window.clearTimeout(copyTimer.current); }, []);
   return (
     <article className="thumb-wrap">
       <button
@@ -386,9 +389,14 @@ function ImageCard({
             right: 0,
           }} className={`prompt-copy${copied ? " is-copied" : ""}`} onClick={async (event) => {
             event.stopPropagation();
-            navigator.clipboard.writeText(image.prompt ?? image.name);
-            setCopied(true);
-            window.setTimeout(() => setCopied(false), 1600);
+            try {
+              await window.studio.copyText(image.prompt ?? image.name);
+              setCopied(true);
+              if (copyTimer.current !== null) window.clearTimeout(copyTimer.current);
+              copyTimer.current = window.setTimeout(() => setCopied(false), 1600);
+            } catch {
+              notify("Could not copy the prompt. Select the text and copy it manually.", "error");
+            }
           }
           } aria-label={copied ? "Prompt copied" : "Copy prompt to clipboard"}>
             {copied ? <Check size={14} aria-hidden="true" /> : null}

@@ -12,18 +12,27 @@ import AudioLines from "lucide-react/dist/esm/icons/audio-lines.mjs";
 import { memo, useRef, useState } from "react";
 import type { ImageThread } from "../lib/threads";
 import type { AudioThread } from "../lib/ttsThreads";
+import type { TextThread } from "../lib/textThreads";
 
 interface StudioSidebarProps {
   threads: Array<Pick<ImageThread, "id" | "title" | "archived">>;
   audioThreads: Array<Pick<AudioThread, "id" | "title" | "archived" | "outputs">>;
+  textThreads: Array<Pick<TextThread, "id" | "title" | "archived" | "messages">>;
   activeThreadId: string;
   activeAudioThreadId: string;
+  activeTextThreadId: string;
   runningAudioThreadId: string | null;
+  runningTextThreadId: string | null;
   runningThreadId: string | null;
   onSelectThread: (id: string) => void;
   onNewThread: () => void;
   onSelectAudioThread: (id: string) => void;
   onNewAudioThread: () => void;
+  onSelectTextThread: (id: string) => void;
+  onNewTextThread: () => void;
+  onRenameTextThread: (id: string, title: string) => void;
+  onArchiveTextThread: (id: string) => void;
+  onDeleteTextThread: (id: string) => void;
   onRenameAudioThread: (id: string, title: string) => void;
   onArchiveAudioThread: (id: string) => void;
   onDeleteAudioThread: (id: string) => Promise<void>;
@@ -33,7 +42,7 @@ interface StudioSidebarProps {
   onOpenSearch: () => void;
   submitting: boolean;
   collapsed: boolean;
-  activeSection: "create" | "tts" | "library" | "preferences" | "storage";
+  activeSection: "create" | "tts" | "text" | "library" | "preferences" | "storage";
   onOpenLibrary: () => void;
   onOpenData: () => void;
   onOpenPreferences: () => void;
@@ -42,14 +51,22 @@ interface StudioSidebarProps {
 export const StudioSidebar = memo(function StudioSidebar({
   threads,
   audioThreads,
+  textThreads,
   activeThreadId,
   activeAudioThreadId,
+  activeTextThreadId,
   runningAudioThreadId,
+  runningTextThreadId,
   runningThreadId,
   onSelectThread,
   onNewThread,
   onSelectAudioThread,
   onNewAudioThread,
+  onSelectTextThread,
+  onNewTextThread,
+  onRenameTextThread,
+  onArchiveTextThread,
+  onDeleteTextThread,
   onRenameAudioThread,
   onArchiveAudioThread,
   onDeleteAudioThread,
@@ -66,6 +83,10 @@ export const StudioSidebar = memo(function StudioSidebar({
 }: StudioSidebarProps) {
   const [limit, setLimit] = useState(60);
   const [audioLimit, setAudioLimit] = useState(30);
+  const [textLimit, setTextLimit] = useState(30);
+  const [textDeleteId, setTextDeleteId] = useState<string | null>(null);
+  const [textDeletingBusy, setTextDeletingBusy] = useState(false);
+  const [textDeleteError, setTextDeleteError] = useState<string | null>(null);
   const filtered = threads.filter((thread) => !thread.archived);
   const visibleAudioThreads = audioThreads.filter((thread) => !thread.archived || thread.id === activeAudioThreadId);
   const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -122,7 +143,7 @@ export const StudioSidebar = memo(function StudioSidebar({
         </svg>
         <div className="sidebar-brand-copy">
           <strong translate="no">Fern</strong>
-          <span>Local image &amp; audio studio</span>
+            <span>Your local AI studio</span>
         </div>
         <button
           type="button"
@@ -157,6 +178,17 @@ export const StudioSidebar = memo(function StudioSidebar({
       >
         <AudioLines size={16} strokeWidth={1.6} aria-hidden="true" />
         <span>New audio thread</span>
+      </button>
+
+      <button
+        type="button"
+        className="sidebar-new-button sidebar-new-text-button"
+        onClick={onNewTextThread}
+        aria-label="New text thread"
+        title="New text thread · Ctrl Alt N"
+      >
+        <MessageSquare size={16} strokeWidth={1.6} aria-hidden="true" />
+        <span>New text thread</span>
       </button>
 
       <div className="sidebar-new-divider" />
@@ -364,6 +396,26 @@ export const StudioSidebar = memo(function StudioSidebar({
             Show more threads
           </button>
         ) : null}
+      </section>
+
+      <section className="sidebar-threads sidebar-text-threads" aria-label="Text threads">
+        <div className="sidebar-threads-heading">Text threads</div>
+        {!textThreads.filter((thread) => !thread.archived || thread.id === activeTextThreadId).length
+          ? <p className="thread-empty">No active text threads.</p> : null}
+        {textThreads.filter((thread) => !thread.archived || thread.id === activeTextThreadId).slice(0, textLimit).map((thread) => (
+          <div className={`sidebar-thread-row${activeSection === "text" && thread.id === activeTextThreadId ? " is-active" : ""}`} key={thread.id}>
+            {renamingId === thread.id ? <input className="thread-name-input" aria-label="Text thread name" autoFocus maxLength={80} value={threadName} onChange={(event) => setThreadName(event.target.value)} onFocus={(event) => event.target.select()} onBlur={() => { if (!cancelRename.current) onRenameTextThread(thread.id, threadName); setRenamingId(null); }} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); cancelRename.current = true; onRenameTextThread(thread.id, threadName); setRenamingId(null); focusThread(thread.id); } if (event.key === "Escape") { event.preventDefault(); cancelRename.current = true; setRenamingId(null); focusThread(thread.id); } }} /> : <>
+              <button type="button" className="sidebar-thread-button" data-thread-id={thread.id} title={thread.title} aria-label={`Text thread: ${thread.title}${thread.archived ? " (archived)" : ""}`} aria-current={activeSection === "text" && thread.id === activeTextThreadId ? "page" : undefined} aria-description={runningTextThreadId === thread.id ? "Text response running" : undefined} onClick={() => onSelectTextThread(thread.id)}>
+                <MessageSquare size={14} aria-hidden="true" /><span>{thread.title}</span>{runningTextThreadId === thread.id ? <span className="thread-running-dot" aria-label="Text response running" /> : null}
+              </button>
+              <button type="button" className="thread-action thread-rename" title="Rename text thread" aria-label={`Rename text thread ${thread.title}`} onClick={() => { cancelRename.current = false; setThreadName(thread.title); setRenamingId(thread.id); }}><Pencil size={12} aria-hidden="true" /></button>
+              <button type="button" className="thread-action thread-archive" title={thread.archived ? "Restore text thread" : "Archive text thread"} aria-label={`${thread.archived ? "Restore" : "Archive"} text thread ${thread.title}`} onClick={() => onArchiveTextThread(thread.id)}>{thread.archived ? <ArchiveRestore size={14} aria-hidden="true" /> : <Archive size={14} aria-hidden="true" />}</button>
+              <button type="button" className="thread-action thread-delete" title={runningTextThreadId === thread.id ? "Stop the response before deleting" : "Delete text thread"} aria-label={`Delete text thread ${thread.title}`} aria-expanded={textDeleteId === thread.id} disabled={textDeletingBusy || runningTextThreadId === thread.id} onClick={() => { setTextDeleteError(null); setTextDeleteId(textDeleteId === thread.id ? null : thread.id); }}><Trash2 size={13} aria-hidden="true" /></button>
+              {textDeleteId === thread.id ? <div className="thread-delete-confirm" role="group" aria-label={`Confirm deletion of text thread ${thread.title}`} onKeyDown={(event) => { if (event.key === "Escape" && !textDeletingBusy) { setTextDeleteId(null); setTextDeleteError(null); focusThread(thread.id); } }}><p>Delete this text thread?</p><small>The conversation and its settings will be removed.</small>{textDeleteError && <small role="alert">{textDeleteError}</small>}<div><button type="button" className="btn btn-secondary" autoFocus disabled={textDeletingBusy} onClick={() => { setTextDeleteId(null); setTextDeleteError(null); focusThread(thread.id); }}>Cancel</button><button type="button" className="btn btn-danger-outline" disabled={textDeletingBusy || runningTextThreadId === thread.id} onClick={async () => { setTextDeletingBusy(true); setTextDeleteError(null); try { await onDeleteTextThread(thread.id); setTextDeleteId(null); focusThread(); } catch (cause) { setTextDeleteError(cause instanceof Error ? cause.message : "Could not delete this text thread."); } finally { setTextDeletingBusy(false); } }}>{textDeletingBusy ? "Deleting…" : "Delete thread"}</button></div></div> : null}
+            </>}
+          </div>
+        ))}
+        {textThreads.filter((thread) => !thread.archived || thread.id === activeTextThreadId).length > textLimit ? <button type="button" className="text-action" onClick={() => setTextLimit((value) => value + 60)}>Show more text threads</button> : null}
       </section>
 
       <section className="sidebar-threads sidebar-audio-threads" aria-label="Audio threads">

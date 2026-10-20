@@ -61,7 +61,7 @@ class ModelsTests(unittest.TestCase):
             ],
         }
         with tempfile.TemporaryDirectory() as tmp, patch.dict(
-            mm.CATALOG, {"4b": spec}
+            mm.MODEL_CATALOG, {"4b": spec}
         ), patch("model_manager.urllib.request.urlopen", return_value=Response(data)):
             manager = mm.ModelManager(tmp)
             manager.start("4b")
@@ -93,7 +93,7 @@ class ModelsTests(unittest.TestCase):
             ],
         }
         with tempfile.TemporaryDirectory() as tmp, patch.dict(
-            mm.CATALOG, {"4b": spec}
+            mm.MODEL_CATALOG, {"4b": spec}
         ), patch("model_manager.urllib.request.urlopen", return_value=Response(data)):
             manager = mm.ModelManager(tmp)
             manager.start("4b")
@@ -175,7 +175,7 @@ class ModelsTests(unittest.TestCase):
                 event.set()
                 return value
 
-        with tempfile.TemporaryDirectory() as tmp, patch.dict(mm.CATALOG, {"4b": spec}):
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(mm.MODEL_CATALOG, {"4b": spec}):
             manager = mm.ModelManager(tmp)
             manager.jobs["4b"] = {"state": "downloading", "downloaded": 0}
             with patch(

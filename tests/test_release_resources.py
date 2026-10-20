@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import shutil
 import tempfile
 import unittest
 import zipfile
@@ -17,6 +18,13 @@ class ReleaseResourceTests(unittest.TestCase):
     def payload(self, root):
         for name in audit.ALLOWED_BACKEND:
             (root / name).write_text('# fixture')
+        scripts = Path(__file__).parents[1] / 'scripts'
+        for name in (
+            'model_catalog.json', 'flux3_klein_model_catalog.json',
+            'tame_pony_model_catalog.json', 'qwen21_turbo_model_catalog.json',
+            'tts_model_catalog.json', 'text_model_catalog.json',
+        ):
+            shutil.copyfile(scripts / name, root / name)
         components = ('transformer', 'text_encoder', 'text_encoder_i2i', 'vision_encoder', 'vae_encoder', 'vae_decoder')
         model_paths = [
             '.fern-qwen21-turbo-openvino.json', '.fern-sample-sigmas.json',

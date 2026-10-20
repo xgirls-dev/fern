@@ -207,15 +207,23 @@ export function GenerationControls({
 }: GenerationControlsProps) {
   const [customSize, setCustomSize] = useState(false);
   const isQwenTurbo = settings.model === "qwen21-turbo";
-  const dimensionMultiple = 16;
+  const isFlux3Klein = settings.model === "flux3-klein";
+  const isTamePony = settings.model === "tame-pony-v25-sdxl" || settings.model === "tame-pony-v25-sdxl-int8";
+  const hasFixedSampling = isQwenTurbo || isFlux3Klein;
+  const dimensionMultiple = isQwenTurbo ? 32 : isTamePony ? 8 : 16;
+  const minimumDimension = isTamePony ? 512 : isFlux3Klein ? 1024 : 256;
+  const maximumDimension = isTamePony ? 1536 : isFlux3Klein ? 1024 : 1920;
   const availableSizePresets = useMemo(
     () =>
       SIZE_PRESETS.filter((preset) => {
+        if (isFlux3Klein) return preset.value === "1024x1024";
         if (preset.value === "custom") return true;
         const [width, height] = preset.value.split("x").map(Number);
-        return width % dimensionMultiple === 0 && height % dimensionMultiple === 0;
+        return width >= minimumDimension && height >= minimumDimension
+          && width <= maximumDimension && height <= maximumDimension
+          && width % dimensionMultiple === 0 && height % dimensionMultiple === 0;
       }),
-    [dimensionMultiple],
+    [dimensionMultiple, isFlux3Klein, maximumDimension, minimumDimension],
   );
   const [referenceBusy, setReferenceBusy] = useState(false);
   const activeChips = new Set(
@@ -306,10 +314,10 @@ export function GenerationControls({
     });
     onSettingsChange({
       prompt: recipe.prompt,
-      width: recipe.width,
-      height: recipe.height,
-      steps: recipe.steps,
-      guidance: recipe.guidance,
+      width: isFlux3Klein ? 1024 : recipe.width,
+      height: isFlux3Klein ? 1024 : recipe.height,
+      steps: hasFixedSampling ? (isFlux3Klein ? 16 : 8) : recipe.steps,
+      guidance: hasFixedSampling ? (isFlux3Klein ? 0 : 1) : recipe.guidance,
     });
   };
 
@@ -425,12 +433,14 @@ export function GenerationControls({
         <div className="control-sections">
           <ControlSection
             title="Canvas & device"
-            summary={`${settings.width} × ${settings.height} | ${isQwenTurbo ? "1 image" : `${settings.batchSize} image${settings.batchSize === 1 ? "" : "s"}`}`}
+            summary={`${settings.width} × ${settings.height} | ${hasFixedSampling ? "1 image" : `${settings.batchSize} image${settings.batchSize === 1 ? "" : "s"}`}`}
             defaultOpen
           >
-            {isQwenTurbo ? (
+            {hasFixedSampling ? (
               <p className="model-note field-note">
-                Official Turbo runs 8 fixed steps and generates 1 image per request. Auto-select prefers Intel GPU; choose CPU only as a fallback. This OpenVINO graph does not use the checkpoint’s KV cache, so it can be slower than CUDA Turbo. Larger canvases need more memory and take longer.
+                {isFlux3Klein
+                  ? "FLUX.3 Klein uses 16 fixed steps and text-to-image only. GPU runs now use FP32 transformer inference; keep the canvas at 1024 × 1024 while output quality is rechecked."
+                  : "Official Turbo runs 8 fixed steps and generates 1 image per request. Auto-select prefers Intel GPU; choose CPU only as a fallback. This OpenVINO graph does not use the checkpoint’s KV cache, so it can be slower than CUDA Turbo. Larger canvases need more memory and take longer."}
               </p>
             ) : null}
             <div className="field">
@@ -440,7 +450,7 @@ export function GenerationControls({
               <select
                 id="size-preset"
                 name="size-preset"
-                value={customSize ? "custom" : sizePreset}
+                value={isFlux3Klein ? "1024x1024" : customSize ? "custom" : sizePreset}
                 onChange={(event) => applySizePreset(event.target.value)}
               >
                 {availableSizePresets.map((preset) => (
@@ -459,8 +469,9 @@ export function GenerationControls({
                   id="width"
                   name="width"
                   type="number"
-                  min={256}
-                  max={1920}
+                  disabled={isFlux3Klein}
+                  min={minimumDimension}
+                  max={maximumDimension}
                   step={dimensionMultiple}
                   value={settings.width}
                   onChange={(event) =>
@@ -471,6 +482,7 @@ export function GenerationControls({
               <button
                 type="button"
                 className="btn-icon btn-icon-sm"
+                disabled={isFlux3Klein}
                 onClick={swapDimensions}
                 title="Swap dimensions"
                 aria-label="Swap width and height"
@@ -484,8 +496,9 @@ export function GenerationControls({
                   id="height"
                   name="height"
                   type="number"
-                  min={256}
-                  max={1920}
+                  disabled={isFlux3Klein}
+                  min={minimumDimension}
+                  max={maximumDimension}
                   step={dimensionMultiple}
                   value={settings.height}
                   onChange={(event) =>
@@ -525,8 +538,8 @@ export function GenerationControls({
                 <select
                   id="batch-size"
                   name="batch-size"
-                  value={isQwenTurbo ? 1 : settings.batchSize}
-                  disabled={isQwenTurbo}
+                  value={hasFixedSampling ? 1 : settings.batchSize}
+                  disabled={hasFixedSampling}
                   onChange={(event) =>
                     onSettingsChange({ batchSize: Number(event.target.value) })
                   }
@@ -536,7 +549,7 @@ export function GenerationControls({
                   <option value={3}>3 images</option>
                   <option value={4}>4 images</option>
                 </select>
-                {isQwenTurbo ? <small className="field-note">Qwen Turbo generates one image per request.</small> : null}
+                {hasFixedSampling ? <small className="field-note">{isFlux3Klein ? "FLUX.3 Klein generates one image per request." : "Qwen Turbo generates one image per request."}</small> : null}
               </div>
             </div>
             <p
@@ -756,7 +769,7 @@ export function GenerationControls({
 
           <ControlSection
             title="Advanced"
-            summary={settings.model === "qwen21-turbo" ? "8 steps | guidance 1.0 (fixed)" : `${settings.steps} steps | guidance ${settings.guidance}`}
+            summary={hasFixedSampling ? (isFlux3Klein ? "16 steps | no guidance (fixed)" : "8 steps | guidance 1.0 (fixed)") : `${settings.steps} steps | guidance ${settings.guidance}`}
           >
             <div className="field">
               <label htmlFor="seed">Seed</label>
@@ -803,7 +816,7 @@ export function GenerationControls({
               </div>
             </div>
 
-            <div className="field" hidden={settings.model === "qwen21-turbo"}>
+            <div className="field" hidden={hasFixedSampling}>
               <label htmlFor="steps">Steps</label>
               <div className="range-pair">
                 <input
@@ -838,7 +851,7 @@ export function GenerationControls({
               </div>
             </div>
 
-            <div className="field" hidden={settings.model === "qwen21-turbo"}>
+            <div className="field" hidden={hasFixedSampling}>
               <label htmlFor="guidance">Guidance</label>
               <div className="range-pair">
                 <input

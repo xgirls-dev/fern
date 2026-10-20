@@ -1,8 +1,8 @@
 {
   "name": "@fern/desktop",
-  "version": "0.1.27",
+  "version": "0.1.28",
   "private": true,
-  "description": "Fern private local image studio with optional Flux.2 Klein 4B and 9B models",
+  "description": "Fern local-first desktop studio for OpenVINO image, text, and audio models",
   "author": "Fern",
   "main": "out/main/index.js",
   "scripts": {
@@ -16,7 +16,9 @@
   "dependencies": {
     "lucide-react": "^1.25.0",
     "react": "^19.1.0",
-    "react-dom": "^19.1.0"
+    "react-dom": "^19.1.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
     "@types/node": "^22.15.21",
@@ -52,7 +54,9 @@
       {
         "from": "resources/licenses",
         "to": "licenses",
-        "filter": ["*.txt"]
+        "filter": [
+          "*.txt"
+        ]
       },
       {
         "from": "resources/runtime-release.json",

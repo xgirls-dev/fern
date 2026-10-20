@@ -4,10 +4,13 @@ Thanks for helping improve Fern.
 
 ## Scope
 
-Fern supports one image model: Flux.2 Klein 9B with OpenVINO Intel GPU,
-OpenVINO NVIDIA plugin, and CPU devices. Please keep contributions focused on those
-runtimes, their performance, the desktop experience, installation, reliability,
-accessibility, and docs.
+Fern provides separate image, text, and audio workspaces. Image model families
+include Flux.2 Klein, FLUX.3 Klein, Qwen Image 2.1 Turbo, and Tame Pony SDXL;
+text and speech models use their own OpenVINO runtimes. Model integrations must
+preserve the workspace boundaries, verify pinned model downloads, expose only
+supported controls, and report device/runtime limitations clearly. Keep
+contributions focused on those integrations, performance, desktop experience,
+installation, reliability, accessibility, and docs.
 
 ## Development workflow
 
@@ -21,4 +24,10 @@ accessibility, and docs.
 GPU generation is intentionally not part of CI. If a change affects inference,
 include the tested device, resolution, steps, and observed result in the pull
 request.
+
+New model support should include a pinned catalog, safe download and removal
+behavior, packaging-resource entries, model-specific control constraints,
+automated regression coverage, and a concise user-facing setup path. Do not add
+large model weights, generated media, credentials, or environment-specific
+caches to the repository.
 

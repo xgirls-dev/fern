@@ -26,6 +26,27 @@ def inference_loop(connection):
         connection.close()
 
 
+def tame_pony_inference_loop(connection):
+    """Keep SDXL imports and OpenVINO allocations out of the Fern API process."""
+    import tame_pony_pipeline as pony
+
+    try:
+        while True:
+            request = connection.recv()
+            try:
+                result = pony.generate_image(
+                    **request,
+                    log=lambda message: connection.send(("log", message)),
+                )
+                connection.send(("result", (str(result[0]), result[1])))
+            except Exception as error:
+                connection.send(("error", str(error)))
+    except (EOFError, BrokenPipeError):
+        pass
+    finally:
+        connection.close()
+
+
 class GenerationWorker:
     def __init__(self, target=inference_loop):
         self.target = target
@@ -46,6 +67,17 @@ class GenerationWorker:
         if self.connection is not None:
             self.connection.close()
             self.connection = None
+
+    def interrupt(self):
+        """Terminate an in-flight inference process so cancellation is immediate."""
+        process = self.process
+        if process is not None:
+            try:
+                if process.is_alive():
+                    process.terminate()
+            except (AssertionError, OSError, ValueError):
+                # The generate thread may have concurrently reaped the process.
+                pass
 
     def generate(self, *, cancel_event: Event, log, **request):
         with self.lock:

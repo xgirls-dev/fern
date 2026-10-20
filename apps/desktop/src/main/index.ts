@@ -354,6 +354,18 @@ function registerIpc(): void {
     return result.filePaths[0];
   });
 
+  ipcMain.handle("studio:pick-text-model-folder", async (event) => {
+    const window = BrowserWindow.fromWebContents(event.sender) ?? undefined;
+    const options = {
+      title: "Choose an OpenVINO text model folder",
+      properties: ["openDirectory"] as Array<"openDirectory">,
+    };
+    const result = window
+      ? await dialog.showOpenDialog(window, options)
+      : await dialog.showOpenDialog(options);
+    return result.canceled || result.filePaths.length === 0 ? null : result.filePaths[0];
+  });
+
   ipcMain.on("studio:request-api-base-url", (event) => {
     if (backend) {
       event.sender.send("studio:api-base-url", backend.baseUrl);

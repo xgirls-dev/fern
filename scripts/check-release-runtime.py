@@ -10,7 +10,7 @@ from packaging.requirements import Requirement
 def verify_runtime() -> dict[str, str]:
     installed = {distribution.metadata['Name'].lower().replace('_', '-'): distribution
                  for distribution in metadata.distributions()}
-    forbidden = {'openvino-genai', 'qwen-tts', 'qwen3-tts'} & installed.keys()
+    forbidden = {'qwen-tts', 'qwen3-tts'} & installed.keys()
     if forbidden:
         raise RuntimeError(f'Retired/separate model dependencies in the build environment: {sorted(forbidden)}')
     for line in (Path(__file__).parents[1] / 'requirements-release.txt').read_text(encoding='utf-8-sig').splitlines():
@@ -29,7 +29,11 @@ def verify_runtime() -> dict[str, str]:
                 raise RuntimeError(f'{requirement.name} must come from the locked Git commit in requirements-release.txt.')
     from optimum.intel import OVFlux2KleinPipeline
     assert OVFlux2KleinPipeline is not None
-    return {name: metadata.version(name) for name in ('openvino', 'torch', 'diffusers', 'optimum-intel')}
+    import openvino_genai
+    import openvino_tokenizers
+    assert openvino_genai.LLMPipeline is not None
+    assert openvino_tokenizers is not None
+    return {name: metadata.version(name) for name in ('openvino', 'openvino-genai', 'openvino-tokenizers', 'torch', 'diffusers', 'optimum-intel')}
 
 
 if __name__ == '__main__':

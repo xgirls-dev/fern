@@ -19,7 +19,7 @@ export interface ImageRecord {
 }
 
 export interface ModelStatus {
-  selectedModel?: "9b" | "4b" | "qwen21-turbo";
+  selectedModel?: "9b" | "4b" | "qwen21-turbo" | "flux3-klein" | "tame-pony-v25-sdxl" | "tame-pony-v25-sdxl-int8";
   memoryBytes?: number | null;
   compatibility?: string;
   checking?: boolean;
@@ -52,7 +52,7 @@ export interface DeviceAdapter {
 }
 
 export interface FluxJob {
-  model?: "9b" | "4b" | "qwen21-turbo";
+  model?: "9b" | "4b" | "qwen21-turbo" | "flux3-klein" | "tame-pony-v25-sdxl" | "tame-pony-v25-sdxl-int8";
   threadId?: string | null;
   id: string | null;
   status: "idle" | "running" | "complete" | "cancelled" | "failed";
@@ -74,7 +74,7 @@ export interface RuntimeStatus {
 }
 
 export interface FluxStatusResponse {
-  installedModels?: { id: "9b" | "4b" | "qwen21-turbo"; label: string }[];
+  installedModels?: { id: "9b" | "4b" | "qwen21-turbo" | "flux3-klein" | "tame-pony-v25-sdxl" | "tame-pony-v25-sdxl-int8"; label: string }[];
   job: FluxJob;
   images: ImageRecord[];
   model: ModelStatus;
@@ -89,7 +89,7 @@ export interface FluxStatusResponse {
 }
 
 export interface GenerationPayload {
-  model?: "auto" | "9b" | "4b" | "qwen21-turbo";
+  model?: "auto" | "9b" | "4b" | "qwen21-turbo" | "flux3-klein" | "tame-pony-v25-sdxl" | "tame-pony-v25-sdxl-int8";
   thread_id?: string;
   prompt: string;
   device: DeviceId;
@@ -103,7 +103,7 @@ export interface GenerationPayload {
 }
 
 export interface StudioSettings {
-  model?: "auto" | "9b" | "4b" | "qwen21-turbo";
+  model?: "auto" | "9b" | "4b" | "qwen21-turbo" | "flux3-klein" | "tame-pony-v25-sdxl" | "tame-pony-v25-sdxl-int8";
   prompt: string;
   device: DeviceId;
   width: number;

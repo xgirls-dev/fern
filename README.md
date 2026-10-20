@@ -1,49 +1,48 @@
 # Fern
 
-Fern is a private Windows image and audio studio for running **Flux.2 Klein 9B** locally
-with one shared image model and a hardware-specific OpenVINO device. Intel, NVIDIA,
-and CPU execution all use the same xgirls INT4 OpenVINO release at
-[`xgirls/FLUX.2-klein-9B-ov-int4`](https://huggingface.co/xgirls/FLUX.2-klein-9B-ov-int4).
-NVIDIA execution uses the `NVIDIA` device from the
-[OpenVINO NVIDIA plugin](https://github.com/openvinotoolkit/openvino_contrib/tree/master/modules/nvidia_plugin).
+Fern is a local-first Windows studio for image generation, text conversations,
+and speech generation. Each workspace has its own threads, settings, and output
+history.
 
-Fern also provides audio threads for **Qwen3-TTS with OpenVINO**. Audio threads keep speech settings and WAV outputs separate
-from image threads. The Qwen3-TTS workspace supports preset voices, voice
-design, and reference-audio voice cloning. **Set up** installs a pinned speech
-runtime and downloads the selected ready-made OpenVINO export from
-[xgirls on Hugging Face](https://huggingface.co/xgirls). New installations do
-not export source checkpoints. Downloads are verified and can resume after
-interruption; the first take still compiles the downloaded model on the GPU.
+Image threads support Flux.2 Klein, FLUX.3 Klein, Qwen Image 2.1 Turbo, and
+Tame Pony SDXL OpenVINO models. Install available image models from **Library**;
+model-specific controls keep unsupported sizes and sampling options out of the
+composer. Image workflows include text-to-image, supported image guidance,
+repeatable seeds, batch generation, and a local gallery. Intel GPU, NVIDIA GPU,
+and CPU execution depend on the selected model and the installed runtime.
 
-The app supports text-to-image and image-guided generation, a local gallery,
-repeatable seeds, batch generation, and CPU, Intel GPU, or NVIDIA GPU execution. Prompts,
-reference images, and generated images stay on the local machine.
+Text threads run local OpenVINO language models, with Qwen3 4B Instruct 2507 as
+the recommended model. Audio threads support Qwen3-TTS preset voices, voice
+design, and reference-audio voice cloning. Set up downloads the selected
+ready-made OpenVINO model from [xgirls on Hugging Face](https://huggingface.co/xgirls);
+the app does not export source checkpoints during installation.
 
-Use **New image thread** (Ctrl+N) to start an image workspace, or **New audio thread** (Ctrl+Shift+N) for speech. Threads in the sidebar
-keep their own prompt, settings, reference image, and generated images across
-app restarts. Select a thread to continue it, or open **Library** to browse all
-images. Images appear as large thumbnails in the main workspace.
+Use **New image thread** (Ctrl+N), **New audio thread** (Ctrl+Shift+N), or
+**New text thread** (Ctrl+Alt+N) to open a workspace. Prompts, thread settings,
+reference media, and generated outputs stay on the local machine. Threads
+persist across app restarts.
 
 ## Install
 
-Download `Fern-Setup-*.exe` from the project's GitHub Releases
-page and run it. The installer contains the desktop app, Python, OpenVINO, and
-the OpenVINO NVIDIA plugin when included in the build environment. On first
-launch, Fern installs its bundled runtime. Optional Klein 4B/9B models can be
-downloaded from Preferences; Qwen3-TTS models are downloaded from the audio workspace. On
-hybrid laptops with both Intel integrated graphics and an NVIDIA GPU,
-Auto-select gives the NVIDIA GPU priority when the NVIDIA driver reports it.
-If the NVIDIA plugin is not ready, Fern reports that directly instead of
-silently switching to the Intel GPU.
-After the model is available, Fern loads it into the selected device memory
-before enabling generation; the first runtime load can take a little while.
-During generation, use **Stop Generation** to cancel at the next inference
-step without closing the app.
+Download `Fern-Setup-*.exe` from the project's GitHub Releases page and run it.
+The installer contains the desktop app, Python, and the pinned OpenVINO runtime.
+On first launch, Fern prepares its bundled runtime. Install image models from
+**Library**, the recommended language model from a text thread, and speech
+models from an audio thread. Downloads are pinned to catalog revisions and
+verified; interrupted downloads can resume. The first model load compiles for
+the selected device and can take longer than later runs.
+
+Fern automatically selects an available GPU where supported. CPU is available
+as an explicit fallback. The NVIDIA plugin is bundled only when present in the
+build environment and must match the OpenVINO runtime; Fern reports when that
+plugin is unavailable rather than silently changing devices. **Stop** cancels
+generation at a supported inference boundary without closing the app.
 
 Requirements:
 
 - Windows 10 or 11, 64-bit
-- Approximately 12 GB of free disk space for the shared OpenVINO model
+- Free disk space for the selected models and their compiled-device caches;
+  requirements vary by model
 - An internet connection for the first model download
 - An Intel GPU supported by OpenVINO, an NVIDIA GPU with a current driver and
   compatible CUDA libraries, or a CPU fallback
@@ -91,7 +90,8 @@ a release build or the bundled runtime archive. Development uses the local
 enable generation in development, download the model into the `models/`
 directory with the bootstrap command below, then relaunch the app.
 
-The development app expects the model at:
+The development app stores downloaded models under `models/`. The Flux.2 Klein
+9B model uses:
 
 ```text
 models/flux2-klein-9b-circulus-int4
@@ -163,8 +163,8 @@ can override it when needed:
 ## Repository layout
 
 ```text
-apps/desktop/   Electron + React desktop app
-scripts/        Flux.2 Klein 9B backend, setup, and packaging tools
+apps/desktop/   Electron + React image, text, and audio workspaces
+scripts/        OpenVINO model runtimes, setup, and packaging tools
 .github/        CI and contribution templates
 ```
 
@@ -175,8 +175,7 @@ desktop app. See [SECURITY.md](SECURITY.md) for reporting vulnerabilities.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). By design, changes that add another
-model family or checkpoint selector are outside this project's scope.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for model integration and release guidance.
 
 ## License
 

@@ -52,7 +52,7 @@ for (const [imageCount, threadCount] of [
       .fill(`number ${threadCount - 1}`);
     assert.equal(await page.locator(".thread-browser-list article").count(), 1);
     await page
-      .getByRole("button", { name: "Close threads", exact: true })
+      .getByRole("button", { name: "Close thread search", exact: true })
       .click();
     state.job = {
       id: "scale-job",

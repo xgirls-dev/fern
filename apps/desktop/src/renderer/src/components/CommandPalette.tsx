@@ -7,6 +7,7 @@ import Search from "lucide-react/dist/esm/icons/search.mjs";
 import Settings2 from "lucide-react/dist/esm/icons/settings-2.mjs";
 import Sparkles from "lucide-react/dist/esm/icons/sparkles.mjs";
 import AudioLines from "lucide-react/dist/esm/icons/audio-lines.mjs";
+import MessageSquare from "lucide-react/dist/esm/icons/message-square.mjs";
 import Square from "lucide-react/dist/esm/icons/square.mjs";
 import X from "lucide-react/dist/esm/icons/x.mjs";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -16,11 +17,14 @@ interface CommandPaletteProps {
   open: boolean;
   running: boolean;
   audioRunning: boolean;
+  textRunning: boolean;
   sidebarCollapsed: boolean;
   onClose: () => void;
   onNewRender: () => void;
   onNewAudio: () => void;
+  onNewText: () => void;
   onOpenAudio: () => void;
+  onOpenText: () => void;
   onOpenLibrary: () => void;
   onOpenData: () => void;
   onOpenPreferences: () => void;
@@ -28,6 +32,7 @@ interface CommandPaletteProps {
   onToggleSidebar: () => void;
   onStop: () => void;
   onStopAudio: () => void;
+  onStopText: () => void;
 }
 
 interface PaletteAction {
@@ -43,11 +48,14 @@ export function CommandPalette({
   open,
   running,
   audioRunning,
+  textRunning,
   sidebarCollapsed,
   onClose,
   onNewRender,
   onNewAudio,
+  onNewText,
   onOpenAudio,
+  onOpenText,
   onOpenLibrary,
   onOpenData,
   onOpenPreferences,
@@ -55,6 +63,7 @@ export function CommandPalette({
   onToggleSidebar,
   onStop,
   onStopAudio,
+  onStopText,
 }: CommandPaletteProps) {
   const dialogRef = useRef<HTMLElement>(null);
   const [query, setQuery] = useState("");
@@ -79,6 +88,8 @@ export function CommandPalette({
       },
       { id: "new-audio", label: "New audio thread", description: "Start a Qwen3-TTS thread", shortcut: "Ctrl Shift N", icon: <AudioLines size={16} aria-hidden="true" />, onSelect: onNewAudio },
       { id: "open-audio", label: "Open audio workspace", description: "Return to the selected audio thread", icon: <AudioLines size={16} aria-hidden="true" />, onSelect: onOpenAudio },
+      { id: "new-text", label: "New text thread", description: "Start a local LLM conversation", shortcut: "Ctrl Alt N", icon: <MessageSquare size={16} aria-hidden="true" />, onSelect: onNewText },
+      { id: "open-text", label: "Open text workspace", description: "Return to the selected text thread", icon: <MessageSquare size={16} aria-hidden="true" />, onSelect: onOpenText },
       {
         id: "library",
         label: "Open library",
@@ -128,6 +139,7 @@ export function CommandPalette({
           ]
         : []),
       ...(audioRunning ? [{ id: "stop-audio", label: "Stop audio job", description: "Cancel Qwen3-TTS setup or generation", icon: <Square size={16} fill="currentColor" aria-hidden="true" />, onSelect: onStopAudio }] : []),
+      ...(textRunning ? [{ id: "stop-text", label: "Stop text generation", description: "Stop the active local LLM response", icon: <Square size={16} fill="currentColor" aria-hidden="true" />, onSelect: onStopText }] : []),
     ],
     [
       onNewRender,
@@ -140,8 +152,12 @@ export function CommandPalette({
       onOpenPreferences,
       onStop,
       onStopAudio,
+      onNewText,
+      onOpenText,
+      onStopText,
       running,
       audioRunning,
+      textRunning,
       sidebarCollapsed,
     ],
   );

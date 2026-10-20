@@ -26,7 +26,7 @@ try {
   assert.equal(await page.locator("#create-heading").innerText(), "New draft");
   await page.locator("#prompt").fill("Draft after generation");
   assert.equal(await page.locator("#create-heading").innerText(), "New draft");
-  await button("Image settings").click();
+  await page.locator(".workspace-header").getByRole("button", { name: "Image settings", exact: true }).click();
   assert.equal(
     await page.locator("#device option").last().innerText(),
     "NVIDIA GPU",
@@ -145,7 +145,7 @@ try {
     [390, 844],
   ]) {
     await page.setViewportSize({ width, height });
-    await button("Image settings").click();
+    await page.locator(".workspace-header").getByRole("button", { name: "Image settings", exact: true }).click();
     await page.screenshot({ path: `${dir}/settings-${width}.png` });
     assert.equal(
       await page.evaluate(

@@ -22,6 +22,57 @@ EXPORT_PYTHON = EXPORT_RUNTIME / "Scripts" / "python.exe"
 TURBO_PYTHON = TURBO_RUNTIME / "Scripts" / "python.exe"
 
 
+def qwen_turbo_inference_size(width: int, height: int) -> tuple[int, int]:
+    """Round requested output dimensions up to Qwen Image's 32px latent grid."""
+    if width < 1 or height < 1:
+        raise ValueError("Qwen Turbo dimensions must be positive integers.")
+    multiple = 32
+    return (
+        ((width + multiple - 1) // multiple) * multiple,
+        ((height + multiple - 1) // multiple) * multiple,
+    )
+
+
+def crop_qwen_turbo_output(image, width: int, height: int):
+    """Center-crop an aligned Qwen render to its exact requested output size."""
+    if image.width < width or image.height < height:
+        raise ValueError(
+            f"Qwen Turbo returned {image.width}x{image.height}, smaller than requested {width}x{height}."
+        )
+    left = (image.width - width) // 2
+    top = (image.height - height) // 2
+    return image.crop((left, top, left + width, top + height))
+
+
+def resolve_qwen_turbo_output_dir(
+    output_root: Path,
+    requested_dir: str | Path | None,
+    output_name: str | None = None,
+) -> Path:
+    """Resolve the request's generation folder directly under the cache root."""
+    root = output_root.resolve()
+    if root.name.startswith("generation-"):
+        root = root.parent
+    if requested_dir is None:
+        # Older API servers pass a fixed generation folder on process startup
+        # and don't include outputDir in each request. The generated filename
+        # carries the job ID, so resolve the correct workspace even on reuse.
+        name = Path(output_name or "").name
+        prefix = "qwen21-turbo-"
+        if not name.startswith(prefix) or not name.lower().endswith(".png"):
+            raise ValueError("Qwen Turbo request is missing its generation workspace.")
+        identity = name[len(prefix):-4]
+        job_id, separator, image_index = identity.rpartition("-")
+        if not separator or not job_id.isdecimal() or not image_index.isdecimal() or int(image_index) < 1:
+            raise ValueError("Qwen Turbo request has an invalid generation filename.")
+        candidate = root / f"generation-{job_id}"
+    else:
+        candidate = Path(requested_dir).resolve()
+    if candidate.parent != root or not candidate.name.startswith("generation-"):
+        raise ValueError("Qwen Turbo output folder must be a generation workspace under the cache root.")
+    return candidate
+
+
 def turbo_env(base_env: dict[str, str] | None = None) -> dict[str, str]:
     env = dict(os.environ if base_env is None else base_env)
     env.pop("PYTHONHOME", None)
@@ -369,7 +420,7 @@ def setup_model(source_root: Path, model_dir: Path) -> None:
     print("FERN_QWEN_PROGRESS:OpenVINO INT8 export and GPU validation are complete.", flush=True)
 
 
-def serve(model_dir: Path, output_dir: Path, device: str) -> None:
+def serve(model_dir: Path, output_root: Path, device: str) -> None:
     import numpy as np
     import openvino as ov
     import torch
@@ -383,6 +434,9 @@ def serve(model_dir: Path, output_dir: Path, device: str) -> None:
     for line in sys.stdin:
         try:
             req = json.loads(line)
+            output_dir = resolve_qwen_turbo_output_dir(
+                output_root, req.get("outputDir"), req.get("outputName"),
+            )
             if pipe is None:
                 print("FERN_QWEN_PROGRESS:Loading the OpenVINO INT8 pipeline.", flush=True)
                 pipe = OVQwenImage21Pipeline.from_pretrained(str(model_dir), device=device)
@@ -399,6 +453,18 @@ def serve(model_dir: Path, output_dir: Path, device: str) -> None:
                     reference = opened.convert("RGBA")
             start = time.perf_counter()
             sigmas = json.loads((model_dir / ".fern-sample-sigmas.json").read_text(encoding="utf-8"))["sample_sigmas"]
+            requested_width = int(req["width"])
+            requested_height = int(req["height"])
+            inference_width, inference_height = qwen_turbo_inference_size(
+                requested_width, requested_height,
+            )
+            if (inference_width, inference_height) != (requested_width, requested_height):
+                print(
+                    "FERN_QWEN_PROGRESS:Rendering at "
+                    f"{inference_width}x{inference_height} on Qwen's 32px grid, "
+                    f"then center-cropping to {requested_width}x{requested_height}.",
+                    flush=True,
+                )
 
             def report_step(_pipeline, step, _timestep, callback_kwargs):
                 print(f"FERN_QWEN_PROGRESS:Step {step + 1}/8", flush=True)
@@ -406,12 +472,12 @@ def serve(model_dir: Path, output_dir: Path, device: str) -> None:
 
             result = pipe(
                 prompt=str(req["prompt"]), image=reference,
-                width=int(req["width"]), height=int(req["height"]),
+                width=inference_width, height=inference_height,
                 num_inference_steps=8, sigmas=sigmas, true_cfg_scale=1.0,
                 use_kv_cache=False, callback_on_step_end=report_step,
                 generator=torch.Generator("cpu").manual_seed(int(req["seed"])),
             )
-            image = result.images[0]
+            image = crop_qwen_turbo_output(result.images[0], requested_width, requested_height)
             pixels = np.asarray(image.convert("RGB"))
             if not np.isfinite(pixels).all() or float(pixels.std()) < 0.5:
                 raise RuntimeError("Invalid or flat output rejected.")
@@ -421,7 +487,9 @@ def serve(model_dir: Path, output_dir: Path, device: str) -> None:
             metadata = {
                 "model": MODEL_ID, "modelRevision": MODEL_REVISION, "format": "OpenVINO INT8",
                 "prompt": str(req["prompt"]), "seed": int(req["seed"]),
-                "width": image.width, "height": image.height, "steps": 8,
+                "width": image.width, "height": image.height,
+                "inferenceWidth": inference_width, "inferenceHeight": inference_height,
+                "steps": 8,
                 "trueCfgScale": 1.0, "useKvCache": False,
                 "sampleSigmas": sigmas, "device": device,
                 "referenceUsed": reference is not None, "generationTime": elapsed,

@@ -7,7 +7,7 @@ import shutil
 import threading
 import urllib.request
 from pathlib import Path
-from model_catalog import CATALOG, installed, model_spec
+from model_catalog import MODEL_CATALOG, installed, model_spec
 
 
 class ModelManager:
@@ -30,7 +30,7 @@ class ModelManager:
     def snapshot(self):
         with self.lock:
             result = []
-            for key, spec in CATALOG.items():
+            for key, spec in MODEL_CATALOG.items():
                 is_installed = installed(self.root, key)
                 result.append({
                     **{k: v for k, v in spec.items() if k != "files"},
@@ -97,13 +97,18 @@ class ModelManager:
                     path = self.folder(model, staging)
                     if path.exists():
                         shutil.rmtree(path)
-                cache_root = (self.root.parent / ".cache" / "openvino").resolve()
-                cache_name = f"flux2-klein-{model}"
-                cache = (cache_root / cache_name).resolve()
-                if cache.parent != cache_root:
-                    raise ValueError("Invalid model cache folder")
-                if cache.exists():
-                    shutil.rmtree(cache)
+                if model in ("9b", "4b", "tame-pony-v25-sdxl", "tame-pony-v25-sdxl-int8"):
+                    cache_root = (self.root.parent / ".cache" / "openvino").resolve()
+                    cache_name = (
+                        f"flux2-klein-{model}"
+                        if model in ("9b", "4b")
+                        else model
+                    )
+                    cache = (cache_root / cache_name).resolve()
+                    if cache.parent != cache_root:
+                        raise ValueError("Invalid model cache folder")
+                    if cache.exists():
+                        shutil.rmtree(cache)
                 self.jobs.pop(model, None)
             except Exception as error:
                 self.jobs[model] = {
@@ -180,7 +185,8 @@ class ModelManager:
                 ):
                     target.unlink()
                     raise ValueError(
-                        "Download verification failed. Resume to retry the damaged file."
+                        f"Download verification failed for {item['path']}. "
+                        "Resume to retry the damaged file."
                     )
                 done += item["size"]
                 self._update(model, state="downloading", downloaded=done)

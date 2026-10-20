@@ -4,6 +4,7 @@ import argparse
 import base64
 import hashlib
 import io
+import importlib.util
 import json
 import math
 from contextlib import nullcontext
@@ -14,6 +15,7 @@ import sys
 import subprocess
 import threading
 import time
+import uuid
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -43,12 +45,21 @@ for path in (PROJECT_SCRIPTS, SCRIPTS):
             sys.path.insert(0, value)
 
 import flux2_klein_pipeline as flux2
-from generation_worker import GenerationWorker, GenerationCancelled
+import flux3_klein_pipeline as flux3
+import flux3_klein_runtime
+import tame_pony_pipeline as tame_pony
+from generation_worker import GenerationWorker, GenerationCancelled, tame_pony_inference_loop
 from tts_generation_worker import TtsGenerationWorker
+from text_generation_process import TextGenerationProcess
+from text_model_registry import TextModelRegistry
+from text_model_download import DEFAULT_MODEL_ID as DEFAULT_TEXT_MODEL_ID
+from text_model_download import catalog as text_model_catalog, install_model as install_text_model
 from tts_model_download import model_ready as tts_export_ready
 
 GENERATION_WORKER = GenerationWorker()
+TAME_PONY_GENERATION_WORKER = GenerationWorker(target=tame_pony_inference_loop)
 TTS_GENERATION_WORKER = TtsGenerationWorker()
+TEXT_GENERATION_WORKER = TextGenerationProcess()
 from model_manager import ModelManager
 from model_catalog import model_spec
 import gallery_store
@@ -64,6 +75,10 @@ MODELS_DIR = ROOT / "models"
 CACHE_DIR = ROOT / ".cache"
 TTS_MODEL_ROOT = Path(os.environ.get("FERN_TTS_MODEL_ROOT", MODELS_DIR / "qwen3-tts")).resolve()
 TTS_ENV = Path(os.environ.get("FERN_TTS_ENV", ROOT / ".venv-qwen3-tts")).resolve()
+TEXT_MODEL_REGISTRY = TextModelRegistry(Path(os.environ.get("FERN_TEXT_MODEL_REGISTRY", DATA_DIR / "text-models.json")))
+TEXT_MODEL_ROOT = Path(os.environ.get("FERN_TEXT_MODEL_ROOT", MODELS_DIR / "text")).resolve()
+TEXT_MODEL_INSTALL_LOCK = threading.Lock()
+TEXT_MODEL_INSTALL: dict[str, Any] = {"id": None, "status": "idle", "phase": None, "error": None}
 QWEN_TURBO_MODEL_ID = "qwen21-turbo"
 QWEN_TURBO_MODEL_ROOT = Path(os.environ.get("FERN_QWEN_TURBO_MODEL_ROOT", MODELS_DIR / "qwen-image-2.1-turbo-openvino-int8")).resolve()
 QWEN_TURBO_PARTIAL_ROOT = QWEN_TURBO_MODEL_ROOT.with_name(QWEN_TURBO_MODEL_ROOT.name + ".partial")
@@ -75,6 +90,9 @@ QWEN_TURBO_BASE_RUNTIME = ROOT / ".venv-qwen21-export"
 QWEN_TURBO_OVERLAY_RUNTIME = ROOT / ".venv-qwen21-turbo-export"
 QWEN_TURBO_PYTHON = Path(sys.executable)
 MODEL_MANAGER = ModelManager(MODELS_DIR)
+FLUX3_SETUP_LOCK = threading.Lock()
+FLUX3_SETUP_STATE: dict[str, Any] = {"status": "idle", "phase": None, "error": None}
+FLUX3_SETUP_CANCEL: threading.Event | None = None
 
 TTS_MODELS = {
     "custom-0.6b": {"label": "Custom Voice · 0.6B", "kind": "custom_voice"},
@@ -92,11 +110,42 @@ TTS_JOB: dict[str, Any] = {
     "operation": None, "logs": [], "startedAt": None, "finishedAt": None,
     "output": None, "error": None, "diagnostics": [], "phase": None,
 }
+TEXT_JOB_LOCK = threading.Lock()
+# Serialize admission and cancellation across modalities.
+JOB_ADMISSION_LOCK = threading.RLock()
+TEXT_CANCEL_EVENT: threading.Event | None = None
+TEXT_JOB: dict[str, Any] = {
+    "id": None, "threadId": None, "modelId": None, "status": "idle",
+    "phase": None, "partialText": "", "startedAt": None, "finishedAt": None,
+    "result": None, "error": None,
+}
+
+
+def text_model_install_running() -> bool:
+    with TEXT_MODEL_INSTALL_LOCK:
+        return TEXT_MODEL_INSTALL.get("status") in ("downloading", "preparing")
+
+
+def run_text_model_install(model_id: str, job_id: str) -> None:
+    def progress(phase: str) -> None:
+        with TEXT_MODEL_INSTALL_LOCK:
+            if TEXT_MODEL_INSTALL.get("id") == job_id:
+                TEXT_MODEL_INSTALL.update(status="preparing" if phase.startswith("Converting") else "downloading", phase=phase)
+    try:
+        TEXT_GENERATION_WORKER.close()
+        folder = install_text_model(model_id, TEXT_MODEL_ROOT, progress)
+        model = TEXT_MODEL_REGISTRY.add(str(folder))
+        with TEXT_MODEL_INSTALL_LOCK:
+            TEXT_MODEL_INSTALL.update(status="complete", phase="Installed and verified.", error=None, modelId=model["id"])
+    except Exception as error:
+        with TEXT_MODEL_INSTALL_LOCK:
+            TEXT_MODEL_INSTALL.update(status="failed", phase=None, error=str(error)[:1000])
 QWEN_JOB_LOCK = threading.Lock()
 QWEN_PROCESS_LOCK = threading.Lock()
 QWEN_ACTIVE_PROCESS: subprocess.Popen[str] | None = None
 QWEN_CANCEL_EVENT: threading.Event | None = None
 QWEN_GENERATION_WORKER = TtsGenerationWorker()
+FLUX3_GENERATION_WORKER = TtsGenerationWorker()
 QWEN_JOB: dict[str, Any] = {
     "status": "idle", "logs": [], "phase": None, "error": None,
     "downloaded": 0, "bytes": 23_201_764_848,
@@ -340,6 +389,81 @@ def qwen_turbo_snapshot() -> dict[str, Any]:
     }
 
 
+def model_library_snapshot() -> list[dict[str, Any]]:
+    """Merge the regular catalog with Flux.3's separate runtime setup state."""
+    models = MODEL_MANAGER.snapshot()
+    flux3_item = next((item for item in models if item["id"] == flux3.MODEL_KEY), None)
+    if flux3_item is not None:
+        with FLUX3_SETUP_LOCK:
+            setup = dict(FLUX3_SETUP_STATE)
+        flux3_item["runtimeReady"] = flux3_klein_runtime.runtime_ready()
+        flux3_item["supportsReferenceImage"] = False
+        if setup["status"] == "installing":
+            flux3_item.update(state="installing", phase=setup.get("phase"), error=None)
+        elif setup["status"] == "failed":
+            flux3_item.update(
+                state="runtime-unavailable" if flux3_item["installed"] else "failed",
+                error=setup.get("error"),
+            )
+        elif flux3_item["installed"] and not flux3_item["runtimeReady"]:
+            flux3_item["state"] = "runtime-unavailable"
+    runtime = flux2._OPENVINO_DEPENDENCY_STATUS
+    for pony_item in (item for item in models if tame_pony.is_model(item["id"])):
+        pony_item["supportsReferenceImage"] = False
+        pony_item["runtimeReady"] = bool(runtime and runtime.get("installed"))
+        if pony_item["installed"] and runtime and not runtime.get("installed"):
+            pony_item["state"] = "runtime-unavailable"
+    return models + [qwen_turbo_snapshot()]
+
+
+def _run_flux3_setup(cancel_event: threading.Event) -> None:
+    try:
+        def progress(message: str) -> None:
+            with FLUX3_SETUP_LOCK:
+                FLUX3_SETUP_STATE["phase"] = message
+
+        flux3_klein_runtime.ensure_runtime(progress, cancel_event)
+        if cancel_event.is_set():
+            raise InterruptedError("FLUX.3 setup was cancelled.")
+        flux3.refresh_devices()
+        if not next(
+            item for item in MODEL_MANAGER.snapshot() if item["id"] == flux3.MODEL_KEY
+        )["installed"]:
+            MODEL_MANAGER.start(flux3.MODEL_KEY)
+        with FLUX3_SETUP_LOCK:
+            FLUX3_SETUP_STATE.update(status="idle", phase=None, error=None)
+    except InterruptedError as error:
+        with FLUX3_SETUP_LOCK:
+            FLUX3_SETUP_STATE.update(status="idle", phase=None, error=str(error))
+    except Exception as error:
+        with FLUX3_SETUP_LOCK:
+            FLUX3_SETUP_STATE.update(
+                status="failed", phase=None, error=str(error) or type(error).__name__
+            )
+
+
+def start_flux3_setup() -> None:
+    global FLUX3_SETUP_CANCEL
+    with FLUX3_SETUP_LOCK:
+        if FLUX3_SETUP_STATE["status"] == "installing":
+            raise ValueError("FLUX.3 setup is already running.")
+        FLUX3_SETUP_CANCEL = threading.Event()
+        FLUX3_SETUP_STATE.update(
+            status="installing", phase="Preparing the isolated FLUX.3 runtime…", error=None
+        )
+        event = FLUX3_SETUP_CANCEL
+    threading.Thread(target=_run_flux3_setup, args=(event,), daemon=True).start()
+
+
+def cancel_flux3_setup() -> None:
+    with FLUX3_SETUP_LOCK:
+        if FLUX3_SETUP_STATE["status"] == "installing":
+            if FLUX3_SETUP_CANCEL is not None:
+                FLUX3_SETUP_CANCEL.set()
+            return
+    MODEL_MANAGER.cancel(flux3.MODEL_KEY)
+
+
 def cleanup_cache_when_model_idle() -> dict[str, Any] | None:
     # Qwen's pinned source snapshot lives under CACHE_DIR. Serialize the check
     # with install/remove so cleanup cannot erase source files during export.
@@ -384,6 +508,135 @@ def tts_snapshot() -> dict[str, Any]:
     ]
     job["environmentReady"] = tts_environment_ready()
     return job
+
+
+def text_runtime_snapshot() -> dict[str, Any]:
+    try:
+        # Keep native GenAI libraries in the worker. Importing them from
+        # simultaneous HTTP threads can contend with OpenVINO initialization.
+        missing = [name for name in ("openvino", "openvino_genai", "openvino_tokenizers")
+                   if importlib.util.find_spec(name) is None]
+        if missing:
+            raise RuntimeError("Missing text runtime packages: " + ", ".join(missing))
+        runtime_available = True
+        runtime_error = None
+    except Exception as error:
+        runtime_available = False
+        runtime_error = str(error).splitlines()[-1][:300]
+    with TEXT_JOB_LOCK:
+        job = dict(TEXT_JOB)
+    try:
+        models = TEXT_MODEL_REGISTRY.snapshot()
+        registry_error = None
+    except ValueError as error:
+        models = []
+        registry_error = str(error)
+    with TEXT_MODEL_INSTALL_LOCK:
+        model_install = dict(TEXT_MODEL_INSTALL)
+    recommended = []
+    for model_id, spec in text_model_catalog().items():
+        folder = TEXT_MODEL_ROOT / spec["folder"]
+        entry = next((model for model in models if Path(model.get("path", "")).resolve() == folder), None)
+        recommended.append({
+            "id": model_id,
+            "name": spec["name"],
+            "repo": spec["repo"],
+            "bytes": sum(file["size"] for file in spec["files"]),
+            "installed": bool(entry and entry.get("installed")),
+        })
+    return {
+        "job": job,
+        "models": models,
+        "recommendedModels": recommended,
+        "defaultModelId": DEFAULT_TEXT_MODEL_ID,
+        "modelInstall": model_install,
+        "registryError": registry_error,
+        "runtimeAvailable": runtime_available,
+        "runtimeError": runtime_error,
+        "devices": ["AUTO", "GPU", "CPU"],
+    }
+
+
+def append_text_event(job_id: str, *, phase: str | None = None, token: str | None = None) -> None:
+    with TEXT_JOB_LOCK:
+        if TEXT_JOB.get("id") != job_id or TEXT_JOB.get("status") != "running":
+            return
+        if phase is not None:
+            TEXT_JOB["phase"] = phase[:500]
+        if token:
+            current = str(TEXT_JOB.get("partialText") or "")
+            if len(current) < 100_000:
+                TEXT_JOB["partialText"] = current + token[:100_000 - len(current)]
+
+
+def text_job_running() -> bool:
+    with TEXT_JOB_LOCK:
+        return TEXT_JOB.get("status") == "running"
+
+
+def qwen_turbo_setup_running() -> bool:
+    with QWEN_JOB_LOCK:
+        return QWEN_JOB.get("status") in ("setting_up", "downloading")
+
+
+def run_text_generation(payload: dict[str, Any], job_id: str, cancel_event: threading.Event) -> None:
+    try:
+        GENERATION_WORKER.close()
+        TAME_PONY_GENERATION_WORKER.close()
+        QWEN_GENERATION_WORKER.close()
+        FLUX3_GENERATION_WORKER.close()
+        TTS_GENERATION_WORKER.close()
+        flux2.release_pipeline()
+        if cancel_event.is_set():
+            raise InterruptedError()
+        model = next(
+            (item for item in TEXT_MODEL_REGISTRY.snapshot() if item["id"] == payload["modelId"]),
+            None,
+        )
+        if model is None or not model.get("installed"):
+            raise ValueError("Add this OpenVINO model again; its folder is no longer available.")
+        device = payload["device"]
+        append_text_event(job_id, phase=f"Loading {model['name']} on {device_label(device)}…")
+        result = TEXT_GENERATION_WORKER.generate(
+            model_path=model["path"],
+            device=device,
+            command=[str(Path(sys.executable)), "-u", str(SCRIPTS / "text_generation_worker.py"), model["path"], device],
+            request={**payload, "op": "generate"},
+            cwd=ROOT,
+            env={
+                **os.environ,
+                "PYTHONUNBUFFERED": "1",
+                "PYTHONUTF8": "1",
+                "PYTHONIOENCODING": "utf-8",
+            },
+            on_token=lambda token: append_text_event(job_id, token=token),
+            on_phase=lambda phase: append_text_event(job_id, phase=phase),
+            cancel_event=cancel_event,
+        )
+        if cancel_event.is_set():
+            raise InterruptedError()
+        with TEXT_JOB_LOCK:
+            if cancel_event.is_set():
+                raise InterruptedError()
+            if TEXT_JOB.get("id") == job_id:
+                result.update(modelId=model["id"], modelName=model["name"], device=result.get("device", device),
+                              seed=payload["seed"], temperature=payload["temperature"],
+                              topP=payload["topP"], maxNewTokens=payload["maxNewTokens"])
+                TEXT_JOB.update(
+                    status="complete", finishedAt=time.time(), phase="Response complete.",
+                    partialText=result.get("text", ""), result=result, error=None,
+                )
+    except InterruptedError:
+        with TEXT_JOB_LOCK:
+            if TEXT_JOB.get("id") == job_id:
+                TEXT_JOB.update(status="stopped", finishedAt=time.time(), phase="Generation stopped.", error=None)
+    except Exception as error:
+        with TEXT_JOB_LOCK:
+            if TEXT_JOB.get("id") == job_id:
+                stopped = cancel_event.is_set()
+                TEXT_JOB.update(status="stopped" if stopped else "failed", finishedAt=time.time(),
+                                phase="Generation stopped." if stopped else "Generation failed.",
+                                error=None if stopped else (str(error) or type(error).__name__)[-1000:])
 
 
 def tts_job_running() -> bool:
@@ -522,6 +775,17 @@ def run_qwen_turbo_process(command: list[str], cancel_event: threading.Event) ->
 
 def _run_qwen_turbo_setup(job_id: str, cancel_event: threading.Event) -> None:
     try:
+        # Model setup can allocate substantial memory and disk bandwidth. Drop
+        # any warm inference pipelines before exporting or validating it.
+        GENERATION_WORKER.close()
+        TAME_PONY_GENERATION_WORKER.close()
+        QWEN_GENERATION_WORKER.close()
+        FLUX3_GENERATION_WORKER.close()
+        TTS_GENERATION_WORKER.close()
+        TEXT_GENERATION_WORKER.close()
+        flux2.release_pipeline()
+        if cancel_event.is_set():
+            raise TtsJobCancelled()
         model_ready = qwen_turbo_model_ready()
         if not model_ready:
             if QWEN_TURBO_MODEL_ROOT.exists():
@@ -671,6 +935,14 @@ def run_tts_setup(model: str, job_id: str, cancel_event: threading.Event) -> Non
         append_tts_log("FERN_TTS_PROGRESS:Preparing the local speech environment.")
         if cancel_event.is_set():
             raise TtsJobCancelled()
+        # The separate speech environment is installed while no generation is
+        # active; also release idle workers so setup has predictable headroom.
+        GENERATION_WORKER.close()
+        TAME_PONY_GENERATION_WORKER.close()
+        QWEN_GENERATION_WORKER.close()
+        FLUX3_GENERATION_WORKER.close()
+        TEXT_GENERATION_WORKER.close()
+        flux2.release_pipeline()
         TTS_GENERATION_WORKER.close()
         if not tts_environment_ready():
             install_script = SCRIPTS / "install-qwen3-tts.ps1"
@@ -717,6 +989,12 @@ def run_tts_setup(model: str, job_id: str, cancel_event: threading.Event) -> Non
 def run_tts_generation(payload: dict[str, Any], job_id: str, cancel_event: threading.Event | None = None) -> None:
     cancel_event = cancel_event or threading.Event()
     try:
+        TEXT_GENERATION_WORKER.close()
+        GENERATION_WORKER.close()
+        TAME_PONY_GENERATION_WORKER.close()
+        QWEN_GENERATION_WORKER.close()
+        FLUX3_GENERATION_WORKER.close()
+        flux2.release_pipeline()
         if cancel_event.is_set():
             raise TtsJobCancelled()
         append_tts_log("FERN_TTS_PROGRESS:Preparing a new audio take.")
@@ -813,6 +1091,43 @@ def model_snapshot(device: str, model="9b") -> dict[str, Any]:
                 {"id": "CPU", "label": "CPU", "available": "CPU" in devices, "runtimeReady": bool(installed and "CPU" in devices), "note": "Checking OpenVINO devices…" if checking else None, "supportsReferenceImage": True},
             ],
         }
+    if model == flux3.MODEL_KEY:
+        return flux3.model_status(device)
+    if tame_pony.is_model(model):
+        with MODEL_CHECK_LOCK:
+            if not MODEL_CHECK_STARTED:
+                MODEL_CHECK_STARTED = True
+                def check():
+                    results = {}
+                    for choice in ("9b", "4b", *tame_pony.MODEL_KEYS):
+                        for adapter in ("AUTO", "INTEL_GPU", "NVIDIA_GPU", "CPU"):
+                            try:
+                                result = (
+                                    tame_pony.model_status(adapter, choice)
+                                    if tame_pony.is_model(choice)
+                                    else flux2.model_status(adapter, choice)
+                                )
+                            except Exception as error:
+                                result = {
+                                    "runtimeReady": False,
+                                    "checking": False,
+                                    "runtimeNote": f"Could not check generation runtime: {error}",
+                                }
+                            results[(adapter, choice)] = result
+                    with MODEL_CHECK_LOCK:
+                        MODEL_CHECK_RESULTS.update(results)
+                threading.Thread(target=check, daemon=True).start()
+            cached = MODEL_CHECK_RESULTS.get((device, model))
+        if cached and not cached.get("runtimeNote", "").startswith("Could not check"):
+            return tame_pony.model_status(device, model)
+        return dict(cached or {
+            "selectedModel": model,
+            "runtimeReady": False,
+            "checking": True,
+            "runtimeNote": "Checking OpenVINO runtime and available devices…",
+            "requestedDevice": device,
+            "adapters": [],
+        })
     if model not in ("auto", "9b", "4b"): model = "9b"
     requested_model = model
     resolved_model = flux2.resolve_model(model, device)
@@ -820,13 +1135,22 @@ def model_snapshot(device: str, model="9b") -> dict[str, Any]:
         if not MODEL_CHECK_STARTED:
             MODEL_CHECK_STARTED = True
             def check():
-                try:
-                    results = {(key, choice): flux2.model_status(key, choice) for choice in ("9b", "4b") for key in ("AUTO", "INTEL_GPU", "NVIDIA_GPU", "CPU")}
-                except Exception as error:
-                    results = {(key, choice): {"runtimeReady": False, "checking": False,
-                                    "runtimeNote": f"Could not check generation runtime: {error}"}
-                               for choice in ("9b", "4b")
-                               for key in ("AUTO", "INTEL_GPU", "NVIDIA_GPU", "CPU")}
+                results = {}
+                for choice in ("9b", "4b", *tame_pony.MODEL_KEYS):
+                    for adapter in ("AUTO", "INTEL_GPU", "NVIDIA_GPU", "CPU"):
+                        try:
+                            result = (
+                                tame_pony.model_status(adapter, choice)
+                                if tame_pony.is_model(choice)
+                                else flux2.model_status(adapter, choice)
+                            )
+                        except Exception as error:
+                            result = {
+                                "runtimeReady": False,
+                                "checking": False,
+                                "runtimeNote": f"Could not check generation runtime: {error}",
+                            }
+                        results[(adapter, choice)] = result
                 with MODEL_CHECK_LOCK:
                     MODEL_CHECK_RESULTS.update(results)
             threading.Thread(target=check, daemon=True).start()
@@ -962,7 +1286,7 @@ def decode_flux_reference_image(value: Any) -> Image.Image | None:
 
 def validate_flux_payload(payload: dict[str, Any]) -> dict[str, Any]:
     model = payload.get("model", "9b")
-    if model not in ("auto", QWEN_TURBO_MODEL_ID): model_spec(model)
+    if model not in ("auto", QWEN_TURBO_MODEL_ID, flux3.MODEL_KEY): model_spec(model)
     prompt = str(payload.get("prompt", "")).strip()
     if not prompt:
         raise ValueError("Prompt is required.")
@@ -1001,29 +1325,38 @@ def validate_flux_payload(payload: dict[str, Any]) -> dict[str, Any]:
     ):
         raise ValueError("Thread ID must contain 1 to 128 letters, numbers, hyphens, or underscores.")
     reference_image = decode_flux_reference_image(payload.get("reference_image"))
+    if model == flux3.MODEL_KEY and reference_image is not None:
+        raise ValueError("This FLUX.3 Klein OpenVINO quant currently supports text-to-image only.")
+    is_tame_pony = tame_pony.is_model(model)
+    if is_tame_pony and reference_image is not None:
+        raise ValueError("Tame Pony SDXL currently supports text-to-image only.")
 
     maximum = 1920
-    dimension_multiple = 16
-    if width < 256 or width > maximum or width % dimension_multiple != 0:
-        raise ValueError(f"Width must be 256 to {maximum} and divisible by {dimension_multiple}.")
-    if height < 256 or height > maximum or height % dimension_multiple != 0:
-        raise ValueError(f"Height must be 256 to {maximum} and divisible by {dimension_multiple}.")
+    dimension_multiple = 8 if is_tame_pony else 32 if model == QWEN_TURBO_MODEL_ID else 16
+    minimum = 512 if is_tame_pony else 256
+    model_maximum = 1536 if is_tame_pony else maximum
+    if width < minimum or width > model_maximum or width % dimension_multiple != 0:
+        raise ValueError(f"Width must be {minimum} to {model_maximum} and divisible by {dimension_multiple}.")
+    if height < minimum or height > model_maximum or height % dimension_multiple != 0:
+        raise ValueError(f"Height must be {minimum} to {model_maximum} and divisible by {dimension_multiple}.")
+    if model == flux3.MODEL_KEY and (width != flux3.VALIDATED_WIDTH or height != flux3.VALIDATED_HEIGHT):
+        raise ValueError("This FLUX.3 quant is currently validated at 1024×1024 only.")
     if steps < 1 or steps > 50:
         raise ValueError("Steps are outside the supported range.")
     if guidance < 0 or guidance > 10:
         raise ValueError("Guidance must be 0 to 10.")
     if batch_size < 1 or batch_size > 4:
         raise ValueError("Batch size must be 1 to 4.")
-    if model == QWEN_TURBO_MODEL_ID and batch_size != 1:
-        raise ValueError("Official Qwen Turbo currently supports one image per generation.")
+    if model in (QWEN_TURBO_MODEL_ID, flux3.MODEL_KEY) and batch_size != 1:
+        raise ValueError("Qwen Turbo and FLUX.3 Klein currently support one image per generation.")
 
     return {
         "prompt": prompt,
         "device": device,
         "width": width,
         "height": height,
-        "steps": 8 if model == QWEN_TURBO_MODEL_ID else steps,
-        "guidance": 1.0 if model == QWEN_TURBO_MODEL_ID else guidance,
+        "steps": 8 if model == QWEN_TURBO_MODEL_ID else flux3.DEFAULT_STEPS if model == flux3.MODEL_KEY else steps,
+        "guidance": 1.0 if model == QWEN_TURBO_MODEL_ID else flux3.DEFAULT_GUIDANCE if model == flux3.MODEL_KEY else guidance,
         "seed": seed,
         "batch_size": batch_size,
         "thread_id": thread_id,
@@ -1040,14 +1373,14 @@ def run_flux_generation(
 ) -> None:
     def log_generation(message: str) -> None:
         display_message = message
-        for prefix in ("FERN_QWEN_PROGRESS:", "FERN_TTS_PROGRESS:"):
+        for prefix in ("FERN_QWEN_PROGRESS:", "FERN_TTS_PROGRESS:", flux3.PROGRESS_PREFIX):
             if display_message.startswith(prefix):
                 display_message = display_message[len(prefix):].strip()
                 break
         append_flux_log(display_message)
-        if message.startswith(("Loading Flux", "Loading Qwen", "Loading the OpenVINO")):
+        if message.startswith(("Loading Flux", "Loading Qwen", "Loading Tame Pony", "Loading the OpenVINO")):
             mark_runtime(status="loading", message="Loading model for generation…", error=None)
-        elif message.startswith(("Seed:", "Qwen denoising step")):
+        elif message.startswith(("Seed:", "Qwen denoising step", "Tame Pony SDXL ")):
             mark_runtime(status="ready", device=payload["device"], message="Model ready.", error=None)
         elif message.startswith("FERN_QWEN_PROGRESS:"):
             progress = message.removeprefix("FERN_QWEN_PROGRESS:").strip()
@@ -1058,11 +1391,26 @@ def run_flux_generation(
                 )
             elif progress.lower().startswith(("loading", "compiling", "preparing")):
                 mark_runtime(status="loading", device=payload["device"], message=progress, error=None)
+        elif message.startswith(flux3.PROGRESS_PREFIX):
+            progress = message.removeprefix(flux3.PROGRESS_PREFIX).strip()
+            if progress.lower().startswith(("loading", "compiling", "preparing")):
+                mark_runtime(status="loading", device=payload["device"], message=progress, error=None)
+            elif progress.lower().startswith("completed"):
+                mark_runtime(status="ready", device=payload["device"], message=progress, error=None)
         if cancel_event.is_set():
             raise FluxGenerationCancelled("Generation stopped by user.")
 
     stage = CACHE_DIR / ("generation-" + job_id)
     try:
+        TEXT_GENERATION_WORKER.close()
+        TTS_GENERATION_WORKER.close()
+        if payload.get("model") != QWEN_TURBO_MODEL_ID:
+            QWEN_GENERATION_WORKER.close()
+        if not tame_pony.is_model(payload.get("model", "")):
+            TAME_PONY_GENERATION_WORKER.close()
+        GENERATION_WORKER.close()
+        if payload.get("model") != flux3.MODEL_KEY:
+            FLUX3_GENERATION_WORKER.close()
         if stage.resolve().parent != CACHE_DIR.resolve():
             raise ValueError("Invalid generation staging path.")
         stage.mkdir(parents=True, exist_ok=True)
@@ -1075,6 +1423,24 @@ def run_flux_generation(
         if payload["model"] == QWEN_TURBO_MODEL_ID and payload["reference_image"] is not None:
             qwen_reference_path = stage / "reference.png"
             payload["reference_image"].save(qwen_reference_path, format="PNG")
+        reference_url = None
+        if payload.get("reference_source"):
+            header, encoded = payload["reference_source"].split(",", 1)
+            extension = {
+                "data:image/png;base64": "png",
+                "data:image/jpeg;base64": "jpg",
+                "data:image/webp;base64": "webp",
+            }.get(header.lower())
+            if extension is None:
+                raise ValueError("Reference image must be a PNG, JPEG, or WebP upload.")
+            reference_bytes = base64.b64decode(encoded, validate=True)
+            reference_name = f"reference-{hashlib.sha256(reference_bytes).hexdigest()[:32]}.{extension}"
+            references = DATA_DIR / "references"
+            references.mkdir(parents=True, exist_ok=True)
+            reference_path = references / reference_name
+            if not reference_path.exists():
+                reference_path.write_bytes(reference_bytes)
+            reference_url = f"/references/{urllib.parse.quote(reference_name)}"
         last_record = None
         for index in range(payload["batch_size"]):
             if cancel_event.is_set():
@@ -1090,7 +1456,15 @@ def run_flux_generation(
                 "steps": payload["steps"],
                 "guidance": payload["guidance"],
                 "device": resolve_qwen_turbo_device(payload["device"]) if payload["model"] == QWEN_TURBO_MODEL_ID else payload["device"],
-                "modelPath": str(QWEN_TURBO_MODEL_ROOT if payload["model"] == QWEN_TURBO_MODEL_ID else flux2.model_dir_for(payload["device"], payload.get("model", "9b"))),
+                "modelPath": str(
+                    QWEN_TURBO_MODEL_ROOT
+                    if payload["model"] == QWEN_TURBO_MODEL_ID
+                    else flux3.MODEL_DIR
+                    if payload["model"] == flux3.MODEL_KEY
+                    else tame_pony.model_dir_for(payload["model"])
+                    if tame_pony.is_model(payload["model"])
+                    else flux2.model_dir_for(payload["device"], payload.get("model", "9b"))
+                ),
                 "model": payload.get("model", "9b"),
                 "modelRevision": (
                     "84d3f71fff32fc6c4740b89f5556657d0c65af27"
@@ -1106,12 +1480,13 @@ def run_flux_generation(
                     key=(QWEN_TURBO_MODEL_ID, resolve_qwen_turbo_device(payload["device"])),
                     command=[
                         str(QWEN_TURBO_PYTHON), "-u", str(SCRIPTS / "qwen21_turbo_openvino.py"),
-                        "serve", str(QWEN_TURBO_MODEL_ROOT), str(stage),
+                        "serve", str(QWEN_TURBO_MODEL_ROOT), str(CACHE_DIR),
                         "--device", resolve_qwen_turbo_device(payload["device"]),
                     ],
                     request={
                         "prompt": payload["prompt"], "width": payload["width"],
                         "height": payload["height"], "seed": seed, "outputName": output_name,
+                        "outputDir": str(stage),
                         "referencePath": str(qwen_reference_path) if qwen_reference_path else None,
                     },
                     cwd=ROOT, env=qwen_turbo_child_env(), log=log_generation,
@@ -1143,6 +1518,66 @@ def run_flux_generation(
                 with Image.open(output_path) as output_image:
                     if output_image.size != (payload["width"], payload["height"]):
                         raise RuntimeError("Qwen Turbo output dimensions do not match the request.")
+            elif payload["model"] == flux3.MODEL_KEY:
+                output_name = f"flux3-{job_id}-{index + 1}.png"
+                result = FLUX3_GENERATION_WORKER.generate(
+                    key=(flux3.MODEL_KEY, payload["device"]),
+                    command=[
+                        str(Path(sys.executable)), "-u", str(SCRIPTS / "flux3_klein_pipeline.py"),
+                        "serve", str(flux3.MODEL_DIR), "--device",
+                        {"NVIDIA_GPU": "NVIDIA", "INTEL_GPU": "GPU", "CPU": "CPU"}[payload["device"]],
+                    ],
+                    request={
+                        "prompt": payload["prompt"], "width": payload["width"],
+                        "height": payload["height"], "steps": payload["steps"],
+                        "seed": seed, "outputName": output_name, "outputDir": str(stage),
+                    },
+                    cwd=ROOT,
+                    env=flux3_klein_runtime.child_env(),
+                    log=log_generation,
+                    runtime_label="FLUX.3 Klein",
+                    progress_prefix=flux3.PROGRESS_PREFIX,
+                )
+                output_path = Path(result["path"])
+                if output_path.resolve().parent != stage.resolve() or output_path.name != output_name:
+                    raise RuntimeError("FLUX.3 Klein returned an image outside its generation workspace.")
+                if not output_path.is_file() or output_path.stat().st_size <= 0:
+                    raise RuntimeError("FLUX.3 Klein did not create a valid output image.")
+                generation_time = float(result.get("generationTime", float("nan")))
+                if not math.isfinite(generation_time) or generation_time < 0:
+                    raise RuntimeError("FLUX.3 Klein returned an invalid generation duration.")
+                with Image.open(output_path) as output_image:
+                    output_image.verify()
+                with Image.open(output_path) as output_image:
+                    if output_image.size != (payload["width"], payload["height"]):
+                        raise RuntimeError("FLUX.3 Klein output dimensions do not match the request.")
+            elif tame_pony.is_model(payload["model"]):
+                output_name = f"tame-pony-{job_id}-{index + 1}.png"
+                output_path, generation_time = TAME_PONY_GENERATION_WORKER.generate(
+                    cancel_event=cancel_event,
+                    prompt=payload["prompt"],
+                    model_key=payload["model"],
+                    width=payload["width"],
+                    height=payload["height"],
+                    steps=payload["steps"],
+                    guidance=payload["guidance"],
+                    seed=seed,
+                    device=payload["device"],
+                    output_dir=stage,
+                    output_name=output_name,
+                    log=log_generation,
+                )
+                if output_path.resolve().parent != stage.resolve() or output_path.name != output_name:
+                    raise RuntimeError("Tame Pony returned an image outside its generation workspace.")
+                if not output_path.is_file() or output_path.stat().st_size <= 0:
+                    raise RuntimeError("Tame Pony did not create a valid output image.")
+                if not math.isfinite(generation_time) or generation_time < 0:
+                    raise RuntimeError("Tame Pony returned an invalid generation duration.")
+                with Image.open(output_path) as output_image:
+                    output_image.verify()
+                with Image.open(output_path) as output_image:
+                    if output_image.size != (payload["width"], payload["height"]):
+                        raise RuntimeError("Tame Pony output dimensions do not match the request.")
             else:
                 output_path, generation_time = GENERATION_WORKER.generate(
                     cancel_event=cancel_event,
@@ -1165,19 +1600,8 @@ def run_flux_generation(
                 output_path.replace(destination)
             output_path = destination
             metadata["referenceUsed"] = payload["reference_image"] is not None
-            if payload["reference_image"] is not None:
-                references = DATA_DIR / "references"
-                references.mkdir(parents=True, exist_ok=True)
-                source = payload.get("reference_source")
-                if source:
-                    header, encoded = source.split(",", 1)
-                    extension = ".jpg" if "image/jpeg" in header else ".webp" if "image/webp" in header else ".png"
-                    reference_name = output_path.name + extension
-                    (references / reference_name).write_bytes(base64.b64decode(encoded, validate=True))
-                else:
-                    reference_name = output_path.name + ".png"
-                    payload["reference_image"].save(references / reference_name, format="PNG")
-                metadata["referenceUrl"] = "/references/" + urllib.parse.quote(reference_name)
+            if reference_url:
+                metadata["referenceUrl"] = reference_url
             metadata["generationTime"] = round(generation_time, 1)
             last_record = image_record(output_path, metadata)
         append_flux_log(f"Batch complete | {payload['batch_size']} image(s).")
@@ -1189,21 +1613,33 @@ def run_flux_generation(
         )
         if payload["model"] == QWEN_TURBO_MODEL_ID:
             mark_runtime(status="ready", device=payload["device"], message="Qwen Turbo is ready for another image.", error=None)
+        elif payload["model"] == flux3.MODEL_KEY:
+            mark_runtime(status="ready", device=payload["device"], message="FLUX.3 Klein is ready for another image.", error=None)
+        elif tame_pony.is_model(payload["model"]):
+            mark_runtime(status="ready", device=payload["device"], message=f"{tame_pony.display_name(payload['model'])} is ready for another image.", error=None)
         cleanup_cache_when_model_idle()
     except FluxGenerationCancelled:
         QWEN_GENERATION_WORKER.close()
+        FLUX3_GENERATION_WORKER.close()
+        TAME_PONY_GENERATION_WORKER.close()
         mark_runtime(status="idle", message="Generation stopped. Model will reload on the next generation.", error=None)
         append_flux_log("Generation stopped by user.")
         mark_flux_job(status="cancelled", finishedAt=time.time(), output=None, error=None)
     except Exception as exc:
         if cancel_event.is_set():
             QWEN_GENERATION_WORKER.close()
+            FLUX3_GENERATION_WORKER.close()
+            TAME_PONY_GENERATION_WORKER.close()
             mark_runtime(status="idle", message="Generation stopped. Model will reload on the next generation.", error=None)
             append_flux_log("Generation stopped by user.")
             mark_flux_job(status="cancelled", finishedAt=time.time(), output=None, error=None)
             return
         if payload.get("model") == QWEN_TURBO_MODEL_ID:
             QWEN_GENERATION_WORKER.close()
+        if payload.get("model") == flux3.MODEL_KEY:
+            FLUX3_GENERATION_WORKER.close()
+        if tame_pony.is_model(payload.get("model", "")):
+            TAME_PONY_GENERATION_WORKER.close()
         mark_runtime(status="idle", message="Ready to retry generation.", error=None)
         append_flux_log(str(exc))
         mark_flux_job(status="failed", finishedAt=time.time(), output=None, error=str(exc))
@@ -1280,12 +1716,16 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         parsed = urllib.parse.urlparse(self.path)
 
+        if parsed.path == "/api/text/status":
+            self.send_json(200, text_runtime_snapshot())
+            return
+
         if parsed.path == "/api/tts/status":
             self.send_json(200, tts_snapshot())
             return
 
         if parsed.path == "/api/models":
-            self.send_json(200, {"models": MODEL_MANAGER.snapshot() + [qwen_turbo_snapshot()]})
+            self.send_json(200, {"models": model_library_snapshot()})
             return
 
         if parsed.path == "/api/health":
@@ -1302,16 +1742,16 @@ class Handler(BaseHTTPRequestHandler):
                 {
                     "job": flux_job_snapshot(),
                     "images": latest_images() if query.get("images", ["1"])[0] != "0" else None,
-                    "installedModels": [{"id": item["id"], "label": item["label"]} for item in MODEL_MANAGER.snapshot() if item["installed"]]
+                    "installedModels": [{"id": item["id"], "label": item["label"]} for item in model_library_snapshot() if item["installed"]]
                     + ([{"id": QWEN_TURBO_MODEL_ID, "label": "Qwen Image 2.1 Turbo · official"}] if qwen_model_ready and qwen_runtime_ready is not False else []),
                     "model": model_snapshot(requested_device, query.get("model", ["9b"])[0]),
                     "runtime": runtime_snapshot(),
                     "defaults": {
                         "device": flux2.DEFAULT_DEVICE,
-                        "width": flux2.DEFAULT_WIDTH,
-                        "height": flux2.DEFAULT_HEIGHT,
-                        "steps": flux2.DEFAULT_STEPS,
-                        "guidance": flux2.DEFAULT_GUIDANCE,
+                "width": (tame_pony.DEFAULT_WIDTH if tame_pony.is_model(query.get("model", [""])[0]) else flux3.DEFAULT_WIDTH if query.get("model", [""])[0] == flux3.MODEL_KEY else flux2.DEFAULT_WIDTH),
+                "height": (tame_pony.DEFAULT_HEIGHT if tame_pony.is_model(query.get("model", [""])[0]) else flux3.DEFAULT_HEIGHT if query.get("model", [""])[0] == flux3.MODEL_KEY else flux2.DEFAULT_HEIGHT),
+                "steps": (tame_pony.DEFAULT_STEPS if tame_pony.is_model(query.get("model", [""])[0]) else flux3.DEFAULT_STEPS if query.get("model", [""])[0] == flux3.MODEL_KEY else flux2.DEFAULT_STEPS),
+                "guidance": (tame_pony.DEFAULT_GUIDANCE if tame_pony.is_model(query.get("model", [""])[0]) else flux3.DEFAULT_GUIDANCE if query.get("model", [""])[0] == flux3.MODEL_KEY else flux2.DEFAULT_GUIDANCE),
                     },
                 },
             )
@@ -1384,8 +1824,149 @@ class Handler(BaseHTTPRequestHandler):
         self.send_error(404)
 
     def do_POST(self) -> None:
-        global FLUX_CANCEL_EVENT, TTS_CANCEL_EVENT
+        with JOB_ADMISSION_LOCK:
+            self.handle_post()
+
+    def handle_post(self) -> None:
+        global FLUX_CANCEL_EVENT, TTS_CANCEL_EVENT, TEXT_CANCEL_EVENT
         parsed = urllib.parse.urlparse(self.path)
+
+        if parsed.path == "/api/text/stop":
+            with TEXT_JOB_LOCK:
+                running = TEXT_JOB.get("status") == "running"
+                if running:
+                    TEXT_JOB["phase"] = "Stopping generation…"
+                    cancel_event = TEXT_CANCEL_EVENT
+                    if cancel_event is not None:
+                        cancel_event.set()
+            if running:
+                TEXT_GENERATION_WORKER.interrupt()
+            self.send_json(202, {"job": text_runtime_snapshot()})
+            return
+
+        if parsed.path == "/api/text/models/install":
+            try:
+                payload = self.read_json_body()
+                model_id = payload.get("modelId")
+                if not isinstance(model_id, str) or model_id not in text_model_catalog():
+                    raise ValueError("Choose a recommended OpenVINO text model.")
+                with TTS_JOB_LOCK:
+                    audio_busy = TTS_JOB.get("status") in ("running", "setting_up", "stopping")
+                with FLUX_JOB_LOCK:
+                    image_busy = FLUX_JOB.get("status") == "running"
+                if audio_busy or image_busy or text_job_running() or tts_job_running() or qwen_turbo_setup_running() or text_model_install_running():
+                    raise ValueError("Finish the active generation or model setup before installing a text model.")
+                job_id = str(uuid.uuid4())
+                with TEXT_MODEL_INSTALL_LOCK:
+                    TEXT_MODEL_INSTALL.update(id=job_id, status="downloading", phase="Preparing download…", error=None, modelId=model_id)
+                threading.Thread(target=run_text_model_install, args=(model_id, job_id), daemon=True).start()
+                self.send_json(202, text_runtime_snapshot())
+            except Exception as error:
+                self.send_json(400, {"error": str(error)})
+            return
+
+        if parsed.path in ("/api/text/models/import", "/api/text/models/remove"):
+            try:
+                payload = self.read_json_body()
+                if text_job_running() or text_model_install_running():
+                    raise ValueError("Wait for the current text response or model installation before changing models.")
+                if parsed.path.endswith("/import"):
+                    folder = payload.get("path")
+                    if not isinstance(folder, str) or not folder.strip() or len(folder) > 4096:
+                        raise ValueError("Choose a local OpenVINO model folder.")
+                    model = TEXT_MODEL_REGISTRY.add(folder)
+                else:
+                    model_id = payload.get("modelId")
+                    if not isinstance(model_id, str) or len(model_id) > 64:
+                        raise ValueError("Choose a model to remove from the library.")
+                    model = next((item for item in TEXT_MODEL_REGISTRY.snapshot() if item["id"] == model_id), None)
+                    if model is None:
+                        raise ValueError("That text model is no longer in the library.")
+                    TEXT_GENERATION_WORKER.close()
+                    TEXT_MODEL_REGISTRY.remove(model_id)
+                self.send_json(200, {"model": model, "models": TEXT_MODEL_REGISTRY.snapshot()})
+            except Exception as error:
+                self.send_json(400, {"error": str(error)})
+            return
+
+        if parsed.path == "/api/text/generate":
+            try:
+                payload = self.read_json_body()
+                model_id = payload.get("modelId")
+                if not isinstance(model_id, str) or len(model_id) > 64:
+                    raise ValueError("Select an OpenVINO text model first.")
+                model = next((item for item in TEXT_MODEL_REGISTRY.snapshot() if item["id"] == model_id), None)
+                if model is None or not model.get("installed"):
+                    raise ValueError("Add the selected OpenVINO model folder again.")
+                thread_id = payload.get("threadId")
+                if not isinstance(thread_id, str) or not thread_id.startswith("text-thread-") or len(thread_id) > 100:
+                    raise ValueError("The text conversation is invalid. Start a new text thread and retry.")
+                messages = payload.get("messages")
+                if not isinstance(messages, list) or not 1 <= len(messages) <= 100:
+                    raise ValueError("A conversation must contain 1 to 100 messages.")
+                safe_messages = []
+                total_chars = 0
+                for message in messages:
+                    if not isinstance(message, dict) or message.get("role") not in ("user", "assistant"):
+                        raise ValueError("The conversation contains an unsupported message.")
+                    content = message.get("content")
+                    if not isinstance(content, str) or not content.strip() or len(content) > 20_000:
+                        raise ValueError("Each message must contain between 1 and 20,000 characters.")
+                    total_chars += len(content)
+                    safe_messages.append({"role": message["role"], "content": content})
+                if safe_messages[-1]["role"] != "user" or any(item["role"] != ("user" if index % 2 == 0 else "assistant") for index, item in enumerate(safe_messages)):
+                    raise ValueError("The last conversation message must be from you.")
+                if total_chars > 80_000:
+                    raise ValueError("This conversation is too long. Start a new text thread to continue.")
+                system_prompt = payload.get("systemPrompt", "")
+                if not isinstance(system_prompt, str) or len(system_prompt) > 10_000:
+                    raise ValueError("The system prompt must be 10,000 characters or fewer.")
+                device = payload.get("device", "AUTO")
+                if device not in ("AUTO", "GPU", "CPU"):
+                    raise ValueError("Choose Auto, Intel GPU, or CPU.")
+                max_new_tokens = payload.get("maxNewTokens", 512)
+                if isinstance(max_new_tokens, bool) or not isinstance(max_new_tokens, int) or not 1 <= max_new_tokens <= 8192:
+                    raise ValueError("Maximum output length must be between 1 and 8,192 tokens.")
+                temperature = payload.get("temperature", 0.7)
+                top_p = payload.get("topP", 0.9)
+                if isinstance(temperature, bool) or not isinstance(temperature, (int, float)) or not 0 <= temperature <= 2:
+                    raise ValueError("Temperature must be between 0 and 2.")
+                if isinstance(top_p, bool) or not isinstance(top_p, (int, float)) or not 0.01 <= top_p <= 1:
+                    raise ValueError("Top P must be between 0.01 and 1.")
+                seed = payload.get("seed", 0)
+                if isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed <= 2_147_483_647:
+                    raise ValueError("Seed must be an integer between 0 and 2,147,483,647.")
+                with TTS_JOB_LOCK:
+                    audio_busy = TTS_JOB.get("status") in ("running", "setting_up", "stopping")
+                with FLUX_JOB_LOCK:
+                    image_busy = FLUX_JOB.get("status") == "running"
+                if audio_busy or image_busy or tts_job_running() or qwen_turbo_setup_running() or text_model_install_running():
+                    raise ValueError("Finish the active image/audio job or model setup before starting a text response.")
+                with TEXT_JOB_LOCK:
+                    if TEXT_JOB.get("status") == "running":
+                        raise ValueError("A text response is already running.")
+                    job_id = payload.get("requestId") or str(uuid.uuid4())
+                    if not isinstance(job_id, str) or len(job_id) > 100:
+                        raise ValueError("Invalid text request ID.")
+                    cancel_event = threading.Event()
+                    TEXT_CANCEL_EVENT = cancel_event
+                    TEXT_JOB.update(
+                        id=job_id, threadId=thread_id, modelId=model_id,
+                        status="running", phase="Queued…", partialText="",
+                        startedAt=time.time(), finishedAt=None, result=None, error=None,
+                    )
+                generation = {
+                    "modelId": model_id, "device": device,
+                    "messages": safe_messages, "systemPrompt": system_prompt.strip(),
+                    "temperature": float(temperature), "topP": float(top_p),
+                    "maxNewTokens": max_new_tokens,
+                    "seed": seed,
+                }
+                threading.Thread(target=run_text_generation, args=(generation, job_id, cancel_event), daemon=True).start()
+                self.send_json(202, {"job": text_runtime_snapshot()})
+            except Exception as error:
+                self.send_json(400, {"error": str(error)})
+            return
 
         if parsed.path == "/api/tts/stop":
             with TTS_JOB_LOCK:
@@ -1406,6 +1987,8 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path in ("/api/tts/setup", "/api/tts/generate"):
             try:
                 payload = self.read_json_body()
+                if text_job_running() or flux_job_snapshot()["status"] == "running" or qwen_turbo_setup_running() or text_model_install_running():
+                    raise ValueError("Stop the active image/text response or model setup before starting an audio job.")
                 model = payload.get("model")
                 if model not in TTS_MODELS:
                     raise ValueError("Choose a supported Qwen3-TTS model.")
@@ -1490,6 +2073,10 @@ class Handler(BaseHTTPRequestHandler):
             cancel_event.set()
             if FLUX_JOB.get("model") == QWEN_TURBO_MODEL_ID:
                 QWEN_GENERATION_WORKER.interrupt()
+            elif FLUX_JOB.get("model") == flux3.MODEL_KEY:
+                FLUX3_GENERATION_WORKER.interrupt()
+            elif tame_pony.is_model(FLUX_JOB.get("model", "")):
+                TAME_PONY_GENERATION_WORKER.interrupt()
             append_flux_log("Stopping generation...")
             self.send_json(202, {"job": flux_job_snapshot()})
             return
@@ -1499,11 +2086,14 @@ class Handler(BaseHTTPRequestHandler):
                 current = flux_job_snapshot()
                 with QWEN_JOB_LOCK:
                     qwen_setup_active = QWEN_JOB["status"] in ("setting_up", "downloading")
-                if current["status"] == "running" or tts_job_running() or qwen_setup_active:
+                if current["status"] == "running" or tts_job_running() or text_job_running() or text_model_install_running() or qwen_setup_active:
                     self.send_json(409, {"error": "Wait for the current generation or model setup to finish."})
                     return
                 GENERATION_WORKER.close()
+                TAME_PONY_GENERATION_WORKER.close()
                 QWEN_GENERATION_WORKER.close()
+                FLUX3_GENERATION_WORKER.close()
+                TEXT_GENERATION_WORKER.close()
                 flux2.release_pipeline()
                 result = storage_manager.cleanup_cache(ROOT, CACHE_DIR, force=True)
             self.send_json(
@@ -1526,12 +2116,17 @@ class Handler(BaseHTTPRequestHandler):
                 current = flux_job_snapshot()
                 with QWEN_JOB_LOCK:
                     qwen_setup_active = QWEN_JOB["status"] in ("setting_up", "downloading")
-                if current["status"] == "running" or tts_job_running() or qwen_setup_active:
+                if current["status"] == "running" or tts_job_running() or text_job_running() or text_model_install_running() or qwen_setup_active:
                     self.send_json(409, {"error": "Wait for the current generation or model setup to finish."})
                     return
 
                 GENERATION_WORKER.close()
+                TAME_PONY_GENERATION_WORKER.close()
                 QWEN_GENERATION_WORKER.close()
+                FLUX3_GENERATION_WORKER.close()
+                TEXT_GENERATION_WORKER.close()
+                with TEXT_JOB_LOCK:
+                    TEXT_JOB.update(id=None, threadId=None, status="idle", partialText="", result=None, error=None)
                 flux2.release_pipeline()
                 cache_result = storage_manager.cleanup_cache(ROOT, CACHE_DIR, force=True)
                 output_files, output_bytes = storage_manager.clear_directory(OUTPUTS)
@@ -1569,8 +2164,34 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path in ("/api/models/install", "/api/models/pause", "/api/models/remove"):
             try:
                 model = self.read_json_body().get("model")
+                if model == flux3.MODEL_KEY:
+                    if parsed.path.endswith("install"):
+                        if flux_job_snapshot()["status"] == "running" or tts_job_running() or text_job_running() or text_model_install_running():
+                            raise ValueError("Finish the active image, audio, or text job before setting up FLUX.3 Klein.")
+                        if any(
+                            item["state"] in ("downloading", "verifying", "removing")
+                            for item in MODEL_MANAGER.snapshot()
+                        ):
+                            raise ValueError("Wait for the current model operation to finish.")
+                        start_flux3_setup()
+                    elif parsed.path.endswith("pause"):
+                        cancel_flux3_setup()
+                    else:
+                        with FLUX_JOB_LOCK:
+                            if FLUX_JOB["status"] == "running":
+                                raise ValueError("Stop generation before removing FLUX.3 Klein.")
+                        with FLUX3_SETUP_LOCK:
+                            if FLUX3_SETUP_STATE["status"] == "installing":
+                                raise ValueError("Wait for FLUX.3 runtime setup to finish before removing the model.")
+                        FLUX3_GENERATION_WORKER.close()
+                        MODEL_MANAGER.remove(model)
+                        flux3_klein_runtime.remove_runtime()
+                    self.send_json(200, {"models": model_library_snapshot()})
+                    return
                 if model == QWEN_TURBO_MODEL_ID:
                     if parsed.path.endswith("install"):
+                        if flux_job_snapshot()["status"] == "running" or tts_job_running() or text_job_running() or text_model_install_running():
+                            raise ValueError("Finish the active image, audio, or text job before setting up Qwen Turbo.")
                         start_qwen_turbo_setup()
                     elif parsed.path.endswith("pause"):
                         cancel_qwen_turbo_setup()
@@ -1597,7 +2218,7 @@ class Handler(BaseHTTPRequestHandler):
                                     downloaded=0, bytes=qwen_turbo_quant_bytes(),
                                     startedAt=None, finishedAt=None,
                                 )
-                    self.send_json(200, {"models": MODEL_MANAGER.snapshot() + [qwen_turbo_snapshot()]})
+                    self.send_json(200, {"models": model_library_snapshot()})
                     return
                 model_spec(model)
                 if parsed.path.endswith("install"): MODEL_MANAGER.start(model)
@@ -1607,7 +2228,7 @@ class Handler(BaseHTTPRequestHandler):
                         if FLUX_JOB["status"] == "running": raise ValueError("Stop generation before removing a model.")
                         GENERATION_WORKER.close()
                         MODEL_MANAGER.remove(model)
-                self.send_json(200, {"models": MODEL_MANAGER.snapshot()})
+                self.send_json(200, {"models": model_library_snapshot()})
             except Exception as error: self.send_json(400, {"error": str(error)})
             return
 
@@ -1618,6 +2239,9 @@ class Handler(BaseHTTPRequestHandler):
         current = flux_job_snapshot()
         if current["status"] == "running":
             self.send_json(409, {"error": "A generation job is already running."})
+            return
+        if text_job_running() or text_model_install_running() or tts_job_running() or qwen_turbo_setup_running():
+            self.send_json(409, {"error": "Stop the active text/audio response or model setup before starting image generation."})
             return
 
         try:
@@ -1635,6 +2259,10 @@ class Handler(BaseHTTPRequestHandler):
             status = (
                 model_snapshot(payload["device"], payload["model"])
                 if payload["model"] == QWEN_TURBO_MODEL_ID
+                else flux3.model_status(payload["device"])
+                if payload["model"] == flux3.MODEL_KEY
+                else tame_pony.model_status(payload["device"], payload["model"])
+                if tame_pony.is_model(payload["model"])
                 else flux2.model_status(payload["device"], payload["model"])
             )
             if not status["runtimeReady"]:
@@ -1714,8 +2342,11 @@ def run_server(port: int = 8000, *, allow_cors: bool = False) -> None:
         pass
     finally:
         GENERATION_WORKER.close()
+        TAME_PONY_GENERATION_WORKER.close()
         TTS_GENERATION_WORKER.close()
         QWEN_GENERATION_WORKER.close()
+        FLUX3_GENERATION_WORKER.close()
+        TEXT_GENERATION_WORKER.close()
         server.server_close()
 
 

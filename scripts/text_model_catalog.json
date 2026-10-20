@@ -1,0 +1,18 @@
+{
+  "qwen3-4b-instruct-2507": {
+    "name": "Qwen3 4B Instruct 2507",
+    "repo": "xgirls/Qwen3-4B-Instruct-2507-openvino",
+    "revision": "e347e3317a5e964cd15583e4ef8fb56900ad01c5",
+    "folder": "qwen3-4b-instruct-2507-openvino",
+    "format": "OpenVINO export",
+    "files": [
+      {"path":"config.json","size":1593,"algorithm":"git-sha1","digest":"a75a93ee800d68a05ac35fbfc8f5a029cb7dce10"},
+      {"path":"generation_config.json","size":212,"algorithm":"git-sha1","digest":"f6a5339b3ab1da83c3f111d5296399c79439bc44"},
+      {"path":"openvino_model.bin","size":4026830485,"algorithm":"sha256","digest":"e92b757b61a3007d1402b551e0996bfe03d6ed9aa54341b78ae2e123c864952a"},
+      {"path":"openvino_model.xml","size":3551130,"algorithm":"git-sha1","digest":"73a8b646cf128444745bb1ded8865fc0d4c097f9"},
+      {"path":"tokenizer.json","size":11422654,"algorithm":"sha256","digest":"aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4"},
+      {"path":"tokenizer_config.json","size":9377,"algorithm":"git-sha1","digest":"51c1be0d9192e7f6e6596de71d0f07d58fbc32ac"},
+      {"path":"vocab.json","size":2776833,"algorithm":"git-sha1","digest":"4783fe10ac3adce15ac8f358ef5462739852c569"}
+    ]
+  }
+}

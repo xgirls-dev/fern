@@ -339,6 +339,8 @@ def model_status(device: str = DEFAULT_DEVICE, model="9b") -> dict[str, Any]:
 
 
 def release_pipeline() -> None:
+    if _PIPELINE_CACHE["pipeline"] is None:
+        return
     _PIPELINE_CACHE["key"] = None
     _PIPELINE_CACHE["pipeline"] = None
     gc.collect()

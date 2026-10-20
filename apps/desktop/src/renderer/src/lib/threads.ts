@@ -1,15 +1,40 @@
 import type { StudioSettings } from "./types";
+import { normalizeQwenDimension } from "./imageDimensions";
 
 const THREADS_KEY = "fern-threads:v1";
 const REFERENCES_DB = "fern-thread-references";
 
 // Retired model IDs can remain in old threads and gallery metadata.
 export function normalizeImageSettings(settings: StudioSettings): StudioSettings {
-  if (settings.model === "qwen21-turbo") {
+  if (settings.model === "tame-pony-v25-sdxl" || settings.model === "tame-pony-v25-sdxl-int8") {
     const dimension = (value: number) =>
-      Number.isFinite(value) ? Math.max(256, Math.min(1920, Math.round(value / 16) * 16)) : 1024;
+      Number.isFinite(value) ? Math.max(512, Math.min(1536, Math.round(value / 8) * 8)) : 1024;
+    return {
+      ...settings,
+      model: settings.model,
+      width: dimension(settings.width),
+      height: dimension(settings.height),
+      steps: Number.isFinite(settings.steps) ? Math.max(1, Math.min(50, Math.round(settings.steps))) : 30,
+      guidance: Number.isFinite(settings.guidance) ? Math.max(0, Math.min(10, settings.guidance)) : 7,
+      batchSize: Number.isFinite(settings.batchSize) ? Math.max(1, Math.min(4, Math.round(settings.batchSize))) : 1,
+      device: ["AUTO", "INTEL_GPU", "NVIDIA_GPU", "CPU"].includes(settings.device) ? settings.device : "AUTO",
+    };
+  }
+  if (settings.model === "qwen21-turbo") {
     const device: StudioSettings["device"] = ["AUTO", "INTEL_GPU", "CPU"].includes(settings.device) ? settings.device : "AUTO";
-    return { ...settings, model: "qwen21-turbo", width: dimension(settings.width), height: dimension(settings.height), steps: 8, guidance: 1, batchSize: 1, device };
+    return { ...settings, model: "qwen21-turbo", width: normalizeQwenDimension(settings.width), height: normalizeQwenDimension(settings.height), steps: 8, guidance: 1, batchSize: 1, device };
+  }
+  if (settings.model === "flux3-klein") {
+    return {
+      ...settings,
+      model: "flux3-klein",
+      width: 1024,
+      height: 1024,
+      steps: 16,
+      guidance: 0,
+      batchSize: 1,
+      device: ["AUTO", "INTEL_GPU", "NVIDIA_GPU", "CPU"].includes(settings.device) ? settings.device : "AUTO",
+    };
   }
   if (settings.model === "9b" || settings.model === "4b") return settings;
   const dimension = (value: number) =>
@@ -81,7 +106,7 @@ export function loadThreadWorkspace(settings: StudioSettings): ThreadWorkspace {
             referenceLabel: thread.referenceLabel ?? "No reference image.",
           })),
         };
-        if (threads.some((thread) => !["9b", "4b", "qwen21-turbo"].includes(thread.settings.model ?? "9b"))) {
+        if (threads.some((thread) => !["9b", "4b", "qwen21-turbo", "flux3-klein", "tame-pony-v25-sdxl", "tame-pony-v25-sdxl-int8"].includes(thread.settings.model ?? "9b"))) {
           try { saveThreadWorkspace(workspace); } catch {
             // Keep the migrated draft usable even if local storage is full.
           }

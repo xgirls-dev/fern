@@ -6,6 +6,7 @@ import type {
   DeviceId,
 } from "./types";
 import { repairMojibakeDeep } from "./text";
+import type { TextModel, TextRuntimeStatus } from "./textThreads";
 
 let apiBaseUrl = "";
 let cachedImages: FluxStatusResponse["images"] = [];
@@ -133,6 +134,58 @@ export async function clearLocalData(): Promise<StorageMutationResponse> {
   cachedImages = [];
   invalidateImages();
   return result;
+}
+
+export function fetchTextStatus(): Promise<TextRuntimeStatus> {
+  return requestJson<TextRuntimeStatus>("/api/text/status", { signal: AbortSignal.timeout(15_000) });
+}
+
+export function addTextModel(path: string): Promise<{ model: TextModel; models: TextModel[] }> {
+  return requestJson("/api/text/models/import", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path }),
+  });
+}
+
+export function installTextModel(modelId: string): Promise<TextRuntimeStatus> {
+  return requestJson("/api/text/models/install", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ modelId }),
+  });
+}
+
+export function removeTextModel(modelId: string): Promise<{ models: TextModel[] }> {
+  return requestJson("/api/text/models/remove", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ modelId }),
+  });
+}
+
+export function startTextGeneration(payload: {
+  requestId: string;
+  threadId: string;
+  modelId: string;
+  device: "AUTO" | "GPU" | "CPU";
+  messages: Array<{ role: "user" | "assistant"; content: string }>;
+  systemPrompt: string;
+  temperature: number;
+  topP: number;
+  maxNewTokens: number;
+  seed: number;
+}): Promise<{ job: TextRuntimeStatus }> {
+  return requestJson("/api/text/generate", {
+    signal: AbortSignal.timeout(30_000),
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function stopTextGeneration(): Promise<void> {
+  return requestJson("/api/text/stop", { method: "POST" });
 }
 
 export async function deleteThreadAssets(

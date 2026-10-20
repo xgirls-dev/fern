@@ -23,7 +23,7 @@ try {
   await page.locator(".stage-image").waitFor();
   await page.unroute("**/api/flux2/status*", delayStatus);
 
-  await button("Image settings").click();
+  await page.locator(".workspace-header").getByRole("button", { name: "Image settings", exact: true }).click();
   await page
     .getByRole("group", { name: "Inspector view" })
     .getByRole("button", { name: "Render info", exact: true })
@@ -40,7 +40,11 @@ try {
   assert(await page.locator("#width").isVisible());
   await button("Close image settings").click();
 
-  await button("Select").click();
+  await button("Library").click();
+  const firstCard = page.locator(".thumb-wrap").filter({ has: button("Review audit-1.png") });
+  await firstCard.hover();
+  await firstCard.locator('.image-menu summary[aria-label="Image actions for audit-1.png"]').click();
+  await firstCard.getByRole("button", { name: "Remix", exact: true }).click();
   await page.waitForTimeout(300);
   const workspace = await page.evaluate(() =>
     JSON.parse(localStorage.getItem("fern-threads:v1")),

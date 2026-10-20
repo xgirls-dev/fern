@@ -24,13 +24,14 @@ export function useModalFocus(
   useEffect(() => {
     if (!open) return;
 
-    openerRef.current =
-      document.activeElement instanceof HTMLElement
-        ? document.activeElement
-        : null;
-
     const dialog = dialogRef.current;
     if (!dialog) return;
+    // StrictMode replays effects after initial focus has moved into the dialog.
+    // Preserve the real opener instead of replacing it with a dialog control.
+    if (!dialog.contains(document.activeElement)) {
+      openerRef.current = document.activeElement instanceof HTMLElement
+        ? document.activeElement : null;
+    }
 
     const focusInitialElement = () => {
       const firstFocusable =

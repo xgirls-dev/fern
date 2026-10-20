@@ -6,7 +6,8 @@ try {
  await page.route('**/api/models',route=>route.fulfill({json:{models}}));
  await page.route('**/api/models/*',route=>{const op=route.request().url().split('/').at(-1);models[1].state=op==='install'?'downloading':op==='pause'?'paused':'not-installed';return route.fulfill({json:{models}});});
  state.installedModels=[{id:'9b',label:'Klein 9B'},{id:'4b',label:'Klein 4B'}];
- await page.getByRole('button',{name:'Choose model',exact:true}).click();
+ await page.waitForResponse(r=>r.url().includes('/api/flux2/status'));
+ await page.locator('.composer-model-trigger').click();
  await page.getByRole('menuitemradio',{name:/Klein 4B/}).click();
  await page.getByRole('button',{name:'Generate image',exact:true}).click();
  assert.equal(state.payloads.at(-1).model,'4b');

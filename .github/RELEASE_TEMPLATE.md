@@ -1,15 +1,12 @@
-## Fern release checklist
+## What's new
 
-- [ ] `npm run check`
-- [ ] `npm run package`
-- [ ] Verify the installer launches on Windows 10 or 11
-- [ ] Verify the release contains exactly one `Fern-Setup-*.exe` asset
-- [ ] Confirm no models, generated images, bundled runtimes, credentials, or private media are included in the source commit
-
-## Highlights
-
-<!-- Summarize the user-visible changes. -->
+- Image threads: Flux.2 Klein, FLUX.3 Klein, Qwen Image 2.1 Turbo, and Tame Pony SDXL model options.
+- Text threads: local OpenVINO conversations with Qwen3 4B Instruct 2507 as the recommended model.
+- Audio threads: Qwen3-TTS voice generation, voice design, and reference-audio cloning.
+- Model-specific controls, download verification, and workspace reliability improvements.
 
 ## Verification
 
-<!-- Note the tested Windows version, hardware/device, and any limitations. -->
+- Automated checks: `npm run check`
+- Installer: Windows NSIS package, `Fern-Setup-<version>.exe`
+- Device coverage and known model limitations: see the release announcement and repository documentation.

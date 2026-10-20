@@ -9,7 +9,9 @@ try {
     logs: [],
   };
   assert.equal(await page.getByRole("dialog").count(), 0);
+  await button("Seed settings").click();
   await page.getByRole("textbox", { name: "Seed", exact: true }).fill("123456");
+  await page.keyboard.press("Escape");
   await button("Generate image").click();
   assert.equal(state.payloads.at(-1).seed, 123456);
   state.runtime = { status: "loading", message: "Loading model", logs: [] };
@@ -52,11 +54,11 @@ try {
   const card = page
     .locator(".thumb-wrap")
     .filter({ has: button("Review audit-2.png") });
-  await card.getByRole("button", { name: "Full prompt", exact: true }).click();
-  assert(await card.locator(".thumb-prompt.is-expanded").isVisible());
-  await page.screenshot({ path: `${dir}/gallery-prompt-actions.png` });
+  await card.hover();
+  await card.locator('.image-menu summary[aria-label="Image actions for audit-2.png"]').click();
   await card.getByRole("button", { name: "Copy prompt", exact: true }).click();
-  await card.getByRole("button", { name: "Select", exact: true }).click();
+  await card.locator('.image-menu summary[aria-label="Image actions for audit-2.png"]').click();
+  await card.getByRole("button", { name: "Remix", exact: true }).click();
   assert.equal(
     await page.locator("#prompt").inputValue(),
     "Original image prompt 2",
@@ -71,7 +73,7 @@ try {
     await page.locator(".stage-image").getAttribute("alt"),
     "Original image prompt 2",
   );
-  await button("Image settings").click();
+  await page.locator(".workspace-header").getByRole("button", { name: "Image settings", exact: true }).click();
   await page.locator("summary").filter({ hasText: "Reference Image" }).click();
   assert.equal(
     await page.getByRole("button", { name: /Use Current Output/i }).isEnabled(),

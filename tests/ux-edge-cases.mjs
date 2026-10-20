@@ -3,12 +3,12 @@ import { fixture } from "./ui-fixture.mjs";
 const { page, state, errors, close } = await fixture();
 const button = (name) => page.getByRole("button", { name, exact: true });
 try {
-  await button("Image settings").click();
+  await page.locator(".workspace-header").getByRole("button", { name: "Image settings", exact: true }).click();
   await page.locator("summary").filter({ hasText: "Style & recipes" }).click();
   await page
     .getByRole("combobox", { name: "Prompt recipe" })
     .selectOption("editorial-portrait");
-  await page.locator(".sidebar-new-button").click();
+  await button("New image thread").click();
   await button("Undo").click();
   assert.equal(await page.locator("#prompt").inputValue(), "");
   await page.waitForTimeout(350);
@@ -29,7 +29,7 @@ try {
     .fill("Keep this recipe");
   await button("Save recipe").click();
   await button("Remove").click();
-  await page.locator(".sidebar-new-button").click();
+  await button("New image thread").click();
   await button("Undo").click();
   assert(
     await page.evaluate(() =>

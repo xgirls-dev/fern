@@ -4,7 +4,7 @@ import Check from "lucide-react/dist/esm/icons/check.mjs";
 import type { StudioSettings } from "../lib/types";
 
 export interface ComposerModel {
-  id: "9b" | "4b" | "qwen21-turbo";
+  id: "9b" | "4b" | "qwen21-turbo" | "flux3-klein" | "tame-pony-v25-sdxl" | "tame-pony-v25-sdxl-int8";
   label: string;
 }
 
@@ -12,8 +12,11 @@ const MODEL_LABELS: Record<ComposerModel["id"], string> = {
   "9b": "Klein 9B",
   "4b": "Klein 4B",
   "qwen21-turbo": "Qwen Image 2.1 Turbo",
+  "flux3-klein": "FLUX.3 Klein · INT4",
+  "tame-pony-v25-sdxl": "Tame Pony · SDXL",
+  "tame-pony-v25-sdxl-int8": "Tame Pony · SDXL INT8",
 };
-const MODEL_CHOICES: ComposerModel["id"][] = ["9b", "4b", "qwen21-turbo"];
+const MODEL_CHOICES: ComposerModel["id"][] = ["9b", "4b", "qwen21-turbo", "flux3-klein", "tame-pony-v25-sdxl", "tame-pony-v25-sdxl-int8"];
 
 export function ComposerModelMenu({
   models,
@@ -35,7 +38,7 @@ export function ComposerModelMenu({
   const trigger = useRef<HTMLButtonElement>(null);
   const menu = useRef<HTMLDivElement>(null);
   const id = useId();
-  const selectedId = value === "4b" || value === "qwen21-turbo" ? value : "9b";
+  const selectedId = value === "4b" || value === "qwen21-turbo" || value === "flux3-klein" || value === "tame-pony-v25-sdxl" || value === "tame-pony-v25-sdxl-int8" ? value : "9b";
   const current = models.find((model) => model.id === selectedId);
   const triggerLabel = loading
     ? "Checking…"

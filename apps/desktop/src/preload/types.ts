@@ -22,6 +22,7 @@ export interface StudioApi {
   saveOutputAudio: (audioName: string) => Promise<string | null>;
   showImageInFolder: (filePath: string) => Promise<void>;
   pickReferenceImage: () => Promise<string | null>;
+  pickTextModelFolder: () => Promise<string | null>;
   saveImageAs: (defaultName: string) => Promise<string | null>;
   writeImageFile: (targetPath: string, sourceUrl: string) => Promise<string>;
   copyText: (text: string) => Promise<void>;

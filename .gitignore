@@ -8,6 +8,8 @@
 *.p12
 
 # Python environments, caches, and tooling
+.runtime/
+.runtime
 .venv/
 .venv
 .venv-qwen3-tts/
@@ -61,6 +63,7 @@ docs/*
 !docs/experiments/
 docs/experiments/*
 !docs/experiments/QWEN-IMAGE-2.1-EXPERIMENT-REPORT.md
+!docs/experiments/HY-MT2-1.8B-OPENVINO-INT4.md
 
 # Local AI models and checkpoints
 /models/
