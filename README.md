@@ -184,6 +184,3 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for model integration and release guidanc
 ## License
 
 MIT. See [LICENSE](LICENSE).
-
-
-The retired Qwen Image 2.1 attempts, self-contained recreation instructions, and removal record are documented in [the experiment report](docs/experiments/QWEN-IMAGE-2.1-EXPERIMENT-REPORT.md).
