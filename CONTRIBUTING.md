@@ -25,6 +25,14 @@ GPU generation is intentionally not part of CI. If a change affects inference,
 include the tested device, resolution, steps, and observed result in the pull
 request.
 
+## Release notes
+
+Add user-visible changes to `CHANGELOG.md` under **Unreleased** as they land.
+Before a release, move those notes into a dated `## [version]` section and group
+them under **Added**, **Improved**, or **Fixed**. The release workflow requires
+that section and publishes it as the GitHub Release description, including when
+rebuilding an existing release tag.
+
 New model support should include a pinned catalog, safe download and removal
 behavior, packaging-resource entries, model-specific control constraints,
 automated regression coverage, and a concise user-facing setup path. Do not add

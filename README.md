@@ -22,6 +22,8 @@ Use **New image thread** (Ctrl+N), **New audio thread** (Ctrl+Shift+N), or
 reference media, and generated outputs stay on the local machine. Threads
 persist across app restarts.
 
+See the [changelog](CHANGELOG.md) for release-by-release updates.
+
 ![Fern app interface](assets/app-ui.png)
 
 ## Install

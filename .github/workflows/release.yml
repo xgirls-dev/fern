@@ -72,13 +72,28 @@ jobs:
             $tag = "v$($package.version)"
           }
 
+          $version = $tag -replace '^v', ''
+          $changelog = Get-Content -Raw "CHANGELOG.md"
+          $escapedVersion = [regex]::Escape($version)
+          $notesPattern = "(?ms)^## \[$escapedVersion\][^\r\n]*\r?\n(.*?)(?=^## \[|\z)"
+          $notesMatch = [regex]::Match($changelog, $notesPattern)
+          if (-not $notesMatch.Success -or [string]::IsNullOrWhiteSpace($notesMatch.Groups[1].Value)) {
+            throw "CHANGELOG.md must contain a non-empty section for [$version] before publishing $tag."
+          }
+          $notesPath = Join-Path $env:RUNNER_TEMP "fern-release-notes.md"
+          Set-Content -Path $notesPath -Value $notesMatch.Groups[1].Value.Trim() -Encoding utf8NoBOM
+
           gh release view $tag *> $null
           if ($LASTEXITCODE -eq 0) {
             gh release upload $tag $installer.FullName --clobber
           } else {
-            gh release create $tag $installer.FullName --generate-notes --target $env:GITHUB_SHA
+            gh release create $tag $installer.FullName --notes-file $notesPath --target $env:GITHUB_SHA
           }
           if ($LASTEXITCODE -ne 0) { throw "GitHub release upload/create failed for $tag." }
+
+          # Keep release notes curated from CHANGELOG.md when rebuilding an existing tag too.
+          gh release edit $tag --notes-file $notesPath
+          if ($LASTEXITCODE -ne 0) { throw "GitHub release notes update failed for $tag." }
 
           $releaseAssets = @(gh release view $tag --json assets --jq '.assets[] | select(.name | startswith("Fern-Setup-")) | .name')
           if ($releaseAssets.Count -ne 1) {
