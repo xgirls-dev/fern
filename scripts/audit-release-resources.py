@@ -12,6 +12,7 @@ ALLOWED_BACKEND = {
     'flux2_klein_pipeline.py', 'flux3_klein_model_catalog.json',
     'flux3_klein_pipeline.py', 'flux3_klein_runtime.py',
     'tame_pony_model_catalog.json', 'tame_pony_pipeline.py',
+    'custom_image_registry.py', 'custom_image_pipeline.py', 'custom_image_download.py',
     'requirements-flux3-klein-overlay.txt',
     'qwen3_tts_worker.py', 'tts_generation_worker.py',
     'qwen21_turbo_openvino.py',

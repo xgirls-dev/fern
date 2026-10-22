@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from collections import deque
 from pathlib import Path
 from threading import Event
 from typing import Callable
@@ -68,6 +69,7 @@ def ensure_runtime(
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix="site-packages-", dir=RUNTIME_DIR))
     process: subprocess.Popen[str] | None = None
+    pip_tail: deque[str] = deque(maxlen=24)
     try:
         command = [
             sys.executable,
@@ -77,6 +79,10 @@ def ensure_runtime(
             "--disable-pip-version-check",
             "--no-deps",
             "--no-build-isolation",
+            "--retries",
+            "2",
+            "--timeout",
+            "30",
             "--target",
             str(staging),
             "-r",
@@ -101,10 +107,25 @@ def ensure_runtime(
                 raise InterruptedError("Flux.3 runtime setup was cancelled.")
             line = line.strip()
             if line:
-                log(line[:400])
+                line = line[:400]
+                pip_tail.append(line)
+                log(line)
         code = process.wait()
         if code:
-            raise RuntimeError(f"Flux.3 Python runtime setup failed (pip exit {code}).")
+            detail = next(
+                (
+                    line
+                    for line in reversed(pip_tail)
+                    if any(
+                        marker in line.lower()
+                        for marker in ("error:", "failed", "cannot", "could not")
+                    )
+                ),
+                pip_tail[-1] if pip_tail else "Pip did not report an error message.",
+            )
+            raise RuntimeError(
+                f"Flux.3 Python runtime setup failed (pip exit {code}): {detail[:400]}"
+            )
 
         probe_env = child_env(staging)
         probe = subprocess.run(

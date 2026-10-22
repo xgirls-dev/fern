@@ -100,6 +100,7 @@ const studioApi: StudioApi = {
     ipcRenderer.invoke("studio:show-image-in-folder", filePath),
   pickReferenceImage: () => ipcRenderer.invoke("studio:pick-reference-image"),
   pickTextModelFolder: () => ipcRenderer.invoke("studio:pick-text-model-folder"),
+  pickCustomImageModelFolder: () => ipcRenderer.invoke("studio:pick-custom-image-model-folder"),
   saveImageAs: (defaultName) =>
     ipcRenderer.invoke("studio:save-image-as", defaultName),
   writeImageFile: (targetPath, sourceUrl) =>

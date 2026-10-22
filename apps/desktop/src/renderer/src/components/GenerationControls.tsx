@@ -208,11 +208,12 @@ export function GenerationControls({
   const [customSize, setCustomSize] = useState(false);
   const isQwenTurbo = settings.model === "qwen21-turbo";
   const isFlux3Klein = settings.model === "flux3-klein";
+  const isCustomImage = settings.model?.startsWith("custom-") ?? false;
   const isTamePony = settings.model === "tame-pony-v25-sdxl" || settings.model === "tame-pony-v25-sdxl-int8";
   const hasFixedSampling = isQwenTurbo || isFlux3Klein;
-  const dimensionMultiple = isQwenTurbo ? 32 : isTamePony ? 8 : 16;
-  const minimumDimension = isTamePony ? 512 : isFlux3Klein ? 1024 : 256;
-  const maximumDimension = isTamePony ? 1536 : isFlux3Klein ? 1024 : 1920;
+  const dimensionMultiple = isCustomImage ? modelStatus?.dimensionMultiple ?? 16 : isQwenTurbo ? 32 : isTamePony ? 8 : 16;
+  const minimumDimension = isCustomImage ? modelStatus?.minimumDimension ?? 256 : isTamePony ? 512 : isFlux3Klein ? 1024 : 256;
+  const maximumDimension = isCustomImage ? modelStatus?.maximumDimension ?? 1920 : isTamePony ? 1536 : isFlux3Klein ? 1024 : 1920;
   const availableSizePresets = useMemo(
     () =>
       SIZE_PRESETS.filter((preset) => {
@@ -443,6 +444,7 @@ export function GenerationControls({
                   : "Official Turbo runs 8 fixed steps and generates 1 image per request. Auto-select prefers Intel GPU; choose CPU only as a fallback. This OpenVINO graph does not use the checkpoint’s KV cache, so it can be slower than CUDA Turbo. Larger canvases need more memory and take longer."}
               </p>
             ) : null}
+            {isCustomImage ? <p className="model-note field-note">{modelStatus?.familyLabel ?? "Custom OpenVINO GenAI model"} · text-to-image only. Fern uses the selected family to apply safe canvas limits and recommended defaults.</p> : null}
             <div className="field">
               <div className="field-header">
                 <label htmlFor="size-preset">Resolution</label>
@@ -863,7 +865,7 @@ export function GenerationControls({
                   name="guidance"
                   type="range"
                   min={0}
-                  max={10}
+                  max={isCustomImage ? 20 : 10}
                   step={0.1}
                   value={settings.guidance}
                   onChange={(event) =>
@@ -877,7 +879,7 @@ export function GenerationControls({
                   name="guidance-value"
                   type="number"
                   min={0}
-                  max={10}
+                  max={isCustomImage ? 20 : 10}
                   step={0.1}
                   value={settings.guidance}
                   onChange={(event) =>

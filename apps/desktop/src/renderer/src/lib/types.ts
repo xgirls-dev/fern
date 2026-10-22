@@ -1,5 +1,7 @@
 export interface ImageRecord {
   model?: string;
+  modelLabel?: string;
+  modelFamily?: string | null;
   modelRevision?: string;
   referenceUsed?: boolean;
   referenceUrl?: string;
@@ -19,7 +21,7 @@ export interface ImageRecord {
 }
 
 export interface ModelStatus {
-  selectedModel?: "9b" | "4b" | "qwen21-turbo" | "flux3-klein" | "tame-pony-v25-sdxl" | "tame-pony-v25-sdxl-int8";
+  selectedModel?: string;
   memoryBytes?: number | null;
   compatibility?: string;
   checking?: boolean;
@@ -31,6 +33,15 @@ export interface ModelStatus {
   runtimeBackend?: string;
   supportsReferenceImage?: boolean;
   supportsKvCache?: boolean;
+  family?: string;
+  familyLabel?: string;
+  minimumDimension?: number;
+  maximumDimension?: number;
+  dimensionMultiple?: number;
+  defaultSteps?: number;
+  defaultGuidance?: number;
+  defaultWidth?: number;
+  defaultHeight?: number;
   requestedDevice?: DeviceId;
   selectedDevice?: Exclude<DeviceId, "AUTO">;
   adapters?: DeviceAdapter[];
@@ -74,7 +85,7 @@ export interface RuntimeStatus {
 }
 
 export interface FluxStatusResponse {
-  installedModels?: { id: "9b" | "4b" | "qwen21-turbo" | "flux3-klein" | "tame-pony-v25-sdxl" | "tame-pony-v25-sdxl-int8"; label: string }[];
+  installedModels?: { id: string; label: string; family?: string; familyLabel?: string; defaultSteps?: number; defaultGuidance?: number; defaultWidth?: number; defaultHeight?: number; installed?: boolean }[];
   job: FluxJob;
   images: ImageRecord[];
   model: ModelStatus;
@@ -89,7 +100,7 @@ export interface FluxStatusResponse {
 }
 
 export interface GenerationPayload {
-  model?: "auto" | "9b" | "4b" | "qwen21-turbo" | "flux3-klein" | "tame-pony-v25-sdxl" | "tame-pony-v25-sdxl-int8";
+  model?: string;
   thread_id?: string;
   prompt: string;
   device: DeviceId;
@@ -103,7 +114,7 @@ export interface GenerationPayload {
 }
 
 export interface StudioSettings {
-  model?: "auto" | "9b" | "4b" | "qwen21-turbo" | "flux3-klein" | "tame-pony-v25-sdxl" | "tame-pony-v25-sdxl-int8";
+  model?: string;
   prompt: string;
   device: DeviceId;
   width: number;

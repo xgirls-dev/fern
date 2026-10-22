@@ -1,13 +1,16 @@
 {
   "name": "@fern/desktop",
-  "version": "0.1.28",
+  "version": "0.1.29",
   "private": true,
   "description": "Fern local-first desktop studio for OpenVINO image, text, and audio models",
   "author": "Fern",
   "main": "out/main/index.js",
   "scripts": {
     "dev": "node scripts/dev.mjs",
+    "build:browser-test": "vite build --config vite.browser-test.config.mjs --configLoader native",
+    "preview:browser-test": "vite preview --config vite.browser-test.config.mjs --configLoader native --host 127.0.0.1 --port 5173 --strictPort",
     "start": "node scripts/start.mjs",
+    "test:electron": "npm run build && node e2e/smoke.mjs",
     "build": "electron-vite build",
     "preview": "cross-env ELECTRON_RUN_AS_NODE= electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
@@ -21,6 +24,7 @@
     "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.64.1",
     "@types/node": "^22.15.21",
     "@types/react": "^19.1.4",
     "@types/react-dom": "^19.1.5",

@@ -55,6 +55,9 @@ export function PromptComposer({
   const seedPopover = useRef<HTMLDivElement>(null);
   useEffect(() => setSeedDraft(String(settings.seed)), [settings.seed]);
   useEffect(() => {
+    if (!supportsReference && referenceImage) onClearReference();
+  }, [onClearReference, referenceImage, supportsReference]);
+  useEffect(() => {
     if (!seedPopoverOpen) return;
     const close = (event: PointerEvent) => {
       if (!seedPopover.current?.contains(event.target as Node))
@@ -283,8 +286,10 @@ export function PromptComposer({
               value={settings.model ?? "9b"}
               disabled={running || submitting || busyElsewhere}
               onChange={(model) => {
-                if (model === "qwen21-turbo" || model === "flux3-klein" || model === "tame-pony-v25-sdxl" || model === "tame-pony-v25-sdxl-int8") {
-                  const currentIsSpecial = settings.model === "qwen21-turbo" || settings.model === "flux3-klein" || settings.model === "tame-pony-v25-sdxl" || settings.model === "tame-pony-v25-sdxl-int8";
+                const isCustom = model.startsWith("custom-");
+                const isSpecial = model === "qwen21-turbo" || model === "flux3-klein" || model === "tame-pony-v25-sdxl" || model === "tame-pony-v25-sdxl-int8" || isCustom;
+                const currentIsSpecial = settings.model === "qwen21-turbo" || settings.model === "flux3-klein" || settings.model === "tame-pony-v25-sdxl" || settings.model === "tame-pony-v25-sdxl-int8" || settings.model?.startsWith("custom-");
+                if (isSpecial) {
                   if (!currentIsSpecial && preSpecialSettings.current === null) {
                     preSpecialSettings.current = {
                       width: settings.width,
@@ -316,13 +321,26 @@ export function PromptComposer({
                       device: "AUTO",
                     });
                     if (referenceImage) onClearReference();
-                  } else {
+                  } else if (isCustom) {
+                    const customModel = installedModels?.find((candidate) => candidate.id === model);
                     onSettingsChange({
                       model,
-                      width: 1024,
-                      height: 1024,
-                      steps: 30,
-                      guidance: 7,
+                      width: customModel?.defaultWidth ?? 1024,
+                      height: customModel?.defaultHeight ?? 1024,
+                      steps: customModel?.defaultSteps ?? 30,
+                      guidance: customModel?.defaultGuidance ?? 7,
+                      batchSize: 1,
+                      device: "AUTO",
+                    });
+                    if (referenceImage) onClearReference();
+                  } else {
+                    const selectedModel = installedModels?.find((candidate) => candidate.id === model);
+                    onSettingsChange({
+                      model,
+                      width: selectedModel?.defaultWidth ?? 1024,
+                      height: selectedModel?.defaultHeight ?? 1024,
+                      steps: selectedModel?.defaultSteps ?? 30,
+                      guidance: selectedModel?.defaultGuidance ?? 7,
                       batchSize: 1,
                       device: "AUTO",
                     });
@@ -330,7 +348,7 @@ export function PromptComposer({
                   }
                   return;
                 }
-                const restore = settings.model === "qwen21-turbo" || settings.model === "flux3-klein" || settings.model === "tame-pony-v25-sdxl" || settings.model === "tame-pony-v25-sdxl-int8"
+                const restore = settings.model === "qwen21-turbo" || settings.model === "flux3-klein" || settings.model === "tame-pony-v25-sdxl" || settings.model === "tame-pony-v25-sdxl-int8" || settings.model?.startsWith("custom-")
                   ? preSpecialSettings.current ?? { steps: 4, guidance: 1, batchSize: 1, device: "AUTO" }
                   : undefined;
                 preSpecialSettings.current = null;

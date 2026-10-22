@@ -20,6 +20,7 @@ import { getAppIconPath, getOutputsDir, resolveProjectRoot } from "./paths";
 const isDev = !app.isPackaged;
 let mainWindow: BrowserWindow | null = null;
 let backend: PythonBackend | null = null;
+let backendReady = false;
 let isShuttingDown = false;
 
 function allocatePort(): number {
@@ -40,7 +41,7 @@ function resolvePreloadPath(): string {
   return match;
 }
 
-function createWindow(apiBaseUrl: string): BrowserWindow {
+function createWindow(apiBaseUrl?: string): BrowserWindow {
   const window = new BrowserWindow({
     width: 1440,
     height: 920,
@@ -120,13 +121,13 @@ function createWindow(apiBaseUrl: string): BrowserWindow {
     } else {
       await window.loadFile(join(__dirname, "../renderer/index.html"));
     }
-    if (!window.isDestroyed()) {
+    if (apiBaseUrl && !window.isDestroyed()) {
       window.webContents.send("studio:api-base-url", apiBaseUrl);
     }
   };
 
   window.webContents.on("did-finish-load", () => {
-    if (!window.isDestroyed()) {
+    if (apiBaseUrl && !window.isDestroyed()) {
       window.webContents.send("studio:api-base-url", apiBaseUrl);
     }
   });
@@ -366,8 +367,20 @@ function registerIpc(): void {
     return result.canceled || result.filePaths.length === 0 ? null : result.filePaths[0];
   });
 
+  ipcMain.handle("studio:pick-custom-image-model-folder", async (event) => {
+    const window = BrowserWindow.fromWebContents(event.sender) ?? undefined;
+    const options = {
+      title: "Choose an OpenVINO image model export folder",
+      properties: ["openDirectory"] as Array<"openDirectory">,
+    };
+    const result = window
+      ? await dialog.showOpenDialog(window, options)
+      : await dialog.showOpenDialog(options);
+    return result.canceled || result.filePaths.length === 0 ? null : result.filePaths[0];
+  });
+
   ipcMain.on("studio:request-api-base-url", (event) => {
-    if (backend) {
+    if (backend && backendReady) {
       event.sender.send("studio:api-base-url", backend.baseUrl);
     }
   });
@@ -495,12 +508,13 @@ async function bootstrap(): Promise<void> {
   backend = new PythonBackend(port);
   const pendingBaseUrl = `http://127.0.0.1:${port}`;
 
-  mainWindow = createWindow(pendingBaseUrl);
+  mainWindow = createWindow();
   if (setupWindow && !setupWindow.isDestroyed()) setupWindow.close();
 
   void (async () => {
     try {
       await backend?.start();
+      backendReady = Boolean(backend);
       const baseUrl = backend?.baseUrl ?? pendingBaseUrl;
       for (const window of BrowserWindow.getAllWindows()) {
         if (!window.isDestroyed()) {
@@ -522,7 +536,7 @@ async function bootstrap(): Promise<void> {
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0 && backend) {
-      mainWindow = createWindow(backend.baseUrl);
+      mainWindow = createWindow(backendReady ? backend.baseUrl : undefined);
     }
   });
 }
@@ -533,6 +547,7 @@ async function shutdown(): Promise<void> {
   }
   isShuttingDown = true;
 
+  backendReady = false;
   if (backend) {
     await backend.stop();
     backend = null;

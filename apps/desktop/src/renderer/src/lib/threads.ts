@@ -36,6 +36,10 @@ export function normalizeImageSettings(settings: StudioSettings): StudioSettings
       device: ["AUTO", "INTEL_GPU", "NVIDIA_GPU", "CPU"].includes(settings.device) ? settings.device : "AUTO",
     };
   }
+  if (settings.model?.startsWith("custom-")) {
+    const dimension = (value: number) => Number.isFinite(value) ? Math.max(256, Math.min(1920, Math.round(value / 16) * 16)) : 1024;
+    return { ...settings, model: settings.model, width: dimension(settings.width), height: dimension(settings.height), steps: Number.isFinite(settings.steps) ? Math.max(1, Math.min(50, Math.round(settings.steps))) : 30, guidance: Number.isFinite(settings.guidance) ? Math.max(0, Math.min(20, settings.guidance)) : 7, batchSize: Number.isFinite(settings.batchSize) ? Math.max(1, Math.min(4, Math.round(settings.batchSize))) : 1, device: ["AUTO", "INTEL_GPU", "CPU"].includes(settings.device) ? settings.device : "AUTO" };
+  }
   if (settings.model === "9b" || settings.model === "4b") return settings;
   const dimension = (value: number) =>
     Number.isFinite(value) ? Math.max(256, Math.min(1920, Math.round(value / 16) * 16)) : 1024;
@@ -106,7 +110,7 @@ export function loadThreadWorkspace(settings: StudioSettings): ThreadWorkspace {
             referenceLabel: thread.referenceLabel ?? "No reference image.",
           })),
         };
-        if (threads.some((thread) => !["9b", "4b", "qwen21-turbo", "flux3-klein", "tame-pony-v25-sdxl", "tame-pony-v25-sdxl-int8"].includes(thread.settings.model ?? "9b"))) {
+        if (threads.some((thread) => !["9b", "4b", "qwen21-turbo", "flux3-klein", "tame-pony-v25-sdxl", "tame-pony-v25-sdxl-int8"].includes(thread.settings.model ?? "9b") && !thread.settings.model?.startsWith("custom-"))) {
           try { saveThreadWorkspace(workspace); } catch {
             // Keep the migrated draft usable even if local storage is full.
           }

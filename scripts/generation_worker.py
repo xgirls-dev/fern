@@ -47,6 +47,27 @@ def tame_pony_inference_loop(connection):
         connection.close()
 
 
+def custom_image_inference_loop(connection):
+    """Isolate dynamic OpenVINO GenAI image pipelines from the API process."""
+    import custom_image_pipeline as custom
+
+    try:
+        while True:
+            request = connection.recv()
+            try:
+                result = custom.generate_image(
+                    **request,
+                    log=lambda message: connection.send(("log", message)),
+                )
+                connection.send(("result", (str(result[0]), result[1])))
+            except Exception as error:
+                connection.send(("error", str(error)))
+    except (EOFError, BrokenPipeError):
+        pass
+    finally:
+        connection.close()
+
+
 class GenerationWorker:
     def __init__(self, target=inference_loop):
         self.target = target

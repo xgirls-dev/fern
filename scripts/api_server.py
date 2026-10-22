@@ -48,7 +48,10 @@ import flux2_klein_pipeline as flux2
 import flux3_klein_pipeline as flux3
 import flux3_klein_runtime
 import tame_pony_pipeline as tame_pony
-from generation_worker import GenerationWorker, GenerationCancelled, tame_pony_inference_loop
+import custom_image_pipeline as custom_image
+import custom_image_registry
+import custom_image_download
+from generation_worker import GenerationWorker, GenerationCancelled, tame_pony_inference_loop, custom_image_inference_loop
 from tts_generation_worker import TtsGenerationWorker
 from text_generation_process import TextGenerationProcess
 from text_model_registry import TextModelRegistry
@@ -58,6 +61,7 @@ from tts_model_download import model_ready as tts_export_ready
 
 GENERATION_WORKER = GenerationWorker()
 TAME_PONY_GENERATION_WORKER = GenerationWorker(target=tame_pony_inference_loop)
+CUSTOM_IMAGE_GENERATION_WORKER = GenerationWorker(target=custom_image_inference_loop)
 TTS_GENERATION_WORKER = TtsGenerationWorker()
 TEXT_GENERATION_WORKER = TextGenerationProcess()
 from model_manager import ModelManager
@@ -72,6 +76,7 @@ from qwen21_turbo_download import download_model as download_qwen_turbo_model
 OUTPUTS = ROOT / "outputs"
 DATA_DIR = ROOT / "data"
 MODELS_DIR = ROOT / "models"
+CUSTOM_IMAGE_DOWNLOAD = custom_image_download.CustomImageDownloadManager(MODELS_DIR)
 CACHE_DIR = ROOT / ".cache"
 TTS_MODEL_ROOT = Path(os.environ.get("FERN_TTS_MODEL_ROOT", MODELS_DIR / "qwen3-tts")).resolve()
 TTS_ENV = Path(os.environ.get("FERN_TTS_ENV", ROOT / ".venv-qwen3-tts")).resolve()
@@ -91,7 +96,7 @@ QWEN_TURBO_OVERLAY_RUNTIME = ROOT / ".venv-qwen21-turbo-export"
 QWEN_TURBO_PYTHON = Path(sys.executable)
 MODEL_MANAGER = ModelManager(MODELS_DIR)
 FLUX3_SETUP_LOCK = threading.Lock()
-FLUX3_SETUP_STATE: dict[str, Any] = {"status": "idle", "phase": None, "error": None}
+FLUX3_SETUP_STATE: dict[str, Any] = {"status": "idle", "phase": None, "error": None, "logs": []}
 FLUX3_SETUP_CANCEL: threading.Event | None = None
 
 TTS_MODELS = {
@@ -398,8 +403,13 @@ def model_library_snapshot() -> list[dict[str, Any]]:
             setup = dict(FLUX3_SETUP_STATE)
         flux3_item["runtimeReady"] = flux3_klein_runtime.runtime_ready()
         flux3_item["supportsReferenceImage"] = False
+        flux3_item["logs"] = list(setup.get("logs") or [])
         if setup["status"] == "installing":
-            flux3_item.update(state="installing", phase=setup.get("phase"), error=None)
+            if not flux3_item["installed"] and flux3_item["state"] in ("downloading", "verifying"):
+                phase = "Downloading and verifying FLUX.3 model files…"
+            else:
+                phase = setup.get("phase")
+            flux3_item.update(state="installing", phase=phase, error=None)
         elif setup["status"] == "failed":
             flux3_item.update(
                 state="runtime-unavailable" if flux3_item["installed"] else "failed",
@@ -413,25 +423,54 @@ def model_library_snapshot() -> list[dict[str, Any]]:
         pony_item["runtimeReady"] = bool(runtime and runtime.get("installed"))
         if pony_item["installed"] and runtime and not runtime.get("installed"):
             pony_item["state"] = "runtime-unavailable"
-    return models + [qwen_turbo_snapshot()]
+    return models + [qwen_turbo_snapshot()] + custom_image_registry.MODEL_REGISTRY.snapshot()
 
 
 def _run_flux3_setup(cancel_event: threading.Event) -> None:
     try:
+        if cancel_event.is_set():
+            raise InterruptedError("FLUX.3 setup was cancelled.")
+        item = next(
+            item for item in MODEL_MANAGER.snapshot() if item["id"] == flux3.MODEL_KEY
+        )
+        if not item["installed"]:
+            if cancel_event.is_set():
+                raise InterruptedError("FLUX.3 setup was cancelled.")
+            if item["state"] not in ("downloading", "verifying"):
+                MODEL_MANAGER.start(flux3.MODEL_KEY)
+            while True:
+                if cancel_event.is_set():
+                    MODEL_MANAGER.cancel(flux3.MODEL_KEY)
+                    raise InterruptedError("FLUX.3 setup was cancelled.")
+                item = next(
+                    item for item in MODEL_MANAGER.snapshot() if item["id"] == flux3.MODEL_KEY
+                )
+                if item["installed"]:
+                    break
+                if item["state"] == "failed":
+                    raise RuntimeError(item.get("error") or "FLUX.3 model download failed.")
+                if item["state"] == "paused":
+                    raise InterruptedError("FLUX.3 model download was paused.")
+                with FLUX3_SETUP_LOCK:
+                    if FLUX3_SETUP_STATE["status"] == "installing":
+                        FLUX3_SETUP_STATE["phase"] = "Downloading and verifying FLUX.3 model files…"
+                cancel_event.wait(0.25)
+
         def progress(message: str) -> None:
             with FLUX3_SETUP_LOCK:
                 FLUX3_SETUP_STATE["phase"] = message
+                logs = FLUX3_SETUP_STATE.setdefault("logs", [])
+                logs.append(message[:400])
+                del logs[:-24]
 
+        with FLUX3_SETUP_LOCK:
+            FLUX3_SETUP_STATE["phase"] = "Preparing the isolated FLUX.3 runtime…"
         flux3_klein_runtime.ensure_runtime(progress, cancel_event)
         if cancel_event.is_set():
             raise InterruptedError("FLUX.3 setup was cancelled.")
         flux3.refresh_devices()
-        if not next(
-            item for item in MODEL_MANAGER.snapshot() if item["id"] == flux3.MODEL_KEY
-        )["installed"]:
-            MODEL_MANAGER.start(flux3.MODEL_KEY)
         with FLUX3_SETUP_LOCK:
-            FLUX3_SETUP_STATE.update(status="idle", phase=None, error=None)
+            FLUX3_SETUP_STATE.update(status="idle", phase=None, error=None, logs=[])
     except InterruptedError as error:
         with FLUX3_SETUP_LOCK:
             FLUX3_SETUP_STATE.update(status="idle", phase=None, error=str(error))
@@ -449,7 +488,7 @@ def start_flux3_setup() -> None:
             raise ValueError("FLUX.3 setup is already running.")
         FLUX3_SETUP_CANCEL = threading.Event()
         FLUX3_SETUP_STATE.update(
-            status="installing", phase="Preparing the isolated FLUX.3 runtime…", error=None
+            status="installing", phase="Downloading FLUX.3 model files…", error=None, logs=[]
         )
         event = FLUX3_SETUP_CANCEL
     threading.Thread(target=_run_flux3_setup, args=(event,), daemon=True).start()
@@ -460,7 +499,6 @@ def cancel_flux3_setup() -> None:
         if FLUX3_SETUP_STATE["status"] == "installing":
             if FLUX3_SETUP_CANCEL is not None:
                 FLUX3_SETUP_CANCEL.set()
-            return
     MODEL_MANAGER.cancel(flux3.MODEL_KEY)
 
 
@@ -1066,6 +1104,11 @@ def model_snapshot(device: str, model="9b") -> dict[str, Any]:
     """Hardware imports must never hold gallery/status requests hostage."""
     global MODEL_CHECK_STARTED
     device = normalize_device(device)
+    if custom_image.is_model(model):
+        try:
+            return custom_image.model_status(device, model)
+        except ValueError as error:
+            return {"selectedModel": model, "runtimeReady": False, "runtimeNote": str(error), "requestedDevice": device, "adapters": []}
     if model == QWEN_TURBO_MODEL_ID:
         model_ready = qwen_turbo_model_ready()
         runtime_ready, devices = qwen_turbo_runtime_status() if model_ready else (False, set())
@@ -1286,7 +1329,8 @@ def decode_flux_reference_image(value: Any) -> Image.Image | None:
 
 def validate_flux_payload(payload: dict[str, Any]) -> dict[str, Any]:
     model = payload.get("model", "9b")
-    if model not in ("auto", QWEN_TURBO_MODEL_ID, flux3.MODEL_KEY): model_spec(model)
+    custom_model = custom_image.is_model(model)
+    if model not in ("auto", QWEN_TURBO_MODEL_ID, flux3.MODEL_KEY) and not custom_model: model_spec(model)
     prompt = str(payload.get("prompt", "")).strip()
     if not prompt:
         raise ValueError("Prompt is required.")
@@ -1305,6 +1349,9 @@ def validate_flux_payload(payload: dict[str, Any]) -> dict[str, Any]:
     }:
         raise ValueError("Device must be Auto-select, Intel GPU, NVIDIA GPU, or CPU.")
     device = normalize_device(raw_device)
+    if custom_model and device in ("NVIDIA_GPU",):
+        raise ValueError("Custom OpenVINO GenAI image models support Intel GPU or CPU. Select Auto, Intel GPU, or CPU.")
+    custom_spec = custom_image.model_spec(model) if custom_model else None
     if model == QWEN_TURBO_MODEL_ID:
         if device not in ("AUTO", "INTEL_GPU", "CPU"):
             raise ValueError("Official Qwen Turbo uses the OpenVINO Intel GPU or an explicitly selected CPU.")
@@ -1328,13 +1375,14 @@ def validate_flux_payload(payload: dict[str, Any]) -> dict[str, Any]:
     if model == flux3.MODEL_KEY and reference_image is not None:
         raise ValueError("This FLUX.3 Klein OpenVINO quant currently supports text-to-image only.")
     is_tame_pony = tame_pony.is_model(model)
-    if is_tame_pony and reference_image is not None:
-        raise ValueError("Tame Pony SDXL currently supports text-to-image only.")
+    if (is_tame_pony or custom_model) and reference_image is not None:
+        raise ValueError("This model currently supports text-to-image only.")
 
     maximum = 1920
-    dimension_multiple = 8 if is_tame_pony else 32 if model == QWEN_TURBO_MODEL_ID else 16
-    minimum = 512 if is_tame_pony else 256
-    model_maximum = 1536 if is_tame_pony else maximum
+    custom_family = custom_image_registry.FAMILIES[custom_spec["family"]] if custom_spec else None
+    dimension_multiple = custom_family["multiple"] if custom_family else 8 if is_tame_pony else 32 if model == QWEN_TURBO_MODEL_ID else 16
+    minimum = custom_family["minimum"] if custom_family else 512 if is_tame_pony else 256
+    model_maximum = custom_family["maximum"] if custom_family else 1536 if is_tame_pony else maximum
     if width < minimum or width > model_maximum or width % dimension_multiple != 0:
         raise ValueError(f"Width must be {minimum} to {model_maximum} and divisible by {dimension_multiple}.")
     if height < minimum or height > model_maximum or height % dimension_multiple != 0:
@@ -1343,8 +1391,8 @@ def validate_flux_payload(payload: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("This FLUX.3 quant is currently validated at 1024×1024 only.")
     if steps < 1 or steps > 50:
         raise ValueError("Steps are outside the supported range.")
-    if guidance < 0 or guidance > 10:
-        raise ValueError("Guidance must be 0 to 10.")
+    if guidance < 0 or guidance > (20 if custom_model else 10):
+        raise ValueError("Guidance is outside the supported range.")
     if batch_size < 1 or batch_size > 4:
         raise ValueError("Batch size must be 1 to 4.")
     if model in (QWEN_TURBO_MODEL_ID, flux3.MODEL_KEY) and batch_size != 1:
@@ -1378,9 +1426,9 @@ def run_flux_generation(
                 display_message = display_message[len(prefix):].strip()
                 break
         append_flux_log(display_message)
-        if message.startswith(("Loading Flux", "Loading Qwen", "Loading Tame Pony", "Loading the OpenVINO")):
+        if message.startswith(("Loading Flux", "Loading Qwen", "Loading Tame Pony", "Loading the OpenVINO", "Loading ")):
             mark_runtime(status="loading", message="Loading model for generation…", error=None)
-        elif message.startswith(("Seed:", "Qwen denoising step", "Tame Pony SDXL ")):
+        elif message.startswith(("Seed:", "Step ", "Qwen denoising step", "Tame Pony SDXL ")):
             mark_runtime(status="ready", device=payload["device"], message="Model ready.", error=None)
         elif message.startswith("FERN_QWEN_PROGRESS:"):
             progress = message.removeprefix("FERN_QWEN_PROGRESS:").strip()
@@ -1406,8 +1454,10 @@ def run_flux_generation(
         TTS_GENERATION_WORKER.close()
         if payload.get("model") != QWEN_TURBO_MODEL_ID:
             QWEN_GENERATION_WORKER.close()
-        if not tame_pony.is_model(payload.get("model", "")):
+        if not tame_pony.is_model(payload.get("model", "")) and not custom_image.is_model(payload.get("model", "")):
             TAME_PONY_GENERATION_WORKER.close()
+        if not custom_image.is_model(payload.get("model", "")):
+            CUSTOM_IMAGE_GENERATION_WORKER.close()
         GENERATION_WORKER.close()
         if payload.get("model") != flux3.MODEL_KEY:
             FLUX3_GENERATION_WORKER.close()
@@ -1461,14 +1511,26 @@ def run_flux_generation(
                     if payload["model"] == QWEN_TURBO_MODEL_ID
                     else flux3.MODEL_DIR
                     if payload["model"] == flux3.MODEL_KEY
+                    else custom_image.model_spec(payload["model"])["path"]
+                    if custom_image.is_model(payload["model"])
                     else tame_pony.model_dir_for(payload["model"])
                     if tame_pony.is_model(payload["model"])
                     else flux2.model_dir_for(payload["device"], payload.get("model", "9b"))
                 ),
                 "model": payload.get("model", "9b"),
+                "modelLabel": (
+                    custom_image.model_spec(payload["model"])["label"]
+                    if custom_image.is_model(payload["model"])
+                    else "Qwen Image 2.1 Turbo · official"
+                    if payload["model"] == QWEN_TURBO_MODEL_ID
+                    else model_spec(payload["model"])["label"]
+                ),
+                "modelFamily": custom_image.model_spec(payload["model"])["familyLabel"] if custom_image.is_model(payload["model"]) else None,
                 "modelRevision": (
                     "84d3f71fff32fc6c4740b89f5556657d0c65af27"
                     if payload["model"] == QWEN_TURBO_MODEL_ID
+                    else "local-custom"
+                    if custom_image.is_model(payload["model"])
                     else payload.get("modelRevision", model_spec(payload.get("model", "9b"))["revision"])
                 ),
                 "createdAt": time.time(),
@@ -1578,6 +1640,26 @@ def run_flux_generation(
                 with Image.open(output_path) as output_image:
                     if output_image.size != (payload["width"], payload["height"]):
                         raise RuntimeError("Tame Pony output dimensions do not match the request.")
+            elif custom_image.is_model(payload["model"]):
+                output_name = f"custom-image-{job_id}-{index + 1}.png"
+                output_path, generation_time = CUSTOM_IMAGE_GENERATION_WORKER.generate(
+                    cancel_event=cancel_event,
+                    model_id=payload["model"], prompt=payload["prompt"],
+                    width=payload["width"], height=payload["height"], steps=payload["steps"],
+                    guidance=payload["guidance"], seed=seed, device=payload["device"],
+                    output_dir=stage, output_name=output_name, log=log_generation,
+                )
+                if output_path.resolve().parent != stage.resolve() or output_path.name != output_name:
+                    raise RuntimeError("Custom image model returned an image outside its generation workspace.")
+                if not output_path.is_file() or output_path.stat().st_size <= 0:
+                    raise RuntimeError("Custom image model did not create a valid output image.")
+                if not math.isfinite(generation_time) or generation_time < 0:
+                    raise RuntimeError("Custom image model returned an invalid generation duration.")
+                with Image.open(output_path) as output_image:
+                    output_image.verify()
+                with Image.open(output_path) as output_image:
+                    if output_image.size != (payload["width"], payload["height"]):
+                        raise RuntimeError("Custom image output dimensions do not match the request.")
             else:
                 output_path, generation_time = GENERATION_WORKER.generate(
                     cancel_event=cancel_event,
@@ -1617,11 +1699,14 @@ def run_flux_generation(
             mark_runtime(status="ready", device=payload["device"], message="FLUX.3 Klein is ready for another image.", error=None)
         elif tame_pony.is_model(payload["model"]):
             mark_runtime(status="ready", device=payload["device"], message=f"{tame_pony.display_name(payload['model'])} is ready for another image.", error=None)
+        elif custom_image.is_model(payload["model"]):
+            mark_runtime(status="ready", device=payload["device"], message=f"{custom_image.model_spec(payload['model'])['label']} is ready for another image.", error=None)
         cleanup_cache_when_model_idle()
     except FluxGenerationCancelled:
         QWEN_GENERATION_WORKER.close()
         FLUX3_GENERATION_WORKER.close()
         TAME_PONY_GENERATION_WORKER.close()
+        CUSTOM_IMAGE_GENERATION_WORKER.close()
         mark_runtime(status="idle", message="Generation stopped. Model will reload on the next generation.", error=None)
         append_flux_log("Generation stopped by user.")
         mark_flux_job(status="cancelled", finishedAt=time.time(), output=None, error=None)
@@ -1630,6 +1715,7 @@ def run_flux_generation(
             QWEN_GENERATION_WORKER.close()
             FLUX3_GENERATION_WORKER.close()
             TAME_PONY_GENERATION_WORKER.close()
+            CUSTOM_IMAGE_GENERATION_WORKER.close()
             mark_runtime(status="idle", message="Generation stopped. Model will reload on the next generation.", error=None)
             append_flux_log("Generation stopped by user.")
             mark_flux_job(status="cancelled", finishedAt=time.time(), output=None, error=None)
@@ -1640,6 +1726,8 @@ def run_flux_generation(
             FLUX3_GENERATION_WORKER.close()
         if tame_pony.is_model(payload.get("model", "")):
             TAME_PONY_GENERATION_WORKER.close()
+        if custom_image.is_model(payload.get("model", "")):
+            CUSTOM_IMAGE_GENERATION_WORKER.close()
         mark_runtime(status="idle", message="Ready to retry generation.", error=None)
         append_flux_log(str(exc))
         mark_flux_job(status="failed", finishedAt=time.time(), output=None, error=str(exc))
@@ -1725,7 +1813,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if parsed.path == "/api/models":
-            self.send_json(200, {"models": model_library_snapshot()})
+            self.send_json(200, {"models": model_library_snapshot(), "customImageDownload": CUSTOM_IMAGE_DOWNLOAD.snapshot()})
             return
 
         if parsed.path == "/api/health":
@@ -1742,7 +1830,7 @@ class Handler(BaseHTTPRequestHandler):
                 {
                     "job": flux_job_snapshot(),
                     "images": latest_images() if query.get("images", ["1"])[0] != "0" else None,
-                    "installedModels": [{"id": item["id"], "label": item["label"]} for item in model_library_snapshot() if item["installed"]]
+                    "installedModels": [{key: item[key] for key in ("id", "label", "family", "familyLabel", "defaultSteps", "defaultGuidance", "defaultWidth", "defaultHeight", "installed") if key in item} for item in model_library_snapshot() if item["installed"] or item["id"].startswith("custom-")]
                     + ([{"id": QWEN_TURBO_MODEL_ID, "label": "Qwen Image 2.1 Turbo · official"}] if qwen_model_ready and qwen_runtime_ready is not False else []),
                     "model": model_snapshot(requested_device, query.get("model", ["9b"])[0]),
                     "runtime": runtime_snapshot(),
@@ -2077,6 +2165,8 @@ class Handler(BaseHTTPRequestHandler):
                 FLUX3_GENERATION_WORKER.interrupt()
             elif tame_pony.is_model(FLUX_JOB.get("model", "")):
                 TAME_PONY_GENERATION_WORKER.interrupt()
+            elif custom_image.is_model(FLUX_JOB.get("model", "")):
+                CUSTOM_IMAGE_GENERATION_WORKER.interrupt()
             append_flux_log("Stopping generation...")
             self.send_json(202, {"job": flux_job_snapshot()})
             return
@@ -2091,6 +2181,7 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 GENERATION_WORKER.close()
                 TAME_PONY_GENERATION_WORKER.close()
+                CUSTOM_IMAGE_GENERATION_WORKER.close()
                 QWEN_GENERATION_WORKER.close()
                 FLUX3_GENERATION_WORKER.close()
                 TEXT_GENERATION_WORKER.close()
@@ -2161,9 +2252,66 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
+        if parsed.path == "/api/models/custom/add":
+            try:
+                if flux_job_snapshot()["status"] == "running":
+                    raise ValueError("Stop image generation before adding a model.")
+                body = self.read_json_body()
+                path = body.get("path")
+                family = body.get("family")
+                if not isinstance(path, str) or not isinstance(family, str):
+                    raise ValueError("Choose an export folder and supported model family.")
+                custom_image_registry.MODEL_REGISTRY.add(path, family)
+                self.send_json(200, {"models": model_library_snapshot()})
+            except Exception as error:
+                self.send_json(400, {"error": str(error)})
+            return
+
+        if parsed.path == "/api/models/custom/download":
+            try:
+                if flux_job_snapshot()["status"] == "running":
+                    raise ValueError("Stop image generation before downloading a model.")
+                body = self.read_json_body()
+                repo_id, family = body.get("repoId"), body.get("family")
+                if not isinstance(repo_id, str) or not isinstance(family, str):
+                    raise ValueError("Enter a Hugging Face repository and supported model family.")
+                if any(item["state"] in ("downloading", "verifying", "removing") for item in MODEL_MANAGER.snapshot()):
+                    raise ValueError("Wait for the current model operation to finish.")
+                CUSTOM_IMAGE_DOWNLOAD.start(repo_id, family)
+                self.send_json(202, {"models": model_library_snapshot(), "customImageDownload": CUSTOM_IMAGE_DOWNLOAD.snapshot()})
+            except Exception as error:
+                self.send_json(400, {"error": str(error)})
+            return
+
+        if parsed.path == "/api/models/custom/cancel":
+            try:
+                CUSTOM_IMAGE_DOWNLOAD.cancel()
+                self.send_json(202, {"models": model_library_snapshot(), "customImageDownload": CUSTOM_IMAGE_DOWNLOAD.snapshot()})
+            except Exception as error:
+                self.send_json(400, {"error": str(error)})
+            return
+
         if parsed.path in ("/api/models/install", "/api/models/pause", "/api/models/remove"):
             try:
                 model = self.read_json_body().get("model")
+                if custom_image.is_model(model):
+                    if not parsed.path.endswith("remove"):
+                        raise ValueError("Custom local models are added from their export folder.")
+                    with FLUX_JOB_LOCK:
+                        if FLUX_JOB["status"] == "running":
+                            raise ValueError("Stop generation before removing a model.")
+                    CUSTOM_IMAGE_GENERATION_WORKER.close()
+                    custom_entry = custom_image.model_spec(model)
+                    if custom_entry.get("sourceType") == "huggingface":
+                        owned_root = (MODELS_DIR / "custom-image-models").resolve()
+                        owned_path = Path(custom_entry["path"]).resolve(strict=True)
+                        if owned_path.parent != owned_root or not owned_path.name or owned_path == owned_root:
+                            raise ValueError("Fern refused to remove model files outside its custom model storage.")
+                    custom_image_registry.MODEL_REGISTRY.remove(model)
+                    if custom_entry.get("sourceType") == "huggingface":
+                        shutil.rmtree(owned_path)
+                    self.send_json(200, {"models": model_library_snapshot()})
+                    return
                 if model == flux3.MODEL_KEY:
                     if parsed.path.endswith("install"):
                         if flux_job_snapshot()["status"] == "running" or tts_job_running() or text_job_running() or text_model_install_running():
@@ -2261,6 +2409,8 @@ class Handler(BaseHTTPRequestHandler):
                 if payload["model"] == QWEN_TURBO_MODEL_ID
                 else flux3.model_status(payload["device"])
                 if payload["model"] == flux3.MODEL_KEY
+                else custom_image.model_status(payload["device"], payload["model"])
+                if custom_image.is_model(payload["model"])
                 else tame_pony.model_status(payload["device"], payload["model"])
                 if tame_pony.is_model(payload["model"])
                 else flux2.model_status(payload["device"], payload["model"])
@@ -2286,6 +2436,8 @@ class Handler(BaseHTTPRequestHandler):
         model_label = (
             "Qwen Image 2.1 Turbo · official"
             if payload["model"] == QWEN_TURBO_MODEL_ID
+            else custom_image.model_spec(payload["model"])["label"]
+            if custom_image.is_model(payload["model"])
             else model_spec(payload["model"])["label"]
         )
         mark_flux_job(
@@ -2343,6 +2495,7 @@ def run_server(port: int = 8000, *, allow_cors: bool = False) -> None:
     finally:
         GENERATION_WORKER.close()
         TAME_PONY_GENERATION_WORKER.close()
+        CUSTOM_IMAGE_GENERATION_WORKER.close()
         TTS_GENERATION_WORKER.close()
         QWEN_GENERATION_WORKER.close()
         FLUX3_GENERATION_WORKER.close()

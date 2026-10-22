@@ -6,6 +6,33 @@ lands directly on `main` instead of through labeled pull requests.
 
 ## [Unreleased]
 
+## [0.1.29] - 2026-10-22
+
+### Added
+
+- Custom OpenVINO image models can be downloaded from Hugging Face or linked
+  from a local folder. Choose a supported model family and use the model from
+  the image composer.
+- A browser-based renderer harness and Electron smoke coverage for custom
+  model installation, validation, selection, and removal.
+
+### Improved
+
+- Custom image models apply family-specific generation defaults and dimension
+  limits in the composer.
+- FLUX.3 Klein setup reports download and runtime progress, supports
+  cancellation, and surfaces more useful setup errors.
+- Generated image metadata includes the custom model name and family.
+
+### Fixed
+
+- Runtime readiness now corresponds to the image model selected in the current
+  thread.
+- SDXL model setup handles the current Diffusers device lookup API.
+- Removing a linked local model preserves its source files.
+
+Full Changelog: https://github.com/xgirls-dev/fern/compare/v0.1.28...v0.1.29
+
 ## [0.1.28] - 2026-10-20
 
 ### Added

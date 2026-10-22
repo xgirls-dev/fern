@@ -47,6 +47,8 @@ jobs:
       - name: Use release virtualenv
         shell: pwsh
         run: Add-Content -Path $env:GITHUB_PATH -Value "$PWD\.venv\Scripts"
+      - name: Verify Electron app and backend integration
+        run: npm run test:electron --workspace @fern/desktop
       - run: npm run check
       - run: npm run package
       - name: Publish installer

@@ -744,7 +744,10 @@ export function useStudio() {
     return unsubscribe;
   }, [updateSettings]);
 
-  const modelInstalled = status?.model.runtimeReady ?? false;
+  const modelInstalled = Boolean(
+    status?.model.runtimeReady &&
+    status.model.selectedModel === (settings.model ?? "9b"),
+  );
 
   const retryRuntime = useCallback(async () => {
     setError(null);

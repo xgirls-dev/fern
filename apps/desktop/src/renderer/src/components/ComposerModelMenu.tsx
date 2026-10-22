@@ -4,11 +4,18 @@ import Check from "lucide-react/dist/esm/icons/check.mjs";
 import type { StudioSettings } from "../lib/types";
 
 export interface ComposerModel {
-  id: "9b" | "4b" | "qwen21-turbo" | "flux3-klein" | "tame-pony-v25-sdxl" | "tame-pony-v25-sdxl-int8";
+  id: string;
   label: string;
+  family?: string;
+  familyLabel?: string;
+  defaultSteps?: number;
+  defaultGuidance?: number;
+  defaultWidth?: number;
+  defaultHeight?: number;
+  installed?: boolean;
 }
 
-const MODEL_LABELS: Record<ComposerModel["id"], string> = {
+const MODEL_LABELS: Record<string, string> = {
   "9b": "Klein 9B",
   "4b": "Klein 4B",
   "qwen21-turbo": "Qwen Image 2.1 Turbo",
@@ -16,7 +23,7 @@ const MODEL_LABELS: Record<ComposerModel["id"], string> = {
   "tame-pony-v25-sdxl": "Tame Pony · SDXL",
   "tame-pony-v25-sdxl-int8": "Tame Pony · SDXL INT8",
 };
-const MODEL_CHOICES: ComposerModel["id"][] = ["9b", "4b", "qwen21-turbo", "flux3-klein", "tame-pony-v25-sdxl", "tame-pony-v25-sdxl-int8"];
+const MODEL_CHOICES = ["9b", "4b", "qwen21-turbo", "flux3-klein", "tame-pony-v25-sdxl", "tame-pony-v25-sdxl-int8"];
 
 export function ComposerModelMenu({
   models,
@@ -30,7 +37,7 @@ export function ComposerModelMenu({
   loading?: boolean;
   value: StudioSettings["model"];
   disabled: boolean;
-  onChange: (model: StudioSettings["model"]) => void;
+  onChange: (model: string) => void;
   onOpen: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -38,14 +45,16 @@ export function ComposerModelMenu({
   const trigger = useRef<HTMLButtonElement>(null);
   const menu = useRef<HTMLDivElement>(null);
   const id = useId();
-  const selectedId = value === "4b" || value === "qwen21-turbo" || value === "flux3-klein" || value === "tame-pony-v25-sdxl" || value === "tame-pony-v25-sdxl-int8" ? value : "9b";
+  const selectedId = value && (MODEL_CHOICES.includes(value) || value.startsWith("custom-")) ? value : "9b";
   const current = models.find((model) => model.id === selectedId);
+  const choices = [...MODEL_CHOICES, ...models.map((model) => model.id).filter((modelId) => modelId.startsWith("custom-"))];
+  if (selectedId.startsWith("custom-") && !choices.includes(selectedId)) choices.push(selectedId);
   const triggerLabel = loading
     ? "Checking…"
     : current
-      ? MODEL_LABELS[current.id]
+      ? `${current.label}${current.installed === false ? " · Missing" : ""}`
       : models.length
-        ? `${MODEL_LABELS[selectedId]} · Missing`
+        ? `${MODEL_LABELS[selectedId] ?? "Custom model"} · Missing`
         : "No models";
 
   useEffect(() => {
@@ -136,8 +145,9 @@ export function ComposerModelMenu({
             }
           }}
         >
-          {MODEL_CHOICES.map((modelId) => {
-            const installed = models.some((model) => model.id === modelId);
+          {choices.map((modelId) => {
+            const model = models.find((candidate) => candidate.id === modelId);
+            const installed = Boolean(model && model.installed !== false);
             return (
               <button
                 type="button"
@@ -153,7 +163,7 @@ export function ComposerModelMenu({
                   trigger.current?.focus();
                 }}
               >
-                <span>{MODEL_LABELS[modelId]}</span>
+                <span>{model?.label ?? MODEL_LABELS[modelId] ?? "Custom image model"}</span>
                 {installed && selectedId === modelId ? (
                   <Check size={14} aria-hidden="true" />
                 ) : !installed ? (

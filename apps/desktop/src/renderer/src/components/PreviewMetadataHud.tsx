@@ -80,13 +80,13 @@ export function PreviewMetadataHud({ image }: PreviewMetadataHudProps) {
   if (image.model)
     rows.push({
       label: "Model used",
-      value: image.model === "qwen21-turbo"
+      value: image.modelLabel ?? (image.model === "qwen21-turbo"
         ? "Qwen Image 2.1 Turbo · official"
         : image.model === "flux3-klein"
           ? "FLUX.3 Klein · INT4"
           : image.model === "tame-pony-v25-sdxl" || image.model === "tame-pony-v25-sdxl-int8"
             ? image.model.endsWith("-int8") ? "Tame Pony · SDXL INT8" : "Tame Pony · SDXL"
-          : `Flux.2 Klein ${image.model.toUpperCase()}`,
+          : `Flux.2 Klein ${image.model.toUpperCase()}`),
     });
   if (image.modelRevision)
     rows.push({ label: "Model revision", value: image.modelRevision });

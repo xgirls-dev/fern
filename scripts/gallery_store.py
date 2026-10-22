@@ -92,6 +92,8 @@ def enrich_image_record(record: dict[str, Any], metadata: dict[str, Any] | None 
         "device",
         "modelPath",
         "model",
+        "modelLabel",
+        "modelFamily",
         "modelRevision",
         "generationTime",
     ):

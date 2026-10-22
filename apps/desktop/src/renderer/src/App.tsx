@@ -467,6 +467,8 @@ export function App() {
                         ? "FLUX.3 Klein · INT4"
                         : studio.status?.model.selectedModel === "tame-pony-v25-sdxl" || studio.status?.model.selectedModel === "tame-pony-v25-sdxl-int8"
                           ? studio.status?.model.selectedModel.endsWith("-int8") ? "Tame Pony · SDXL INT8" : "Tame Pony · SDXL"
+                        : studio.status?.model.selectedModel?.startsWith("custom-")
+                          ? studio.status?.installedModels?.find((model) => model.id === studio.status?.model.selectedModel)?.label ?? "Custom image model"
                         : studio.status?.model.selectedModel
                         ? `Flux.2 Klein ${studio.status.model.selectedModel.toUpperCase()}`
                         : "Flux.2 Klein"}

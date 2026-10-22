@@ -37,7 +37,12 @@ def _patch_openvino_vae_device_lookup() -> None:
     """Keep Diffusers' SDXL device helper compatible with Optimum's OVModelVae."""
     import diffusers.pipelines.stable_diffusion_xl.pipeline_stable_diffusion_xl as sdxl_pipeline
 
-    helper = sdxl_pipeline.get_module_execution_device
+    helper = getattr(sdxl_pipeline, "get_module_execution_device", None)
+    # Diffusers 0.40 moved this logic to DiffusionPipeline._execution_device.
+    # Newer Optimum/OpenVINO VAE wrappers are handled by that implementation;
+    # only patch older Diffusers releases that still expose the module helper.
+    if helper is None:
+        return
     if getattr(helper, "_fern_openvino_vae_compatible", False):
         return
 
@@ -87,7 +92,7 @@ def model_status(device: str = DEFAULT_DEVICE, model_key: str = MODEL_KEY) -> di
         defaultHeight=DEFAULT_HEIGHT,
         defaultSteps=DEFAULT_STEPS,
         defaultGuidance=DEFAULT_GUIDANCE,
-        sampler="Euler ancestral · trailing timestep spacing",
+        sampler="EDM DPM-Solver multistep",
     )
     for adapter in status.get("adapters", []):
         adapter.update(
@@ -149,18 +154,13 @@ def _load_pipeline(device: str, log: Callable[[str], None] | None, model_key: st
         log("Using the Fern-managed model cache; the shared OpenVINO cache threshold was not met.")
     if log:
         log(f"Loading {display_name(model_key)} on {device_label(selected)}…")
-    from diffusers import EulerAncestralDiscreteScheduler
     from optimum.intel import OVStableDiffusionXLPipeline
 
-    # Pony was originally run as an SDXL pipeline with Euler ancestral sampling
-    # and trailing timestep spacing. The exported EDM scheduler is not the
-    # sampler used by Fern's established Pony integration.
+    # Keep the scheduler from the export's model_index and scheduler_config.
+    # The upstream Pony pipeline uses the checkpoint's EDMDPMSolver scheduler;
+    # swapping it for a different sampler can turn valid inference into noise.
     pipeline = OVStableDiffusionXLPipeline.from_pretrained(
         str(model_dir), device=openvino_device, ov_config=ov_config
-    )
-    pipeline.scheduler = EulerAncestralDiscreteScheduler.from_config(
-        pipeline.scheduler.config,
-        timestep_spacing="trailing",
     )
     # The pinned SDXL exports declare force_upcast=false. Keep Diffusers from
     # calling torch.nn.Module-only VAE upcasting on Optimum's OVModelVae.
