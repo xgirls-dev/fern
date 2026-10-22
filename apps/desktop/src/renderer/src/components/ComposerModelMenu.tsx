@@ -53,7 +53,9 @@ export function ComposerModelMenu({
     ? "Checking…"
     : current
       ? `${current.label}${current.installed === false ? " · Missing" : ""}`
-      : models.length
+      : selectedId.startsWith("custom-")
+        ? "Custom model · Missing"
+        : models.length
         ? `${MODEL_LABELS[selectedId] ?? "Custom model"} · Missing`
         : "No models";
 
