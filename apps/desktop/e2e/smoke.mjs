@@ -119,6 +119,8 @@ try {
   await customChoice.waitFor();
   await customChoice.click();
   await expect(page.getByRole("button", { name: `Image model: ${path.basename(customModelPath)}` })).toBeVisible();
+  const selectedImageThreadId = await page.locator('.sidebar-thread-button[aria-current="page"]').getAttribute("data-thread-id");
+  assert.ok(selectedImageThreadId, "The custom model selection should belong to an active image thread");
   await page.getByRole("button", { name: "Image settings" }).last().click();
   await expect(page.getByRole("spinbutton", { name: "Width", exact: true })).toHaveValue("1024");
   await expect(page.getByRole("spinbutton", { name: "Height", exact: true })).toHaveValue("1024");
@@ -144,7 +146,9 @@ try {
   await modelCard.getByRole("button", { name: "Confirm removal" }).click();
   await modelCard.waitFor({ state: "detached", timeout: 30_000 });
   assert.ok((await readFile(modelIndexPath)).length > 0, "Removing a local link must preserve the source model files");
-  await page.getByRole("button", { name: "New image thread" }).click();
+  // Return to the thread that selected this model. A new thread correctly
+  // starts without a model selection on a clean CI runner.
+  await page.locator(`.sidebar-thread-button[data-thread-id="${selectedImageThreadId}"]`).click();
   await expect(page.getByRole("button", { name: "Image model: Custom model · Missing" })).toBeVisible();
   assert.deepEqual(pageErrors, [], `Renderer errors: ${pageErrors.join(" | ")}`);
   assert.deepEqual(consoleErrors, [], `Console errors: ${consoleErrors.join(" | ")}`);
