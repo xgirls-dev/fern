@@ -1122,7 +1122,7 @@ def model_snapshot(device: str, model="9b") -> dict[str, Any]:
             "runtimeNote": "Checking the OpenVINO runtime and available devices…" if checking else
                 "Official Qwen Turbo uses the OpenVINO INT8 export." if runtime_ready_for_device else
                 "OpenVINO GPU is unavailable. Select CPU explicitly to try it." if installed and device in ("AUTO", "INTEL_GPU") else
-                "OpenVINO runtime is unavailable. Repair it in Preferences." if model_ready else
+                "OpenVINO runtime is unavailable. Repair it in Models." if model_ready else
                 "Install the official checkpoint and OpenVINO INT8 export before generating.",
             "modelId": "Qwen/Qwen-Image-2.1-Turbo", "modelDir": str(QWEN_TURBO_MODEL_ROOT),
             "pipelineClass": "OVQwenImage21Pipeline", "runtimeBackend": "OpenVINO · INT8",
@@ -1356,7 +1356,7 @@ def validate_flux_payload(payload: dict[str, Any]) -> dict[str, Any]:
         if device not in ("AUTO", "INTEL_GPU", "CPU"):
             raise ValueError("Official Qwen Turbo uses the OpenVINO Intel GPU or an explicitly selected CPU.")
         if not (qwen_turbo_runtime_ready() and qwen_turbo_model_ready()):
-            raise ValueError("Install the official Qwen Turbo OpenVINO INT8 model from Preferences before generating.")
+            raise ValueError("Install the official Qwen Turbo OpenVINO INT8 model from Models before generating.")
     backend = flux2
     width = int(payload.get("width", backend.DEFAULT_WIDTH))
     height = int(payload.get("height", backend.DEFAULT_HEIGHT))
@@ -1371,7 +1371,17 @@ def validate_flux_payload(payload: dict[str, Any]) -> dict[str, Any]:
         or not all(character.isascii() and (character.isalnum() or character in "-_") for character in thread_id)
     ):
         raise ValueError("Thread ID must contain 1 to 128 letters, numbers, hyphens, or underscores.")
-    reference_image = decode_flux_reference_image(payload.get("reference_image"))
+    reference_sources = payload.get("reference_images")
+    if reference_sources is None:
+        reference_sources = [payload["reference_image"]] if payload.get("reference_image") else []
+    if not isinstance(reference_sources, list) or len(reference_sources) > 4:
+        raise ValueError("Attach up to 4 reference images.")
+    if any(not isinstance(source, str) or not source for source in reference_sources):
+        raise ValueError("Each reference image must be a PNG, JPEG, or WebP upload.")
+    if len(reference_sources) > 1 and model not in ("9b", "4b", "auto"):
+        raise ValueError("Multiple reference images are supported by FLUX.2 Klein 4B and 9B.")
+    reference_images = [decode_flux_reference_image(source) for source in reference_sources]
+    reference_image = reference_images[0] if reference_images else None
     if model == flux3.MODEL_KEY and reference_image is not None:
         raise ValueError("This FLUX.3 Klein OpenVINO quant currently supports text-to-image only.")
     is_tame_pony = tame_pony.is_model(model)
@@ -1409,8 +1419,10 @@ def validate_flux_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "batch_size": batch_size,
         "thread_id": thread_id,
         "reference_image": reference_image,
+        "reference_images": reference_images,
         "model": model,
         "reference_source": payload.get("reference_image") if reference_image is not None else None,
+        "reference_sources": reference_sources,
     }
 
 
@@ -1473,9 +1485,10 @@ def run_flux_generation(
         if payload["model"] == QWEN_TURBO_MODEL_ID and payload["reference_image"] is not None:
             qwen_reference_path = stage / "reference.png"
             payload["reference_image"].save(qwen_reference_path, format="PNG")
-        reference_url = None
-        if payload.get("reference_source"):
-            header, encoded = payload["reference_source"].split(",", 1)
+        reference_urls = []
+        reference_sources = payload.get("reference_sources", [payload["reference_source"]] if payload.get("reference_source") else [])
+        for reference_source in reference_sources:
+            header, encoded = reference_source.split(",", 1)
             extension = {
                 "data:image/png;base64": "png",
                 "data:image/jpeg;base64": "jpg",
@@ -1490,7 +1503,7 @@ def run_flux_generation(
             reference_path = references / reference_name
             if not reference_path.exists():
                 reference_path.write_bytes(reference_bytes)
-            reference_url = f"/references/{urllib.parse.quote(reference_name)}"
+            reference_urls.append(f"/references/{urllib.parse.quote(reference_name)}")
         last_record = None
         for index in range(payload["batch_size"]):
             if cancel_event.is_set():
@@ -1672,6 +1685,7 @@ def run_flux_generation(
                     seed=seed,
                     device=payload["device"],
                     reference_image=payload["reference_image"],
+                    reference_images=payload.get("reference_images"),
                     output_dir=stage,
                     log=log_generation,
                 )
@@ -1682,8 +1696,9 @@ def run_flux_generation(
                 output_path.replace(destination)
             output_path = destination
             metadata["referenceUsed"] = payload["reference_image"] is not None
-            if reference_url:
-                metadata["referenceUrl"] = reference_url
+            if reference_urls:
+                metadata["referenceUrl"] = reference_urls[0]
+                metadata["referenceUrls"] = reference_urls
             metadata["generationTime"] = round(generation_time, 1)
             last_record = image_record(output_path, metadata)
         append_flux_log(f"Batch complete | {payload['batch_size']} image(s).")
@@ -1789,6 +1804,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def read_json_body(self) -> dict[str, Any]:
         length = int(self.headers.get("Content-Length", "0"))
+        if length > 60 * 1024 * 1024:
+            raise ValueError("Request is too large. Attach up to 4 images smaller than 10 MB each.")
         if length <= 0:
             return {}
         payload = json.loads(self.rfile.read(length).decode("utf-8"))

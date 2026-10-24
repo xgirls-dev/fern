@@ -123,9 +123,9 @@ def model_status(device: str = DEFAULT_DEVICE) -> dict[str, Any]:
                 else "FLUX.3 Klein INT4 · GPU runtime ready; transformer uses FP32 inference precision."
             )
             if model_installed and runtime_ready and available and device_supported
-            else "Install FLUX.3 Klein from Preferences to download its OpenVINO model."
+            else "Install FLUX.3 Klein from Models to download its OpenVINO model."
             if not model_installed
-            else "Preparing the isolated FLUX.3 Diffusers runtime from Preferences."
+            else "Preparing the isolated FLUX.3 Diffusers runtime from Models."
             if not runtime_ready
             else "Fern's GPU validation produced blank images. Select CPU, the only documented OpenVINO inference path for this export."
             if available and not device_supported

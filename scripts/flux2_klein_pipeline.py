@@ -421,6 +421,7 @@ def generate_image(
     device: str = DEFAULT_DEVICE,
     model: str = "9b",
     reference_image: Any | None = None,
+    reference_images: list[Any] | None = None,
     log: Callable[[str], None] | None = None,
 ) -> tuple[Path, float]:
     for label, value in (("Width", width), ("Height", height)):
@@ -445,8 +446,11 @@ def generate_image(
     generator = torch.Generator("cpu").manual_seed(int(seed))
     _log(log, f"Seed: {seed}")
     _log(log, f"Resolution: {width}x{height} | {steps} steps | guidance {guidance:.1f}")
-    if reference_image is not None:
-        _log(log, f"Reference image: {reference_image.width}x{reference_image.height}")
+    images = reference_images if reference_images is not None else [reference_image] if reference_image is not None else []
+    if len(images) > 4:
+        raise ValueError("FLUX.2 Klein supports up to 4 reference images in Fern.")
+    for index, image in enumerate(images):
+        _log(log, f"Reference {index + 1}: {image.width}x{image.height}")
 
     def on_step_end(
         _pipeline: Any,
@@ -461,7 +465,7 @@ def generate_image(
     started = time.perf_counter()
     result = pipeline(
         prompt=prompt,
-        image=reference_image,
+        image=images if len(images) > 1 else images[0] if images else None,
         height=height,
         width=width,
         num_inference_steps=steps,

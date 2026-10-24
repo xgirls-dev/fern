@@ -18,7 +18,8 @@ async function complete(text) {
   await until(async () => (await page.locator('.text-message--assistant').last().textContent()).includes(text), 'completion');
 }
 try {
-  await page.getByRole('button', { name: 'New text thread', exact: true }).click();
+  await page.locator('.sidebar-new-menu > button').click();
+  await page.getByRole('menuitem', { name: 'New text thread', exact: true }).click();
   await page.getByLabel('Message', { exact: true }).fill('Remember the word fern.');
   await page.getByRole('button', { name: 'Send message', exact: true }).click();
   await until(() => state.textRequests.length === 1, 'first request');

@@ -1,4 +1,3 @@
-import { ModelLibrary } from "./ModelLibrary";
 import Check from "lucide-react/dist/esm/icons/check.mjs";
 import Command from "lucide-react/dist/esm/icons/command.mjs";
 import Cpu from "lucide-react/dist/esm/icons/cpu.mjs";
@@ -6,17 +5,12 @@ import Moon from "lucide-react/dist/esm/icons/moon.mjs";
 import PanelLeft from "lucide-react/dist/esm/icons/panel-left.mjs";
 import Sun from "lucide-react/dist/esm/icons/sun.mjs";
 import type { ModelStatus } from "../lib/types";
-import type { TtsModelStatus } from "../hooks/useQwen3Tts";
 
 interface PreferencesViewProps {
   active: boolean;
   theme: "light" | "dark";
   sidebarCollapsed: boolean;
   modelStatus: ModelStatus | null;
-  audioModels: TtsModelStatus[];
-  audioStatusLoaded: boolean;
-  audioStatusError: string | null;
-  onOpenAudio: () => void;
   onToggleTheme: () => void;
   onToggleSidebar: () => void;
 }
@@ -47,10 +41,6 @@ export function PreferencesView({
   theme,
   sidebarCollapsed,
   modelStatus,
-  audioModels,
-  audioStatusLoaded,
-  audioStatusError,
-  onOpenAudio,
   onToggleTheme,
   onToggleSidebar,
 }: PreferencesViewProps) {
@@ -66,17 +56,11 @@ export function PreferencesView({
           <h2 tabIndex={-1} id="preferences-view-title">
             Preferences
           </h2>
-          <p>Shape how you create and review images and audio.</p>
+          <p>Appearance, workspace, and application settings.</p>
         </div>
       </header>
 
       <div className="shell-page-body preferences-body">
-        <ModelLibrary status={modelStatus} />
-        <section className="preferences-section" aria-labelledby="audio-models-title">
-          <div className="preferences-section-heading"><div><h3 id="audio-models-title">Audio models</h3><p>Qwen3-TTS models are set up separately for each voice mode and size.</p></div></div>
-          {audioStatusError ? <p role="alert">Audio model status is unavailable: {audioStatusError}</p> : audioStatusLoaded ? <div className="preferences-adapters" aria-label="Audio model availability">{audioModels.map((model) => <div className={`preferences-adapter-row${model.installed ? " is-ready" : ""}`} key={model.id}><span className="preferences-adapter-dot" aria-hidden="true" /><span className="preferences-adapter-copy"><strong>{model.label}</strong><small>{model.id.endsWith("0.6b") ? "Faster · less memory" : "More detail · more memory"}</small></span><span className="preferences-adapter-state">{model.installed ? "Ready" : "Setup needed"}</span></div>)}</div> : <p role="status">Checking audio models…</p>}
-          <button type="button" className="btn btn-secondary" onClick={onOpenAudio}>Open audio workspace</button>
-        </section>
         <section
           className="preferences-section"
           aria-labelledby="preferences-appearance"

@@ -158,14 +158,14 @@ export function ComposerModelMenu({
                 role="menuitemradio"
                 aria-checked={selectedId === modelId}
                 disabled={!installed}
-                title={installed ? undefined : "Not installed"}
+                title={`${model?.label ?? MODEL_LABELS[modelId] ?? "Custom image model"}${installed ? "" : " · Not installed"}`}
                 onClick={() => {
                   onChange(modelId);
                   setOpen(false);
                   trigger.current?.focus();
                 }}
               >
-                <span>{model?.label ?? MODEL_LABELS[modelId] ?? "Custom image model"}</span>
+                <span className="composer-model-label">{model?.label ?? MODEL_LABELS[modelId] ?? "Custom image model"}</span>
                 {installed && selectedId === modelId ? (
                   <Check size={14} aria-hidden="true" />
                 ) : !installed ? (
@@ -174,6 +174,7 @@ export function ComposerModelMenu({
               </button>
             );
           })}
+          <div className="composer-model-menu-footer"><button type="button" role="menuitem" onClick={() => { setOpen(false); window.dispatchEvent(new CustomEvent("fern-models", { detail: "image" })); }}>Manage models</button></div>
         </div>
       ) : null}
     </div>

@@ -6,9 +6,32 @@ The bundle is written to `.cache/fern-browser-test-dist`, outside the Electron p
 
 ## Real Electron smoke test
 
-Run `npm.cmd run test:electron --workspace @fern/desktop` from the repository root. This builds and launches the actual Electron main process, preload, renderer, and Python API in a temporary profile. It uses Playwright's main-process dialog mock to exercise the real folder-picker IPC without opening an OS dialog, adds and removes a tiny valid OpenVINO SDXL fixture, verifies cancellation and source-file preservation, and fails on renderer or console errors. Temporary data and screenshots are removed after success and retained for debugging after failure.
+Run `npm.cmd run test:electron --workspace @fern/desktop` from the repository root. This builds and launches the actual Electron main process, preload, renderer, and Python API in a temporary profile. The test window stays hidden using `FERN_E2E_HEADLESS=1`, so automation does not take focus from other work. It checks multiple reference attachments across reload, the Models page, real folder-picker IPC through a main-process dialog mock, local-model registration/removal, cancellation, and source-file preservation. Temporary profile data is removed after success and retained for debugging after failure. A Models screenshot is retained under `artifacts/ux-verification`.
 
 The test needs the repository's `.venv`. It does not need a downloaded model, run inference, or download model files.
+
+After building an installer, test the packaged executable and its bundled Python
+runtime with a fresh profile:
+
+```powershell
+$env:FERN_E2E_EXECUTABLE = Join-Path (Get-Location).Path 'apps\desktop\release\win-unpacked\Fern.exe'
+node apps/desktop/e2e/smoke.mjs
+Remove-Item Env:FERN_E2E_EXECUTABLE
+```
+
+This additionally checks first-run runtime extraction and verifies that Electron
+is running as a packaged application. Native page capture keeps the production
+window hidden while taking screenshots.
+
+Run `npm.cmd run test:ui` for the renderer regression suite. It uses mocked API
+responses with the real React app and headless Chrome. Live inference scripts
+are excluded. An installed Chrome or Edge is detected on Windows; set
+`FERN_CHROME_PATH` to override it. Screenshots and results are written under
+`artifacts/ux-verification`.
+
+Model installation is now under **Models** in the sidebar. Image, text, and
+audio installation use separate categories on that page. General Preferences
+contains appearance, workspace, and runtime information.
 
 ## Run it
 

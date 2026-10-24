@@ -8,7 +8,8 @@ try {
   await page
     .getByRole("combobox", { name: "Prompt recipe" })
     .selectOption("editorial-portrait");
-  await button("New image thread").click();
+  await page.locator(".sidebar-new-menu > button").click();
+  await page.getByRole("menuitem", { name: "New image thread" }).click();
   await button("Undo").click();
   assert.equal(await page.locator("#prompt").inputValue(), "");
   await page.waitForTimeout(350);
@@ -29,7 +30,8 @@ try {
     .fill("Keep this recipe");
   await button("Save recipe").click();
   await button("Remove").click();
-  await button("New image thread").click();
+  await page.locator(".sidebar-new-menu > button").click();
+  await page.getByRole("menuitem", { name: "New image thread" }).click();
   await button("Undo").click();
   assert(
     await page.evaluate(() =>

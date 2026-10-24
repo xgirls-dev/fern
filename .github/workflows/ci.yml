@@ -22,6 +22,8 @@ jobs:
         with:
           python-version: "3.12"
       - run: npm ci
+      - name: Verify renderer workflows and layouts
+        run: npm run test:ui
       - run: npm run typecheck
       - run: npm run check:python
       - run: npm run build

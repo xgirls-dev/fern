@@ -29,6 +29,7 @@ const StorageView = lazy(() => import("./components/StorageView").then((module) 
 const PreferencesView = lazy(() => import("./components/PreferencesView").then((module) => ({ default: module.PreferencesView })));
 const Qwen3TtsWorkspace = lazy(() => import("./components/Qwen3TtsWorkspace").then((module) => ({ default: module.Qwen3TtsWorkspace })));
 const TextWorkspace = lazy(() => import("./components/TextWorkspace").then((module) => ({ default: module.TextWorkspace })));
+const ModelsView = lazy(() => import("./components/ModelsView").then((module) => ({ default: module.ModelsView })));
 
 export function App() {
   const studio = useStudio();
@@ -57,11 +58,18 @@ export function App() {
   const inspectorRef = useRef<HTMLElement>(null);
   const [runtimeDismissed, setRuntimeDismissed] = useState(true);
   const [referenceBusy, setReferenceBusy] = useState(false);
+  const attachReference = (dataUrl: string, label: string) => {
+    if (["9b", "4b"].includes(studio.settings.model ?? "9b")) {
+      if (studio.referenceImages.length >= 4) throw new Error("Klein accepts up to 4 references. Remove an attachment in the composer first.");
+      studio.setReferenceImages([...studio.referenceImages, { dataUrl, label }]);
+    } else studio.setReferenceImages([{ dataUrl, label }]);
+  };
   const lightboxOpen = Boolean(lightboxImage);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [activeSection, setActiveSection] = useState<
-    "create" | "tts" | "text" | "library" | "preferences" | "storage"
+    "create" | "tts" | "text" | "library" | "models" | "preferences" | "storage"
   >("create");
+  const [modelCategory, setModelCategory] = useState<"image" | "text" | "audio">("image");
   useEffect(() => {
     if (!studio.ready) return;
     const imageActive = activeSection === "create" || activeSection === "library";
@@ -78,7 +86,7 @@ export function App() {
   });
 
   useEffect(() => {
-    if (activeSection !== "preferences" && activeSection !== "storage") return;
+    if (!["preferences", "storage", "models"].includes(activeSection)) return;
     document
       .querySelector<HTMLElement>(".shell-page:not([hidden]) h2")
       ?.focus();
@@ -86,6 +94,7 @@ export function App() {
 
   const openThreadSearch = useCallback(() => setThreadBrowserOpen(true), []);
   const openStorage = useCallback(() => setActiveSection("storage"), []);
+  const openModels = useCallback(() => { setModelCategory("image"); setActiveSection("models"); }, []);
   const openPreferences = useCallback(
     () => setActiveSection("preferences"),
     [],
@@ -200,7 +209,11 @@ export function App() {
         field?.scrollIntoView({ block: "center" });
       }, 30);
     };
-    const models = () => setActiveSection("preferences");
+    const models = (event: Event) => {
+      const category = (event as CustomEvent<string>).detail;
+      setModelCategory(category === "text" || category === "audio" ? category : "image");
+      setActiveSection("models");
+    };
     window.addEventListener("fern-models", models);
     window.addEventListener("fern-open-thread", open);
     window.addEventListener("fern-validation", invalid);
@@ -391,6 +404,7 @@ export function App() {
           collapsed={sidebarCollapsed}
           activeSection={activeSection}
           onOpenLibrary={openLibrary}
+          onOpenModels={openModels}
           onOpenData={openStorage}
           onOpenPreferences={openPreferences}
         />
@@ -399,6 +413,7 @@ export function App() {
           id="main-content"
           className={`dashboard dashboard--${activeSection}`}
         >
+          {activeSection === "models" ? <Suspense fallback={<div className="dashboard-loading" role="status">Opening models…</div>}><ModelsView category={modelCategory} onCategoryChange={setModelCategory} text={text} audio={tts} /></Suspense> : null}
           {activeSection === "storage" ? <Suspense fallback={<div className="dashboard-loading" role="status">Opening storage…</div>}><StorageView
             active={activeSection === "storage"}
             running={studio.running || tts.status.status === "running" || tts.status.status === "setting_up" || tts.status.status === "stopping" || text.busy}
@@ -409,10 +424,6 @@ export function App() {
             theme={studio.settings.theme}
             sidebarCollapsed={sidebarCollapsed}
             modelStatus={studio.status?.model ?? null}
-            audioModels={tts.status.models}
-            audioStatusLoaded={tts.statusLoaded}
-            audioStatusError={tts.statusError}
-            onOpenAudio={() => setActiveSection("tts")}
             onToggleTheme={() =>
               studio.updateSettings({
                 theme: studio.settings.theme === "dark" ? "light" : "dark",
@@ -421,7 +432,7 @@ export function App() {
             onToggleSidebar={() => setSidebarCollapsed((value) => !value)}
           /></Suspense> : null}
 
-          {activeSection === "preferences" ||
+          {activeSection === "models" || activeSection === "preferences" ||
           activeSection === "storage" ? null : activeSection === "text" ? (
             <Suspense fallback={<div className="dashboard-loading" role="status">Opening text workspace…</div>}><TextWorkspace studio={text} sidebarCollapsed={sidebarCollapsed} /></Suspense>
           ) : activeSection === "tts" ? (
@@ -559,11 +570,7 @@ export function App() {
                       studio.running && !studio.activeThreadRunning
                     }
                     settings={studio.settings}
-                    referenceImage={studio.referenceImage}
-                    referenceLabel={studio.referenceLabel}
-                    supportsReference={
-                      studio.status?.model.supportsReferenceImage ?? true
-                    }
+                    referenceImages={studio.referenceImages}
                     running={studio.activeThreadRunning}
                     submitting={studio.submitting}
                     stopping={studio.stopping}
@@ -577,14 +584,7 @@ export function App() {
                     onSettingsChange={(patch) =>
                       studio.updateSettings(patch, studio.activeThread.id)
                     }
-                    onReferenceChange={(url, label) => {
-                      studio.setReferenceImage(url);
-                      studio.setReferenceLabel(label);
-                    }}
-                    onClearReference={() => {
-                      studio.setReferenceImage("");
-                      studio.setReferenceLabel("No reference image.");
-                    }}
+                    onReferencesChange={studio.setReferenceImages}
                     onToggleInspector={() => setInspectorOpen((open) => !open)}
                     onGenerate={() => void studio.generate()}
                   />
@@ -649,13 +649,13 @@ export function App() {
                       settings={studio.settings}
                       modelStatus={studio.status?.model ?? null}
                       referenceImage={studio.referenceImage}
+                      referenceCount={studio.referenceImages.length}
                       referenceLabel={studio.referenceLabel}
                       onSettingsChange={(patch) =>
                         studio.updateSettings(patch, studio.activeThread.id)
                       }
                       onReferenceChange={(dataUrl, label) => {
-                        studio.setReferenceImage(dataUrl);
-                        studio.setReferenceLabel(label);
+                        attachReference(dataUrl, label);
                       }}
                       onClearReference={() => {
                         studio.setReferenceImage("");
@@ -683,10 +683,7 @@ export function App() {
                             },
                           );
                           await validateReference(dataUrl);
-                          studio.setReferenceImage(dataUrl);
-                          studio.setReferenceLabel(
-                            `${studio.preview.name} loaded as reference.`,
-                          );
+                          attachReference(dataUrl, studio.preview.name);
                         } finally {
                           setReferenceBusy(false);
                         }

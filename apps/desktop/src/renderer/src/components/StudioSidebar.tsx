@@ -9,7 +9,9 @@ import Pencil from "lucide-react/dist/esm/icons/pencil.mjs";
 import Trash2 from "lucide-react/dist/esm/icons/trash-2.mjs";
 import Search from "lucide-react/dist/esm/icons/search.mjs";
 import AudioLines from "lucide-react/dist/esm/icons/audio-lines.mjs";
-import { memo, useRef, useState } from "react";
+import Box from "lucide-react/dist/esm/icons/box.mjs";
+import ChevronDown from "lucide-react/dist/esm/icons/chevron-down.mjs";
+import { memo, useEffect, useRef, useState } from "react";
 import type { ImageThread } from "../lib/threads";
 import type { AudioThread } from "../lib/ttsThreads";
 import type { TextThread } from "../lib/textThreads";
@@ -42,8 +44,9 @@ interface StudioSidebarProps {
   onOpenSearch: () => void;
   submitting: boolean;
   collapsed: boolean;
-  activeSection: "create" | "tts" | "text" | "library" | "preferences" | "storage";
+  activeSection: "create" | "tts" | "text" | "library" | "models" | "preferences" | "storage";
   onOpenLibrary: () => void;
+  onOpenModels: () => void;
   onOpenData: () => void;
   onOpenPreferences: () => void;
 }
@@ -78,9 +81,21 @@ export const StudioSidebar = memo(function StudioSidebar({
   collapsed,
   activeSection,
   onOpenLibrary,
+  onOpenModels,
   onOpenData,
   onOpenPreferences,
 }: StudioSidebarProps) {
+  const [newMenuOpen, setNewMenuOpen] = useState(false);
+  const newMenuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!newMenuOpen) return;
+    newMenuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus();
+    const outside = (event: PointerEvent) => {
+      if (!newMenuRef.current?.contains(event.target as Node)) setNewMenuOpen(false);
+    };
+    document.addEventListener("pointerdown", outside);
+    return () => document.removeEventListener("pointerdown", outside);
+  }, [newMenuOpen]);
   const [limit, setLimit] = useState(60);
   const [audioLimit, setAudioLimit] = useState(30);
   const [textLimit, setTextLimit] = useState(30);
@@ -156,43 +171,33 @@ export const StudioSidebar = memo(function StudioSidebar({
         </button>
       </div>
 
-      <button
-        type="button"
-        className="sidebar-new-button"
-        onClick={onNewThread}
-        aria-label="New image thread"
-        aria-controls="prompt"
-        title="New image thread · Ctrl N"
-      >
-        <Plus size={16} strokeWidth={1.6} aria-hidden="true" />
-        <span>New image thread</span>
-        <span className="sidebar-shortcut">Ctrl N</span>
-      </button>
-
-      <button
-        type="button"
-        className="sidebar-new-button sidebar-new-audio-button"
-        onClick={onNewAudioThread}
-        aria-label="New audio thread"
-        title="New audio thread · Ctrl Shift N"
-      >
-        <AudioLines size={16} strokeWidth={1.6} aria-hidden="true" />
-        <span>New audio thread</span>
-      </button>
-
-      <button
-        type="button"
-        className="sidebar-new-button sidebar-new-text-button"
-        onClick={onNewTextThread}
-        aria-label="New text thread"
-        title="New text thread · Ctrl Alt N"
-      >
-        <MessageSquare size={16} strokeWidth={1.6} aria-hidden="true" />
-        <span>New text thread</span>
-      </button>
+      <div className="sidebar-new-menu" ref={newMenuRef} onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setNewMenuOpen(false);
+      }} onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          event.preventDefault(); setNewMenuOpen(false);
+          newMenuRef.current?.querySelector<HTMLButtonElement>(".sidebar-new-button")?.focus();
+        }
+        if (newMenuOpen && ["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
+          event.preventDefault();
+          const items = Array.from(newMenuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? []);
+          const index = items.indexOf(document.activeElement as HTMLButtonElement);
+          items[event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 : (index + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length]?.focus();
+        }
+      }}>
+        <button type="button" className="sidebar-new-button" aria-label="New thread" title="New thread" aria-haspopup="menu" aria-expanded={newMenuOpen} aria-controls={newMenuOpen ? "new-thread-menu" : undefined} onClick={() => setNewMenuOpen((value) => !value)} onKeyDown={(event) => {
+          if (!newMenuOpen && ["ArrowDown", "ArrowUp"].includes(event.key)) { event.preventDefault(); setNewMenuOpen(true); }
+        }}>
+          <Plus size={16} aria-hidden="true" /><span>New thread</span><ChevronDown size={13} className="sidebar-new-chevron" aria-hidden="true" />
+        </button>
+        {newMenuOpen ? <div id="new-thread-menu" className="sidebar-new-options" role="menu" aria-label="New thread type">
+          {[{ label: "Image", Icon: Images, create: onNewThread }, { label: "Text", Icon: MessageSquare, create: onNewTextThread }, { label: "Audio", Icon: AudioLines, create: onNewAudioThread }].map(({ label, Icon, create }) => <button type="button" role="menuitem" key={label} aria-label={`New ${label.toLowerCase()} thread`} title={`New ${label.toLowerCase()} thread`} onClick={() => { setNewMenuOpen(false); create(); }}><Icon size={16} aria-hidden="true" /><span>{label}</span></button>)}
+        </div> : null}
+      </div>
 
       <div className="sidebar-new-divider" />
       <nav className="sidebar-nav" aria-label="Studio">
+        <button type="button" className={`sidebar-nav-button${activeSection === "models" ? " is-active" : ""}`} onClick={onOpenModels} aria-current={activeSection === "models" ? "page" : undefined} aria-label="Models" title="Install and manage models"><Box size={15} aria-hidden="true" /><span>Models</span></button>
         <button
           type="button"
           className={`sidebar-nav-button${activeSection === "library" ? " is-active" : ""}`}
@@ -207,6 +212,7 @@ export const StudioSidebar = memo(function StudioSidebar({
         </button>
       </nav>
 
+      <div className="sidebar-scroll-area" aria-label="Threads">
       <section className="sidebar-threads" aria-label="Image threads">
         <div className="sidebar-threads-heading">Image threads</div>
         {!filtered.length ? (
@@ -441,6 +447,7 @@ export const StudioSidebar = memo(function StudioSidebar({
         {visibleAudioThreads.length > audioLimit ? <button type="button" className="text-action" onClick={() => setAudioLimit((value) => value + 60)}>Show more audio threads</button> : null}
       </section>
 
+      </div>
       <div className="sidebar-spacer" />
 
       <nav
@@ -471,11 +478,6 @@ export const StudioSidebar = memo(function StudioSidebar({
         </button>
       </nav>
 
-      <footer className="sidebar-footer">
-        <span>Private by default</span>
-        <span className="sidebar-footer-dot" aria-hidden="true" />
-        <span>On device</span>
-      </footer>
     </aside>
   );
 });

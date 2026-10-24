@@ -98,6 +98,7 @@ export function CommandPalette({
         icon: <Images size={16} aria-hidden="true" />,
         onSelect: onOpenLibrary,
       },
+      { id: "models", label: "Manage models", description: "Install image, text, and audio models", icon: <Images size={16} aria-hidden="true" />, onSelect: () => window.dispatchEvent(new CustomEvent("fern-models")) },
       {
         id: "toggle-sidebar",
         label: sidebarCollapsed ? "Show sidebar" : "Hide sidebar",

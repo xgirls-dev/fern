@@ -49,8 +49,16 @@ jobs:
         run: Add-Content -Path $env:GITHUB_PATH -Value "$PWD\.venv\Scripts"
       - name: Verify Electron app and backend integration
         run: npm run test:electron --workspace @fern/desktop
+      - name: Verify renderer workflows and layouts
+        run: npm run test:ui
       - run: npm run check
       - run: npm run package
+      - name: Verify packaged application and first-run runtime
+        shell: pwsh
+        run: |
+          $env:FERN_E2E_EXECUTABLE = Join-Path $PWD 'apps\desktop\release\win-unpacked\Fern.exe'
+          node apps/desktop/e2e/smoke.mjs
+          if ($LASTEXITCODE -ne 0) { throw "Packaged Fern smoke test failed." }
       - name: Publish installer
         env:
           GH_TOKEN: ${{ github.token }}

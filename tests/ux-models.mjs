@@ -11,7 +11,7 @@ try {
  await page.getByRole('menuitemradio',{name:/Klein 4B/}).click();
  await page.getByRole('button',{name:'Generate image',exact:true}).click();
  assert.equal(state.payloads.at(-1).model,'4b');
- await page.getByRole('button',{name:'Preferences',exact:true}).click();
+ await page.getByRole('button',{name:'Models',exact:true}).click();
  const card=page.locator('.model-library-card').filter({has:page.getByRole('heading',{name:/Klein 4B/})});
  await card.getByRole('button',{name:'Install',exact:true}).click();
  await card.getByRole('button',{name:'Pause',exact:true}).click();

@@ -11,7 +11,6 @@ import { TextMenu } from "./TextMenu";
 import X from "lucide-react/dist/esm/icons/x.mjs";
 import Settings2 from "lucide-react/dist/esm/icons/settings-2.mjs";
 import Square from "lucide-react/dist/esm/icons/square.mjs";
-import Trash2 from "lucide-react/dist/esm/icons/trash-2.mjs";
 import LoaderCircle from "lucide-react/dist/esm/icons/loader-circle.mjs";
 import type { useTextChat } from "../hooks/useTextChat";
 import { notify } from "../lib/notifications";
@@ -21,11 +20,11 @@ type TextStudio = ReturnType<typeof useTextChat>;
 export function TextWorkspace({ studio, sidebarCollapsed = false }: { studio: TextStudio; sidebarCollapsed?: boolean }) {
   const { activeThread, status, statusError, actionError, busy } = studio;
   const visibleError = actionError ?? statusError ?? status.registryError ?? (!status.runtimeAvailable ? status.runtimeError : null);
-  const [panel, setPanel] = useState<"settings" | "models" | null>(null);
+  const [panel, setPanel] = useState<"settings" | null>(null);
+  const openModels = () => { setPanel(null); window.dispatchEvent(new CustomEvent("fern-models", { detail: "text" })); };
   const panelRef = useRef<HTMLElement>(null);
   const panelTrigger = useRef<HTMLButtonElement>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
-  const [removingModel, setRemovingModel] = useState<string | null>(null);
   const [infoId, setInfoId] = useState<string | null>(null);
   const [showScrollButton, setShowScrollButton] = useState(false);
   const feedRef = useRef<HTMLDivElement>(null);
@@ -121,7 +120,7 @@ export function TextWorkspace({ studio, sidebarCollapsed = false }: { studio: Te
           <div className="text-empty-state">
             <h3>What can I help with?</h3>
             {checking ? <p role="status">Checking local models…</p> : !installedModels.length && <p>Download a model to start chatting on your device.</p>}
-            {!checking && !installedModels.length && <button type="button" className="text-secondary-button" onClick={() => setPanel("models")}><Plus size={16} aria-hidden="true" /> Get recommended model</button>}
+            {!checking && !installedModels.length && <button type="button" className="text-secondary-button" onClick={openModels}><Plus size={16} aria-hidden="true" /> Browse models</button>}
 
           </div>
         ) : null}
@@ -177,7 +176,7 @@ export function TextWorkspace({ studio, sidebarCollapsed = false }: { studio: Te
             </div>
             <div className="composer-send-tools">
               <TextMenu label="Text model" value={selectedModel} disabled={busy} options={modelOptions} onSelect={studio.selectModel}>
-                <button type="button" role="menuitem" onClick={() => setPanel("models")}>Manage local models</button>
+                <button type="button" role="menuitem" onClick={openModels}>Manage models</button>
               </TextMenu>
             {runningHere ? <button type="button" className="composer-submit is-stop" disabled={status.job.status !== "running"} onClick={() => void studio.stop()} aria-label="Stop generation" title="Stop generation"><Square size={14} fill="currentColor" aria-hidden="true" /></button> : <button type="submit" className="composer-submit" disabled={busy || !activeThread.draft.trim() || !modelAvailable || !status.runtimeAvailable || needsRetry} aria-label="Send message" title={activity || unavailableReason || "Send message"}>{studio.submitting || pendingHere ? <LoaderCircle className="spinner" size={16} aria-hidden="true" /> : <Send size={20} aria-hidden="true" />}</button>}
             </div>
@@ -190,7 +189,7 @@ export function TextWorkspace({ studio, sidebarCollapsed = false }: { studio: Te
         <div className="inspector-heading">
           <div className="inspector-tabs" aria-label="Chat inspector views">
             <button type="button" aria-pressed={panel === "settings"} onClick={() => setPanel("settings")}>Settings</button>
-            <button type="button" aria-pressed={panel === "models"} onClick={() => setPanel("models")}>Models</button>
+            <button type="button" onClick={openModels}>Manage models</button>
           </div>
           <button type="button" className="btn btn-icon" aria-label="Close chat settings" onClick={closePanel}><X size={16} aria-hidden="true" /></button>
         </div>
@@ -205,28 +204,6 @@ export function TextWorkspace({ studio, sidebarCollapsed = false }: { studio: Te
             <label>Temperature<small className="text-setting-help">Lower for focused answers, higher for variety.</small><div className="text-range-control"><input aria-label="Temperature" type="range" min="0" max="2" step="0.05" value={activeThread.temperature} disabled={busy} onChange={(event) => studio.updateThread(activeThread.id, { temperature: Number(event.target.value) })} /><output>{activeThread.temperature.toFixed(2)}</output></div></label>
             <label>Top P<small className="text-setting-help">Limits the range of words the model considers.</small><div className="text-range-control"><input aria-label="Top P" type="range" min="0.1" max="1" step="0.05" value={activeThread.topP} disabled={busy} onChange={(event) => studio.updateThread(activeThread.id, { topP: Number(event.target.value) })} /><output>{activeThread.topP.toFixed(2)}</output></div></label>
           </div>
-        </div>}
-        {panel === "models" && <div className="text-inspector-body">
-        <p className="text-panel-description">Download a model or add one from your computer.</p>
-        {visibleError && <p className="text-error" role="alert">{visibleError}</p>}
-        {status.recommendedModels?.map(model => {
-          const install = status.modelInstall;
-          const installing = install?.modelId === model.id && ["downloading", "preparing"].includes(install.status);
-          const failed = install?.modelId === model.id && install.status === "failed";
-          return <div className="text-recommended-model" key={model.id}>
-            <div className="text-recommended-model-copy"><strong>{model.name}</strong><span>Recommended</span><span>{(model.bytes / 1024 ** 3).toFixed(2)} GiB · OpenVINO</span>
-              {installing && <span role="status">{install?.phase ?? "Installing…"}</span>}
-              {failed && <span className="text-error" role="alert">{install?.error ?? "Installation failed."}</span>}
-            </div>
-            <button type="button" className="text-secondary-button" disabled={busy || model.installed} onClick={() => void studio.installRecommendedModel(model.id)}>{model.installed ? "Installed" : installing ? "Installing…" : "Download"}</button>
-          </div>;
-        })}
-        <div className="text-model-library">{models.map(model => <div className="text-library-row" key={model.id}>
-          <div><strong>{model.name}</strong><small title={model.path}>{model.path.split(/[\\/]/).filter(Boolean).slice(-2).join("/")}</small>{!model.installed && <span className="text-error">Folder unavailable</span>}</div>
-          <button type="button" className="text-icon-button" disabled={busy} aria-label={`Remove ${model.name}`} title="Remove from library" onClick={() => setRemovingModel(model.id)}><Trash2 size={16} aria-hidden="true" /></button>
-          {removingModel === model.id && <div className="text-remove-confirm"><p>Remove this model from Fern? The files on disk will be kept.</p><button type="button" className="text-secondary-button" onClick={() => setRemovingModel(null)}>Cancel</button><button type="button" className="text-secondary-button" disabled={busy} onClick={async () => { if (await studio.deleteModel(model.id)) setRemovingModel(null); }}>Remove model</button></div>}
-        </div>)}</div>
-        <button type="button" className="text-secondary-button" disabled={busy} onClick={() => void studio.importModel()}><Plus size={16} aria-hidden="true" />Add local model</button>
         </div>}
       </aside>}
       </div>

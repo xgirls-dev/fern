@@ -23,8 +23,10 @@ DEFAULT_WIDTH = int(SPEC["width"])
 DEFAULT_HEIGHT = int(SPEC["height"])
 DEFAULT_STEPS = int(SPEC["steps"])
 DEFAULT_GUIDANCE = float(SPEC["guidance"])
-ROOT = Path(__file__).resolve().parents[1]
-MODELS_ROOT = Path(os.environ.get("FERN_MODELS_ROOT") or ROOT / "models").resolve()
+# Packaged scripts live under resources; all model/cache/output paths use the
+# writable data root selected by Electron, just as the Klein adapter does.
+ROOT = flux2.ROOT
+MODELS_ROOT = flux2.MODELS_ROOT
 MODEL_DIR = MODELS_ROOT / SPEC["folder"]
 CACHE_DIR = ROOT / ".cache" / "openvino" / MODEL_KEY
 
@@ -92,7 +94,7 @@ def model_status(device: str = DEFAULT_DEVICE, model_key: str = MODEL_KEY) -> di
         defaultHeight=DEFAULT_HEIGHT,
         defaultSteps=DEFAULT_STEPS,
         defaultGuidance=DEFAULT_GUIDANCE,
-        sampler="EDM DPM-Solver multistep",
+        sampler="DPM++ 2M Karras",
     )
     for adapter in status.get("adapters", []):
         adapter.update(
@@ -103,7 +105,7 @@ def model_status(device: str = DEFAULT_DEVICE, model_key: str = MODEL_KEY) -> di
         )
     if not installed(MODELS_ROOT, model_key):
         status["runtimeReady"] = False
-        status["runtimeNote"] = f"Install {display_name(model_key)} from Preferences before generating."
+        status["runtimeNote"] = f"Install {display_name(model_key)} from Models before generating."
     return status
 
 
@@ -115,6 +117,31 @@ def release_pipeline() -> None:
     gc.collect()
 
 
+def configure_pony_scheduler(pipeline: Any, log: Callable[[str], None] | None = None) -> None:
+    """Repair the legacy Pony export's EDM label for the SDXL epsilon UNet.
+
+    EDM sends preconditioned log-sigma timesteps to an EDM-trained denoiser.
+    This Pony checkpoint uses SDXL's standard beta schedule and timesteps.
+    Keep the downloaded artifacts intact and correct only this runtime object.
+    """
+    if type(pipeline.scheduler).__name__ != "EDMDPMSolverMultistepScheduler":
+        return
+    from diffusers import DPMSolverMultistepScheduler
+
+    config = pipeline.scheduler.config
+    pipeline.scheduler = DPMSolverMultistepScheduler(
+        num_train_timesteps=config.get("num_train_timesteps", 1000),
+        beta_start=config.get("beta_start", 0.00085),
+        beta_end=config.get("beta_end", 0.012),
+        beta_schedule=config.get("beta_schedule", "scaled_linear"),
+        prediction_type="epsilon", algorithm_type="dpmsolver++",
+        solver_order=2, solver_type="midpoint", use_karras_sigmas=True,
+        lower_order_final=True, final_sigmas_type="zero",
+    )
+    if log:
+        log("Using DPM++ 2M Karras for the Pony SDXL epsilon checkpoint.")
+
+
 def _load_pipeline(device: str, log: Callable[[str], None] | None, model_key: str) -> Any:
     global _PIPELINE, _PIPELINE_DEVICE, _PIPELINE_MODEL_KEY
     if not is_model(model_key):
@@ -124,11 +151,11 @@ def _load_pipeline(device: str, log: Callable[[str], None] | None, model_key: st
     cache_dir = ROOT / ".cache" / "openvino" / model_key
     selected = normalize_device(device)
     if selected == "AUTO":
-        selected = model_status(DEFAULT_DEVICE)["selectedDevice"]
+        selected = model_status(DEFAULT_DEVICE, model_key)["selectedDevice"]
     if selected not in (INTEL_GPU, NVIDIA_GPU, CPU):
         raise ValueError("Tame Pony requires a supported OpenVINO device.")
     if not installed(MODELS_ROOT, model_key):
-        raise RuntimeError("Tame Pony model files are incomplete. Repair the model in Preferences.")
+        raise RuntimeError("Tame Pony model files are incomplete. Repair the model in Models.")
     if _PIPELINE is not None and _PIPELINE_DEVICE == selected and _PIPELINE_MODEL_KEY == model_key:
         return _PIPELINE
 
@@ -156,12 +183,10 @@ def _load_pipeline(device: str, log: Callable[[str], None] | None, model_key: st
         log(f"Loading {display_name(model_key)} on {device_label(selected)}…")
     from optimum.intel import OVStableDiffusionXLPipeline
 
-    # Keep the scheduler from the export's model_index and scheduler_config.
-    # The upstream Pony pipeline uses the checkpoint's EDMDPMSolver scheduler;
-    # swapping it for a different sampler can turn valid inference into noise.
     pipeline = OVStableDiffusionXLPipeline.from_pretrained(
         str(model_dir), device=openvino_device, ov_config=ov_config
     )
+    configure_pony_scheduler(pipeline, log)
     # The pinned SDXL exports declare force_upcast=false. Keep Diffusers from
     # calling torch.nn.Module-only VAE upcasting on Optimum's OVModelVae.
     pipeline.vae.config.force_upcast = False
@@ -169,8 +194,7 @@ def _load_pipeline(device: str, log: Callable[[str], None] | None, model_key: st
     # catalog pipeline classes may still be recorded as OVDiffusionPipeline.
     _patch_openvino_vae_device_lookup()
     pipeline.set_progress_bar_config(disable=True)
-    if cache_enabled:
-        storage_manager.touch_cache(cache_dir)
+    storage_manager.touch_cache(cache_dir)
     _PIPELINE = pipeline
     _PIPELINE_DEVICE = selected
     _PIPELINE_MODEL_KEY = model_key

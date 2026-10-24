@@ -34,7 +34,7 @@ export function TextMenu({ label, value, options, onSelect, disabled, children }
       }
     }}>
       {options.map(option => <button key={option.value} type="button" role="menuitemradio" aria-checked={option.value === value} disabled={option.disabled} onClick={() => { onSelect(option.value); setOpen(false); trigger.current?.focus(); }}>
-        <span><strong>{option.label}</strong>{option.description && <small>{option.description}</small>}</span>{option.value === value && <Check size={15} aria-hidden="true" />}
+        <span className="composer-model-label" title={option.label}>{option.label}</span>{option.description ? <span className="composer-model-unavailable">{option.description}</span> : option.value === value ? <Check size={15} aria-hidden="true" /> : null}
       </button>)}
       {children && <div className="text-menu-extra" onClick={() => { trigger.current?.focus(); setOpen(false); }}>{children}</div>}
     </div>}

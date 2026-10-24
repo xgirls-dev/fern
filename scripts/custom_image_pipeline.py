@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import gc
+import json
 import importlib.util
 import time
 import threading
@@ -50,7 +51,7 @@ def is_model(model_id: str) -> bool:
 def model_spec(model_id: str) -> dict[str, Any]:
     item = registry.MODEL_REGISTRY.get(model_id)
     if not item or not item.get("installed"):
-        raise ValueError("The custom image model folder is unavailable. Add its export folder again in Preferences.")
+        raise ValueError("The custom image model folder is unavailable. Add its export folder again in Models.")
     return item
 
 
@@ -160,6 +161,10 @@ def _load_pipeline(model_id: str, device: str, log: Callable[[str], None] | None
         if item["family"] == "sdxl":
             _patch_vae_device_lookup("diffusers.pipelines.stable_diffusion_xl.pipeline_stable_diffusion_xl")
             pipeline = OVStableDiffusionXLPipeline.from_pretrained(item["path"], device=openvino_device, ov_config=ov_config)
+            metadata = json.loads((Path(item["path"]) / "model_index.json").read_text(encoding="utf-8"))
+            if metadata.get("_name_or_path") == "John6666/tame-pony-the-authenticity-machine-v25-sdxl":
+                from tame_pony_pipeline import configure_pony_scheduler
+                configure_pony_scheduler(pipeline, log)
         else:
             _patch_vae_device_lookup("diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion")
             pipeline = OVStableDiffusionPipeline.from_pretrained(item["path"], device=openvino_device, ov_config=ov_config)
@@ -172,7 +177,7 @@ def _load_pipeline(model_id: str, device: str, log: Callable[[str], None] | None
     else:
         import openvino_genai as genai
 
-        _PIPELINE = genai.Text2ImagePipeline(item["path"], openvino_device)
+        pipeline = genai.Text2ImagePipeline(item["path"], openvino_device)
         _PIPELINE_KIND = "genai"
     _PIPELINE = pipeline
     _PIPELINE_KEY = key

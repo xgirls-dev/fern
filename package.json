@@ -1,6 +1,6 @@
 {
   "name": "fern",
-  "version": "0.1.29",
+  "version": "0.1.30",
   "private": true,
   "description": "Fern local-first desktop studio for OpenVINO image, text, and audio models",
   "license": "MIT",
@@ -14,6 +14,7 @@
     "typecheck": "npm run typecheck --workspace @fern/desktop",
     "check:python": "python -m compileall -q scripts",
     "test:python": "python -m unittest discover -s tests -p \"test_*.py\"",
+    "test:ui": "node scripts/test-renderer.mjs",
     "check": "npm run typecheck && npm run check:python && npm run test:python && npm run build",
     "package": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-installer.ps1"
   },

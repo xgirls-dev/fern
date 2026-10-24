@@ -3,9 +3,11 @@ import { fixture } from './ui-fixture.mjs';
 const textStatus = { models: [{ id: 'qwen', name: 'Qwen 2.5 · 0.5B', path: 'C:/models/qwen2.5-0.5b-instruct-int4', installed: true }], runtimeAvailable: true, runtimeError: null, devices: ['AUTO','GPU','CPU'], job: {id:null,status:'idle'} };
 const {page, errors, dir, close} = await fixture({textStatus});
 try {
-  await page.getByRole('button',{name:'New text thread',exact:true}).click();
+  await page.locator('.sidebar-new-menu > button').click();
+  await page.getByRole('menuitem',{name:'New text thread',exact:true}).click();
   await page.getByRole('heading',{name:'What can I help with?'}).waitFor();
-  await page.getByRole('button',{name:'New text thread',exact:true}).click();
+  await page.locator('.sidebar-new-menu > button').click();
+  await page.getByRole('menuitem',{name:'New text thread',exact:true}).click();
   assert.equal(await page.getByRole('button',{name:'Text thread: New text thread',exact:true}).count(), 1, 'Empty threads should be reused');
   await page.locator('.sidebar-thread-row.is-active').hover();
   await page.getByRole('button',{name:'Delete text thread New text thread',exact:true}).click();
@@ -47,10 +49,10 @@ try {
   await page.keyboard.press('ArrowDown');
   await page.getByRole('menu').waitFor();
   await page.screenshot({path:`${dir}/text-design-menu.png`});
-  assert.equal(await page.getByRole('menuitem',{name:'Manage local models',exact:true}).count(), 1);
+  assert.equal(await page.getByRole('menuitem',{name:'Manage models',exact:true}).count(), 1);
   await page.keyboard.press('Escape');
   await page.getByRole('button',{name:'Generation settings',exact:true}).click();
-  await page.getByRole('button',{name:'Models',exact:true}).click();
+  await page.getByRole('complementary',{name:'Chat settings panel'}).getByRole('button',{name:'Manage models',exact:true}).click();
   await page.screenshot({path:`${dir}/text-design-library.png`});
   await page.keyboard.press('Escape');
   await page.addInitScript(()=>{

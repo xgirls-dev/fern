@@ -74,7 +74,7 @@ try {
     "Original image prompt 2",
   );
   await page.locator(".workspace-header").getByRole("button", { name: "Image settings", exact: true }).click();
-  await page.locator("summary").filter({ hasText: "Reference Image" }).click();
+  await page.locator("summary").filter({ hasText: "References" }).click();
   assert.equal(
     await page.getByRole("button", { name: /Use Current Output/i }).isEnabled(),
     true,

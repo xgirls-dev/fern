@@ -40,12 +40,14 @@ try {
     }
   });
   await page.evaluate(path => { window.studio.pickTextModelFolder = async () => path; }, model);
-  await page.getByRole('button', {name:'New text thread', exact:true}).click();
+  await page.locator('.sidebar-new-menu > button').click();
+  await page.getByRole('menuitem', {name:'New text thread', exact:true}).click();
   await page.getByRole('button', {name:'Generation settings', exact:true}).click();
-  await page.getByRole('button', {name:'Models', exact:true}).click();
+  await page.getByRole('complementary', {name:'Chat settings panel'}).getByRole('button', {name:'Manage models', exact:true}).click();
   await page.getByRole('button', {name:'Add local model', exact:true}).click();
   console.log('Import requested');
-  await page.getByRole('button',{name:'Settings',exact:true}).click();
+  await page.locator('.sidebar-text-threads .sidebar-thread-button').first().click();
+  await page.getByRole('button', {name:'Generation settings', exact:true}).click();
   await page.getByLabel('Temperature',{exact:true}).focus();
   await page.keyboard.press('Home');
   await page.getByRole('button',{name:'Close chat settings',exact:true}).click();

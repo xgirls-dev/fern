@@ -3,7 +3,7 @@ import { fixture } from "./ui-fixture.mjs";
 
 const { page, state, errors, close } = await fixture();
 try {
-  await page.getByRole("button", { name: "Image settings", exact: true }).click();
+  await page.locator(".workspace-header").getByRole("button", { name: "Image settings", exact: true }).click();
   await page.locator("#width").fill("720");
   await page.locator("#height").fill("1280");
 

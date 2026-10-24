@@ -1,5 +1,6 @@
 import type { StudioSettings } from "./types";
 import { normalizeQwenDimension } from "./imageDimensions";
+import type { ReferenceAttachment } from "./reference";
 
 const THREADS_KEY = "fern-threads:v1";
 const REFERENCES_DB = "fern-thread-references";
@@ -37,7 +38,9 @@ export function normalizeImageSettings(settings: StudioSettings): StudioSettings
     };
   }
   if (settings.model?.startsWith("custom-")) {
-    const dimension = (value: number) => Number.isFinite(value) ? Math.max(256, Math.min(1920, Math.round(value / 16) * 16)) : 1024;
+    // Preserve valid SDXL 8-pixel sizes; the loaded family's limits validate
+    // stricter 16/32-pixel models before generation.
+    const dimension = (value: number) => Number.isFinite(value) ? Math.max(256, Math.min(1920, Math.round(value / 8) * 8)) : 1024;
     return { ...settings, model: settings.model, width: dimension(settings.width), height: dimension(settings.height), steps: Number.isFinite(settings.steps) ? Math.max(1, Math.min(50, Math.round(settings.steps))) : 30, guidance: Number.isFinite(settings.guidance) ? Math.max(0, Math.min(20, settings.guidance)) : 7, batchSize: Number.isFinite(settings.batchSize) ? Math.max(1, Math.min(4, Math.round(settings.batchSize))) : 1, device: ["AUTO", "INTEL_GPU", "CPU"].includes(settings.device) ? settings.device : "AUTO" };
   }
   if (settings.model === "9b" || settings.model === "4b") return settings;
@@ -141,7 +144,7 @@ function referencesDatabase(): Promise<IDBDatabase> {
   });
 }
 
-export async function readThreadReference(id: string): Promise<string> {
+export async function readThreadReferences(id: string): Promise<ReferenceAttachment[]> {
   await referenceWrites.catch(() => undefined);
   const db = await referencesDatabase();
   return new Promise((resolve, reject) => {
@@ -149,7 +152,8 @@ export async function readThreadReference(id: string): Promise<string> {
     const request = transaction.objectStore("images").get(id);
     transaction.oncomplete = () => {
       db.close();
-      resolve(typeof request.result === "string" ? request.result : "");
+      const value: unknown = request.result;
+      resolve(typeof value === "string" ? value ? [{ dataUrl: value, label: "Reference image" }] : [] : Array.isArray(value) ? value.filter((item): item is ReferenceAttachment => item && typeof item.dataUrl === "string" && typeof item.label === "string").slice(0, 4) : []);
     };
     transaction.onabort = () => {
       db.close();
@@ -160,14 +164,14 @@ export async function readThreadReference(id: string): Promise<string> {
 
 async function persistReference(
   id: string | null,
-  image: string,
+  image: string | ReferenceAttachment[],
 ): Promise<void> {
   const db = await referencesDatabase();
   return new Promise((resolve, reject) => {
     const transaction = db.transaction("images", "readwrite");
     const store = transaction.objectStore("images");
     if (id === null) store.clear();
-    else if (image) store.put(image, id);
+    else if (typeof image === "string" ? Boolean(image) : image.length > 0) store.put(image, id);
     else store.delete(id);
     transaction.oncomplete = () => {
       db.close();
@@ -183,7 +187,7 @@ async function persistReference(
 let referenceWrites: Promise<void> = Promise.resolve();
 export function writeThreadReference(
   id: string | null,
-  image: string,
+  image: string | ReferenceAttachment[],
 ): Promise<void> {
   const next = referenceWrites
     .catch(() => undefined)

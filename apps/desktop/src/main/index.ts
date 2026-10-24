@@ -79,7 +79,7 @@ function createWindow(apiBaseUrl?: string): BrowserWindow {
   });
 
   window.once("ready-to-show", () => {
-    window.show();
+    if (process.env.FERN_E2E_HEADLESS !== "1") window.show();
   });
 
   window.webContents.on("before-input-event", (event, input) => {
@@ -491,7 +491,7 @@ async function bootstrap(): Promise<void> {
   } catch (error) {
     if (error instanceof RuntimeSetupCancelled) { app.quit(); return; }
     console.error("Fern runtime setup failed:", error);
-    await dialog.showErrorBox(
+    if (process.env.FERN_E2E_HEADLESS !== "1") dialog.showErrorBox(
       "Fern",
       error instanceof Error
         ? error.message

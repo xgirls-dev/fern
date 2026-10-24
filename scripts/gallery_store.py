@@ -81,6 +81,7 @@ def enrich_image_record(record: dict[str, Any], metadata: dict[str, Any] | None 
     for key in (
         "referenceUsed",
         "referenceUrl",
+        "referenceUrls",
         "threadId",
         "prompt",
         "negativePrompt",

@@ -15,6 +15,7 @@ import type { ModelStatus, StudioSettings } from "../lib/types";
 
 import { notify } from "../lib/notifications";
 import { readReference, validateReference } from "../lib/reference";
+import { imageDimensionLimits } from "../lib/imageDimensions";
 
 const STYLE_CHIPS = [
   {
@@ -120,6 +121,7 @@ interface GenerationControlsProps {
   settings: StudioSettings;
   modelStatus: ModelStatus | null;
   referenceImage: string;
+  referenceCount?: number;
   referenceLabel: string;
   onSettingsChange: (patch: Partial<StudioSettings>) => void;
   onReferenceChange: (dataUrl: string, label: string) => void;
@@ -198,6 +200,7 @@ export function GenerationControls({
   settings,
   modelStatus,
   referenceImage,
+  referenceCount = referenceImage ? 1 : 0,
   referenceLabel,
   onSettingsChange,
   onReferenceChange,
@@ -209,11 +212,8 @@ export function GenerationControls({
   const isQwenTurbo = settings.model === "qwen21-turbo";
   const isFlux3Klein = settings.model === "flux3-klein";
   const isCustomImage = settings.model?.startsWith("custom-") ?? false;
-  const isTamePony = settings.model === "tame-pony-v25-sdxl" || settings.model === "tame-pony-v25-sdxl-int8";
   const hasFixedSampling = isQwenTurbo || isFlux3Klein;
-  const dimensionMultiple = isCustomImage ? modelStatus?.dimensionMultiple ?? 16 : isQwenTurbo ? 32 : isTamePony ? 8 : 16;
-  const minimumDimension = isCustomImage ? modelStatus?.minimumDimension ?? 256 : isTamePony ? 512 : isFlux3Klein ? 1024 : 256;
-  const maximumDimension = isCustomImage ? modelStatus?.maximumDimension ?? 1920 : isTamePony ? 1536 : isFlux3Klein ? 1024 : 1920;
+  const { multiple: dimensionMultiple, minimum: minimumDimension, maximum: maximumDimension } = imageDimensionLimits(settings.model, modelStatus);
   const availableSizePresets = useMemo(
     () =>
       SIZE_PRESETS.filter((preset) => {
@@ -667,8 +667,8 @@ export function GenerationControls({
 
           {supportsReference ? (
             <ControlSection
-              title="Reference Image"
-              summary={referenceImage ? "Image loaded" : "Optional"}
+              title="References"
+              summary={referenceCount ? `${referenceCount} attached` : "Optional"}
               defaultOpen={Boolean(referenceImage)}
             >
               <div
@@ -702,7 +702,7 @@ export function GenerationControls({
                 <div className="dropzone-copy">
                   <strong>
                     {referenceImage
-                      ? "Reference loaded"
+                      ? `${referenceCount} reference${referenceCount === 1 ? "" : "s"} attached`
                       : "Add a reference image"}
                   </strong>
                   <span>
@@ -724,7 +724,7 @@ export function GenerationControls({
                     });
                   }}
                 >
-                  {referenceImage ? "Replace image" : "Choose image"}
+                  {referenceImage && ["9b", "4b"].includes(settings.model ?? "9b") ? "Add image" : referenceImage ? "Replace image" : "Choose image"}
                 </button>
               </div>
               <div className="meta-actions">
@@ -733,7 +733,7 @@ export function GenerationControls({
                   className="btn btn-secondary"
                   onClick={onClearReference}
                 >
-                  Clear Image
+                  Clear references
                 </button>
                 <button
                   type="button"

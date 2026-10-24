@@ -22,7 +22,7 @@ try {
  await page.waitForFunction(()=>document.querySelector('.composer-model-trigger')?.textContent?.includes('Klein 9B'));
  assert.equal(await choose().count(),1);assert((await choose().innerText()).includes('Klein 9B'));
  assert.equal(await page.locator('.prompt-composer select').count(),0);
- assert.equal(await page.getByRole('button',{name:'Models',exact:true}).count(),0);
+ assert.equal(await page.getByRole('button',{name:'Models',exact:true}).count(),1);
  await page.locator('.prompt-composer').getByRole('button',{name:'Image settings',exact:true}).click();
  await oneRow();await page.screenshot({path:`${dir}/composer-one-model.png`});
  state.installedModels=[{id:'9b',label:'Klein 9B'},{id:'4b',label:'Klein 4B'}];await refreshed();await choose().waitFor();
@@ -31,8 +31,8 @@ try {
  await contained('.composer-model-menu','right');
  await page.screenshot({path:`${dir}/composer-model-popover.png`});
  await page.keyboard.press('Escape');assert.equal(await menu.count(),0);assert(await choose().evaluate(el=>el===document.activeElement));
- await choose().click();await page.locator('#prompt').click();assert.equal(await menu.count(),0);
- await choose().focus();await page.keyboard.press('ArrowDown');await page.keyboard.press('End');await page.keyboard.press('Enter');assert.equal(await menu.count(),0);assert((await choose().innerText()).includes('4B'));
+ await choose().click();await page.locator('#prompt').click({ position: { x: 8, y: 8 } });assert.equal(await menu.count(),0);
+ await choose().focus();await page.keyboard.press('ArrowDown');await page.keyboard.press('ArrowDown');await page.keyboard.press('Enter');assert.equal(await menu.count(),0);assert((await choose().innerText()).includes('4B'));
  await page.getByRole('button',{name:'Seed settings',exact:true}).click();await contained('.seed-popover','left');await page.screenshot({path:`${dir}/composer-seed-popover.png`});await page.getByRole('textbox',{name:'Seed',exact:true}).fill('1234567890123');await choose().click();assert.equal(await page.getByRole('dialog',{name:'Seed settings',exact:true}).count(),0);
  for(const width of [1440,1080]){
   await page.setViewportSize({width,height:720});await contained('.composer-model-menu','right');

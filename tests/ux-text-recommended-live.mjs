@@ -55,11 +55,12 @@ try {
     catch (error) { console.error(`API proxy failure: ${path}`, error); await route.abort().catch(() => {}); }
   });
 
-  await page.getByRole('button', { name: 'New text thread', exact: true }).click();
-  await page.getByRole('button', { name: 'Get recommended model', exact: true }).click();
-  await page.getByRole('complementary', { name: 'Chat settings panel' }).getByRole('button', { name: 'Download', exact: true }).click();
-  await page.getByRole('complementary', { name: 'Chat settings panel' }).getByRole('button', { name: 'Installed', exact: true }).waitFor({ timeout: 30000 });
-  await page.getByRole('button', { name: 'Close chat settings', exact: true }).click();
+  await page.locator('.sidebar-new-menu > button').click();
+  await page.getByRole('menuitem', { name: 'New text thread', exact: true }).click();
+  await page.getByRole('button', { name: 'Browse models', exact: true }).click();
+  await page.getByRole('button', { name: 'Download', exact: true }).click();
+  await page.getByRole('button', { name: 'Installed', exact: true }).waitFor({ timeout: 30000 });
+  await page.locator('.sidebar-text-threads .sidebar-thread-button').first().click();
   await page.getByRole('button', { name: 'Text model', exact: true }).waitFor();
   const installed = await apiJson('/api/text/status');
   assert.equal(installed.recommendedModels[0].installed, true);

@@ -11,11 +11,27 @@ const scratchRoot = await mkdtemp(path.join(os.tmpdir(), "fern-electron-e2e-"));
 const customModelPath = path.join(scratchRoot, "fixture-sdxl-openvino");
 const modelIndexPath = path.join(customModelPath, "model_index.json");
 const profilePath = path.join(scratchRoot, "profile");
+const packagedExecutable = process.env.FERN_E2E_EXECUTABLE;
 let electronApp;
 const pageErrors = [];
 const consoleErrors = [];
 let validatingRejectedRepository = false;
 let succeeded = false;
+
+async function captureWindow(page, targetPath) {
+  if (!packagedExecutable) {
+    await page.screenshot({ path: targetPath });
+    return;
+  }
+  // Native capture keeps a packaged window hidden while waking its compositor.
+  // CDP screenshots can stall when production DevTools are disabled.
+  const window = await electronApp.browserWindow(page);
+  const png = await window.evaluate(async (browserWindow) => {
+    const image = await browserWindow.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true });
+    return image.toPNG().toString("base64");
+  });
+  await writeFile(targetPath, Buffer.from(png, "base64"));
+}
 
 try {
   await mkdir(path.join(customModelPath, "unet"), { recursive: true });
@@ -27,6 +43,7 @@ try {
     ...process.env,
     FERN_ROOT: repoRoot,
     INTEL_IRIS_ROOT: repoRoot,
+    FERN_E2E_HEADLESS: "1",
     FERN_CUSTOM_IMAGE_REGISTRY: path.join(scratchRoot, "custom-image-models.json"),
     FERN_TEXT_MODEL_REGISTRY: path.join(scratchRoot, "text-models.json"),
     HF_HOME: path.join(scratchRoot, "huggingface"),
@@ -34,16 +51,33 @@ try {
   delete env.ELECTRON_RUN_AS_NODE;
 
   electronApp = await electron.launch({
-    args: [path.join(desktopRoot, "out", "main", "index.js"), `--user-data-dir=${profilePath}`, "--disable-gpu", "--disable-gpu-compositing", "--use-gl=swiftshader", "--use-angle=swiftshader", "--disable-features=Vulkan"],
+    ...(packagedExecutable ? { executablePath: packagedExecutable } : {}),
+    args: [...(packagedExecutable ? [] : [path.join(desktopRoot, "out", "main", "index.js")]), `--user-data-dir=${profilePath}`, "--disable-gpu", "--disable-gpu-compositing", "--use-gl=swiftshader", "--use-angle=swiftshader", "--disable-features=Vulkan"],
     cwd: repoRoot,
     env,
-    timeout: 90_000,
+    timeout: packagedExecutable ? 180_000 : 90_000,
   });
   electronApp.process().stderr?.on("data", (chunk) => process.stderr.write(`[electron] ${chunk}`));
   electronApp.process().on("exit", (code, signal) => console.error(`Electron exited: code=${code} signal=${signal}`));
 
-  const page = await electronApp.firstWindow();
+  let page = await electronApp.firstWindow();
+  if (packagedExecutable) {
+    const deadline = Date.now() + 180_000;
+    let found = false;
+    while (Date.now() < deadline && !found) {
+      for (const candidate of electronApp.windows()) {
+        try {
+          if (await candidate.evaluate(() => typeof window.studio?.getApiBaseUrl === "function")) { page = candidate; found = true; break; }
+        } catch { /* Runtime setup windows close when the main window opens. */ }
+      }
+      if (!found) await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    assert.ok(found, "Packaged Fern should finish runtime extraction and open its main renderer");
+    assert.equal(await electronApp.evaluate(({ app }) => app.isPackaged), true, "This run must use the packaged executable");
+  }
   page.on("pageerror", (error) => pageErrors.push(error.message));
+  const browserWindow = await electronApp.browserWindow(page);
+  await browserWindow.evaluate((window) => window.webContents.setBackgroundThrottling(false));
   page.on("console", (message) => {
     if (message.type() === "error") {
       const text = message.text();
@@ -53,7 +87,7 @@ try {
   });
 
   const apiBaseUrl = await page.evaluate(() => window.studio.getApiBaseUrl());
-  const apiDeadline = Date.now() + 65_000;
+  const apiDeadline = Date.now() + (packagedExecutable ? 180_000 : 65_000);
   let healthStatus = 0;
   let lastHealthError = "";
   while (Date.now() < apiDeadline) {
@@ -74,11 +108,24 @@ try {
   assert.equal(bridge.url, apiBaseUrl, "The preload bridge should keep the assigned API URL");
   assert.equal(healthStatus, 200, `Fern backend should become healthy (${lastHealthError})`);
   assert.ok(bridge.isolated, "Renderer should expose only the context-isolated preload bridge");
-  await page.screenshot({ path: path.join(scratchRoot, "electron-create.png") });
+  assert.equal(await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isVisible()), false, "Electron smoke must keep its isolated window hidden");
+  await captureWindow(page, path.join(scratchRoot, "electron-create.png"));
+  const referencePng = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=", "base64");
+  await page.getByLabel("Reference image file").setInputFiles([{ name: "reference-one.png", mimeType: "image/png", buffer: referencePng }, { name: "reference-two.png", mimeType: "image/png", buffer: referencePng }]);
+  await expect(page.locator(".composer-reference")).toHaveCount(2);
+  for (let reload = 0; reload < 3; reload += 1) {
+    await page.reload();
+    await expect(page.locator(".composer-reference")).toHaveCount(2);
+  }
+  await page.getByRole("button", { name: "Remove reference 2", exact: true }).click();
+  await page.getByRole("button", { name: "Remove reference 1", exact: true }).click();
 
-  await page.getByRole("button", { name: "Preferences" }).click();
-  await page.getByRole("heading", { name: "Preferences" }).waitFor();
+  await page.getByRole("button", { name: "Models", exact: true }).click();
+  await page.getByRole("heading", { name: "Models", exact: true }).waitFor();
   await page.getByRole("heading", { name: "Image models" }).waitFor();
+  const modelsWidth = await page.locator(".models-view").evaluate((view) => ({ page: view.getBoundingClientRect().width, main: view.closest("main").getBoundingClientRect().width }));
+  assert(Math.abs(modelsWidth.page - modelsWidth.main) <= 2, "Model management must fill the main window content area");
+  await page.getByText("Add custom model", { exact: true }).click();
 
   const familyPicker = page.getByRole("combobox", { name: "Custom image model family" });
   await expect(familyPicker).toHaveValue("sdxl");
@@ -109,9 +156,13 @@ try {
   const modelCard = page.locator("article.model-library-card").filter({ has: page.getByRole("heading", { name: path.basename(customModelPath) }) });
   await modelCard.waitFor({ state: "visible", timeout: 30_000 });
   await modelCard.getByText("Installed · local OpenVINO export linked").waitFor();
-  await page.screenshot({ path: path.join(scratchRoot, "electron-custom-model-installed.png") });
+  await modelCard.scrollIntoViewIfNeeded();
+  await captureWindow(page, path.join(scratchRoot, "electron-custom-model-installed.png"));
+  await mkdir(path.join(repoRoot, "artifacts", "ux-verification"), { recursive: true });
+  await captureWindow(page, path.join(repoRoot, "artifacts", "ux-verification", "electron-models.png"));
 
-  await page.getByRole("button", { name: "New image thread" }).click();
+  await page.locator(".sidebar-new-menu > button").click();
+  await page.getByRole("menuitem", { name: "New image thread" }).click();
   const modelTrigger = page.getByRole("button", { name: "Image model: Klein 9B" });
   await modelTrigger.waitFor();
   await modelTrigger.click();
@@ -129,8 +180,10 @@ try {
   await expect(page.locator("#width")).toHaveAttribute("min", "512");
   await expect(page.locator("#width")).toHaveAttribute("max", "1536");
   await expect(page.locator("#width")).toHaveAttribute("step", "8");
-  await page.getByRole("button", { name: "Preferences" }).click();
+  await page.getByRole("button", { name: "Models", exact: true }).click();
   await page.getByRole("heading", { name: "Image models" }).waitFor();
+  await page.getByText("Add custom model", { exact: true }).click();
+  await expect(modelCard).toBeVisible();
 
   // Cancel is exercised through the same native-dialog IPC boundary and must
   // leave the library unchanged without presenting an error.
@@ -139,7 +192,7 @@ try {
   });
   await page.getByRole("button", { name: "Add local folder" }).click();
   await expect(page.getByRole("button", { name: "Add local folder" })).toBeEnabled();
-  assert.equal(await modelCard.count(), 1, "Cancelling the picker must keep the linked model unchanged");
+  await expect(modelCard).toHaveCount(1);
   assert.equal(await page.getByRole("alert").count(), 0, "Cancelling the picker should not show an error");
 
   await modelCard.getByRole("button", { name: "Remove" }).click();
@@ -153,11 +206,11 @@ try {
   assert.deepEqual(pageErrors, [], `Renderer errors: ${pageErrors.join(" | ")}`);
   assert.deepEqual(consoleErrors, [], `Console errors: ${consoleErrors.join(" | ")}`);
 
-  console.log("Electron smoke passed: main process, real preload/API bridge, family/repository controls and validation, dialog IPC, local model add/remove, composer model selection, cancellation, and source preservation.");
+  console.log("Electron smoke passed: hidden main window, real preload/API bridge, multi-reference persistence, Models navigation, family/repository controls, dialog IPC, local model add/remove, composer model selection, cancellation, and source preservation.");
   console.log(`Isolated profile: ${profilePath}`);
   succeeded = true;
 } finally {
   if (electronApp) await electronApp.close().catch(() => {});
-  if (succeeded) await rm(scratchRoot, { recursive: true, force: true });
+  if (succeeded) await rm(scratchRoot, { recursive: true, force: true, maxRetries: 40, retryDelay: 250 });
   else console.error(`Electron smoke artifacts retained for debugging: ${scratchRoot}`);
 }

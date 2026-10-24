@@ -13,7 +13,7 @@ import {
   createImageThread,
   loadThreadWorkspace,
   normalizeImageSettings,
-  readThreadReference,
+  readThreadReferences,
   saveThreadWorkspace,
   threadTitle,
   writeThreadReference,
@@ -28,6 +28,8 @@ import type {
 } from "../lib/types";
 
 import { notify } from "../lib/notifications";
+import type { ReferenceAttachment } from "../lib/reference";
+import { imageDimensionLimits } from "../lib/imageDimensions";
 
 const SETTINGS_KEY = "fern-studio-settings:v3";
 const LEGACY_SETTINGS_KEYS = [
@@ -175,8 +177,15 @@ export function useStudio() {
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const workspaceDirty = useRef(false);
   const [notice, setNotice] = useState<string | null>(null);
-  const [referenceImage, setReferenceImageState] = useState("");
-  const referenceLabel = activeThread.referenceLabel;
+  const [referenceImages, setReferenceImagesState] = useState<ReferenceAttachment[]>([]);
+  const referenceImagesRef = useRef<ReferenceAttachment[]>([]);
+  const referenceImage = referenceImages[0]?.dataUrl ?? "";
+  const setReferenceImageState = useCallback((image: string) => {
+    const next = image ? [{ dataUrl: image, label: "Reference image" }] : [];
+    referenceImagesRef.current = next;
+    setReferenceImagesState(next);
+  }, []);
+  const referenceLabel = referenceImages.length > 1 ? `${referenceImages.length} reference images` : referenceImages[0]?.label ?? activeThread.referenceLabel;
   const [referenceLoading, setReferenceLoading] = useState(true);
   const referenceRevision = useRef(0);
   const [preview, setPreviewState] = useState<ImageRecord | null>(null);
@@ -293,13 +302,15 @@ export function useStudio() {
     const revision = ++referenceRevision.current;
     setReferenceImageState("");
     setReferenceLoading(true);
-    readThreadReference(id)
-      .then((image) => {
+    readThreadReferences(id)
+      .then((images) => {
         if (
           workspaceRef.current.activeId === id &&
           referenceRevision.current === revision
-        )
-          setReferenceImageState(image);
+        ) {
+          referenceImagesRef.current = images;
+          setReferenceImagesState(images);
+        }
       })
       .catch(() => {
         if (workspaceRef.current.activeId === id)
@@ -316,23 +327,45 @@ export function useStudio() {
       });
   }, [activeThread.id]);
 
-  const setReferenceImage = useCallback(
-    (image: string) => {
+  const setReferenceImages = useCallback(
+    async (images: ReferenceAttachment[]) => {
       const id = activeThread.id;
       if (workspaceRef.current.activeId !== id) return;
-      ++referenceRevision.current;
-      setReferenceImageState(image);
-      setReferenceLoading(false);
-      void writeThreadReference(id, image).catch(() =>
-        setError("Could not save the reference image for this thread."),
-      );
+      const revision = ++referenceRevision.current;
+      const next = images.slice(0, 4);
+      referenceImagesRef.current = next;
+      setReferenceLoading(true);
+      commitWorkspace((current) => ({
+        ...current,
+        threads: current.threads.map((thread) => thread.id === id ? {
+          ...thread,
+          referenceLabel: next.length > 1 ? `${next.length} reference images` : next[0]?.label ?? "No reference image.",
+        } : thread),
+      }));
+      try {
+        // Persist the owning thread before exposing saved attachments. A reload
+        // must not create a new first-run thread or abort an unfinished write.
+        saveThreadWorkspace(workspaceRef.current);
+        await writeThreadReference(id, next);
+        if (workspaceRef.current.activeId === id && referenceRevision.current === revision) {
+          setReferenceImagesState(next);
+        }
+      } catch {
+        setError("Could not save the reference images for this thread.");
+      } finally {
+        if (workspaceRef.current.activeId === id && referenceRevision.current === revision) {
+          setReferenceLoading(false);
+        }
+      }
     },
-    [activeThread.id],
+    [activeThread.id, commitWorkspace],
   );
+  const setReferenceImage = useCallback((image: string) => setReferenceImages(image ? [{ dataUrl: image, label: "Reference image" }] : []), [setReferenceImages]);
 
   const setReferenceLabel = useCallback(
     (label: string) => {
       if (workspaceRef.current.activeId !== activeThread.id) return;
+      if (referenceImagesRef.current.length) setReferenceImages(referenceImagesRef.current.map((item, index) => index === 0 ? { ...item, label } : item));
       commitWorkspace((current) => ({
         ...current,
         threads: current.threads.map((thread) =>
@@ -342,7 +375,7 @@ export function useStudio() {
         ),
       }));
     },
-    [activeThread.id, commitWorkspace],
+    [activeThread.id, commitWorkspace, setReferenceImages],
   );
 
   const setPreview = useCallback(
@@ -771,17 +804,23 @@ export function useStudio() {
       setError("Prompt is required.");
       return;
     }
+    const maxReferences = ["9b", "4b"].includes(settings.model ?? "9b") ? 4 : settings.model === "qwen21-turbo" ? 1 : 0;
+    if (referenceImages.length > maxReferences) {
+      setError(maxReferences ? `This model supports up to ${maxReferences} reference image${maxReferences === 1 ? "" : "s"}. Remove extra attachments or select Klein.` : "This model generates from text only. Remove the references or select Klein to edit them.");
+      return;
+    }
     const invalid: Record<string, string> = {};
-    const dimensionMultiple = 16;
+    const limits = imageDimensionLimits(settings.model, status?.model);
+    const dimensionMultiple = limits.multiple;
     for (const key of ["width", "height"] as const) {
       const value = settings[key];
       if (
         !Number.isInteger(value) ||
-        value < 256 ||
-        value > 1920 ||
+        value < limits.minimum ||
+        value > limits.maximum ||
         value % dimensionMultiple !== 0
       )
-        invalid[key] = `Use a multiple of ${dimensionMultiple} between 256 and 1920.`;
+        invalid[key] = `Use a multiple of ${dimensionMultiple} between ${limits.minimum} and ${limits.maximum}.`;
     }
     const minimumSteps = 1;
     if (
@@ -793,9 +832,9 @@ export function useStudio() {
     if (
       !Number.isFinite(settings.guidance) ||
       settings.guidance < 0 ||
-      settings.guidance > 10
+      settings.guidance > (settings.model?.startsWith("custom-") ? 20 : 10)
     )
-      invalid.guidance = "Use guidance from 0 to 10.";
+      invalid.guidance = `Use guidance from 0 to ${settings.model?.startsWith("custom-") ? 20 : 10}.`;
     if (!Number.isSafeInteger(settings.seed))
       invalid.seed = "Use a whole-number seed.";
     if (
@@ -832,8 +871,8 @@ export function useStudio() {
       batch_size: settings.batchSize,
     };
 
-    if (referenceImage) {
-      payload.reference_image = referenceImage;
+    if (referenceImages.length) {
+      payload.reference_images = referenceImages.map((image) => image.dataUrl);
     }
 
     try {
@@ -858,7 +897,7 @@ export function useStudio() {
       setSubmitting(false);
     }
   }, [
-    referenceImage,
+    referenceImages,
     referenceLoading,
     commitWorkspace,
     refresh,
@@ -915,9 +954,11 @@ export function useStudio() {
       thread.renamed = true;
       thread.imageNames = [image.name];
       thread.previewName = image.name;
-      if (image.referenceUrl) {
+      const referenceUrls = image.referenceUrls?.length ? image.referenceUrls : image.referenceUrl ? [image.referenceUrl] : [];
+      if (referenceUrls.length) {
         try {
-          const response = await fetch(resolveAssetUrl(image.referenceUrl));
+          const references = await Promise.all(referenceUrls.map(async (referenceUrl, index) => {
+          const response = await fetch(resolveAssetUrl(referenceUrl));
           if (!response.ok) throw new Error("Reference unavailable");
           const blob = await response.blob();
           const url = await new Promise<string>((resolve, reject) => {
@@ -926,8 +967,10 @@ export function useStudio() {
             reader.onerror = reject;
             reader.readAsDataURL(blob);
           });
-          await writeThreadReference(thread.id, url);
-          thread.referenceLabel = "Original render reference";
+          return { dataUrl: url, label: `Original reference ${index + 1}` };
+          }));
+          await writeThreadReference(thread.id, references);
+          thread.referenceLabel = `Original render · ${references.length} reference${references.length === 1 ? "" : "s"}`;
         } catch {
           notify(
             "Original reference could not be restored. Attach it before generating this variation.",
@@ -1111,6 +1154,8 @@ export function useStudio() {
     notice,
     dismissNotice,
     referenceImage,
+    referenceImages,
+    setReferenceImages,
     setReferenceImage,
     referenceLabel,
     setReferenceLabel,

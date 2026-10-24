@@ -28,7 +28,8 @@ class StorageManagerTests(unittest.TestCase):
             old_time = time.time() - (storage_manager.CACHE_RETENTION_DAYS + 1) * 86400
             os.utime(expired, (old_time, old_time))
 
-            result = storage_manager.cleanup_cache(root, cache)
+            with patch.object(storage_manager, "cache_policy", return_value={"retentionDays": storage_manager.CACHE_RETENTION_DAYS, "maxBytes": 1024, "reserveBytes": 0}):
+                result = storage_manager.cleanup_cache(root, cache)
 
             self.assertFalse(expired.exists())
             self.assertTrue(recent.exists())

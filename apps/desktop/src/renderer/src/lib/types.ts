@@ -5,6 +5,7 @@ export interface ImageRecord {
   modelRevision?: string;
   referenceUsed?: boolean;
   referenceUrl?: string;
+  referenceUrls?: string[];
   threadId?: string;
   name: string;
   url: string;
@@ -111,6 +112,7 @@ export interface GenerationPayload {
   seed: number;
   batch_size?: number;
   reference_image?: string;
+  reference_images?: string[];
 }
 
 export interface StudioSettings {

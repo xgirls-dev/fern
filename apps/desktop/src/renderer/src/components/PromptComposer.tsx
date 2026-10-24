@@ -4,18 +4,18 @@ import Dices from "lucide-react/dist/esm/icons/dices.mjs";
 import ImagePlus from "lucide-react/dist/esm/icons/image-plus.mjs";
 import SlidersHorizontal from "lucide-react/dist/esm/icons/sliders-horizontal.mjs";
 import X from "lucide-react/dist/esm/icons/x.mjs";
+import ArrowLeft from "lucide-react/dist/esm/icons/arrow-left.mjs";
+import ArrowRight from "lucide-react/dist/esm/icons/arrow-right.mjs";
 import { useEffect, useRef, useState } from "react";
 import { normalizeQwenDimension } from "../lib/imageDimensions";
-import { readReference } from "../lib/reference";
+import { MAX_KLEIN_REFERENCES, readReference, type ReferenceAttachment } from "../lib/reference";
 import type { StudioSettings } from "../lib/types";
 
 interface PromptComposerProps {
   onReferenceBusy: (busy: boolean) => void;
   settings: StudioSettings;
   installedModels?: ComposerModel[];
-  referenceImage: string;
-  referenceLabel: string;
-  supportsReference: boolean;
+  referenceImages: ReferenceAttachment[];
   running: boolean;
   busyElsewhere: boolean;
   submitting: boolean;
@@ -23,8 +23,7 @@ interface PromptComposerProps {
   ready: boolean;
   inspectorOpen: boolean;
   onSettingsChange: (patch: Partial<StudioSettings>) => void;
-  onReferenceChange: (dataUrl: string, label: string) => void;
-  onClearReference: () => void;
+  onReferencesChange: (references: ReferenceAttachment[]) => void | Promise<void>;
   onToggleInspector: () => void;
   onGenerate: () => void;
 }
@@ -33,9 +32,7 @@ export function PromptComposer({
   onReferenceBusy,
   settings,
   installedModels,
-  referenceImage,
-  referenceLabel,
-  supportsReference,
+  referenceImages,
   running,
   busyElsewhere,
   submitting,
@@ -43,8 +40,7 @@ export function PromptComposer({
   ready,
   inspectorOpen,
   onSettingsChange,
-  onReferenceChange,
-  onClearReference,
+  onReferencesChange,
   onToggleInspector,
   onGenerate,
 }: PromptComposerProps) {
@@ -53,10 +49,10 @@ export function PromptComposer({
   const [seedDraft, setSeedDraft] = useState(String(settings.seed));
   const [seedPopoverOpen, setSeedPopoverOpen] = useState(false);
   const seedPopover = useRef<HTMLDivElement>(null);
+  const referenceImage = referenceImages[0]?.dataUrl;
+  const maxReferences = !settings.model || ["9b", "4b"].includes(settings.model) ? MAX_KLEIN_REFERENCES : settings.model === "qwen21-turbo" ? 1 : 0;
+  const referencesInvalid = referenceImages.length > maxReferences;
   useEffect(() => setSeedDraft(String(settings.seed)), [settings.seed]);
-  useEffect(() => {
-    if (!supportsReference && referenceImage) onClearReference();
-  }, [onClearReference, referenceImage, supportsReference]);
   useEffect(() => {
     if (!seedPopoverOpen) return;
     const close = (event: PointerEvent) => {
@@ -77,14 +73,18 @@ export function PromptComposer({
   const [dragging, setDragging] = useState(false);
   const [referenceError, setReferenceError] = useState("");
 
-  const loadReference = async (file: File | undefined) => {
-    if (!file || !supportsReference || loadingReference) return;
+  const loadReferences = async (files: File[]) => {
+    if (!files.length || !maxReferences || loadingReference) return;
     setReferenceError("");
+    if (files.length + referenceImages.length > maxReferences) {
+      setReferenceError(`This model accepts up to ${maxReferences} reference image${maxReferences === 1 ? "" : "s"}. Remove an attachment before adding more.`);
+      return;
+    }
     setLoadingReference(true);
     onReferenceBusy(true);
     try {
-      const url = await readReference(file);
-      onReferenceChange(url, file.name);
+      const added = await Promise.all(files.map(async (file) => ({ dataUrl: await readReference(file), label: file.name })));
+      await onReferencesChange([...referenceImages, ...added]);
     } catch (error) {
       setReferenceError(
         error instanceof Error ? error.message : "Could not read that image.",
@@ -107,12 +107,12 @@ export function PromptComposer({
             settings.prompt.trim() &&
             !running &&
             !submitting &&
-            !busyElsewhere
+            !busyElsewhere && !referencesInvalid && !loadingReference
           )
             onGenerate();
         }}
         onDragOver={(event) => {
-          if (!supportsReference || !event.dataTransfer.types.includes("Files"))
+          if (!maxReferences || !event.dataTransfer.types.includes("Files"))
             return;
           event.preventDefault();
           setDragging(true);
@@ -124,37 +124,44 @@ export function PromptComposer({
         onDrop={(event) => {
           event.preventDefault();
           setDragging(false);
-          loadReference(event.dataTransfer.files[0]);
+          void loadReferences(Array.from(event.dataTransfer.files));
         }}
         onPaste={(event) => {
-          if (supportsReference && event.clipboardData.files.length) {
+          if (maxReferences && event.clipboardData.files.length) {
             event.preventDefault();
-            loadReference(event.clipboardData.files[0]);
+            void loadReferences(Array.from(event.clipboardData.files));
           }
         }}
       >
-        {referenceImage ? (
-          <div className="composer-reference">
+        {referenceImages.length ? <div className="composer-references" aria-label="Reference images">
+          {referenceImages.map((reference, index) => <div className="composer-reference" key={`${index}-${reference.label}`}>
             <img
-              src={referenceImage}
-              alt="Reference for the next image"
+              src={reference.dataUrl}
+              alt={`Reference ${index + 1}`}
               width={40}
               height={40}
             />
             <span>
-              <strong>Reference image</strong>
-              <small title={referenceLabel}>{referenceLabel}</small>
+              <strong>Image {index + 1}</strong>
+              <small title={reference.label}>{reference.label}</small>
             </span>
+            {referenceImages.length > 1 ? <div className="composer-reference-order">
+              <button type="button" className="btn-icon btn-icon-sm" disabled={index === 0 || loadingReference} aria-label={`Move reference ${index + 1} earlier`} title="Move earlier" onClick={() => { const next = [...referenceImages]; [next[index - 1], next[index]] = [next[index], next[index - 1]]; onReferencesChange(next); }}><ArrowLeft size={12} aria-hidden="true" /></button>
+              <button type="button" className="btn-icon btn-icon-sm" disabled={index === referenceImages.length - 1 || loadingReference} aria-label={`Move reference ${index + 1} later`} title="Move later" onClick={() => { const next = [...referenceImages]; [next[index + 1], next[index]] = [next[index], next[index + 1]]; onReferencesChange(next); }}><ArrowRight size={12} aria-hidden="true" /></button>
+            </div> : null}
             <button
               type="button"
               className="btn-icon btn-icon-sm"
-              aria-label="Remove reference image"
-              onClick={onClearReference}
+              aria-label={`Remove reference ${index + 1}`}
+              title="Remove reference"
+              disabled={loadingReference}
+              onClick={() => onReferencesChange(referenceImages.filter((_, itemIndex) => index !== itemIndex))}
             >
               <X size={14} aria-hidden="true" />
             </button>
-          </div>
-        ) : null}
+          </div>)}
+          {maxReferences > 1 ? <p className="composer-reference-hint">{referenceImages.length}/{maxReferences} references · Refer to Image 1, Image 2, etc. in your prompt.</p> : null}
+        </div> : null}
         <label className="sr-only" htmlFor="prompt">
           Image prompt
         </label>
@@ -168,7 +175,7 @@ export function PromptComposer({
           spellCheck={true}
           placeholder={
             referenceImage
-              ? "Describe how you want to change this image…"
+              ? referenceImages.length > 1 ? "Describe how to combine or edit these images…" : "Describe how you want to change this image…"
               : "Describe an image. Make it yours."
           }
           onChange={(event) => onSettingsChange({ prompt: event.target.value })}
@@ -176,24 +183,26 @@ export function PromptComposer({
         {loadingReference ? <p role="status">Loading reference…</p> : null}
         <div className="composer-toolbar">
           <div className="composer-options">
-            {supportsReference ? (
+            {maxReferences ? (
               <>
                 <input
                   ref={fileInput}
                   type="file"
                   accept="image/png,image/jpeg,image/webp"
+                  multiple={maxReferences > 1}
                   hidden
                   aria-label="Reference image file"
                   onChange={(event) => {
-                    loadReference(event.target.files?.[0]);
+                    void loadReferences(Array.from(event.target.files ?? []));
                     event.target.value = "";
                   }}
                 />
                 <button
                   type="button"
                   className="composer-tool"
-                  title="Add a reference image, or paste one into the prompt"
+                  title={`Add reference images (${referenceImages.length}/${maxReferences})`}
                   aria-label="Add reference image"
+                  disabled={loadingReference || referenceImages.length >= maxReferences}
                   onClick={() => fileInput.current?.click()}
                 >
                   <ImagePlus size={17} aria-hidden="true" />
@@ -284,7 +293,7 @@ export function PromptComposer({
               models={installedModels ?? []}
               loading={installedModels === undefined}
               value={settings.model ?? "9b"}
-              disabled={running || submitting || busyElsewhere}
+              disabled={running || submitting || busyElsewhere || loadingReference}
               onChange={(model) => {
                 const isCustom = model.startsWith("custom-");
                 const isSpecial = model === "qwen21-turbo" || model === "flux3-klein" || model === "tame-pony-v25-sdxl" || model === "tame-pony-v25-sdxl-int8" || isCustom;
@@ -320,7 +329,6 @@ export function PromptComposer({
                       batchSize: 1,
                       device: "AUTO",
                     });
-                    if (referenceImage) onClearReference();
                   } else if (isCustom) {
                     const customModel = installedModels?.find((candidate) => candidate.id === model);
                     onSettingsChange({
@@ -332,7 +340,6 @@ export function PromptComposer({
                       batchSize: 1,
                       device: "AUTO",
                     });
-                    if (referenceImage) onClearReference();
                   } else {
                     const selectedModel = installedModels?.find((candidate) => candidate.id === model);
                     onSettingsChange({
@@ -344,7 +351,6 @@ export function PromptComposer({
                       batchSize: 1,
                       device: "AUTO",
                     });
-                    if (referenceImage) onClearReference();
                   }
                   return;
                 }
@@ -364,6 +370,7 @@ export function PromptComposer({
                 submitting ||
                 !ready ||
                 busyElsewhere ||
+                referencesInvalid || loadingReference ||
                 !settings.prompt.trim()
               }
               aria-busy={running || submitting}
@@ -390,6 +397,7 @@ export function PromptComposer({
           {referenceError}
         </p>
       ) : null}
+      {referencesInvalid ? <p className="composer-error" role="alert">{maxReferences ? `This model supports ${maxReferences} reference image. Remove extra attachments or switch to Klein.` : "This model generates from text only. Remove the references or select Klein to edit them."}</p> : null}
       <div className="composer-caption">
         <span>
           {busyElsewhere

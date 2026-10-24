@@ -118,6 +118,7 @@ export async function ensureFirstRunSetup(): Promise<BrowserWindow | null> {
   if (runtimeReady()) return null;
 
   const window = new BrowserWindow({
+    show: false,
     width: 560,
     height: 400,
     resizable: false,
@@ -135,7 +136,7 @@ export async function ensureFirstRunSetup(): Promise<BrowserWindow | null> {
     `data:text/html;charset=utf-8,${encodeURIComponent(setupHtmlV2())}`,
   );
   await window.webContents.executeJavaScript('document.querySelector(".cancel").addEventListener("click", () => window.close());');
-  window.show();
+  if (process.env.FERN_E2E_HEADLESS !== "1") window.show();
 
   await ensureRuntime(window);
 

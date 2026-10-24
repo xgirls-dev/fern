@@ -101,11 +101,13 @@ export async function fixture({ imageCount = 3, threadCount = 1, textStatus = nu
     payloads: [],
     imageListings: 0,
     statusCalls: 0,
-    textStatus: textStatus ?? { models: [], runtimeAvailable: true, runtimeError: null, devices: ['AUTO', 'GPU', 'CPU'], job: { id: null, status: 'idle' } },
+    textStatus: textStatus ?? { models: [], recommendedModels: [{ id: 'qwen3-4b-instruct-2507', name: 'Qwen3 4B Instruct 2507', bytes: 8e9, installed: false }], runtimeAvailable: true, runtimeError: null, devices: ['AUTO', 'GPU', 'CPU'], job: { id: null, status: 'idle' } },
     textRequests: [],
+    ttsStatus: { id: null, threadId: null, model: null, status: "idle", operation: null, logs: [], output: null, error: null, models: [{ id: "custom-0.6b", label: "Custom Voice · 0.6B", kind: "custom_voice", installed: true }], environmentReady: true },
     rejectText: null,
   };
   await page.route('**/api/text/status', r => r.fulfill({ json: state.textStatus }));
+  await page.route('**/api/tts/status', r => r.fulfill({ json: state.ttsStatus }));
   await page.route('**/api/text/generate', async r => {
     const payload = r.request().postDataJSON();
     state.textRequests.push(payload);
@@ -149,6 +151,7 @@ export async function fixture({ imageCount = 3, threadCount = 1, textStatus = nu
         runtime: state.runtime,
         installedModels: state.installedModels,
         model: {
+          selectedModel: new URL(r.request().url()).searchParams.get("model") || "9b",
           runtimeReady: state.modelReady ?? true,
           selectedDevice: "CPU",
           runtimeBackend: "OpenVINO",

@@ -1,5 +1,4 @@
-import { useEffect, useState } from "react";
-import type { ModelStatus } from "../lib/types";
+import { useEffect, useRef, useState } from "react";
 import { getApiBaseUrl } from "../lib/api";
 interface InstalledModel {
   id: string;
@@ -34,7 +33,7 @@ const CUSTOM_IMAGE_FAMILIES = [
   ["flux2-klein", "FLUX.2 Klein"],
   ["lcm", "Latent Consistency Model"],
 ] as const;
-export function ModelLibrary({ status }: { status: ModelStatus | null }) {
+export function ModelLibrary() {
   const [models, setModels] = useState<InstalledModel[]>([]);
   const [error, setError] = useState("");
   const [actionError, setActionError] = useState("");
@@ -44,6 +43,11 @@ export function ModelLibrary({ status }: { status: ModelStatus | null }) {
   const [customRepo, setCustomRepo] = useState("");
   const [customDownload, setCustomDownload] = useState<CustomImageDownload>({ status: "idle" });
   const [addingCustom, setAddingCustom] = useState(false);
+  const [startingDownload, setStartingDownload] = useState(false);
+  const customDetails = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    if (["checking", "downloading", "validating", "failed"].includes(customDownload.status) && customDetails.current) customDetails.current.open = true;
+  }, [customDownload.status]);
   useEffect(() => {
     let alive = true;
     let timer: ReturnType<typeof setTimeout>;
@@ -139,6 +143,8 @@ export function ModelLibrary({ status }: { status: ModelStatus | null }) {
     }
   };
   const downloadCustomModel = async () => {
+    if (startingDownload || downloading || busy) return;
+    setStartingDownload(true);
     setActionError("");
     try {
       const response = await fetch(`${getApiBaseUrl()}/api/models/custom/download`, {
@@ -151,6 +157,8 @@ export function ModelLibrary({ status }: { status: ModelStatus | null }) {
       if (data.customImageDownload) setCustomDownload(data.customImageDownload);
     } catch (error) {
       setActionError(error instanceof Error ? error.message : "Could not start the Hugging Face download.");
+    } finally {
+      setStartingDownload(false);
     }
   };
   const cancelCustomDownload = async () => {
@@ -177,28 +185,30 @@ export function ModelLibrary({ status }: { status: ModelStatus | null }) {
           </p>
         </div>
       </div>
+      <details className="model-library-custom" ref={customDetails}>
+      <summary>Add custom model</summary>
       <div className="model-library-import">
         <label>
           <span>Model family</span>
-          <select aria-label="Custom image model family" value={customFamily} disabled={addingCustom || downloading || busy} onChange={(event) => setCustomFamily(event.target.value)}>
+          <select aria-label="Custom image model family" value={customFamily} disabled={addingCustom || startingDownload || downloading || busy} onChange={(event) => setCustomFamily(event.target.value)}>
             {CUSTOM_IMAGE_FAMILIES.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
           </select>
         </label>
         <label className="model-library-hub-repo">
           <span>Hugging Face repository</span>
-          <input aria-label="Hugging Face repository" placeholder="owner/model or Hugging Face URL" value={customRepo} disabled={downloading || busy} onChange={(event) => setCustomRepo(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && customRepo.trim()) void downloadCustomModel(); }} />
+          <input aria-label="Hugging Face repository" name="repository" autoComplete="off" spellCheck={false} placeholder="owner/model or Hugging Face URL…" value={customRepo} disabled={startingDownload || downloading || busy} onChange={(event) => setCustomRepo(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && customRepo.trim() && !startingDownload && !downloading && !busy && !addingCustom && !error) void downloadCustomModel(); }} />
         </label>
         <div className="model-library-import-actions">
           {downloading ? (
             <button className="btn btn-secondary" type="button" disabled={busy} onClick={() => void cancelCustomDownload()}>Cancel download</button>
           ) : (
-            <button className="btn btn-primary" type="button" disabled={!customRepo.trim() || addingCustom || busy || Boolean(error)} onClick={() => void downloadCustomModel()}>Download</button>
+            <button className="btn btn-primary" type="button" disabled={!customRepo.trim() || startingDownload || addingCustom || busy || Boolean(error)} onClick={() => void downloadCustomModel()}>{startingDownload ? "Starting…" : "Download"}</button>
           )}
-          <button className="btn btn-secondary" type="button" disabled={addingCustom || downloading || busy || Boolean(error)} onClick={() => void addCustomModel()}>
+          <button className="btn btn-secondary" type="button" disabled={addingCustom || startingDownload || downloading || busy || Boolean(error)} onClick={() => void addCustomModel()}>
             {addingCustom ? "Validating…" : "Add local folder"}
           </button>
         </div>
-        <p>Fern downloads the selected OpenVINO export into managed model storage. Public repos work directly; gated or private repos need an authorized Hugging Face login. Local folders are linked in place.</p>
+        <p>Use an OpenVINO export from Hugging Face or link a local folder. Choose the family that matches the export.</p>
         {customDownload.status !== "idle" ? (
           <div className="model-library-download-status" role="status" aria-live="polite">
             <span>{customDownload.phase || customDownload.status}{customDownload.repoId ? ` · ${customDownload.repoId}` : ""}</span>
@@ -211,6 +221,7 @@ export function ModelLibrary({ status }: { status: ModelStatus | null }) {
           </div>
         ) : null}
       </div>
+      </details>
       {!models.length && !error ? (
         <p role="status">Checking installed models…</p>
       ) : null}
@@ -223,39 +234,38 @@ export function ModelLibrary({ status }: { status: ModelStatus | null }) {
             key={model.id}
             aria-busy={["installing", "checking-runtime"].includes(model.state) || undefined}
           >
-            <h4>{model.label}</h4>
+            <h4 title={model.label}>{model.label}</h4>
             <p>
               {model.id.startsWith("custom-")
-              ? `OpenVINO · ${model.familyLabel ?? model.family ?? "Custom family"} · ${model.sourceType === "huggingface" ? model.repoId ?? "Hugging Face download" : "linked local folder"}`
+              ? `${model.familyLabel ?? model.family ?? "Custom model"} · ${model.sourceType === "huggingface" ? "Hugging Face" : "Local folder"}`
               : model.id === "qwen21-turbo"
-              ? `Official 8-step checkpoint · OpenVINO INT8 · ${model.bytes > 0 ? `about ${(model.bytes / 1e9).toFixed(1)} GB download · ` : ""}compiled GPU caches add disk use after first launch`
+              ? `8 steps · INT8 · ${(model.bytes / 1e9).toFixed(1)} GB`
                 : model.id === "flux3-klein"
-                  ? `OpenVINO mixed INT4/INT8 · 16 steps · text-to-image · ${model.bytes > 0 ? `about ${(model.bytes / 1e9).toFixed(2)} GB download` : ""}`
+                  ? `16 steps · INT4/INT8 · ${(model.bytes / 1e9).toFixed(2)} GB`
                   : model.id.startsWith("tame-pony-")
-                    ? `SDXL · OpenVINO ${model.id.endsWith("-int8") ? "INT8 quantized" : "export"} · text-to-image · ${model.bytes > 0 ? `about ${(model.bytes / 1e9).toFixed(2)} GB download` : ""}`
+                    ? `SDXL · ${model.id.endsWith("-int8") ? "INT8" : "FP16"} · ${(model.bytes / 1e9).toFixed(2)} GB`
                     : `${model.bytes > 0 ? `${(model.bytes / 1e9).toFixed(2)} GB · ` : ""}${model.id === "4b" ? "Smaller download and lower memory use" : "Larger model"}`}
             </p>
               {model.id.startsWith("custom-") ? (
-              <p className="model-library-note">Text-to-image only. {model.sourceType === "huggingface" ? "Downloaded files are stored and managed by Fern." : "Remove from Fern to unlink it; the local model files stay where they are."}</p>
+              <p className="model-library-note" title={model.repoId}>Text to image · {model.sourceType === "huggingface" ? model.repoId : "Linked in place; source files are kept on removal."}</p>
             ) : model.id.startsWith("tame-pony-") ? (
-              <p className="model-library-note">Text-to-image only. Starts at 1024 × 1024, 30 steps, guidance 7.0; resolution and sampling remain adjustable. Licensed under FAIPL-1.0-SD.</p>
+              <details className="model-library-details"><summary>Model details</summary><p>Text to image · 1024 × 1024 · 30 steps · guidance 7.0. Licensed under FAIPL-1.0-SD.</p></details>
             ) : null}
             {model.id === "qwen21-turbo" ? (
-              <>
+              <details className="model-library-details"><summary>Model details</summary>
                 <p className="model-library-note">
                   Qwen Research License · non-commercial research/evaluation only.
                 </p>
                 <p className="model-library-note">
                   Setup needs additional disk space. Auto-select prefers Intel GPU; CPU is an explicit fallback. One image per request.
                 </p>
-              </>
+              </details>
             ) : null}
             {model.id === "flux3-klein" ? (
-              <>
+              <details className="model-library-details"><summary>Model details</summary>
                 <p className="model-library-note">FLUX Kommunity License · the model card includes the required license and attribution notice.</p>
-                <p className="model-library-note">Fern prepares a separate Diffusers compatibility layer during setup. Text-to-image only; 1024 × 1024 is the published end-to-end validation size.</p>
-                <p className="model-library-note">The updated runner requests FP32 transformer inference on OpenVINO GPU. Fern's previous GPU runs were blank; output quality is being rechecked with the updated runner.</p>
-              </>
+                <p className="model-library-note">Experimental · Text to image at 1024 × 1024. Output quality on Intel GPU is not yet verified.</p>
+              </details>
             ) : null}
             <p className="model-library-status" role="status" aria-live="polite">
               {model.state === "not-installed"
@@ -447,10 +457,6 @@ export function ModelLibrary({ status }: { status: ModelStatus | null }) {
           </article>
         ))}
       </div>
-      <p>
-        {status?.checking ? "Checking runtime. " : ""}
-        Auto-select chooses a supported device for the selected model.
-      </p>
     </section>
   );
 }
