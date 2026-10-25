@@ -10,6 +10,7 @@ import { resolveAssetUrl } from "./lib/api";
 import { useStudio } from "./hooks/useStudio";
 import { useQwen3Tts } from "./hooks/useQwen3Tts";
 import { useTextChat } from "./hooks/useTextChat";
+import { useComputePreference } from "./hooks/useComputePreference";
 import { ActivityTerminal } from "./components/ActivityTerminal";
 import { CommandPalette } from "./components/CommandPalette";
 import { GenerationControls } from "./components/GenerationControls";
@@ -32,9 +33,10 @@ const TextWorkspace = lazy(() => import("./components/TextWorkspace").then((modu
 const ModelsView = lazy(() => import("./components/ModelsView").then((module) => ({ default: module.ModelsView })));
 
 export function App() {
-  const studio = useStudio();
-  const tts = useQwen3Tts(studio.ready);
-  const text = useTextChat(studio.ready);
+  const compute = useComputePreference();
+  const studio = useStudio(compute.device);
+  const tts = useQwen3Tts(studio.ready, compute.device);
+  const text = useTextChat(studio.ready, compute.device);
   const [threadBrowserOpen, setThreadBrowserOpen] = useState(false);
   const [inspectorView, setInspectorView] = useState<
     "settings" | "info" | null
@@ -343,11 +345,6 @@ export function App() {
     ? resolveAssetUrl(studio.preview.url, studio.preview.mtime)
     : null;
   const startupDialogOpen = !runtimeDismissed;
-  const cpuAvailable =
-    studio.status?.model.adapters?.some(
-      (adapter) => adapter.id === "CPU" && adapter.available,
-    ) ?? true;
-
   return (
     <div className="app-shell">
       <a className="skip-link" href="#main-content">
@@ -424,6 +421,10 @@ export function App() {
             theme={studio.settings.theme}
             sidebarCollapsed={sidebarCollapsed}
             modelStatus={studio.status?.model ?? null}
+            allowCpu={compute.allowCpu}
+            computeDevice={compute.device}
+            onAllowCpuChange={(allowCpu) => compute.updatePreference({ allowCpu })}
+            onComputeDeviceChange={(device) => compute.updatePreference({ device })}
             onToggleTheme={() =>
               studio.updateSettings({
                 theme: studio.settings.theme === "dark" ? "light" : "dark",
@@ -648,6 +649,7 @@ export function App() {
                       key={`controls-${studio.activeThread.id}-${studio.resetRevision}`}
                       settings={studio.settings}
                       modelStatus={studio.status?.model ?? null}
+                      computeDevice={compute.device}
                       referenceImage={studio.referenceImage}
                       referenceCount={studio.referenceImages.length}
                       referenceLabel={studio.referenceLabel}
@@ -790,10 +792,10 @@ export function App() {
         <RuntimeLoadingDialog
           onDismiss={() => setRuntimeDismissed(true)}
           runtime={studio.runtimeStatus}
-          cpuAvailable={cpuAvailable}
           onRetry={() => void studio.retryRuntime()}
-          onUseCpu={() => {
-            studio.chooseDevice("CPU");
+          onOpenPreferences={() => {
+            setRuntimeDismissed(true);
+            openPreferences();
           }}
         />
       ) : null}

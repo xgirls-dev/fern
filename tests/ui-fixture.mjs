@@ -1,7 +1,7 @@
 import { createServer } from "vite";
 import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-export async function fixture({ imageCount = 3, threadCount = 1, textStatus = null } = {}) {
+export async function fixture({ imageCount = 3, threadCount = 1, textStatus = null, imageGenerationTime = 65 } = {}) {
   const server = await createServer({
     configFile: false,
     root: fileURLToPath(
@@ -94,7 +94,7 @@ export async function fixture({ imageCount = 3, threadCount = 1, textStatus = nu
       height: 1088,
       steps: 4,
       guidance: 1,
-      generationTime: 65,
+      generationTime: imageGenerationTime,
       device: "CPU",
     })),
     installedModels: [{ id: "9b", label: "Klein 9B" }],
@@ -153,21 +153,16 @@ export async function fixture({ imageCount = 3, threadCount = 1, textStatus = nu
         model: {
           selectedModel: new URL(r.request().url()).searchParams.get("model") || "9b",
           runtimeReady: state.modelReady ?? true,
-          selectedDevice: "CPU",
+          selectedDevice: "NVIDIA_GPU",
           runtimeBackend: "OpenVINO",
           supportsReferenceImage: true,
           adapters: [
             { id: "CPU", label: "CPU", available: true, runtimeReady: true },
-            {
-              id: "NVIDIA_GPU",
-              label: "NVIDIA GPU",
-              available: false,
-              note: "A long runtime explanation that must not be in the option.",
-            },
+            { id: "NVIDIA_GPU", label: "NVIDIA GPU", available: true, runtimeReady: true },
           ],
         },
         defaults: {
-          device: "CPU",
+          device: "AUTO",
           width: 1024,
           height: 1024,
           steps: 4,

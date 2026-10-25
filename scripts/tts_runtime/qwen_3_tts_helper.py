@@ -1629,7 +1629,24 @@ class OVQwen3TTSSpeechTokenizer:
         self.decoder_model = None
         decoder_path = self.model_dir / SPEECH_TOKENIZER_DECODER_NAME
         if decoder_path.exists():
-            self.decoder_model = core.compile_model(decoder_path, device)
+            decoder_ir = core.read_model(decoder_path)
+            if device.upper().startswith("GPU"):
+                # The decoder graph was traced at 325 frames. Although its XML
+                # input advertises a dynamic frame dimension, GPU execution of
+                # that dynamic graph can stall for minutes. Compile the traced
+                # static shape on GPU; this matches the padded input built by
+                # _chunked_ov_decode and avoids dynamic-shape GPU dispatch.
+                decoder_input = decoder_ir.input("audio_codes")
+                input_shape = decoder_input.partial_shape
+                if input_shape.rank.get_length() != 3 or input_shape[2].is_dynamic:
+                    raise RuntimeError(
+                        "The OpenVINO speech decoder must accept [batch, frames, quantizers]."
+                    )
+                num_quantizers = input_shape[2].get_length()
+                decoder_ir.reshape(
+                    {decoder_input: [1, self.DECODER_TRACE_LEN, num_quantizers]}
+                )
+            self.decoder_model = core.compile_model(decoder_ir, device)
 
         # Load config
         config_path = self.model_dir / "config.json"

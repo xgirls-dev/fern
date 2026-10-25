@@ -14,6 +14,26 @@ class Response(io.BytesIO):
 
 
 class ModelsTests(unittest.TestCase):
+    def test_remove_model_tree_clears_readonly_openvino_cache_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "models"
+            manager = mm.ModelManager(root)
+            model_dir = manager.folder("9b")
+            readonly_blob = model_dir / "transformer" / "model_cache" / "readonly.blob"
+            readonly_blob.parent.mkdir(parents=True)
+            readonly_blob.write_bytes(b"compiled model cache")
+            readonly_blob.chmod(0o444)
+
+            cache = root.parent / ".cache" / "openvino" / "flux2-klein-9b"
+            cache.mkdir(parents=True)
+            (cache / "readonly.blob").write_bytes(b"compiled model cache")
+            (cache / "readonly.blob").chmod(0o444)
+
+            manager.remove("9b")
+
+            self.assertFalse(model_dir.exists())
+            self.assertFalse(cache.exists())
+
     def test_memory_telemetry_keeps_host_and_gpu_capacity_separate(self):
         with patch.object(
             capabilities,

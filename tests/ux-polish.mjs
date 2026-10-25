@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { fixture } from "./ui-fixture.mjs";
-const { page, state, errors, dir, close } = await fixture();
+const { page, state, errors, dir, close } = await fixture({ imageGenerationTime: 479.5 });
 const button = (name) => page.getByRole("button", { name, exact: true });
 try {
   // A failed initial connection followed by a slow status response must keep loading visible.
@@ -82,6 +82,7 @@ try {
   await button("Review audit-1.png").click();
   await button("Render info").click();
   assert(await page.locator(".viewer-info .render-metadata").isVisible());
+  await page.getByText("8m", { exact: true }).waitFor({ state: "visible" });
   assert.equal(
     await page.locator(".viewer-details .render-metadata").count(),
     0,

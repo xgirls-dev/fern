@@ -6,8 +6,9 @@ interface PreviewMetadataHudProps {
 
 function formatGenerationTime(seconds: number): string {
   if (seconds < 60) return `${seconds.toFixed(1)}s`;
-  const minutes = Math.floor(seconds / 60);
-  const remainder = Math.round(seconds % 60);
+  const roundedSeconds = Math.round(seconds);
+  const minutes = Math.floor(roundedSeconds / 60);
+  const remainder = roundedSeconds % 60;
   return remainder > 0 ? `${minutes}m ${remainder}s` : `${minutes}m`;
 }
 

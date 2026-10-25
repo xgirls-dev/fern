@@ -37,7 +37,7 @@ async function request<T>(path: string, body?: object): Promise<T> {
   return data as T;
 }
 
-export function useQwen3Tts(apiReady: boolean) {
+export function useQwen3Tts(apiReady: boolean, computeDevice: "GPU" | "CPU" = "GPU") {
   const [workspace, setWorkspace] = useState<AudioThreadWorkspace>(loadAudioThreads);
   const workspaceRef = useRef(workspace);
   workspaceRef.current = workspace;
@@ -277,11 +277,12 @@ export function useQwen3Tts(apiReady: boolean) {
         reader.readAsDataURL(file);
       });
       const threadId = thread.id;
-      const started = await request<{ job: TtsStatus }>("/api/tts/generate", { model: thread.model, threadId, text: thread.text, language: thread.language, speaker: thread.speaker, instruction: thread.model === "voice-design-1.7b" ? thread.designInstruction : thread.instruction, referenceText: thread.referenceText, referenceAudio, device: thread.device });
+      const requestedDevice = computeDevice === "CPU" ? "CPU" : "AUTO";
+      const started = await request<{ job: TtsStatus }>("/api/tts/generate", { model: thread.model, threadId, text: thread.text, language: thread.language, speaker: thread.speaker, instruction: thread.model === "voice-design-1.7b" ? thread.designInstruction : thread.instruction, referenceText: thread.referenceText, referenceAudio, device: requestedDevice });
       const pending: PendingAudioJob = {
         id: started.job.id!, threadId, text: thread.text, model: thread.model, language: thread.language,
         speaker: thread.speaker, instruction: thread.instruction, designInstruction: thread.designInstruction,
-        referenceText: thread.referenceText, referenceFileName: file?.name, device: thread.device,
+        referenceText: thread.referenceText, referenceFileName: file?.name, device: requestedDevice,
       };
       pendingJob.current = pending;
       try { localStorage.setItem(PENDING_JOB_KEY, JSON.stringify(pending)); } catch { /* The live job still completes in this window. */ }
@@ -289,7 +290,7 @@ export function useQwen3Tts(apiReady: boolean) {
       await waitForJob(started.job.id!);
     } catch (caught) { setError(caught instanceof Error ? caught.message : String(caught)); }
     finally { requestActive.current = false; setBusy(false); await refresh(); }
-  }, [activeThread, referenceFiles, refresh, waitForJob]);
+  }, [activeThread, computeDevice, referenceFiles, refresh, waitForJob]);
 
   const stopJob = useCallback(async () => {
     if (!jobRunning || status.status === "stopping") return;

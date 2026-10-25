@@ -86,9 +86,11 @@ def model_status(device: str, model_id: str) -> dict[str, Any]:
     dependency = dependency or {"installed": False, "hasGpu": False, "message": "Checking OpenVINO runtime and available devices…"}
     genai_available = importlib.util.find_spec("openvino_genai") is not None
     uses_diffusers = item["family"] in ("stable-diffusion", "sdxl")
-    diffusers_available = importlib.util.find_spec("diffusers") is not None and importlib.util.find_spec("optimum.intel") is not None
-    backend_available = diffusers_available if uses_diffusers else genai_available
-    backend_label = "OpenVINO · Diffusers" if uses_diffusers else "OpenVINO GenAI"
+    uses_flux2_klein = item["family"] == "flux2-klein"
+    optimum_available = importlib.util.find_spec("optimum.intel") is not None
+    diffusers_available = importlib.util.find_spec("diffusers") is not None and optimum_available
+    backend_available = diffusers_available if uses_diffusers else optimum_available if uses_flux2_klein else genai_available
+    backend_label = "OpenVINO · Diffusers" if uses_diffusers else "OpenVINO · Optimum Intel" if uses_flux2_klein else "OpenVINO GenAI"
     available = {"INTEL_GPU": bool(dependency.get("installed") and dependency.get("hasGpu")), "CPU": bool(dependency.get("installed"))}
     requested = str(device).upper()
     selected = ("INTEL_GPU" if available["INTEL_GPU"] else None) if requested == "AUTO" else requested if requested in available and available[requested] else None
@@ -174,6 +176,14 @@ def _load_pipeline(model_id: str, device: str, log: Callable[[str], None] | None
             pipeline.vae.config.force_upcast = False
         pipeline.set_progress_bar_config(disable=True)
         _PIPELINE_KIND = "diffusers"
+    elif item["family"] == "flux2-klein":
+        from optimum.intel import OVFlux2KleinPipeline
+
+        # Klein exports are Diffusers-compatible OpenVINO IR. OpenVINO GenAI's
+        # generic Text2ImagePipeline cannot load their VAE configuration.
+        pipeline = OVFlux2KleinPipeline.from_pretrained(item["path"], device=openvino_device, ov_config={})
+        pipeline.set_progress_bar_config(disable=True)
+        _PIPELINE_KIND = "flux2-klein"
     else:
         import openvino_genai as genai
 
@@ -208,19 +218,24 @@ def generate_image(*, model_id: str, prompt: str, output_dir: Path, width: int, 
     last_step = 0
     def callback(step: int, total_steps: int, _latent: Any) -> bool:
         nonlocal last_step
+        if step >= total_steps:
+            return False
         last_step = step + 1
         if log:
             log(f"Step {last_step}/{total_steps}")
         return False
 
     started = time.perf_counter()
-    if _PIPELINE_KIND == "diffusers":
+    if _PIPELINE_KIND in ("diffusers", "flux2-klein"):
         import torch
 
         generator = torch.Generator(device="cpu").manual_seed(int(seed))
 
         def on_step_end(_pipe: Any, step: int, _timestep: Any, callback_kwargs: dict[str, Any]) -> dict[str, Any]:
-            if log:
+            # Some Diffusers pipelines issue a terminal callback at index
+            # `steps` after the last denoising iteration. Do not display it as
+            # an additional step (for example, 21/20).
+            if log and step < steps:
                 log(f"Step {step + 1}/{steps}")
             return callback_kwargs
 

@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { app } from "electron";
 import { getProjectRoot } from "./project-root";
 
@@ -7,6 +7,22 @@ export { getProjectRoot, getStoredProjectRoot, resolveProjectRoot } from "./proj
 
 export function getModelsRoot(): string {
   return join(getProjectRoot(), "models");
+}
+
+function getSourceRoot(): string {
+  let candidate = resolve(app.getAppPath());
+  while (true) {
+    if (
+      existsSync(join(candidate, "scripts", "api_server.py")) &&
+      existsSync(join(candidate, "apps", "desktop", "package.json"))
+    ) {
+      return candidate;
+    }
+    const parent = dirname(candidate);
+    if (parent === candidate) break;
+    candidate = parent;
+  }
+  throw new Error("Could not locate the Fern source root from the Electron app path.");
 }
 
 export function getAppIconPath(): string {
@@ -19,7 +35,7 @@ export function getPythonExecutable(): string {
   if (app.isPackaged) {
     return join(app.getPath("userData"), "runtime", "python-home", "python.exe");
   }
-  const root = getProjectRoot();
+  const root = getSourceRoot();
   const candidates = [
     join(root, ".venv", "Scripts", "python.exe"),
     join(root, ".venv", "bin", "python"),
@@ -42,14 +58,14 @@ export function getApiScriptPath(): string {
   if (app.isPackaged) {
     return join(process.resourcesPath, "scripts", "api_server.py");
   }
-  return join(getProjectRoot(), "scripts", "api_server.py");
+  return join(getSourceRoot(), "scripts", "api_server.py");
 }
 
 export function getBootstrapScriptPath(): string {
   if (app.isPackaged) {
     return join(process.resourcesPath, "scripts", "bootstrap_install.py");
   }
-  return join(getProjectRoot(), "scripts", "bootstrap_install.py");
+  return join(getSourceRoot(), "scripts", "bootstrap_install.py");
 }
 
 export function getOutputsDir(): string {

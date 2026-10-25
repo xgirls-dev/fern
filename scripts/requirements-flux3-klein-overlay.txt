@@ -1,2 +1,4 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+torchvision==0.29.1+cpu
 transformers==5.10.4
 https://github.com/huggingface/diffusers/archive/7ecb1e1b4fe500be7fb7381a7bb79a24d7fa3941.zip

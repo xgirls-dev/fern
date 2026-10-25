@@ -73,14 +73,21 @@ try {
   await page.getByRole('button', {name:'Stop generation', exact:true}).click();
   await page.getByRole('button', {name:'Retry response', exact:true}).waitFor({timeout:30000});
   assert.equal((await apiJson('/api/text/status')).job.status, 'stopped');
+  await page.getByRole('button', {name:'Preferences', exact:true}).click();
+  await page.getByRole('button', {name:/Allow CPU selection/}).click();
+  await page.getByLabel('Generation device', {exact:true}).selectOption('CPU');
+  assert.equal(await page.getByLabel('Generation device', {exact:true}).inputValue(), 'CPU');
+  // Verify the opt-in control without doing inference on CPU. GPU remains the
+  // only device used by this real-model test.
+  await page.getByLabel('Generation device', {exact:true}).selectOption('GPU');
+  await page.getByRole('button', {name:'Text', exact:true}).click();
   await page.getByRole('button', {name:'Generation settings', exact:true}).click();
-  await page.getByRole('combobox', {name:'Compute device', exact:true}).selectOption('CPU');
   await page.getByLabel('Maximum output', {exact:true}).selectOption('128');
   await page.getByRole('button', {name:'Close chat settings', exact:true}).click();
   await page.getByRole('button', {name:'Retry response', exact:true}).click();
   await page.getByRole('button', {name:'Regenerate response', exact:true}).waitFor({timeout:180000});
   await page.getByRole('button',{name:'Response details',exact:true}).last().click();
-  assert.match(await page.locator('.text-response-details').last().textContent(), /CPU/);
+  assert.match(await page.locator('.text-response-details').last().textContent(), /GPU/);
   await page.screenshot({path:`${dir}/text-real-model.png`, fullPage:true});
   const registryPath = resolve(isolated, 'data/text-models.json');
   const registry = JSON.parse(await readFile(registryPath, 'utf8'));
@@ -98,7 +105,7 @@ try {
   assert.equal((await apiJson('/api/text/status')).models.length, 0);
   assert((await readFile(resolve(model, 'openvino_model.xml'))).length > 0);
   assert.deepEqual(errors, []);
-  console.log('Real UI → API → INT4 model: import, GPU multi-turn, reload persistence, stop, CPU retry, missing folder and safe removal passed.');
+  console.log('Real UI → API → INT4 model: import, GPU multi-turn, reload persistence, stop, CPU opt-in control, GPU retry, missing folder and safe removal passed.');
 } finally {
   if (logs.includes('Traceback')) console.error(logs);
   if (browser) await browser.close();

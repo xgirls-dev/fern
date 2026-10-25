@@ -65,6 +65,21 @@ def load_pipeline(model_dir: Path, device: str):
     return pipeline
 
 
+def _add_decode_progress(speech_tokenizer) -> None:
+    decode_audio = speech_tokenizer.decode
+    if getattr(decode_audio, "_fern_progress_wrapped", False):
+        return
+
+    def decode_audio_with_progress(encoded):
+        progress("Speech codes generated. Decoding the audio waveform.")
+        result = decode_audio(encoded)
+        progress("Audio waveform decoded.")
+        return result
+
+    decode_audio_with_progress._fern_progress_wrapped = True
+    speech_tokenizer.decode = decode_audio_with_progress
+
+
 def setup(model_key: str, model_root: Path) -> None:
     from tts_model_download import install_model
 
@@ -78,19 +93,20 @@ def generate(request: dict, model_root: Path, outputs: Path) -> dict:
     model_key = request["model"]
     model_dir = model_root / f"{model_key}-OV"
     pipeline = load_pipeline(model_dir, request.get("device", "AUTO"))
+    _add_decode_progress(pipeline.speech_tokenizer)
     started = time.monotonic()
     text = request["text"].strip()
     language = request.get("language") or None
     kind = pipeline.tts_model_type
     kwargs = {"max_new_tokens": min(max(int(request.get("max_new_tokens", 2048)), 16), 4096), "non_streaming_mode": True}
     if kind == "custom_voice":
-        progress("Synthesizing speech with the preset voice.")
+        progress(f"Generating speech tokens on {pipeline.device}.")
         wavs, sample_rate = pipeline.generate_custom_voice(
             text, speaker=request.get("speaker", "vivian").lower().replace(" ", "_"),
             language=language, instruct=request.get("instruction") or None, **kwargs,
         )
     elif kind == "voice_design":
-        progress("Designing voice and synthesizing speech.")
+        progress(f"Designing voice and generating speech tokens on {pipeline.device}.")
         wavs, sample_rate = pipeline.generate_voice_design(
             text, language=language, instruct=request.get("instruction") or "A natural, clear speaking voice.", **kwargs,
         )
@@ -104,7 +120,7 @@ def generate(request: dict, model_root: Path, outputs: Path) -> dict:
             waveform = waveform.mean(axis=1)
         if not waveform.size or not np.isfinite(waveform).all():
             raise ValueError("The reference clip is empty or contains invalid audio. Choose another WAV or FLAC.")
-        progress(f"Cloning reference voice · {len(waveform) / sample_rate_in:.1f}s clip. Synthesizing speech.")
+        progress(f"Cloning reference voice · {len(waveform) / sample_rate_in:.1f}s clip. Generating speech tokens on {pipeline.device}.")
         wavs, sample_rate = pipeline.generate_voice_clone(
             text, language=language, ref_audio=(waveform, sample_rate_in),
             ref_text=request.get("referenceText") or None,

@@ -157,7 +157,7 @@ function imageRecordChanged(previous: ImageRecord, next: ImageRecord): boolean {
 const BACKEND_CONNECT_TIMEOUT_MS = 90_000;
 const BACKEND_CONNECT_INTERVAL_MS = 500;
 
-export function useStudio() {
+export function useStudio(computeDevice: "GPU" | "CPU" = "GPU") {
   const [ready, setReady] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [workspace, setWorkspace] = useState(() =>
@@ -169,6 +169,8 @@ export function useStudio() {
   const settings = activeThread.settings;
   const workspaceRef = useRef(workspace);
   workspaceRef.current = workspace;
+  const computeDeviceRef = useRef(computeDevice);
+  computeDeviceRef.current = computeDevice;
   const [status, setStatus] = useState<FluxStatusResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [connectionError, setConnectionError] = useState<string | null>(null);
@@ -201,6 +203,7 @@ export function useStudio() {
   const previousJobStatusRef = useRef<string>("idle");
   const refreshingRef = useRef(false);
   const refreshQueuedRef = useRef(false);
+  const refreshRef = useRef<() => Promise<boolean | undefined>>(() => Promise.resolve(false));
   const imagePollingActiveRef = useRef(true);
   settingsRef.current = settings;
   previewRef.current = preview;
@@ -524,7 +527,7 @@ export function useStudio() {
     }
     refreshingRef.current = true;
     refreshQueuedRef.current = false;
-    const requestedDevice = settingsRef.current.device;
+    const requestedDevice = computeDevice === "CPU" ? "CPU" : "AUTO";
     const requestedModel = settingsRef.current.model;
 
     try {
@@ -534,7 +537,7 @@ export function useStudio() {
         imagePollingActiveRef.current,
       );
       if (
-        requestedDevice !== settingsRef.current.device ||
+        requestedDevice !== (computeDeviceRef.current === "CPU" ? "CPU" : "AUTO") ||
         requestedModel !== settingsRef.current.model
       ) {
         refreshQueuedRef.current = true;
@@ -605,10 +608,11 @@ export function useStudio() {
       refreshingRef.current = false;
       if (refreshQueuedRef.current) {
         refreshQueuedRef.current = false;
-        queueMicrotask(() => void refresh());
+        queueMicrotask(() => void refreshRef.current());
       }
     }
-  }, [commitWorkspace]);
+  }, [commitWorkspace, computeDevice]);
+  refreshRef.current = refresh;
 
   const setImagePollingActive = useCallback((active: boolean) => {
     if (imagePollingActiveRef.current === active) return;
@@ -704,7 +708,7 @@ export function useStudio() {
 
   useEffect(() => {
     if (ready) void refresh();
-  }, [ready, refresh, settings.device, settings.model, activeThread.id]);
+  }, [activeThread.id, computeDevice, ready, refresh, settings.model]);
 
   useEffect(() => {
     if (running) return;
@@ -860,7 +864,7 @@ export function useStudio() {
       thread_id: generationThreadId,
       prompt: settings.prompt.trim(),
       model: settings.model ?? "9b",
-      device: settings.device,
+      device: computeDevice === "CPU" ? "CPU" : "AUTO",
       width: settings.width,
       height: settings.height,
       steps: settings.steps,
@@ -902,6 +906,7 @@ export function useStudio() {
     commitWorkspace,
     refresh,
     running,
+    computeDevice,
     settings,
     submitting,
     updateThreadSettings,

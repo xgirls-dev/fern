@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import re
-import shutil
 import threading
 from urllib.parse import urlsplit
 from pathlib import Path
@@ -13,6 +12,7 @@ from huggingface_hub import snapshot_download
 from huggingface_hub.utils import tqdm as HubTqdm
 
 import custom_image_registry
+from model_manager import remove_tree
 
 
 class _DownloadCancelled(Exception):
@@ -169,6 +169,6 @@ class CustomImageDownloadManager:
         try:
             resolved = stage.resolve()
             if resolved.parent == self.root and resolved.exists():
-                shutil.rmtree(resolved)
+                remove_tree(resolved)
         except OSError:
             pass

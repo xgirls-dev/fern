@@ -1,5 +1,5 @@
-import { randomInt } from "node:crypto";
 import { existsSync } from "node:fs";
+import { createServer } from "node:net";
 import { join, resolve } from "node:path";
 import {
   app,
@@ -23,8 +23,22 @@ let backend: PythonBackend | null = null;
 let backendReady = false;
 let isShuttingDown = false;
 
-function allocatePort(): number {
-  return randomInt(18_000, 65_000);
+async function allocatePort(): Promise<number> {
+  const probe = createServer();
+  await new Promise<void>((resolve, reject) => {
+    probe.once("error", reject);
+    probe.listen(0, "127.0.0.1", () => resolve());
+  });
+  const address = probe.address();
+  if (!address || typeof address === "string") {
+    probe.close();
+    throw new Error("Could not allocate a local backend port.");
+  }
+  const port = address.port;
+  await new Promise<void>((resolve, reject) => {
+    probe.close((error) => (error ? reject(error) : resolve()));
+  });
+  return port;
 }
 
 function resolvePreloadPath(): string {
@@ -504,7 +518,7 @@ async function bootstrap(): Promise<void> {
   buildMenu();
   registerIpc();
 
-  const port = allocatePort();
+  const port = await allocatePort();
   backend = new PythonBackend(port);
   const pendingBaseUrl = `http://127.0.0.1:${port}`;
 

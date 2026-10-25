@@ -5,9 +5,8 @@ import { useModalFocus } from "../hooks/useModalFocus";
 interface RuntimeLoadingDialogProps {
   onDismiss: () => void;
   runtime: RuntimeStatus | null;
-  cpuAvailable: boolean;
   onRetry: () => void;
-  onUseCpu: () => void;
+  onOpenPreferences: () => void;
 }
 
 function formatDevice(device: string | null): string {
@@ -19,16 +18,15 @@ function formatDevice(device: string | null): string {
     case "CPU":
       return "CPU";
     default:
-      return "Auto-selected device";
+      return "Available GPU";
   }
 }
 
 export function RuntimeLoadingDialog({
   onDismiss,
   runtime,
-  cpuAvailable,
   onRetry,
-  onUseCpu,
+  onOpenPreferences,
 }: RuntimeLoadingDialogProps) {
   const dialogRef = useRef<HTMLElement>(null);
   const failed = runtime?.status === "failed" || runtime?.status === "blocked";
@@ -97,8 +95,8 @@ export function RuntimeLoadingDialog({
         {failed ? (
           <div className="runtime-loading-actions">
             <p>
-              Fern could not start the selected device. Retry the same adapter
-              or use CPU as a fallback.
+              Fern could not start the available GPU. Retry startup, or open
+              Preferences to explicitly enable and select CPU.
             </p>
             <div className="runtime-loading-buttons">
               <button
@@ -108,15 +106,9 @@ export function RuntimeLoadingDialog({
               >
                 Retry startup
               </button>
-              {cpuAvailable ? (
-                <button
-                  type="button"
-                  className="btn btn-secondary"
-                  onClick={onUseCpu}
-                >
-                  Use CPU instead
-                </button>
-              ) : null}
+              <button type="button" className="btn btn-secondary" onClick={onOpenPreferences}>
+                Open Preferences
+              </button>
             </div>
           </div>
         ) : (

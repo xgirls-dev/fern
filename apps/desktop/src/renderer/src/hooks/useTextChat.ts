@@ -23,7 +23,7 @@ const idleStatus: TextRuntimeStatus = {
   job: { id: null, threadId: null, modelId: null, status: "idle", phase: null, partialText: "", startedAt: null, finishedAt: null, result: null, error: null },
 };
 
-export function useTextChat(ready: boolean) {
+export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU") {
   const [workspace, setWorkspace] = useState(loadTextThreads);
   const workspaceRef = useRef(workspace);
   const persistPendingRef = useRef(false);
@@ -258,7 +258,7 @@ export function useTextChat(ready: boolean) {
         requestId,
         threadId: activeThread.id,
         modelId,
-        device: activeThread.device,
+        device: computeDevice === "CPU" ? "CPU" : "AUTO",
         messages: messages.map(({ role, content }) => ({ role, content })),
         systemPrompt: activeThread.systemPrompt,
         temperature: activeThread.temperature,
@@ -290,7 +290,7 @@ export function useTextChat(ready: boolean) {
       sending.current = false;
       setSubmitting(false);
     }
-  }, [activeThread, busy, refresh, status.models, status.runtimeAvailable, status.runtimeError, updateThread]);
+  }, [activeThread, busy, computeDevice, refresh, status.models, status.runtimeAvailable, status.runtimeError, updateThread]);
 
   const retry = useCallback(() => send("", true), [send]);
 

@@ -1,6 +1,6 @@
 {
   "name": "fern",
-  "version": "0.1.30",
+  "version": "0.1.36",
   "private": true,
   "description": "Fern local-first desktop studio for OpenVINO image, text, and audio models",
   "license": "MIT",

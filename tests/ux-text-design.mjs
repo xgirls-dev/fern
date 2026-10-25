@@ -76,7 +76,7 @@ try {
   await page.screenshot({path:`${dir}/text-design-narrow.png`});
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
   await page.getByRole('button',{name:'Generation settings',exact:true}).click();
-  await page.getByRole('combobox',{name:'Compute device',exact:true}).selectOption('GPU');
+  assert.equal(await page.getByRole('combobox',{name:'Compute device',exact:true}).count(),0);
   assert.equal(await page.getByRole('dialog').count(), 0);
   const bounds=await page.getByRole('complementary',{name:'Chat settings panel'}).boundingBox();
   const workspace=await page.locator('.text-workspace').boundingBox();

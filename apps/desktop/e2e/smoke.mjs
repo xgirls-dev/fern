@@ -8,6 +8,7 @@ import { _electron as electron, expect } from "@playwright/test";
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = path.resolve(desktopRoot, "..", "..");
 const scratchRoot = await mkdtemp(path.join(os.tmpdir(), "fern-electron-e2e-"));
+const dataRoot = path.join(scratchRoot, "data");
 const customModelPath = path.join(scratchRoot, "fixture-sdxl-openvino");
 const modelIndexPath = path.join(customModelPath, "model_index.json");
 const profilePath = path.join(scratchRoot, "profile");
@@ -41,8 +42,8 @@ try {
 
   const env = {
     ...process.env,
-    FERN_ROOT: repoRoot,
-    INTEL_IRIS_ROOT: repoRoot,
+    FERN_ROOT: dataRoot,
+    INTEL_IRIS_ROOT: dataRoot,
     FERN_E2E_HEADLESS: "1",
     FERN_CUSTOM_IMAGE_REGISTRY: path.join(scratchRoot, "custom-image-models.json"),
     FERN_TEXT_MODEL_REGISTRY: path.join(scratchRoot, "text-models.json"),

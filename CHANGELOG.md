@@ -6,6 +6,46 @@ lands directly on `main` instead of through labeled pull requests.
 
 ## [Unreleased]
 
+## [0.1.36] - 2026-10-25
+
+### Added
+
+- A dedicated Models page for installing and managing image, text, and audio models.
+- Multiple reference images for FLUX.2 Klein 4B/9B with ordering, removal, and persistence across saved threads and variations.
+
+### Improved
+
+- GPU is the default compute path across image, text, and audio. CPU selection stays hidden unless explicitly enabled in Preferences, and generation settings no longer expose a per-render device selector.
+- Qwen3-TTS GPU decoding uses a traced static speech-tokenizer shape; warm-pipeline progress is reported once per take.
+- Custom FLUX.2 Klein OpenVINO exports use Optimum Intel's Diffusers adapter.
+- Model management and composer workflows include clearer model details, family-specific generation limits, and more reliable reference and thread persistence.
+
+### Fixed
+
+- Model removal retries after clearing Windows read-only attributes, so OpenVINO compiled-cache blobs and Hugging Face exports can be removed cleanly.
+- Custom image progress ignores callbacks beyond the configured step count. Pony generation uses Fern's writable workspace and corrected SDXL scheduler metadata.
+
+Full Changelog: https://github.com/xgirls-dev/fern/compare/v0.1.29...v0.1.36
+
+## [0.1.35] - 2026-10-25
+
+### Fixed
+
+- Qwen3-TTS decode progress is wrapped only once on a warm pipeline, preventing duplicate progress messages from accumulating across takes.
+
+## [0.1.34] - 2026-10-25
+
+### Improved
+
+- GPU is the default compute path across image, text, and audio. CPU selection is hidden unless explicitly enabled in Preferences.
+- GPU Qwen3-TTS decoding uses the traced static speech-tokenizer shape to avoid dynamic-shape stalls.
+- Custom FLUX.2 Klein OpenVINO exports use Optimum Intel's Diffusers adapter.
+- Custom image progress ignores a terminal callback beyond the configured step count.
+
+### Fixed
+
+- Image generation settings no longer expose a per-render device selector; the app uses the available GPU automatically.
+
 ## [0.1.30] - 2026-10-24
 
 ### Added

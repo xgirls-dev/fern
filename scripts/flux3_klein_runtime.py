@@ -132,7 +132,7 @@ def ensure_runtime(
             [
                 sys.executable,
                 "-c",
-                "import openvino, torch, transformers, diffusers; "
+                "import openvino, torch, torchvision, transformers, diffusers; "
                 "from diffusers import ModularPipeline; "
                 "assert ModularPipeline; print('Flux.3 runtime imports ready')",
             ],

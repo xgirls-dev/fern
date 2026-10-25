@@ -5,12 +5,17 @@ import Moon from "lucide-react/dist/esm/icons/moon.mjs";
 import PanelLeft from "lucide-react/dist/esm/icons/panel-left.mjs";
 import Sun from "lucide-react/dist/esm/icons/sun.mjs";
 import type { ModelStatus } from "../lib/types";
+import type { ComputePreference } from "../hooks/useComputePreference";
 
 interface PreferencesViewProps {
   active: boolean;
   theme: "light" | "dark";
   sidebarCollapsed: boolean;
   modelStatus: ModelStatus | null;
+  allowCpu: boolean;
+  computeDevice: ComputePreference;
+  onAllowCpuChange: (allow: boolean) => void;
+  onComputeDeviceChange: (device: ComputePreference) => void;
   onToggleTheme: () => void;
   onToggleSidebar: () => void;
 }
@@ -24,7 +29,7 @@ function deviceLabel(device: string | undefined): string {
     case "CPU":
       return "CPU";
     default:
-      return "Auto-select";
+      return "Available GPU";
   }
 }
 
@@ -41,6 +46,10 @@ export function PreferencesView({
   theme,
   sidebarCollapsed,
   modelStatus,
+  allowCpu,
+  computeDevice,
+  onAllowCpuChange,
+  onComputeDeviceChange,
   onToggleTheme,
   onToggleSidebar,
 }: PreferencesViewProps) {
@@ -155,11 +164,33 @@ export function PreferencesView({
         >
           <div className="preferences-section-heading">
             <div>
-              <h3 id="preferences-runtime">Image runtime</h3>
-              <p>These values describe the current image generation path.</p>
+              <h3 id="preferences-runtime">Compute & image runtime</h3>
+              <p>The compute choice applies to image, text, and audio generation. GPU is the default.</p>
             </div>
             <Cpu size={17} aria-hidden="true" />
           </div>
+          <button
+            type="button"
+            className="preference-toggle-row"
+            onClick={() => onAllowCpuChange(!allowCpu)}
+            aria-pressed={allowCpu}
+          >
+            <span className="preference-row-icon"><Cpu size={15} aria-hidden="true" /></span>
+            <span className="preference-row-copy">
+              <strong>Allow CPU selection</strong>
+              <small>{allowCpu ? "CPU is available below; GPU remains selected until you change it." : "CPU is hidden and cannot be selected. Fern uses an available GPU."}</small>
+            </span>
+            <span className={`preference-switch ${allowCpu ? "is-on" : ""}`} aria-hidden="true"><span /></span>
+          </button>
+          {allowCpu ? (
+            <label className="field preference-compute-device">
+              <span>Generation device</span>
+              <select aria-label="Generation device" value={computeDevice} onChange={(event) => onComputeDeviceChange(event.target.value as ComputePreference)}>
+                <option value="GPU">Available GPU</option>
+                <option value="CPU">CPU</option>
+              </select>
+            </label>
+          ) : null}
           <div className="preferences-runtime-grid">
             <div>
               <span>Model</span>
@@ -167,7 +198,7 @@ export function PreferencesView({
             </div>
             <div>
               <span>Device</span>
-              <strong>{deviceLabel(modelStatus?.selectedDevice)}</strong>
+              <strong>{computeDevice === "CPU" ? "CPU" : deviceLabel(modelStatus?.selectedDevice)}</strong>
             </div>
             <div>
               <span>Backend</span>
@@ -186,7 +217,7 @@ export function PreferencesView({
             className="preferences-adapters"
             aria-label="Device availability"
           >
-            {(modelStatus?.adapters ?? []).map((adapter) => {
+            {(modelStatus?.adapters ?? []).filter((adapter) => adapter.id !== "CPU" || allowCpu).map((adapter) => {
               const state = adapterState(adapter);
               return (
                 <div

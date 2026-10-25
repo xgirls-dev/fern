@@ -51,7 +51,7 @@ class ReferenceAndWorkspaceTests(unittest.TestCase):
     def test_custom_genai_family_returns_and_reuses_its_loaded_pipeline(self):
         pipeline = object()
         factory = MagicMock(return_value=pipeline)
-        spec = {"path": "/fixture", "label": "Fixture", "familyLabel": "FLUX.2 Klein", "family": "flux2-klein"}
+        spec = {"path": "/fixture", "label": "Fixture", "familyLabel": "FLUX.1", "family": "flux"}
         with patch.object(custom, "_PIPELINE", None), patch.object(custom, "_PIPELINE_KEY", None), patch.object(custom, "_PIPELINE_KIND", None), patch.object(custom, "model_spec", return_value=spec), patch.object(custom, "model_status", return_value={"selectedDevice": "INTEL_GPU"}), patch.dict(sys.modules, {"openvino_genai": SimpleNamespace(Text2ImagePipeline=factory)}):
             self.assertIs(custom._load_pipeline("custom-fixture", "INTEL_GPU", None), pipeline)
             self.assertIs(custom._load_pipeline("custom-fixture", "INTEL_GPU", None), pipeline)

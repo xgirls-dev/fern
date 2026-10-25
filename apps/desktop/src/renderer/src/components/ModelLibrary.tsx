@@ -257,7 +257,7 @@ export function ModelLibrary() {
                   Qwen Research License · non-commercial research/evaluation only.
                 </p>
                 <p className="model-library-note">
-                  Setup needs additional disk space. Auto-select prefers Intel GPU; CPU is an explicit fallback. One image per request.
+                  Setup needs additional disk space. Fern uses an available GPU automatically; CPU can be enabled in Preferences. One image per request.
                 </p>
               </details>
             ) : null}

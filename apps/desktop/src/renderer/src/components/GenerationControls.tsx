@@ -120,6 +120,7 @@ interface GenerationControlsProps {
   onReferenceBusy: (busy: boolean) => void;
   settings: StudioSettings;
   modelStatus: ModelStatus | null;
+  computeDevice: "GPU" | "CPU";
   referenceImage: string;
   referenceCount?: number;
   referenceLabel: string;
@@ -199,6 +200,7 @@ export function GenerationControls({
   onReferenceBusy,
   settings,
   modelStatus,
+  computeDevice,
   referenceImage,
   referenceCount = referenceImage ? 1 : 0,
   referenceLabel,
@@ -409,10 +411,9 @@ export function GenerationControls({
 
   const supportsReference = modelStatus?.supportsReferenceImage ?? true;
   const adapters = modelStatus?.adapters ?? [];
-  const requestedAdapter =
-    settings.device === "AUTO"
-      ? adapters.find((adapter) => adapter.id === modelStatus?.selectedDevice)
-      : adapters.find((adapter) => adapter.id === settings.device);
+  const requestedAdapter = computeDevice === "CPU"
+    ? adapters.find((adapter) => adapter.id === "CPU")
+    : adapters.find((adapter) => adapter.id === modelStatus?.selectedDevice);
   const deviceStatus = !requestedAdapter
     ? "Checking available devices…"
     : !requestedAdapter.available
@@ -420,9 +421,9 @@ export function GenerationControls({
       : !requestedAdapter.runtimeReady
         ? (requestedAdapter.note ??
           `${requestedAdapter.label} is missing the model.`)
-        : settings.device === "AUTO"
-          ? `Auto-select will use ${requestedAdapter.label}.`
-          : `${requestedAdapter.label} is ready.`;
+        : computeDevice === "CPU"
+          ? "CPU is explicitly selected in Preferences."
+          : `Fern will use the available ${requestedAdapter.label}.`;
   const deviceStatusClass =
     requestedAdapter?.available && requestedAdapter.runtimeReady
       ? "is-ready"
@@ -433,7 +434,7 @@ export function GenerationControls({
       <div className="inspector-controls">
         <div className="control-sections">
           <ControlSection
-            title="Canvas & device"
+            title="Canvas & compute"
             summary={`${settings.width} × ${settings.height} | ${hasFixedSampling ? "1 image" : `${settings.batchSize} image${settings.batchSize === 1 ? "" : "s"}`}`}
             defaultOpen
           >
@@ -441,7 +442,7 @@ export function GenerationControls({
               <p className="model-note field-note">
                 {isFlux3Klein
                   ? "FLUX.3 Klein uses 16 fixed steps and text-to-image only. GPU runs now use FP32 transformer inference; keep the canvas at 1024 × 1024 while output quality is rechecked."
-                  : "Official Turbo runs 8 fixed steps and generates 1 image per request. Auto-select prefers Intel GPU; choose CPU only as a fallback. This OpenVINO graph does not use the checkpoint’s KV cache, so it can be slower than CUDA Turbo. Larger canvases need more memory and take longer."}
+                  : "Official Turbo runs 8 fixed steps and generates 1 image per request. Fern uses an available GPU automatically. This OpenVINO graph does not use the checkpoint’s KV cache, so it can be slower than CUDA Turbo. Larger canvases need more memory and take longer."}
               </p>
             ) : null}
             {isCustomImage ? <p className="model-note field-note">{modelStatus?.familyLabel ?? "Custom OpenVINO GenAI model"} · text-to-image only. Fern uses the selected family to apply safe canvas limits and recommended defaults.</p> : null}
@@ -511,30 +512,6 @@ export function GenerationControls({
             </div>
 
             <div className="row-2">
-              <div className="field">
-                <label htmlFor="device">Device</label>
-                <select
-                  id="device"
-                  name="device"
-                  value={settings.device}
-                  onChange={(event) =>
-                    onSettingsChange({
-                      device: event.target.value as StudioSettings["device"],
-                    })
-                  }
-                >
-                  <option value="AUTO">Auto-select</option>
-                  {adapters.map((adapter) => (
-                    <option
-                      key={adapter.id}
-                      value={adapter.id}
-                      disabled={!adapter.available}
-                    >
-                      {adapter.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
               <div className="field">
                 <label htmlFor="batch-size">Images per render</label>
                 <select

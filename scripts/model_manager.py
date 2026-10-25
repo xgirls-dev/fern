@@ -4,10 +4,24 @@ import hashlib
 import json
 import os
 import shutil
+import stat
 import threading
 import urllib.request
 from pathlib import Path
 from model_catalog import MODEL_CATALOG, installed, model_spec
+
+
+def remove_tree(path):
+    """Remove a model-owned tree, including read-only OpenVINO/HF cache files."""
+    target = Path(path)
+    if not target.exists():
+        return
+
+    def retry_after_clearing_readonly(function, name, _error):
+        os.chmod(name, stat.S_IWRITE)
+        function(name)
+
+    shutil.rmtree(target, onerror=retry_after_clearing_readonly)
 
 
 class ModelManager:
@@ -96,7 +110,7 @@ class ModelManager:
                 for staging in (False, True):
                     path = self.folder(model, staging)
                     if path.exists():
-                        shutil.rmtree(path)
+                        remove_tree(path)
                 if model in ("9b", "4b", "tame-pony-v25-sdxl", "tame-pony-v25-sdxl-int8"):
                     cache_root = (self.root.parent / ".cache" / "openvino").resolve()
                     cache_name = (
@@ -108,7 +122,7 @@ class ModelManager:
                     if cache.parent != cache_root:
                         raise ValueError("Invalid model cache folder")
                     if cache.exists():
-                        shutil.rmtree(cache)
+                        remove_tree(cache)
                 self.jobs.pop(model, None)
             except Exception as error:
                 self.jobs[model] = {

@@ -9,6 +9,8 @@ from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from unittest.mock import patch
 
+from PIL import Image
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 import custom_image_download
@@ -29,6 +31,75 @@ def write_export(folder: Path) -> None:
 
 
 class CustomImageModelTests(unittest.TestCase):
+    def test_diffusers_progress_ignores_terminal_callback(self):
+        class FakePipeline:
+            def set_progress_bar_config(self, **_kwargs):
+                pass
+
+            def __call__(self, **kwargs):
+                callback = kwargs["callback_on_step_end"]
+                for step in range(kwargs["num_inference_steps"] + 1):
+                    callback(None, step, None, {})
+                return SimpleNamespace(images=[Image.new("RGB", (512, 512), "black")])
+
+        pipeline = FakePipeline()
+        item = {
+            "id": "custom-stable-diffusion",
+            "label": "local-sd",
+            "path": "C:/models/local-sd",
+            "family": "stable-diffusion",
+            "familyLabel": "Stable Diffusion 1.x / 2.x",
+        }
+        torch = ModuleType("torch")
+        torch.Generator = lambda **_kwargs: SimpleNamespace(manual_seed=lambda _seed: object())
+        with tempfile.TemporaryDirectory() as directory:
+            logs: list[str] = []
+            with patch.dict(sys.modules, {"torch": torch}), patch.object(
+                custom_image_pipeline, "model_spec", return_value=item
+            ), patch.object(custom_image_pipeline, "_load_pipeline", return_value=pipeline), patch.object(
+                custom_image_pipeline, "_PIPELINE_KIND", "diffusers"
+            ):
+                custom_image_pipeline.generate_image(
+                    model_id=item["id"],
+                    prompt="test",
+                    output_dir=Path(directory),
+                    width=512,
+                    height=512,
+                    steps=2,
+                    guidance=7,
+                    seed=1,
+                    device="AUTO",
+                    output_name="custom-image-progress.png",
+                    log=logs.append,
+                )
+            self.assertEqual(logs[:2], ["Step 1/2", "Step 2/2"])
+            self.assertNotIn("Step 3/2", logs)
+            self.assertRegex(logs[-1], r"^Completed in \d+\.\d+s\.$")
+
+    def test_flux2_klein_custom_export_uses_optimum_intel_adapter(self):
+        pipeline = SimpleNamespace(set_progress_bar_config=lambda **_kwargs: None)
+        optimum_intel = ModuleType("optimum.intel")
+        optimum_intel.OVFlux2KleinPipeline = SimpleNamespace(
+            from_pretrained=lambda *args, **kwargs: pipeline
+        )
+        item = {
+            "id": "custom-flux2-klein",
+            "label": "local-klein",
+            "path": "C:/models/local-klein",
+            "family": "flux2-klein",
+            "familyLabel": "FLUX.2 Klein",
+        }
+        ready = {"checking": False, "selectedDevice": "INTEL_GPU"}
+        custom_image_pipeline.release_pipeline()
+        with patch.object(custom_image_pipeline, "model_spec", return_value=item), patch.object(
+            custom_image_pipeline, "model_status", return_value=ready
+        ), patch.dict(sys.modules, {"optimum.intel": optimum_intel}):
+            loaded = custom_image_pipeline._load_pipeline(item["id"], "AUTO", None)
+        self.assertIs(loaded, pipeline)
+        self.assertEqual(custom_image_pipeline._PIPELINE_KIND, "flux2-klein")
+        self.assertEqual(custom_image_pipeline._PIPELINE_KEY, (item["id"], "INTEL_GPU"))
+        custom_image_pipeline.release_pipeline()
+
     def test_sdxl_adapters_tolerate_diffusers_without_legacy_device_helper(self):
         module_name = "diffusers.pipelines.stable_diffusion_xl.pipeline_stable_diffusion_xl"
         replacement = ModuleType(module_name)

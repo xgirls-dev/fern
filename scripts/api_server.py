@@ -64,7 +64,7 @@ TAME_PONY_GENERATION_WORKER = GenerationWorker(target=tame_pony_inference_loop)
 CUSTOM_IMAGE_GENERATION_WORKER = GenerationWorker(target=custom_image_inference_loop)
 TTS_GENERATION_WORKER = TtsGenerationWorker()
 TEXT_GENERATION_WORKER = TextGenerationProcess()
-from model_manager import ModelManager
+from model_manager import ModelManager, remove_tree
 from model_catalog import model_spec
 import gallery_store
 from media_http import byte_range
@@ -2326,7 +2326,7 @@ class Handler(BaseHTTPRequestHandler):
                             raise ValueError("Fern refused to remove model files outside its custom model storage.")
                     custom_image_registry.MODEL_REGISTRY.remove(model)
                     if custom_entry.get("sourceType") == "huggingface":
-                        shutil.rmtree(owned_path)
+                        remove_tree(owned_path)
                     self.send_json(200, {"models": model_library_snapshot()})
                     return
                 if model == flux3.MODEL_KEY:
@@ -2376,7 +2376,7 @@ class Handler(BaseHTTPRequestHandler):
                                 QWEN_TURBO_DOWNLOAD_ROOT, source_repo, source_locks,
                             ):
                                 if target.exists() and target.resolve().is_relative_to(ROOT.resolve()):
-                                    shutil.rmtree(target)
+                                    remove_tree(target)
                             with QWEN_JOB_LOCK:
                                 QWEN_JOB.update(
                                     status="idle", logs=[], phase=None, error=None,

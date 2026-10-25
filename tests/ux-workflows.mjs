@@ -27,10 +27,7 @@ try {
   await page.locator("#prompt").fill("Draft after generation");
   assert.equal(await page.locator("#create-heading").innerText(), "New draft");
   await page.locator(".workspace-header").getByRole("button", { name: "Image settings", exact: true }).click();
-  assert.equal(
-    await page.locator("#device option").last().innerText(),
-    "NVIDIA GPU",
-  );
+  assert.equal(await page.locator("#device").count(), 0);
   await page.locator("#size-preset").selectOption("custom");
   assert.equal(await page.locator("#size-preset").inputValue(), "custom");
   await page.locator("#size-preset").selectOption("720x1280");
@@ -46,7 +43,7 @@ try {
       .locator("#width")
       .evaluate((el) => el === document.activeElement),
   );
-  await page.waitForTimeout(3300);
+  await page.locator("#width-error").waitFor({ state: "visible", timeout: 10_000 });
   assert(await page.locator("#width-error").isVisible());
   await page.locator("#width").fill("1920");
   await page.locator("summary").filter({ hasText: "Style & recipes" }).click();
@@ -120,6 +117,17 @@ try {
   assert.equal(state.images.length, 2);
   assert.equal(await page.locator(".image-viewer").count(), 0);
   await button("Preferences").click();
+  const cpuPreference = page.getByRole("button", { name: /Allow CPU selection/ });
+  assert.equal(await cpuPreference.getAttribute("aria-pressed"), "false");
+  assert.equal(await page.getByLabel("Generation device").count(), 0);
+  await cpuPreference.click();
+  const devicePreference = page.getByLabel("Generation device");
+  assert.deepEqual(await devicePreference.locator("option").allTextContents(), ["Available GPU", "CPU"]);
+  await devicePreference.selectOption("CPU");
+  assert.equal(await devicePreference.inputValue(), "CPU");
+  await cpuPreference.click();
+  assert.equal(await page.getByLabel("Generation device").count(), 0);
+  assert.equal(await page.locator("#device").count(), 0);
   await button("Library").click();
   assert.equal(
     await page.getByRole("searchbox", { name: "Filter images" }).inputValue(),
@@ -158,15 +166,21 @@ try {
   await page.setViewportSize({ width: 1080, height: 720 });
   await button("Toggle theme").click();
   await page.screenshot({ path: `${dir}/dark-preview.png` });
+  const activeImageThreadId = await page.locator('.sidebar-thread-button[aria-current="page"]').getAttribute("data-thread-id");
   state.job = {
     id: "batch",
-    threadId: "study",
+    threadId: activeImageThreadId,
     status: "running",
     startedAt: Date.now() / 1000,
     logs: ["Batch image 1/4", "Step 4/4", "Batch image 2/4"],
     output: null,
   };
-  await page.waitForTimeout(3300);
+  try {
+    await page.locator(".generation-progress-strip").waitFor({ state: "visible", timeout: 10_000 });
+  } catch (error) {
+    console.error(`Progress diagnostic: active=${activeImageThreadId} calls=${state.statusCalls} job=${JSON.stringify(state.job)}`);
+    throw error;
+  }
   assert.match(
     await page.locator(".generation-progress-strip").innerText(),
     /Image 2 of 4.*preparing/,

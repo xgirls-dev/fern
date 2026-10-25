@@ -61,7 +61,7 @@ if (Test-Path $DuplicateSitePackages) {
     Remove-Item $DuplicateSitePackages -Recurse -Force
 }
 
-$SiteExcludeDirs = @("__pycache__", "pip")
+$SiteExcludeDirs = @("__pycache__")
 $SiteExcludeArgs = $SiteExcludeDirs | ForEach-Object { "/XD", $_ }
 
 robocopy $SitePackages $SitePackagesTarget /E /NFL /NDL /NJH /NJS /nc /ns /np @SiteExcludeArgs /XF *.pdb *.lib | Out-Null
@@ -77,10 +77,12 @@ sys.path.insert(0, r'$SitePackagesTarget')
 import PIL
 import openvino
 import torch
+import pip
 from optimum.intel import OVFlux2KleinPipeline
 print('bundled-python-ok', sys.version)
 print('openvino', openvino.__version__)
 print('torch', torch.__version__)
+print('pip', pip.__version__)
 print('OVFlux2KleinPipeline ready')
 try:
     import openvino_nvidia
