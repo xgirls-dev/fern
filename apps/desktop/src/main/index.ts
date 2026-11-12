@@ -369,6 +369,17 @@ function registerIpc(): void {
     return result.filePaths[0];
   });
 
+  ipcMain.handle("studio:pick-lora-files", async (event) => {
+    const window = BrowserWindow.fromWebContents(event.sender) ?? undefined;
+    const options = {
+      title: "Choose LoRA files",
+      properties: ["openFile", "multiSelections"] as Array<"openFile" | "multiSelections">,
+      filters: [{ name: "LoRA safetensors", extensions: ["safetensors"] }],
+    };
+    const result = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options);
+    return result.canceled ? [] : result.filePaths;
+  });
+
   ipcMain.handle("studio:pick-text-model-folder", async (event) => {
     const window = BrowserWindow.fromWebContents(event.sender) ?? undefined;
     const options = {

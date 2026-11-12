@@ -18,12 +18,13 @@ export interface ComposerModel {
 const MODEL_LABELS: Record<string, string> = {
   "9b": "Klein 9B",
   "4b": "Klein 4B",
+  "4b-lora": "Klein 4B · LoRA",
   "qwen21-turbo": "Qwen Image 2.1 Turbo",
   "flux3-klein": "FLUX.3 Klein · INT4",
   "tame-pony-v25-sdxl": "Tame Pony · SDXL",
   "tame-pony-v25-sdxl-int8": "Tame Pony · SDXL INT8",
 };
-const MODEL_CHOICES = ["9b", "4b", "qwen21-turbo", "flux3-klein", "tame-pony-v25-sdxl", "tame-pony-v25-sdxl-int8"];
+const MODEL_CHOICES = ["9b", "4b", "4b-lora", "qwen21-turbo", "flux3-klein", "tame-pony-v25-sdxl", "tame-pony-v25-sdxl-int8"];
 
 export function ComposerModelMenu({
   models,

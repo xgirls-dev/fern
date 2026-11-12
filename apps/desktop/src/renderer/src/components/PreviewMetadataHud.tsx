@@ -76,6 +76,8 @@ export function PreviewMetadataHud({ image }: PreviewMetadataHudProps) {
   }
   if (image.guidance != null)
     rows.push({ label: "Guidance", value: String(image.guidance) });
+  if (image.loras?.length)
+    rows.push({ label: "LoRAs", value: image.loras.map((lora) => `${lora.name} (${lora.strength})`).join(", ") });
   if (image.device)
     rows.push({ label: "Device", value: formatDevice(image.device) });
   if (image.model)
@@ -91,6 +93,8 @@ export function PreviewMetadataHud({ image }: PreviewMetadataHudProps) {
     });
   if (image.modelRevision)
     rows.push({ label: "Model revision", value: image.modelRevision });
+  if (image.textEncoder === "uncensored-qwen3-4b-int4-ov")
+    rows.push({ label: "Text encoder", value: "Uncensored Qwen3 4B · OpenVINO INT4" });
   if (image.modelPath)
     rows.push({ label: "Model", value: formatModelPath(image.modelPath) });
 

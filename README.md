@@ -36,6 +36,13 @@ models from an audio thread. Downloads are pinned to catalog revisions and
 verified; interrupted downloads can resume. The first model load compiles for
 the selected device and can take longer than later runs.
 
+To use LoRAs, install **Klein 4B · LoRA** in Models and select it in an image
+thread. In **Image settings → LoRAs**, choose up to four local `.safetensors`
+files, enable the ones you want, and adjust their strengths. Include the
+adapter's trigger words in the prompt. This model currently supports
+text-to-image on Intel GPUs; reference-image editing and 9B LoRAs are not yet
+available. The regular Klein 4B model remains a separate download.
+
 Fern automatically selects an available GPU where supported. CPU is available
 as an explicit fallback. The NVIDIA plugin is bundled only when present in the
 build environment and must match the OpenVINO runtime; Fern reports when that

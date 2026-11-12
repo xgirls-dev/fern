@@ -22,6 +22,7 @@ export interface StudioApi {
   saveOutputAudio: (audioName: string) => Promise<string | null>;
   showImageInFolder: (filePath: string) => Promise<void>;
   pickReferenceImage: () => Promise<string | null>;
+  pickLoraFiles: () => Promise<string[]>;
   pickTextModelFolder: () => Promise<string | null>;
   pickCustomImageModelFolder: () => Promise<string | null>;
   saveImageAs: (defaultName: string) => Promise<string | null>;

@@ -97,6 +97,7 @@ function loadSettings(): StudioSettings {
       batchSize: merged.batchSize,
       seedLocked: merged.seedLocked,
       theme: merged.theme,
+      loras: Array.isArray(merged.loras) ? merged.loras.filter((item) => item && typeof item.path === "string" && Number.isFinite(item.strength) && typeof item.enabled === "boolean").slice(0, 4) : [],
     };
     saveSettings(settings);
     for (const key of LEGACY_SETTINGS_KEYS) localStorage.removeItem(key);
@@ -841,6 +842,8 @@ export function useStudio(computeDevice: "GPU" | "CPU" = "GPU") {
       invalid.guidance = `Use guidance from 0 to ${settings.model?.startsWith("custom-") ? 20 : 10}.`;
     if (!Number.isSafeInteger(settings.seed))
       invalid.seed = "Use a whole-number seed.";
+    if (settings.model === "4b-lora" && (settings.loras ?? []).some((lora) => !Number.isFinite(lora.strength) || lora.strength < -4 || lora.strength > 4))
+      invalid.loras = "Use LoRA strengths between -4 and 4.";
     if (
       !Number.isInteger(settings.batchSize) ||
       settings.batchSize < 1 ||
@@ -873,6 +876,7 @@ export function useStudio(computeDevice: "GPU" | "CPU" = "GPU") {
         ? settings.seed
         : Math.floor(Math.random() * 1_000_000_000),
       batch_size: settings.batchSize,
+      loras: settings.model === "4b-lora" ? (settings.loras ?? []).map(({ path, strength, enabled }) => ({ path, strength, enabled })) : [],
     };
 
     if (referenceImages.length) {

@@ -2680,6 +2680,10 @@ code {
 .model-library-details { color: var(--muted); font-size: 12px; line-height: 1.5; }
 .model-library-details summary { cursor: pointer; }
 .model-library-details p { margin: 8px 0 0; }
+.model-library-encoder-option { display:grid; gap:8px; border-top:1px solid var(--border); padding-top:10px; }
+.model-library-encoder-option > p { margin:0; }
+.model-library-encoder-toggle { display:flex; align-items:center; gap:8px; color:var(--foreground); font-size:13px; }
+.model-library-remove-confirm { display:flex; flex-wrap:wrap; align-items:center; gap:8px; color:var(--muted); font-size:12px; }
 .model-library-card details ul { max-height: none; overflow: visible; }
 .model-card-heading { display: flex; gap: 8px; flex-wrap: wrap; align-items: baseline; }
 .model-card-badge { padding: 2px 6px; border: 1px solid var(--border); border-radius: 5px; color: var(--muted); font-size: 10px; }
@@ -2708,3 +2712,15 @@ code {
 @media (prefers-reduced-motion: reduce) {
   .text-conversation { scroll-behavior: auto; }
 }
+.lora-control {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.65rem 0;
+  border-bottom: 1px solid var(--border, #d5d5d5);
+}
+.lora-control-name { display: flex; align-items: center; gap: 0.5rem; min-width: 0; }
+.lora-control-name input[type="checkbox"] { width: 16px; height: 16px; min-width: 16px; margin: 0; }
+.lora-control-name span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lora-control-strength { display: flex; align-items: center; gap: 0.5rem; }
+.lora-control-strength input { width: 5.5rem; }
+.lora-control > button { justify-self: start; }

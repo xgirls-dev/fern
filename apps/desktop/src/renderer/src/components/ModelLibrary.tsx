@@ -16,6 +16,16 @@ interface InstalledModel {
   familyLabel?: string;
   sourceType?: "local" | "huggingface";
   repoId?: string;
+  uncensoredTextEncoder?: {
+    repoId: string;
+    installed: boolean;
+    enabled: boolean;
+    state: string;
+    downloaded: number;
+    bytes: number;
+    phase?: string;
+    error?: string | null;
+  };
 }
 interface CustomImageDownload {
   status: string;
@@ -39,6 +49,7 @@ export function ModelLibrary() {
   const [actionError, setActionError] = useState("");
   const [busy, setBusy] = useState(false);
   const [remove, setRemove] = useState<string | null>(null);
+  const [removeEncoder, setRemoveEncoder] = useState(false);
   const [customFamily, setCustomFamily] = useState<string>("sdxl");
   const [customRepo, setCustomRepo] = useState("");
   const [customDownload, setCustomDownload] = useState<CustomImageDownload>({ status: "idle" });
@@ -55,6 +66,7 @@ export function ModelLibrary() {
     const poll = async () => {
       let setupActive = false;
       let customDownloadActive = false;
+      let encoderDownloadActive = false;
       try {
         const response = await fetch(`${getApiBaseUrl()}/api/models`, {
           signal: AbortSignal.timeout(5000),
@@ -64,6 +76,7 @@ export function ModelLibrary() {
         if (!Array.isArray(data.models)) throw new Error("Model status response is invalid.");
         failures = 0;
         setupActive = data.models.some((model: InstalledModel) => ["installing", "checking-runtime"].includes(model.state));
+        encoderDownloadActive = data.models.some((model: InstalledModel) => ["downloading", "verifying", "removing"].includes(model.uncensoredTextEncoder?.state ?? ""));
         customDownloadActive = ["checking", "downloading", "validating"].includes(data.customImageDownload?.status);
         if (alive) {
           setModels(data.models);
@@ -78,7 +91,7 @@ export function ModelLibrary() {
         if (alive) {
           const delay = failures
             ? Math.min(30_000, 3_000 * 2 ** Math.min(failures - 1, 3))
-            : setupActive || customDownloadActive ? 1_500 : 8_000;
+            : setupActive || customDownloadActive || encoderDownloadActive ? 1_500 : 8_000;
           timer = setTimeout(poll, delay);
         }
       }
@@ -118,7 +131,7 @@ export function ModelLibrary() {
   };
   const downloading = models.some((model) =>
     ["downloading", "verifying", "removing", "installing"].includes(model.state),
-  ) || ["checking", "downloading", "validating"].includes(customDownload.status);
+  ) || models.some((model) => ["downloading", "verifying", "removing"].includes(model.uncensoredTextEncoder?.state ?? "")) || ["checking", "downloading", "validating"].includes(customDownload.status);
   const actionsUnavailable = busy || Boolean(error);
   const addCustomModel = async () => {
     setAddingCustom(true);
@@ -173,6 +186,26 @@ export function ModelLibrary() {
       if (data.customImageDownload) setCustomDownload(data.customImageDownload);
     } catch (error) {
       setActionError(error instanceof Error ? error.message : "Could not cancel the download.");
+    }
+  };
+  const textEncoderAction = async (operation: string, body?: Record<string, unknown>) => {
+    setBusy(true);
+    setActionError("");
+    try {
+      const response = await fetch(`${getApiBaseUrl()}/api/models/4b/text-encoder/${operation}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: AbortSignal.timeout(30_000),
+        body: JSON.stringify(body ?? {}),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Could not update the Klein 4B text encoder.");
+      if (!Array.isArray(data.models)) throw new Error("The model service returned an invalid status response.");
+      setModels(data.models);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Could not update the Klein 4B text encoder.");
+    } finally {
+      setBusy(false);
     }
   };
   return (
@@ -244,13 +277,14 @@ export function ModelLibrary() {
                   ? `16 steps · INT4/INT8 · ${(model.bytes / 1e9).toFixed(2)} GB`
                   : model.id.startsWith("tame-pony-")
                     ? `SDXL · ${model.id.endsWith("-int8") ? "INT8" : "FP16"} · ${(model.bytes / 1e9).toFixed(2)} GB`
-                    : `${model.bytes > 0 ? `${(model.bytes / 1e9).toFixed(2)} GB · ` : ""}${model.id === "4b" ? "Smaller download and lower memory use" : "Larger model"}`}
+                    : `${model.bytes > 0 ? `${(model.bytes / 1e9).toFixed(2)} GB · ` : ""}${model.id === "4b-lora" ? "LoRA-ready · Intel GPU" : model.id === "4b" ? "Smaller download and lower memory use" : "Larger model"}`}
             </p>
               {model.id.startsWith("custom-") ? (
               <p className="model-library-note" title={model.repoId}>Text to image · {model.sourceType === "huggingface" ? model.repoId : "Linked in place; source files are kept on removal."}</p>
             ) : model.id.startsWith("tame-pony-") ? (
               <details className="model-library-details"><summary>Model details</summary><p>Text to image · 1024 × 1024 · 30 steps · guidance 7.0. Licensed under FAIPL-1.0-SD.</p></details>
             ) : null}
+            {model.id === "4b-lora" ? <p className="model-library-note">Use local Klein 4B LoRAs together, with individual strengths. Intel GPU · text-to-image · Apache 2.0. <a href="https://huggingface.co/xgirls/FLUX.2-klein-4B-OpenVINO-INT4-LoRA" target="_blank" rel="noreferrer">Model details</a>.</p> : null}
             {model.id === "qwen21-turbo" ? (
               <details className="model-library-details"><summary>Model details</summary>
                 <p className="model-library-note">
@@ -266,6 +300,48 @@ export function ModelLibrary() {
                 <p className="model-library-note">FLUX Kommunity License · the model card includes the required license and attribution notice.</p>
                 <p className="model-library-note">Experimental · Text to image at 1024 × 1024. Output quality on Intel GPU is not yet verified.</p>
               </details>
+            ) : null}
+            {model.id === "4b" && model.uncensoredTextEncoder ? (
+              <div className="model-library-encoder-option">
+                <strong>Optional uncensored text encoder</strong>
+                <p className="model-library-note">A separate OpenVINO Qwen3 encoder for Klein 4B only. It adds about 2.1 GB; the standard encoder stays available. Fern downloads it directly, with no Hugging Face account required while the model is publicly available. <a href={`https://huggingface.co/${model.uncensoredTextEncoder.repoId}`} target="_blank" rel="noreferrer">Model details and license</a>.</p>
+                {!model.installed ? (
+                  <p className="model-library-note">Install Klein 4B first.</p>
+                ) : model.uncensoredTextEncoder.installed ? (
+                  <>
+                    <label className="model-library-encoder-toggle">
+                      <input
+                        type="checkbox"
+                        aria-label="Use uncensored text encoder for Klein 4B"
+                        checked={model.uncensoredTextEncoder.enabled}
+                        disabled={actionsUnavailable || downloading}
+                        onChange={(event) => void textEncoderAction("setting", { enabled: event.target.checked })}
+                      />
+                      Use uncensored text encoder for Klein 4B
+                    </label>
+                    {removeEncoder ? (
+                      <div className="model-library-remove-confirm">
+                        <span>Remove the optional encoder? Klein 4B and its standard encoder stay installed.</span>
+                        <button className="btn btn-secondary" type="button" disabled={actionsUnavailable || downloading} onClick={() => { setRemoveEncoder(false); void textEncoderAction("remove"); }}>Confirm removal</button>
+                        <button className="btn btn-secondary" type="button" disabled={busy} onClick={() => setRemoveEncoder(false)}>Cancel</button>
+                      </div>
+                    ) : <button className="btn btn-secondary" type="button" disabled={actionsUnavailable || downloading} onClick={() => setRemoveEncoder(true)}>Remove optional encoder</button>}
+                  </>
+                ) : ["downloading", "verifying"].includes(model.uncensoredTextEncoder.state) ? (
+                  <>
+                    <p className="model-library-status" role="status">{model.uncensoredTextEncoder.phase || "Downloading optional text encoder…"}</p>
+                    {model.uncensoredTextEncoder.bytes > 0 ? <><progress aria-label="Uncensored Klein text encoder download" value={model.uncensoredTextEncoder.downloaded} max={model.uncensoredTextEncoder.bytes} /><small>{(model.uncensoredTextEncoder.downloaded / 1e9).toFixed(2)} / {(model.uncensoredTextEncoder.bytes / 1e9).toFixed(2)} GB</small></> : <progress className="model-library-indeterminate" aria-label="Checking model download access" />}
+                    <button className="btn btn-secondary" type="button" disabled={actionsUnavailable} onClick={() => void textEncoderAction("pause")}>Cancel download</button>
+                  </>
+                ) : (
+                  <>
+                    {model.uncensoredTextEncoder.error ? <p role="alert">{model.uncensoredTextEncoder.error}</p> : null}
+                    <button className="btn btn-secondary" type="button" disabled={actionsUnavailable || downloading} onClick={() => void textEncoderAction("install")}>
+                      {model.uncensoredTextEncoder.state === "paused" ? "Resume download" : model.uncensoredTextEncoder.state === "failed" ? "Retry download" : "Download · about 2.1 GB"}
+                    </button>
+                  </>
+                )}
+              </div>
             ) : null}
             <p className="model-library-status" role="status" aria-live="polite">
               {model.state === "not-installed"

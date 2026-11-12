@@ -51,6 +51,7 @@ import tame_pony_pipeline as tame_pony
 import custom_image_pipeline as custom_image
 import custom_image_registry
 import custom_image_download
+import flux2_klein_text_encoder
 from generation_worker import GenerationWorker, GenerationCancelled, tame_pony_inference_loop, custom_image_inference_loop
 from tts_generation_worker import TtsGenerationWorker
 from text_generation_process import TextGenerationProcess
@@ -95,6 +96,9 @@ QWEN_TURBO_BASE_RUNTIME = ROOT / ".venv-qwen21-export"
 QWEN_TURBO_OVERLAY_RUNTIME = ROOT / ".venv-qwen21-turbo-export"
 QWEN_TURBO_PYTHON = Path(sys.executable)
 MODEL_MANAGER = ModelManager(MODELS_DIR)
+KLEIN_TEXT_ENCODER_MANAGER = flux2_klein_text_encoder.KleinTextEncoderManager(
+    flux2.MODELS_ROOT, DATA_DIR / "flux2-klein-4b-text-encoder.json"
+)
 FLUX3_SETUP_LOCK = threading.Lock()
 FLUX3_SETUP_STATE: dict[str, Any] = {"status": "idle", "phase": None, "error": None, "logs": []}
 FLUX3_SETUP_CANCEL: threading.Event | None = None
@@ -397,6 +401,11 @@ def qwen_turbo_snapshot() -> dict[str, Any]:
 def model_library_snapshot() -> list[dict[str, Any]]:
     """Merge the regular catalog with Flux.3's separate runtime setup state."""
     models = MODEL_MANAGER.snapshot()
+    klein4b = next((item for item in models if item["id"] == "4b"), None)
+    if klein4b is not None:
+        klein4b["uncensoredTextEncoder"] = KLEIN_TEXT_ENCODER_MANAGER.snapshot(
+            bool(klein4b["installed"])
+        )
     flux3_item = next((item for item in models if item["id"] == flux3.MODEL_KEY), None)
     if flux3_item is not None:
         with FLUX3_SETUP_LOCK:
@@ -1142,7 +1151,7 @@ def model_snapshot(device: str, model="9b") -> dict[str, Any]:
                 MODEL_CHECK_STARTED = True
                 def check():
                     results = {}
-                    for choice in ("9b", "4b", *tame_pony.MODEL_KEYS):
+                    for choice in ("9b", "4b", "4b-lora", *tame_pony.MODEL_KEYS):
                         for adapter in ("AUTO", "INTEL_GPU", "NVIDIA_GPU", "CPU"):
                             try:
                                 result = (
@@ -1171,7 +1180,7 @@ def model_snapshot(device: str, model="9b") -> dict[str, Any]:
             "requestedDevice": device,
             "adapters": [],
         })
-    if model not in ("auto", "9b", "4b"): model = "9b"
+    if model not in ("auto", "9b", "4b", "4b-lora"): model = "9b"
     requested_model = model
     resolved_model = flux2.resolve_model(model, device)
     with MODEL_CHECK_LOCK:
@@ -1179,7 +1188,7 @@ def model_snapshot(device: str, model="9b") -> dict[str, Any]:
             MODEL_CHECK_STARTED = True
             def check():
                 results = {}
-                for choice in ("9b", "4b", *tame_pony.MODEL_KEYS):
+                for choice in ("9b", "4b", "4b-lora", *tame_pony.MODEL_KEYS):
                     for adapter in ("AUTO", "INTEL_GPU", "NVIDIA_GPU", "CPU"):
                         try:
                             result = (
@@ -1382,6 +1391,31 @@ def validate_flux_payload(payload: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("Multiple reference images are supported by FLUX.2 Klein 4B and 9B.")
     reference_images = [decode_flux_reference_image(source) for source in reference_sources]
     reference_image = reference_images[0] if reference_images else None
+    loras = payload.get("loras", [])
+    if not isinstance(loras, list) or len(loras) > 4:
+        raise ValueError("Choose up to four LoRAs.")
+    if loras and model != "4b-lora":
+        raise ValueError("LoRAs require the Klein 4B LoRA model.")
+    checked_loras = []
+    lora_paths = set()
+    for lora in loras:
+        if not isinstance(lora, dict) or not isinstance(lora.get("path"), str):
+            raise ValueError("Choose a local LoRA file.")
+        path = Path(lora["path"]).expanduser().resolve(strict=True)
+        if not path.is_file() or path.suffix.lower() != ".safetensors":
+            raise ValueError("Choose a local .safetensors LoRA file.")
+        if str(path).casefold() in lora_paths:
+            raise ValueError("Each LoRA can only be added once.")
+        lora_paths.add(str(path).casefold())
+        strength = float(lora.get("strength", 1.0))
+        if not math.isfinite(strength) or not -4 <= strength <= 4:
+            raise ValueError("LoRA strength must be between -4 and 4.")
+        enabled = lora.get("enabled", True)
+        if not isinstance(enabled, bool):
+            raise ValueError("LoRA enabled must be true or false.")
+        checked_loras.append({"path": str(path), "strength": strength, "enabled": enabled})
+    if model == "4b-lora" and reference_image is not None:
+        raise ValueError("Klein 4B LoRA currently supports text-to-image only.")
     if model == flux3.MODEL_KEY and reference_image is not None:
         raise ValueError("This FLUX.3 Klein OpenVINO quant currently supports text-to-image only.")
     is_tame_pony = tame_pony.is_model(model)
@@ -1403,6 +1437,8 @@ def validate_flux_payload(payload: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("Steps are outside the supported range.")
     if guidance < 0 or guidance > (20 if custom_model else 10):
         raise ValueError("Guidance is outside the supported range.")
+    if model == "4b-lora" and guidance != 1.0:
+        raise ValueError("Klein 4B LoRA uses guidance 1.0.")
     if batch_size < 1 or batch_size > 4:
         raise ValueError("Batch size must be 1 to 4.")
     if model in (QWEN_TURBO_MODEL_ID, flux3.MODEL_KEY) and batch_size != 1:
@@ -1423,6 +1459,7 @@ def validate_flux_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "model": model,
         "reference_source": payload.get("reference_image") if reference_image is not None else None,
         "reference_sources": reference_sources,
+        "loras": checked_loras,
     }
 
 
@@ -1431,6 +1468,13 @@ def run_flux_generation(
     payload: dict[str, Any],
     cancel_event: threading.Event,
 ) -> None:
+    payload["use_uncensored_text_encoder"] = bool(
+        payload.get("model") == "4b"
+        and KLEIN_TEXT_ENCODER_MANAGER.snapshot(
+            any(item["id"] == "4b" and item["installed"] for item in MODEL_MANAGER.snapshot())
+        )["enabled"]
+    )
+
     def log_generation(message: str) -> None:
         display_message = message
         for prefix in ("FERN_QWEN_PROGRESS:", "FERN_TTS_PROGRESS:", flux3.PROGRESS_PREFIX):
@@ -1470,7 +1514,8 @@ def run_flux_generation(
             TAME_PONY_GENERATION_WORKER.close()
         if not custom_image.is_model(payload.get("model", "")):
             CUSTOM_IMAGE_GENERATION_WORKER.close()
-        GENERATION_WORKER.close()
+        if payload.get("model") != "4b-lora":
+            GENERATION_WORKER.close()
         if payload.get("model") != flux3.MODEL_KEY:
             FLUX3_GENERATION_WORKER.close()
         if stage.resolve().parent != CACHE_DIR.resolve():
@@ -1513,6 +1558,8 @@ def run_flux_generation(
             metadata = {
                 "threadId": payload.get("thread_id"),
                 "prompt": payload["prompt"],
+                "textEncoder": "uncensored-qwen3-4b-int4-ov" if payload.get("use_uncensored_text_encoder") and payload.get("model") == "4b" else "default",
+                "loras": [{"name": Path(item["path"]).name, "strength": item["strength"]} for item in payload.get("loras", []) if item["enabled"]],
                 "seed": seed,
                 "width": payload["width"],
                 "height": payload["height"],
@@ -1677,6 +1724,8 @@ def run_flux_generation(
                 output_path, generation_time = GENERATION_WORKER.generate(
                     cancel_event=cancel_event,
                     model=payload.get("model", "9b"),
+                    use_uncensored_text_encoder=payload.get("use_uncensored_text_encoder", False),
+                    loras=payload.get("loras", []),
                     prompt=payload["prompt"],
                     width=payload["width"],
                     height=payload["height"],
@@ -2308,6 +2357,40 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(400, {"error": str(error)})
             return
 
+        if parsed.path in (
+            "/api/models/4b/text-encoder/install",
+            "/api/models/4b/text-encoder/pause",
+            "/api/models/4b/text-encoder/remove",
+            "/api/models/4b/text-encoder/setting",
+        ):
+            try:
+                if flux_job_snapshot()["status"] == "running":
+                    raise ValueError("Stop image generation before changing the Klein 4B text encoder.")
+                model_installed = any(
+                    item["id"] == "4b" and item["installed"]
+                    for item in MODEL_MANAGER.snapshot()
+                )
+                if parsed.path.endswith("/setting"):
+                    enabled = self.read_json_body().get("enabled")
+                    KLEIN_TEXT_ENCODER_MANAGER.set_enabled(enabled, model_installed)
+                    GENERATION_WORKER.close()
+                elif parsed.path.endswith("/install"):
+                    if any(
+                        item["state"] in ("downloading", "verifying", "removing")
+                        for item in MODEL_MANAGER.snapshot()
+                    ):
+                        raise ValueError("Wait for the active model operation to finish before downloading the text encoder.")
+                    KLEIN_TEXT_ENCODER_MANAGER.start(model_installed)
+                elif parsed.path.endswith("/pause"):
+                    KLEIN_TEXT_ENCODER_MANAGER.cancel()
+                else:
+                    GENERATION_WORKER.close()
+                    KLEIN_TEXT_ENCODER_MANAGER.remove()
+                self.send_json(200, {"models": model_library_snapshot()})
+            except Exception as error:
+                self.send_json(400, {"error": str(error)})
+            return
+
         if parsed.path in ("/api/models/install", "/api/models/pause", "/api/models/remove"):
             try:
                 model = self.read_json_body().get("model")
@@ -2391,7 +2474,11 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     with FLUX_JOB_LOCK:
                         if FLUX_JOB["status"] == "running": raise ValueError("Stop generation before removing a model.")
+                    if model == "4b" and KLEIN_TEXT_ENCODER_MANAGER.snapshot(True)["state"] in ("downloading", "verifying", "removing"):
+                        raise ValueError("Cancel or finish the optional text encoder operation before removing Klein 4B.")
                         GENERATION_WORKER.close()
+                        if model == "4b":
+                            KLEIN_TEXT_ENCODER_MANAGER.set_enabled(False, False)
                         MODEL_MANAGER.remove(model)
                 self.send_json(200, {"models": model_library_snapshot()})
             except Exception as error: self.send_json(400, {"error": str(error)})

@@ -295,6 +295,10 @@ export function PromptComposer({
               value={settings.model ?? "9b"}
               disabled={running || submitting || busyElsewhere || loadingReference}
               onChange={(model) => {
+                if (model === "4b-lora") {
+                  onSettingsChange({ model, guidance: 1, device: "AUTO" });
+                  return;
+                }
                 const isCustom = model.startsWith("custom-");
                 const isSpecial = model === "qwen21-turbo" || model === "flux3-klein" || model === "tame-pony-v25-sdxl" || model === "tame-pony-v25-sdxl-int8" || isCustom;
                 const currentIsSpecial = settings.model === "qwen21-turbo" || settings.model === "flux3-klein" || settings.model === "tame-pony-v25-sdxl" || settings.model === "tame-pony-v25-sdxl-int8" || settings.model?.startsWith("custom-");

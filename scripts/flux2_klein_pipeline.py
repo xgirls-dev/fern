@@ -209,7 +209,7 @@ def _adapter_statuses(model="9b") -> list[dict[str, Any]]:
     openvino_model_ready = _openvino_model_ready() if model == "9b" else installed(MODELS_ROOT, model)
     shared_model_ready = openvino_model_ready
 
-    return [
+    statuses = [
         {
             "id": INTEL_GPU,
             "label": device_label(INTEL_GPU),
@@ -265,6 +265,14 @@ def _adapter_statuses(model="9b") -> list[dict[str, Any]]:
             "supportsReferenceImage": True,
         },
     ]
+    if model == "4b-lora":
+        for item in statuses:
+            item["supportsReferenceImage"] = False
+            if item["id"] != INTEL_GPU:
+                item["runtimeReady"] = False
+                item["available"] = False
+                item["note"] = "The LoRA-ready Klein model currently requires an Intel GPU."
+    return statuses
 
 
 def _select_device(requested: str, statuses: list[dict[str, Any]]) -> str:
@@ -353,14 +361,24 @@ def release_pipeline() -> None:
         pass
 
 
-def load_pipeline(*, device: str = DEFAULT_DEVICE, model="9b", log: Callable[[str], None] | None = None):
+def load_pipeline(*, device: str = DEFAULT_DEVICE, model="9b", use_uncensored_text_encoder: bool = False, log: Callable[[str], None] | None = None):
+    import flux2_klein_lora
+    flux2_klein_lora.release()
     selected = _select_device(device, _adapter_statuses(model))
     status = model_status(selected, model)
     if not status["runtimeReady"]:
         raise Flux2KleinNotReady(status["runtimeNote"])
 
     model_dir = model_dir_for(selected, model)
-    cache_key = (selected, str(model_dir))
+    if use_uncensored_text_encoder and model != "4b":
+        raise ValueError("The optional uncensored text encoder is available for Klein 4B only.")
+    optional_encoder_dir = model_dir / "text_encoder_uncensored"
+    if use_uncensored_text_encoder and not all(
+        (optional_encoder_dir / name).is_file()
+        for name in ("config.json", "openvino_model.xml", "openvino_model.bin")
+    ):
+        raise Flux2KleinNotReady("The optional uncensored Klein 4B text encoder is not installed.")
+    cache_key = (selected, str(model_dir), bool(use_uncensored_text_encoder))
     if _PIPELINE_CACHE["key"] == cache_key and _PIPELINE_CACHE["pipeline"] is not None:
         _log(log, f"Using cached Flux.2 Klein {model.upper()} pipeline on {device_label(selected)}.")
         return _PIPELINE_CACHE["pipeline"]
@@ -375,6 +393,8 @@ def load_pipeline(*, device: str = DEFAULT_DEVICE, model="9b", log: Callable[[st
         )
     _log(log, f"Loading Flux.2 Klein {model.upper()}: {model_dir}")
     _log(log, f"Adapter: {device_label(selected)}")
+    if use_uncensored_text_encoder:
+        _log(log, "Using the optional uncensored Klein 4B text encoder.")
 
     if selected == NVIDIA_GPU:
         import openvino_nvidia  # noqa: F401
@@ -396,11 +416,12 @@ def load_pipeline(*, device: str = DEFAULT_DEVICE, model="9b", log: Callable[[st
         _log(log, "Generation cache disabled to protect free disk space.")
 
     _log(log, f"OpenVINO device: {openvino_device}")
-    pipeline = OVFlux2KleinPipeline.from_pretrained(
-        str(model_dir),
-        device=openvino_device,
-        ov_config=ov_config,
-    )
+    pipeline_options: dict[str, Any] = {"device": openvino_device, "ov_config": ov_config}
+    if use_uncensored_text_encoder:
+        pipeline_options["text_encoder"] = ov.Core().read_model(
+            str(optional_encoder_dir / "openvino_model.xml")
+        )
+    pipeline = OVFlux2KleinPipeline.from_pretrained(str(model_dir), **pipeline_options)
     if cache_enabled:
         storage_manager.touch_cache(cache_dir)
 
@@ -420,6 +441,8 @@ def generate_image(
     seed: int = 42,
     device: str = DEFAULT_DEVICE,
     model: str = "9b",
+    use_uncensored_text_encoder: bool = False,
+    loras: list[dict[str, Any]] | None = None,
     reference_image: Any | None = None,
     reference_images: list[Any] | None = None,
     log: Callable[[str], None] | None = None,
@@ -437,9 +460,30 @@ def generate_image(
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    if model == "4b-lora":
+        if selected != INTEL_GPU:
+            raise ValueError("The LoRA-ready Klein model currently requires an Intel GPU.")
+        if reference_image is not None or reference_images:
+            raise ValueError("The LoRA-ready Klein model currently supports text-to-image only.")
+        if guidance != 1.0:
+            raise ValueError("The LoRA-ready Klein model uses guidance 1.0.")
+        if _PIPELINE_CACHE["pipeline"] is not None:
+            release_pipeline()
+        import flux2_klein_lora
+        return flux2_klein_lora.generate(model_dir=model_dir_for(selected, model), selections=loras or [],
+                                         prompt=prompt, output_dir=output_dir, width=width,
+                                         height=height, steps=steps, seed=seed, log=log)
+    if loras:
+        raise ValueError("LoRAs require the Klein 4B LoRA model.")
+
     import torch
 
-    pipeline = load_pipeline(device=selected, model=model, log=log)
+    pipeline = load_pipeline(
+        device=selected,
+        model=model,
+        use_uncensored_text_encoder=use_uncensored_text_encoder,
+        log=log,
+    )
     # OpenVINO executes the model on the selected plugin device; the pipeline
     # uses a CPU torch generator for deterministic scheduler inputs on all
     # adapters, including the NVIDIA plugin.

@@ -72,6 +72,7 @@ const browserStudio: StudioApi = {
   saveOutputAudio: async () => null,
   showImageInFolder: async () => undefined,
   pickReferenceImage: async () => null,
+  pickLoraFiles: async () => [],
   pickTextModelFolder: async () => null,
   pickCustomImageModelFolder: async () => selectedCustomImageFolder,
   saveImageAs: async () => null,

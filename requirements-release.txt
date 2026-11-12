@@ -52,6 +52,7 @@ regex==2026.9.29
 requests==2.34.2
 rich==15.0.0
 safetensors==0.8.0
+sentencepiece==0.2.3
 scikit-learn==1.9.1
 scipy==1.18.1
 setuptools==84.0.0

@@ -71,11 +71,12 @@ def model_status(device: str, model_id: str) -> dict[str, Any]:
                     core = ov.Core()
                     devices = [str(device) for device in core.available_devices]
                     has_optimum = importlib.util.find_spec("optimum.intel") is not None
+                    has_openvino = importlib.util.find_spec("openvino") is not None
                     result = {
-                        "installed": has_optimum,
+                        "installed": has_openvino,
                         "hasGpu": any(device == "GPU" or device.startswith("GPU.") for device in devices),
                         "devices": devices,
-                        "message": "OpenVINO GenAI image runtime is available." if has_optimum else "The OpenVINO Optimum runtime is unavailable.",
+                        "message": "OpenVINO image runtime is available." if has_openvino else "The OpenVINO runtime is unavailable.",
                     }
                 except Exception as error:
                     result = {"installed": False, "hasGpu": False, "message": f"Could not check OpenVINO devices: {error}"}

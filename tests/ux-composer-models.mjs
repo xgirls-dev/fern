@@ -43,7 +43,7 @@ try {
  const banner=await page.locator('.runtime-banner').boundingBox();const header=await page.locator('.titlebar').boundingBox();assert(banner.y>=header.y && banner.y+banner.height<=header.y+header.height,'Alert fits inside titlebar');
  const actions=await page.locator('.titlebar-actions').boundingBox();assert(banner.x+banner.width<=actions.x,'Alert leaves header controls accessible');
  await page.screenshot({path:`${dir}/composer-loading-header.png`});
- await choose().click();state.installedModels=[{id:'9b',label:'Klein 9B'}];await refreshed();assert.equal(await choose().count(),1);assert.equal(await menu.count(),0);await choose().click();await menu.waitFor();assert.equal(await menu.getByRole('menuitemradio',{name:/Klein 4B/}).isDisabled(),true);await page.keyboard.press('Escape');
+ await choose().click();state.installedModels=[{id:'9b',label:'Klein 9B'}];await refreshed();assert.equal(await choose().count(),1);assert.equal(await menu.count(),0);await choose().click();await menu.waitFor();assert.equal(await menu.getByRole('menuitemradio',{name:/^Klein 4B(?! · LoRA)/}).isDisabled(),true);await page.keyboard.press('Escape');
  state.installedModels=[];await refreshed();assert.equal(await choose().count(),1);assert((await choose().innerText()).includes('No models'));await oneRow();await choose().click();await menu.waitFor();assert.equal(await menu.locator('[role="menuitemradio"]:not(:disabled)').count(),0);await page.keyboard.press('Escape');
  state.modelReady=false;state.runtime={status:'idle',message:'',logs:[]};await refreshed();
  assert.equal(await page.locator('.runtime-install-hint').count(),0);await oneRow();

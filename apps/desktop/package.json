@@ -1,6 +1,6 @@
 {
   "name": "@fern/desktop",
-  "version": "0.1.36",
+  "version": "0.1.42",
   "private": true,
   "description": "Fern local-first desktop studio for OpenVINO image, text, and audio models",
   "author": "Fern",

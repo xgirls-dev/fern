@@ -211,6 +211,26 @@ export function GenerationControls({
   canUseOutput,
 }: GenerationControlsProps) {
   const [customSize, setCustomSize] = useState(false);
+  const [loraError, setLoraError] = useState("");
+  const isLoraModel = settings.model === "4b-lora";
+  const loras = settings.loras ?? [];
+  const addLoras = async () => {
+    try {
+      const paths = await window.studio.pickLoraFiles();
+      const existing = new Set(loras.map((item) => item.path.toLowerCase()));
+      const next = [...loras];
+      for (const path of paths) {
+        if (existing.has(path.toLowerCase())) continue;
+        if (next.length >= 4) { setLoraError("Choose up to four LoRAs."); break; }
+        existing.add(path.toLowerCase());
+        next.push({ path, strength: 1, enabled: true });
+      }
+      if (next.length <= 4 && paths.length <= 4 - loras.length) setLoraError("");
+      onSettingsChange({ loras: next });
+    } catch (error) {
+      setLoraError(error instanceof Error ? error.message : "Could not open the file picker.");
+    }
+  };
   const isQwenTurbo = settings.model === "qwen21-turbo";
   const isFlux3Klein = settings.model === "flux3-klein";
   const isCustomImage = settings.model?.startsWith("custom-") ?? false;
@@ -433,11 +453,31 @@ export function GenerationControls({
     <section className="controls-panel" aria-label="Generation controls">
       <div className="inspector-controls">
         <div className="control-sections">
+          {isLoraModel ? (
+            <ControlSection title="LoRAs" summary={`${loras.filter((item) => item.enabled).length} active · up to 4`} defaultOpen>
+              <p className="field-note">Add Klein 4B safetensors files, then set each strength. Include any required trigger words in your prompt. AI-Toolkit and Diffusers LoRAs are supported.</p>
+              {loras.map((lora, index) => (
+                <div className="lora-control" key={lora.path}>
+                  <label className="lora-control-name" title={lora.path}>
+                    <input type="checkbox" checked={lora.enabled} onChange={(event) => onSettingsChange({ loras: loras.map((item, i) => i === index ? { ...item, enabled: event.target.checked } : item) })} />
+                    <span>{lora.path.split(/[\\/]/).pop()}</span>
+                  </label>
+                  <label className="lora-control-strength">Strength
+                    <input type="number" min={-4} max={4} step={0.1} value={lora.strength} aria-label={`Strength for ${lora.path.split(/[\\/]/).pop()}`} onChange={(event) => onSettingsChange({ loras: loras.map((item, i) => i === index ? { ...item, strength: Number(event.target.value) } : item) })} />
+                  </label>
+                  <button type="button" className="btn btn-secondary" onClick={() => onSettingsChange({ loras: loras.filter((_, i) => i !== index) })} aria-label={`Remove ${lora.path.split(/[\\/]/).pop()}`}>Remove</button>
+                </div>
+              ))}
+              <button type="button" className="btn btn-secondary" disabled={loras.length >= 4} onClick={() => void addLoras()}>Add LoRA files</button>
+              {loraError || errors.loras ? <p role="alert" className="field-error">{loraError || errors.loras}</p> : null}
+            </ControlSection>
+          ) : null}
           <ControlSection
             title="Canvas & compute"
             summary={`${settings.width} × ${settings.height} | ${hasFixedSampling ? "1 image" : `${settings.batchSize} image${settings.batchSize === 1 ? "" : "s"}`}`}
             defaultOpen
           >
+            {isLoraModel ? <p className="model-note field-note">Klein 4B LoRA uses the Intel GPU, guidance 1.0, and text-to-image. Reference images are not available yet.</p> : null}
             {hasFixedSampling ? (
               <p className="model-note field-note">
                 {isFlux3Klein
@@ -830,7 +870,7 @@ export function GenerationControls({
               </div>
             </div>
 
-            <div className="field" hidden={hasFixedSampling}>
+            <div className="field" hidden={hasFixedSampling || isLoraModel}>
               <label htmlFor="guidance">Guidance</label>
               <div className="range-pair">
                 <input

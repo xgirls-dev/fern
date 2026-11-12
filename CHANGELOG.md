@@ -6,6 +6,13 @@ lands directly on `main` instead of through labeled pull requests.
 
 ## [Unreleased]
 
+## [0.1.42] - 2026-11-11
+
+### Added
+
+- Optional OpenVINO INT4 uncensored Qwen3 text encoder for FLUX.2 Klein 4B, with in-app download, persistent enable toggle, and the stock encoder retained as the default.
+- A separate LoRA-ready FLUX.2 Klein 4B model for Intel GPU text-to-image, with local safetensors selection, up to four independently enabled adapters, and adjustable strengths. Render information records the active adapters.
+
 ## [0.1.36] - 2026-10-25
 
 ### Added

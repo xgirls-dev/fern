@@ -99,6 +99,7 @@ const studioApi: StudioApi = {
   showImageInFolder: (filePath) =>
     ipcRenderer.invoke("studio:show-image-in-folder", filePath),
   pickReferenceImage: () => ipcRenderer.invoke("studio:pick-reference-image"),
+  pickLoraFiles: () => ipcRenderer.invoke("studio:pick-lora-files"),
   pickTextModelFolder: () => ipcRenderer.invoke("studio:pick-text-model-folder"),
   pickCustomImageModelFolder: () => ipcRenderer.invoke("studio:pick-custom-image-model-folder"),
   saveImageAs: (defaultName) =>
