@@ -9,11 +9,13 @@ import Play from "lucide-react/dist/esm/icons/play.mjs";
 import Search from "lucide-react/dist/esm/icons/search.mjs";
 import Star from "lucide-react/dist/esm/icons/star.mjs";
 import Trash2 from "lucide-react/dist/esm/icons/trash-2.mjs";
+import X from "lucide-react/dist/esm/icons/x.mjs";
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useModalFocus } from "../hooks/useModalFocus";
 import { resolveAssetUrl } from "../lib/api";
 import type { AudioOutput, AudioThread } from "../lib/ttsThreads";
+import { Button, IconButton, Input, MenuItem, SegmentedControl, Select } from "./ui/controls";
 
 type FeedFilter = "all" | "favorites" | "preset" | "clone" | "design";
 const dateTime = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
@@ -39,11 +41,12 @@ interface AudioFeedProps {
   onUseText: (output: AudioOutput) => void;
   onReuseSetup: (output: AudioOutput) => string;
   onOpenComposer: () => void;
+  onOpenSetup?: () => void;
   onUpdateOutput: (name: string, patch: Partial<AudioOutput>) => void;
   onDeleteOutput: (name: string) => Promise<void>;
 }
 
-export function AudioFeed({ thread, revealTake, modelLabel, generation, jobProgress, completion, onUseText, onReuseSetup, onOpenComposer, onUpdateOutput, onDeleteOutput }: AudioFeedProps) {
+export function AudioFeed({ thread, revealTake, modelLabel, generation, jobProgress, completion, onUseText, onReuseSetup, onOpenComposer, onOpenSetup, onUpdateOutput, onDeleteOutput }: AudioFeedProps) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<FeedFilter>("all");
   const [sort, setSort] = useState<"newest" | "oldest">("newest");
@@ -137,14 +140,21 @@ export function AudioFeed({ thread, revealTake, modelLabel, generation, jobProgr
     {jobProgress}
 
     {thread.outputs.length ? <div className="audio-feed-tools">
-      <label className="audio-feed-search"><Search size={15} aria-hidden="true" /><span className="sr-only">Search takes</span><input type="search" value={query} placeholder="Search scripts or voices…" onChange={(event) => { setQuery(event.target.value); setLimit(12); }} /></label>
-      <select aria-label="Sort takes" value={sort} onChange={(event) => setSort(event.target.value as "newest" | "oldest")}><option value="newest">Newest first</option><option value="oldest">Oldest first</option></select>
-      <div className="audio-feed-filters" role="group" aria-label="Filter takes">
-        {filterOptions.map((option) => <button key={option.id} type="button" aria-pressed={filter === option.id} onClick={() => { setFilter(option.id); setLimit(12); }}>{option.label}{option.id === "favorites" && favoriteCount ? ` ${favoriteCount}` : ""}</button>)}
-      </div>
+      <label className="audio-feed-search"><Search size={15} aria-hidden="true" /><span className="sr-only">Search takes</span><Input type="search" value={query} placeholder="Search scripts or voices…" onChange={(event) => { setQuery(event.target.value); setLimit(12); }} /></label>
+      <Select aria-label="Sort takes" value={sort} onChange={(event) => setSort(event.target.value as "newest" | "oldest")}><option value="newest">Newest first</option><option value="oldest">Oldest first</option></Select>
+      <SegmentedControl
+        className="audio-feed-filters"
+        label="Filter takes"
+        value={filter}
+        options={filterOptions.map((option) => ({
+          value: option.id,
+          label: option.id === "favorites" && favoriteCount ? `${option.label} ${favoriteCount}` : option.label,
+        }))}
+        onChange={(value) => { setFilter(value); setLimit(12); }}
+      />
     </div> : null}
 
-    {notice ? <div className="audio-feed-notice" role="status"><span>{notice}</span><button type="button" onClick={() => setNotice(null)} aria-label="Dismiss message">×</button></div> : null}
+    {notice ? <div className="audio-feed-notice" role="status"><span>{notice}</span><IconButton aria-label="Dismiss message" onClick={() => setNotice(null)}><X size={15} aria-hidden="true" /></IconButton></div> : null}
 
     {generation.running && !jobProgress ? <article className="audio-take audio-take--pending" role="status" aria-label="Generating a new take">
       <div className="audio-take-pending-icon"><AudioLines size={23} aria-hidden="true" /></div>
@@ -154,8 +164,8 @@ export function AudioFeed({ thread, revealTake, modelLabel, generation, jobProgr
     </article> : null}
     {generation.error ? <div className="audio-feed-failure" role="alert"><strong>Speech generation failed</strong><p>{generation.error}</p><span>Check the script and voice settings, then generate again.</span></div> : null}
 
-    {!thread.outputs.length && !generation.running ? <div className="audio-feed-empty"><strong>No takes yet</strong><p>Write a script in the composer to create your first take.</p><button type="button" className="btn btn-secondary" onClick={onOpenComposer}>Write a script</button></div> : null}
-    {thread.outputs.length && !filtered.length ? <div className="audio-feed-no-results"><strong>No matching takes</strong><p>Try another search or filter.</p><button type="button" onClick={() => { setQuery(""); setFilter("all"); }}>Clear filters</button></div> : null}
+    {!thread.outputs.length && !generation.running ? <div className="audio-feed-empty"><strong>No takes yet</strong><p>{onOpenSetup ? "Set up a voice model and write a script to create your first take." : "Write a script in the composer to create your first take."}</p><Button variant="primary" onClick={onOpenSetup ?? onOpenComposer}>{onOpenSetup ? "Find model setup" : "Write a script"}</Button></div> : null}
+    {thread.outputs.length && !filtered.length ? <div className="audio-feed-no-results"><strong>No matching takes</strong><p>Try another search or filter.</p><Button variant="ghost" onClick={() => { setQuery(""); setFilter("all"); }}>Clear filters</Button></div> : null}
 
     <div className="audio-feed-list" ref={listRef}>
       {filtered.slice(0, limit).map(({ output, number }) => <AudioTakeCard
@@ -175,12 +185,12 @@ export function AudioFeed({ thread, revealTake, modelLabel, generation, jobProgr
         runAction={runAction}
       />)}
     </div>
-    {filtered.length > limit ? <button type="button" className="btn btn-secondary audio-feed-more" onClick={() => setLimit((value) => value + 12)}>Show more takes ({filtered.length - limit} remaining)</button> : null}
+    {filtered.length > limit ? <Button className="audio-feed-more" onClick={() => setLimit((value) => value + 12)}>Show more takes ({filtered.length - limit} remaining)</Button> : null}
     {deleteTarget ? createPortal(<div className="dialog-backdrop"><div className="delete-image-dialog" ref={dialog} role="alertdialog" aria-modal="true" aria-label="Delete audio take" tabIndex={-1}>
       <h3>Move this take to the Recycle Bin?</h3>
       <p>{deleteTarget.title?.trim() || deleteTarget.prompt.slice(0, 90) || deleteTarget.name}</p>
       <p>The WAV will leave this thread and move to the Windows Recycle Bin. Restoring the file later will not restore its thread card.</p>
-      <div className="image-actions"><button type="button" className="btn btn-secondary" disabled={deleting} onClick={() => setDeleteTarget(null)}>Cancel</button><button type="button" className="btn btn-danger" disabled={deleting} onClick={() => void confirmDelete()}>{deleting ? "Moving…" : "Move to Recycle Bin"}</button></div>
+      <div className="image-actions"><Button variant="secondary" disabled={deleting} onClick={() => setDeleteTarget(null)}>Cancel</Button><Button variant="danger" disabled={deleting} onClick={() => void confirmDelete()}>{deleting ? "Moving…" : "Move to Recycle Bin"}</Button></div>
     </div></div>, document.body) : null}
   </section>;
 }
@@ -238,19 +248,19 @@ function AudioTakeCard({ output, number, featured, modelLabel, onUseText, onReus
     <header className="audio-take-header">
       <div className="audio-take-title-block">
         <span className="audio-take-number">{featured ? "LATEST" : String(number).padStart(2, "0")}</span>
-        {editing ? <form className="audio-take-rename" onSubmit={(event) => { event.preventDefault(); saveTitle(); }}><input aria-label="Take name" autoFocus maxLength={80} value={draftTitle} onChange={(event) => setDraftTitle(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") setEditing(false); }} /><button type="submit">Save</button><button type="button" onClick={() => setEditing(false)}>Cancel</button></form>
-          : <div className="audio-take-title"><h4 tabIndex={-1}>{title}</h4><button type="button" aria-label={`Rename ${title}`} title="Rename take" onClick={() => { setDraftTitle(output.title ?? ""); setEditing(true); }}><Pencil size={13} aria-hidden="true" /></button></div>}
+        {editing ? <form className="audio-take-rename" onSubmit={(event) => { event.preventDefault(); saveTitle(); }}><Input aria-label="Take name" autoFocus maxLength={80} value={draftTitle} onChange={(event) => setDraftTitle(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") setEditing(false); }} /><Button type="submit" variant="secondary">Save</Button><Button type="button" variant="ghost" onClick={() => setEditing(false)}>Cancel</Button></form>
+          : <div className="audio-take-title"><h4 tabIndex={-1}>{title}</h4><IconButton aria-label={`Rename ${title}`} title="Rename take" onClick={() => { setDraftTitle(output.title ?? ""); setEditing(true); }}><Pencil size={13} aria-hidden="true" /></IconButton></div>}
         <time dateTime={validDate ? createdAt.toISOString() : undefined}>{validDate ? dateTime.format(createdAt) : "Unknown date"}</time>
       </div>
-      <button type="button" className={`audio-take-favorite${output.favorite ? " is-favorite" : ""}`} aria-label={output.favorite ? `Remove ${title} from favorites` : `Add ${title} to favorites`} aria-pressed={!!output.favorite} title={output.favorite ? "Remove favorite" : "Favorite"} onClick={() => onUpdate({ favorite: !output.favorite })}><Star size={17} fill={output.favorite ? "currentColor" : "none"} aria-hidden="true" /></button>
+      <IconButton className={`audio-take-favorite${output.favorite ? " is-favorite" : ""}`} aria-label={output.favorite ? `Remove ${title} from favorites` : `Add ${title} to favorites`} aria-pressed={!!output.favorite} title={output.favorite ? "Remove favorite" : "Favorite"} onClick={() => onUpdate({ favorite: !output.favorite })}><Star size={17} fill={output.favorite ? "currentColor" : "none"} aria-hidden="true" /></IconButton>
     </header>
     <div className="audio-take-meta"><span>{modelLabel}</span>{output.device ? <span>{output.device === "CPU" ? "CPU" : "Intel GPU"}</span> : null}{output.generationSeconds != null ? <span>Generated in {formatDuration(output.generationSeconds)}</span> : null}<span>{output.language && output.language !== "Auto" ? output.language : "Auto language"}</span>{output.speaker && voiceKind(output.model) === "preset" ? <span>{output.speaker.replaceAll("_", " ")}</span> : null}</div>
-    <div className="audio-take-script"><span>Spoken text</span><p className={!expanded && longScript ? "is-clamped" : ""}>{output.prompt || "No script saved for this take."}</p>{longScript ? <button type="button" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded}>{expanded ? "Show less" : "Show full script"}</button> : null}</div>
+    <div className="audio-take-script"><span>Spoken text</span><p className={!expanded && longScript ? "is-clamped" : ""}>{output.prompt || "No script saved for this take."}</p>{longScript ? <Button variant="ghost" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded}>{expanded ? "Show less" : "Show full script"}</Button> : null}</div>
     <div className="audio-take-player">
       <div className="audio-take-transport">
-        <button type="button" className="audio-take-play" disabled={loading} aria-busy={loading} aria-label={`${playing ? "Pause" : "Play"} ${title}`} onClick={() => void togglePlayback()}>
+        <IconButton variant="primary" shape="circle" className="audio-take-play" disabled={loading} aria-busy={loading} aria-label={`${playing ? "Pause" : "Play"} ${title}`} onClick={() => void togglePlayback()}>
           {playing ? <Pause size={16} fill="currentColor" aria-hidden="true" /> : <Play size={16} fill="currentColor" aria-hidden="true" />}
-        </button>
+        </IconButton>
         <span className="audio-take-time">{formatDuration(position)}</span>
         <input type="range" min={0} max={Math.max(duration, 0.1)} step="0.1" value={Math.min(position, Math.max(duration, 0.1))}
           aria-label={`Seek ${title}`} onChange={(event) => {
@@ -267,10 +277,10 @@ function AudioTakeCard({ output, number, featured, modelLabel, onUseText, onReus
         onPlay={(event) => { setPlaying(true); onPlay(event.currentTarget); }} onPause={() => setPlaying(false)}
         onEnded={(event) => { setPlaying(false); setPosition(event.currentTarget.duration); }} onError={() => { setLoading(false); setAudioError("Could not load this take. Retry playback or check the output folder."); }} />
     </div>
-    {audioError ? <div className="audio-take-error" role="alert"><span>{audioError}</span><button type="button" className="btn btn-secondary" onClick={() => void togglePlayback()}>Retry playback</button></div> : null}
+    {audioError ? <div className="audio-take-error" role="alert"><span>{audioError}</span><Button variant="secondary" onClick={() => void togglePlayback()}>Retry playback</Button></div> : null}
     <footer className="audio-take-actions">
-      <button type="button" className="btn btn-secondary" onClick={onReuseSetup}>Use setup</button>
-      <button type="button" className="btn btn-secondary" onClick={onSave}><Download size={14} aria-hidden="true" /> Download</button>
+      <Button variant="secondary" onClick={onReuseSetup}>Use setup</Button>
+      <Button variant="secondary" onClick={onSave}><Download size={14} aria-hidden="true" /> Download</Button>
       <details className={`audio-take-menu${menuUp ? " is-up" : ""}`} onToggle={(event) => {
         if (!event.currentTarget.open) return;
         const feed = event.currentTarget.closest<HTMLElement>(".audio-feed");
@@ -280,11 +290,11 @@ function AudioTakeCard({ output, number, featured, modelLabel, onUseText, onReus
         const menu = event.currentTarget.querySelector(".audio-take-menu-items")?.getBoundingClientRect();
         if (viewport && summary && menu) setMenuUp(viewport.bottom - summary.bottom < menu.height + 8 && summary.top - viewport.top > viewport.bottom - summary.bottom);
       }} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) event.currentTarget.open = false; }} onKeyDown={(event) => { if (event.key === "Escape") { event.currentTarget.open = false; event.currentTarget.querySelector("summary")?.focus(); } }}>
-        <summary className="btn btn-secondary" aria-label={`More actions for ${title}`}><MoreHorizontal size={16} aria-hidden="true" /> More</summary>
+        <summary className="ui-disclosure-trigger" aria-label={`More actions for ${title}`}><MoreHorizontal size={16} aria-hidden="true" /> More</summary>
         <div className="audio-take-menu-items">
-          <button type="button" onClick={(event) => { closeMenu(event.currentTarget); onUseText(); }}>Use script only</button>
-          <button type="button" onClick={(event) => { closeMenu(event.currentTarget); void runAction(() => nativeActions ? window.studio.copyText(output.prompt) : navigator.clipboard.writeText(output.prompt), "Script copied."); }}><Copy size={13} aria-hidden="true" /> Copy script</button>
-          {nativeActions ? <><button type="button" onClick={(event) => { closeMenu(event.currentTarget); void runAction(() => window.studio.openOutputAudio(output.name), "Opened WAV."); }}>Open in default app</button><button type="button" onClick={(event) => { closeMenu(event.currentTarget); void runAction(() => window.studio.revealOutputAudio(output.name), "Opened output folder."); }}><FolderOpen size={13} aria-hidden="true" /> Show in folder</button><button type="button" className="danger-text" onClick={(event) => { closeMenu(event.currentTarget); onDelete(); }}><Trash2 size={13} aria-hidden="true" /> Delete take</button></> : null}
+          <MenuItem onClick={(event) => { closeMenu(event.currentTarget); onUseText(); }}>Use script only</MenuItem>
+          <MenuItem onClick={(event) => { closeMenu(event.currentTarget); void runAction(() => nativeActions ? window.studio.copyText(output.prompt) : navigator.clipboard.writeText(output.prompt), "Script copied."); }}><Copy size={13} aria-hidden="true" /> Copy script</MenuItem>
+          {nativeActions ? <><MenuItem onClick={(event) => { closeMenu(event.currentTarget); void runAction(() => window.studio.openOutputAudio(output.name), "Opened WAV."); }}>Open in default app</MenuItem><MenuItem onClick={(event) => { closeMenu(event.currentTarget); void runAction(() => window.studio.revealOutputAudio(output.name), "Opened output folder."); }}><FolderOpen size={13} aria-hidden="true" /> Show in folder</MenuItem><MenuItem destructive onClick={(event) => { closeMenu(event.currentTarget); onDelete(); }}><Trash2 size={13} aria-hidden="true" /> Delete take</MenuItem></> : null}
         </div>
       </details>
     </footer>

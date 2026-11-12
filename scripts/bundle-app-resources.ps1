@@ -27,6 +27,7 @@ $ScriptFiles = @(
     "device_adapters.py",
     "flux2_klein_pipeline.py",
     "flux2_klein_lora.py",
+    "lora_download.py",
     "flux2_klein_text_encoder.py",
     "flux3_klein_pipeline.py",
     "flux3_klein_runtime.py",

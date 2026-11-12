@@ -11,6 +11,7 @@ import type { ImageRecord } from "../lib/types";
 import { resolveAssetUrl } from "../lib/api";
 import { ImageActions } from "./ImageActions";
 import { PreviewMetadataHud } from "./PreviewMetadataHud";
+import { Button, IconButton, SegmentedControl } from "./ui/controls";
 export function Lightbox({
   image,
   images,
@@ -72,8 +73,7 @@ export function Lightbox({
       >
         <header className="viewer-toolbar">
           <div className="viewer-navigation">
-            <button
-              type="button"
+            <IconButton
               className="viewer-icon"
               title="Previous image"
               aria-label="Previous"
@@ -81,12 +81,11 @@ export function Lightbox({
               onClick={() => move(-1)}
             >
               <ChevronLeft size={18} />
-            </button>
+            </IconButton>
             <span className="viewer-count">
               {Math.max(1, index + 1)} / {images.length || 1}
             </span>
-            <button
-              type="button"
+            <IconButton
               className="viewer-icon"
               title="Next image"
               aria-label="Next"
@@ -94,25 +93,11 @@ export function Lightbox({
               onClick={() => move(1)}
             >
               <ChevronRight size={18} />
-            </button>
+            </IconButton>
           </div>
-          <div className="viewer-zoom" role="group" aria-label="Image zoom">
-            <button
-              type="button"
-              aria-pressed={zoom === 0}
-              onClick={() => setZoom(0)}
-            >
-              Fit
-            </button>
-            <button
-              type="button"
-              aria-pressed={zoom === 1}
-              onClick={() => setZoom(1)}
-            >
-              100%
-            </button>
-            <button
-              type="button"
+          <div className="viewer-zoom">
+            <SegmentedControl label="Image zoom" value={zoom === 0 ? "fit" : zoom === 1 ? "100" : "custom"} options={[{ value: "fit", label: "Fit" }, { value: "100", label: "100%" }]} onChange={(value) => setZoom(value === "fit" ? 0 : 1)} />
+            <IconButton
               className="viewer-icon"
               aria-label="Zoom out"
               title="Zoom out"
@@ -120,14 +105,13 @@ export function Lightbox({
               onClick={() => setZoom((v) => Math.max(0.25, (v || 1) - 0.25))}
             >
               <ZoomOut size={17} />
-            </button>
+            </IconButton>
             {zoom > 0 && zoom !== 1 ? (
               <span className="viewer-zoom-value">
                 {Math.round(zoom * 100)}%
               </span>
             ) : null}
-            <button
-              type="button"
+            <IconButton
               className="viewer-icon"
               aria-label="Zoom in"
               title="Zoom in"
@@ -135,11 +119,10 @@ export function Lightbox({
               onClick={() => setZoom((v) => Math.min(4, (v || 1) + 0.25))}
             >
               <ZoomIn size={17} />
-            </button>
+            </IconButton>
           </div>
           <div className="viewer-utilities">
-            <button
-              type="button"
+            <IconButton
               className="viewer-icon"
               aria-label="Render info"
               title="Render info"
@@ -147,16 +130,15 @@ export function Lightbox({
               onClick={() => setInfoOpen((v) => !v)}
             >
               <Info size={18} />
-            </button>
-            <button
-              type="button"
+            </IconButton>
+            <IconButton
               className="viewer-icon"
               aria-label="Close preview"
               title="Close preview"
               onClick={onClose}
             >
               <X size={20} />
-            </button>
+            </IconButton>
           </div>
         </header>
         <div className={`viewer-body${infoOpen ? " has-info" : ""}`}>
@@ -168,16 +150,15 @@ export function Lightbox({
             {failed ? (
               <div className="empty-state">
                 <strong>Image unavailable</strong>
-                <button
-                  type="button"
-                  className="btn btn-secondary"
+                <Button
+                  variant="secondary"
                   onClick={() => {
                     setFailed(false);
                     setRetry((v) => v + 1);
                   }}
                 >
                   Retry image
-                </button>
+                </Button>
               </div>
             ) : (
               <img

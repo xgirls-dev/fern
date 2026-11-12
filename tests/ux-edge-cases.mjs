@@ -108,6 +108,14 @@ try {
     await page.locator(`#${after}`).getAttribute("aria-selected"),
     "true",
   );
+  for (let index = 0; index < 10; index += 1) await page.keyboard.press("ArrowDown");
+  const activeId = await search.getAttribute("aria-activedescendant");
+  const visibleSelection = await page.locator(`#${activeId}`).evaluate((element) => {
+    const row = element.getBoundingClientRect();
+    const list = element.parentElement.getBoundingClientRect();
+    return { top: row.top - list.top, bottom: row.bottom - list.bottom };
+  });
+  assert(visibleSelection.top >= -1 && visibleSelection.bottom <= 1, `Keyboard selection must remain visible: ${JSON.stringify(visibleSelection)}`);
   await page.keyboard.press("Escape");
   await button("Stable title").click();
   state.job = {

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import X from "lucide-react/dist/esm/icons/x.mjs";
 import type { Notification } from "../lib/notifications";
+import { Button, IconButton } from "./ui/controls";
 
 function Toast({
   item,
@@ -33,24 +34,23 @@ function Toast({
     >
       <span>{item.message}</span>
       {item.action ? (
-        <button
-          type="button"
+        <Button
+          variant="secondary"
           onClick={() => {
             item.action!.run();
             dismiss(item.id);
           }}
         >
           {item.action.label}
-        </button>
+        </Button>
       ) : null}
-      <button
-        type="button"
+      <IconButton
         className="notification-close"
         aria-label="Dismiss notification"
         onClick={() => dismiss(item.id)}
       >
         <X size={15} />
-      </button>
+      </IconButton>
     </div>
   );
 }

@@ -6,6 +6,26 @@ lands directly on `main` instead of through labeled pull requests.
 
 ## [Unreleased]
 
+## [0.1.43] - 2026-11-12
+
+### Added
+
+- Download LoRA files from Hugging Face or Civitai links and add them to an image thread.
+- Use a reference image with the LoRA-ready FLUX.2 Klein 4B model on Intel GPUs.
+- Use the optional uncensored text encoder with either Klein 4B model from one shared download.
+- Select and delete multiple images from the Library, with a confirmation before moving them to the Recycle Bin.
+
+### Improved
+
+- Refined the interface across model management, image settings, Library, text, audio, and preferences with consistent controls, spacing, and focus states.
+- Made LoRA controls more compact and centered the model category tabs.
+
+### Fixed
+
+- Restore actual removal of managed model files when a model is removed.
+
+The LoRA-ready model uses Intel GPUs and supports one reference image. Klein 9B LoRAs are not supported.
+
 ## [0.1.42] - 2026-11-11
 
 ### Added

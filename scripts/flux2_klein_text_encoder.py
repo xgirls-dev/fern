@@ -25,9 +25,14 @@ FINAL_FOLDER = "text_encoder_uncensored"
 class KleinTextEncoderManager:
     def __init__(self, root: Path, state_path: Path):
         self.root = Path(root).resolve()
-        self.model_root = (self.root / "flux2-klein-4b-int4").resolve()
+        self.model_root = (self.root / "flux2-klein-4b-optional").resolve()
         self.final_dir = (self.model_root / FINAL_FOLDER).resolve()
         self.stage_dir = self.final_dir.with_name(self.final_dir.name + ".download")
+        legacy_root = self.root / "flux2-klein-4b-int4"
+        for old, new in ((legacy_root / FINAL_FOLDER, self.final_dir), (legacy_root / (FINAL_FOLDER + ".download"), self.stage_dir)):
+            if old.exists() and not new.exists():
+                self.model_root.mkdir(parents=True, exist_ok=True)
+                os.replace(old, new)
         self.state_path = Path(state_path)
         self.lock = threading.RLock()
         self.cancel_event: threading.Event | None = None
@@ -114,8 +119,7 @@ class KleinTextEncoderManager:
     def _download(self, cancel: threading.Event) -> None:
         stage = self.stage_dir
         try:
-            if not self.model_root.is_dir():
-                raise ValueError("Install FLUX.2 Klein 4B before downloading its optional text encoder.")
+            self.model_root.mkdir(parents=True, exist_ok=True)
             stage.mkdir(parents=True, exist_ok=True)
             from huggingface_hub import HfApi, get_token
 

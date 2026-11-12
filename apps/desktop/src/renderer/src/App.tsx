@@ -20,6 +20,7 @@ import { OutputWorkspace } from "./components/OutputWorkspace";
 import { RuntimeLoadingDialog } from "./components/RuntimeLoadingDialog";
 import { StudioSidebar } from "./components/StudioSidebar";
 import { TitleBar } from "./components/TitleBar";
+import { Button, IconButton, PageHeader } from "./components/ui/controls";
 
 import { Notifications } from "./components/Notifications";
 import { ThreadBrowser } from "./components/ThreadBrowser";
@@ -187,7 +188,7 @@ export function App() {
     if (lightboxImage?.name === image.name)
       setLightboxImage(remaining[0] ?? null);
     setTimeout(() => {
-      if (document.activeElement === document.body) {
+      if (!document.querySelector('[aria-modal="true"]') && document.activeElement === document.body) {
         document
           .querySelector<HTMLElement>('[aria-label="Filter images"], #prompt')
           ?.focus();
@@ -481,8 +482,10 @@ export function App() {
                           ? studio.status?.model.selectedModel.endsWith("-int8") ? "Tame Pony · SDXL INT8" : "Tame Pony · SDXL"
                         : studio.status?.model.selectedModel?.startsWith("custom-")
                           ? studio.status?.installedModels?.find((model) => model.id === studio.status?.model.selectedModel)?.label ?? "Custom image model"
+                        : studio.status?.model.selectedModel === "4b-lora"
+                        ? "FLUX.2 Klein 4B · LoRA"
                         : studio.status?.model.selectedModel
-                        ? `Flux.2 Klein ${studio.status.model.selectedModel.toUpperCase()}`
+                        ? `FLUX.2 Klein ${studio.status.model.selectedModel.toUpperCase()}`
                         : "Flux.2 Klein"}
                   </span>
                 </div>
@@ -492,9 +495,9 @@ export function App() {
                       <span className="generation-elapsed" role="timer">
                         {studio.stateLabel}
                       </span>
-                      <button
-                        type="button"
-                        className="btn btn-secondary generation-stop"
+                      <Button
+                        variant="secondary"
+                        className="generation-stop"
                         onClick={() => void studio.stopGeneration()}
                         disabled={studio.stopping}
                         aria-label={
@@ -509,7 +512,7 @@ export function App() {
                           aria-hidden="true"
                         />
                         {studio.stopping ? "Stopping…" : "Stop"}
-                      </button>
+                      </Button>
                     </div>
                   ) : studio.running && studio.status?.job.threadId ? (
                     <button
@@ -613,25 +616,23 @@ export function App() {
                       role="group"
                       aria-label="Inspector view"
                     >
-                      <button
-                        type="button"
+                      <Button
+                        variant="ghost"
                         aria-pressed={inspectorOpen}
                         onClick={() => setInspectorView("settings")}
                       >
                         Image settings
-                      </button>
-                      <button
-                        type="button"
+                      </Button>
+                      <Button
+                        variant="ghost"
                         aria-pressed={renderInfoOpen}
                         disabled={!studio.preview}
                         onClick={() => setInspectorView("info")}
                       >
                         Render info
-                      </button>
+                      </Button>
                     </div>
-                    <button
-                      type="button"
-                      className="btn-icon"
+                    <IconButton
                       aria-label={
                         renderInfoOpen
                           ? "Close render info"
@@ -640,7 +641,7 @@ export function App() {
                       onClick={() => setInspectorView(null)}
                     >
                       <X size={16} />
-                    </button>
+                    </IconButton>
                   </div>
                   <div hidden={!inspectorOpen}>
                     <GenerationControls
@@ -705,19 +706,9 @@ export function App() {
               className="library-view"
               aria-labelledby="library-view-heading"
             >
-              <header className="library-view-header">
-                <div>
-                  <span className="view-kicker">Studio</span>
-                  <h2 id="library-view-heading">Library</h2>
-                  <p>
-                    Review, search, and remix every image Fern has created on
-                    this device.
-                  </p>
-                </div>
+              <PageHeader className="library-view-header" id="library-view-heading" title="Library" description="Review, search, and remix every image Fern has created on this device." actions={
                 <div className="workspace-header-actions">
-                  <button
-                    type="button"
-                    className="btn btn-secondary"
+                  <Button
                     onClick={() =>
                       void window.studio
                         .openOutputsFolder()
@@ -729,17 +720,15 @@ export function App() {
                     }
                   >
                     <FolderOpen size={14} aria-hidden="true" /> Open folder
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-primary"
+                  </Button>
+                  <Button variant="primary"
                     onClick={newThread}
                   >
                     <Plus size={14} aria-hidden="true" />
                     New thread
-                  </button>
+                  </Button>
                 </div>
-              </header>
+              } />
               <OutputWorkspace
                 key={`library-${studio.resetRevision}`}
                 stateKey={`library-${studio.resetRevision}`}
@@ -765,24 +754,19 @@ export function App() {
               {studio.error}
               {studio.status?.job.model === "9b" &&
               /memory|allocation|out of resources/i.test(studio.error) ? (
-                <button
-                  type="button"
-                  className="btn btn-secondary"
+                <Button
+                  variant="secondary"
                   onClick={() => {
                     studio.updateSettings({ model: "4b" });
                     studio.dismissError();
                   }}
                 >
                   Use Klein 4B for retry
-                </button>
+                </Button>
               ) : null}
-              <button
-                type="button"
-                onClick={studio.dismissError}
-                aria-label="Dismiss error"
-              >
+              <IconButton onClick={studio.dismissError} aria-label="Dismiss error">
                 ×
-              </button>
+              </IconButton>
             </div>
           )}
         </main>

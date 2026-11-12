@@ -74,6 +74,14 @@ try {
     "Original image prompt 2",
   );
   await page.locator(".workspace-header").getByRole("button", { name: "Image settings", exact: true }).click();
+  const inspectorViews = page.getByRole('group', { name: 'Inspector view' });
+  const settingsView = inspectorViews.getByRole('button', { name: 'Image settings' });
+  const infoView = inspectorViews.getByRole('button', { name: 'Render info' });
+  assert.equal(await settingsView.getAttribute('aria-pressed'), 'true');
+  assert.equal(Math.round((await settingsView.boundingBox()).height), 32, 'inspector selectors use the shared control height');
+  await infoView.click();
+  assert.equal(await infoView.getAttribute('aria-pressed'), 'true');
+  await settingsView.click();
   await page.locator("summary").filter({ hasText: "References" }).click();
   assert.equal(
     await page.getByRole("button", { name: /Use Current Output/i }).isEnabled(),
@@ -84,10 +92,8 @@ try {
   await button("Close image settings").click();
   await page.screenshot({ path: `${dir}/selected-image-seed.png` });
   const title = await page.locator("#create-heading").innerText();
-  await page.locator(".sidebar-thread-row").first().hover();
-  await page
-    .getByRole("button", { name: `Delete thread ${title}`, exact: true })
-    .click();
+  await button(`Actions for image thread ${title}`).click();
+  await page.getByRole("group", { name: `Actions for ${title}` }).getByRole("button", { name: "Delete", exact: true }).click();
   assert.match(
     await page.locator(".thread-delete-confirm").innerText(),
     /permanently deleted/,

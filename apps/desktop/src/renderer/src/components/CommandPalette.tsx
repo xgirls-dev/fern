@@ -10,8 +10,9 @@ import AudioLines from "lucide-react/dist/esm/icons/audio-lines.mjs";
 import MessageSquare from "lucide-react/dist/esm/icons/message-square.mjs";
 import Square from "lucide-react/dist/esm/icons/square.mjs";
 import X from "lucide-react/dist/esm/icons/x.mjs";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useModalFocus } from "../hooks/useModalFocus";
+import { IconButton, Input } from "./ui/controls";
 
 interface CommandPaletteProps {
   open: boolean;
@@ -66,6 +67,8 @@ export function CommandPalette({
   onStopText,
 }: CommandPaletteProps) {
   const dialogRef = useRef<HTMLElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  const keyboardNavigation = useRef(false);
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
   useModalFocus(open, dialogRef, onClose);
@@ -178,6 +181,18 @@ export function CommandPalette({
     Math.max(0, filteredActions.length - 1),
   );
 
+  useLayoutEffect(() => {
+    if (!open) { keyboardNavigation.current = false; return; }
+    if (!keyboardNavigation.current) return;
+    const list = listRef.current;
+    const selected = list?.querySelector<HTMLElement>('[aria-selected="true"]');
+    if (!list || !selected) return;
+    const listBounds = list.getBoundingClientRect();
+    const selectedBounds = selected.getBoundingClientRect();
+    if (selectedBounds.top < listBounds.top) list.scrollTop -= listBounds.top - selectedBounds.top;
+    else if (selectedBounds.bottom > listBounds.bottom) list.scrollTop += selectedBounds.bottom - listBounds.bottom;
+  }, [open, selectedIndex, filteredActions]);
+
   const selectAction = (action: PaletteAction | undefined) => {
     if (!action) return;
     onClose();
@@ -187,11 +202,13 @@ export function CommandPalette({
   const onSearchKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "ArrowDown") {
       event.preventDefault();
+      keyboardNavigation.current = true;
       setActiveIndex((index) =>
         Math.min(index + 1, Math.max(0, filteredActions.length - 1)),
       );
     } else if (event.key === "ArrowUp") {
       event.preventDefault();
+      keyboardNavigation.current = true;
       setActiveIndex((index) => Math.max(index - 1, 0));
     } else if (event.key === "Enter") {
       event.preventDefault();
@@ -214,9 +231,11 @@ export function CommandPalette({
       >
         <div className="command-palette-search">
           <Search size={17} aria-hidden="true" />
-          <input
+          <Input
+            className="command-palette-input"
             value={query}
             onChange={(event) => {
+              keyboardNavigation.current = false;
               setQuery(event.target.value);
               setActiveIndex(0);
             }}
@@ -234,14 +253,13 @@ export function CommandPalette({
             }
             autoComplete="off"
           />
-          <button
-            type="button"
+          <IconButton
             className="command-palette-close"
             onClick={onClose}
             aria-label="Close commands"
           >
             <X size={15} aria-hidden="true" />
-          </button>
+          </IconButton>
         </div>
 
         <div className="command-palette-heading">
@@ -255,6 +273,7 @@ export function CommandPalette({
         </div>
 
         <div
+          ref={listRef}
           className="command-palette-list"
           id="fern-command-options"
           role="listbox"
@@ -270,7 +289,7 @@ export function CommandPalette({
                 className={`command-palette-action${index === selectedIndex ? " is-active" : ""}`}
                 role="option"
                 aria-selected={index === selectedIndex}
-                onMouseEnter={() => setActiveIndex(index)}
+                onMouseMove={() => { keyboardNavigation.current = false; setActiveIndex(index); }}
                 onClick={() => selectAction(action)}
               >
                 <span className="command-palette-icon">{action.icon}</span>

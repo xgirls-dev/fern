@@ -5,6 +5,7 @@ import Moon from "lucide-react/dist/esm/icons/moon.mjs";
 import Square from "lucide-react/dist/esm/icons/square.mjs";
 import Sun from "lucide-react/dist/esm/icons/sun.mjs";
 import X from "lucide-react/dist/esm/icons/x.mjs";
+import { Button, IconButton } from "./ui/controls";
 
 interface TitleBarProps {
   sidebarCollapsed: boolean;
@@ -28,8 +29,7 @@ export function TitleBar({
     <header
       className={`titlebar${useNativeWindowControls ? " titlebar--native-controls" : ""}`}
     >
-      <button
-        type="button"
+      <IconButton
         className="titlebar-sidebar-toggle"
         onClick={onToggleSidebar}
         aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
@@ -38,11 +38,11 @@ export function TitleBar({
         title="Toggle sidebar · Ctrl B"
       >
         <PanelLeft size={18} strokeWidth={1.6} aria-hidden="true" />
-      </button>
+      </IconButton>
 
       <div className="titlebar-actions">
-        <button
-          type="button"
+        <Button
+          variant="ghost"
           className="titlebar-command-button"
           onClick={onOpenCommands}
           title="Open command palette"
@@ -51,10 +51,8 @@ export function TitleBar({
           <Command size={13} aria-hidden="true" />
           <span>Commands</span>
           <span className="titlebar-command-shortcut">Ctrl K</span>
-        </button>
-        <button
-          type="button"
-          className="btn-icon btn-icon-sm"
+        </Button>
+        <IconButton
           onClick={onToggleTheme}
           title="Toggle theme"
           aria-label="Toggle theme"
@@ -64,7 +62,7 @@ export function TitleBar({
           ) : (
             <Moon size={14} aria-hidden="true" />
           )}
-        </button>
+        </IconButton>
 
         {!useNativeWindowControls ? (
           <div className="titlebar-window-controls">

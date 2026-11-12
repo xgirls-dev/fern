@@ -1,6 +1,7 @@
 import { useRef } from "react";
 import type { RuntimeStatus } from "../lib/types";
 import { useModalFocus } from "../hooks/useModalFocus";
+import { Button } from "./ui/controls";
 
 interface RuntimeLoadingDialogProps {
   onDismiss: () => void;
@@ -56,13 +57,9 @@ export function RuntimeLoadingDialog({
               generation.
             </p>
           </div>
-          <button
-            type="button"
-            className="btn btn-secondary"
-            onClick={onDismiss}
-          >
+          <Button variant="secondary" onClick={onDismiss}>
             Continue to workspace
-          </button>
+          </Button>
         </header>
 
         <div
@@ -99,16 +96,12 @@ export function RuntimeLoadingDialog({
               Preferences to explicitly enable and select CPU.
             </p>
             <div className="runtime-loading-buttons">
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={onRetry}
-              >
+              <Button variant="primary" onClick={onRetry}>
                 Retry startup
-              </button>
-              <button type="button" className="btn btn-secondary" onClick={onOpenPreferences}>
+              </Button>
+              <Button variant="secondary" onClick={onOpenPreferences}>
                 Open Preferences
-              </button>
+              </Button>
             </div>
           </div>
         ) : (

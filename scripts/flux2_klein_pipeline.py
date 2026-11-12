@@ -267,7 +267,6 @@ def _adapter_statuses(model="9b") -> list[dict[str, Any]]:
     ]
     if model == "4b-lora":
         for item in statuses:
-            item["supportsReferenceImage"] = False
             if item["id"] != INTEL_GPU:
                 item["runtimeReady"] = False
                 item["available"] = False
@@ -372,7 +371,9 @@ def load_pipeline(*, device: str = DEFAULT_DEVICE, model="9b", use_uncensored_te
     model_dir = model_dir_for(selected, model)
     if use_uncensored_text_encoder and model != "4b":
         raise ValueError("The optional uncensored text encoder is available for Klein 4B only.")
-    optional_encoder_dir = model_dir / "text_encoder_uncensored"
+    optional_encoder_dir = MODELS_ROOT / "flux2-klein-4b-optional" / "text_encoder_uncensored"
+    if not optional_encoder_dir.is_dir():
+        optional_encoder_dir = model_dir / "text_encoder_uncensored"
     if use_uncensored_text_encoder and not all(
         (optional_encoder_dir / name).is_file()
         for name in ("config.json", "openvino_model.xml", "openvino_model.bin")
@@ -463,8 +464,8 @@ def generate_image(
     if model == "4b-lora":
         if selected != INTEL_GPU:
             raise ValueError("The LoRA-ready Klein model currently requires an Intel GPU.")
-        if reference_image is not None or reference_images:
-            raise ValueError("The LoRA-ready Klein model currently supports text-to-image only.")
+        if reference_images and len(reference_images) > 1:
+            raise ValueError("The LoRA-ready Klein model supports one reference image.")
         if guidance != 1.0:
             raise ValueError("The LoRA-ready Klein model uses guidance 1.0.")
         if _PIPELINE_CACHE["pipeline"] is not None:
@@ -472,7 +473,9 @@ def generate_image(
         import flux2_klein_lora
         return flux2_klein_lora.generate(model_dir=model_dir_for(selected, model), selections=loras or [],
                                          prompt=prompt, output_dir=output_dir, width=width,
-                                         height=height, steps=steps, seed=seed, log=log)
+                                         height=height, steps=steps, seed=seed,
+                                         optional_encoder_dir=(MODELS_ROOT / "flux2-klein-4b-optional" / "text_encoder_uncensored") if use_uncensored_text_encoder else None,
+                                         reference_image=reference_image or (reference_images[0] if reference_images else None), log=log)
     if loras:
         raise ValueError("LoRAs require the Klein 4B LoRA model.")
 

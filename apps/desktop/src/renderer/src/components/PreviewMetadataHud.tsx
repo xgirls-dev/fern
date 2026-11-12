@@ -89,7 +89,7 @@ export function PreviewMetadataHud({ image }: PreviewMetadataHudProps) {
           ? "FLUX.3 Klein · INT4"
           : image.model === "tame-pony-v25-sdxl" || image.model === "tame-pony-v25-sdxl-int8"
             ? image.model.endsWith("-int8") ? "Tame Pony · SDXL INT8" : "Tame Pony · SDXL"
-          : `Flux.2 Klein ${image.model.toUpperCase()}`),
+          : image.model === "4b-lora" ? "FLUX.2 Klein 4B · LoRA" : `FLUX.2 Klein ${image.model.toUpperCase()}`),
     });
   if (image.modelRevision)
     rows.push({ label: "Model revision", value: image.modelRevision });

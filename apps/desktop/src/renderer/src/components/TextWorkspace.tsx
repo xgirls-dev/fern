@@ -6,6 +6,7 @@ import ArrowDown from "lucide-react/dist/esm/icons/arrow-down.mjs";
 import RotateCcw from "lucide-react/dist/esm/icons/rotate-ccw.mjs";
 import Info from "lucide-react/dist/esm/icons/info.mjs";
 import { TextMarkdown } from "./TextMarkdown";
+import { Button, IconButton, MenuItem, Select, Textarea } from "./ui/controls";
 
 import { TextMenu } from "./TextMenu";
 import X from "lucide-react/dist/esm/icons/x.mjs";
@@ -106,11 +107,11 @@ export function TextWorkspace({ studio, sidebarCollapsed = false }: { studio: Te
       <header className="workspace-header text-header">
         <div className="workspace-heading">
           <h2 title={activeThread.title}>{activeThread.title}</h2>
-          <select className={`thread-switcher text-thread-switcher${sidebarCollapsed ? " is-visible" : ""}`} aria-label="Open text thread" value={activeThread.id} onChange={event => studio.selectThread(event.target.value)}>
+          <Select className={`thread-switcher text-thread-switcher${sidebarCollapsed ? " is-visible" : ""}`} aria-label="Open text thread" value={activeThread.id} onChange={event => studio.selectThread(event.target.value)}>
             {studio.threads.filter(thread => !thread.archived || thread.id === activeThread.id).map(thread => <option key={thread.id} value={thread.id}>{thread.title}</option>)}
-          </select>
+          </Select>
         </div>
-        <button ref={panelTrigger} type="button" className="workspace-settings-button" aria-label="Generation settings" aria-expanded={panel !== null} aria-controls={panel ? "text-inspector" : undefined} onClick={() => panel ? closePanel() : setPanel("settings")}><Settings2 size={15} aria-hidden="true" /><span>Chat settings</span></button>
+        <Button ref={panelTrigger} variant="secondary" className="workspace-settings-button" aria-label="Generation settings" aria-expanded={panel !== null} aria-controls={panel ? "text-inspector" : undefined} onClick={() => panel ? closePanel() : setPanel("settings")}><Settings2 size={15} aria-hidden="true" /><span>Chat settings</span></Button>
       </header>
 
       <div className={`text-layout${panel ? " text-layout--inspecting" : ""}`}>
@@ -120,7 +121,7 @@ export function TextWorkspace({ studio, sidebarCollapsed = false }: { studio: Te
           <div className="text-empty-state">
             <h3>What can I help with?</h3>
             {checking ? <p role="status">Checking local models…</p> : !installedModels.length && <p>Download a model to start chatting on your device.</p>}
-            {!checking && !installedModels.length && <button type="button" className="text-secondary-button" onClick={openModels}><Plus size={16} aria-hidden="true" /> Browse models</button>}
+            {!checking && !installedModels.length && <Button variant="secondary" onClick={openModels}><Plus size={16} aria-hidden="true" /> Browse models</Button>}
 
           </div>
         ) : null}
@@ -131,9 +132,9 @@ export function TextWorkspace({ studio, sidebarCollapsed = false }: { studio: Te
             {message.status === "failed" ? <div className="text-error" role="alert">{message.error ?? "Generation failed. Retry the response."}</div> : null}
             {message.status === "stopped" ? <div className="text-partial-note">Stopped{message.content ? " · Partial response" : " before any text was generated"}</div> : null}
             {message.role === "assistant" && <div className="text-message-tools">
-              {message.content.trim() && <button type="button" className="text-icon-button" aria-label={copiedId === message.id ? "Copied" : "Copy message"} title={copiedId === message.id ? "Copied" : "Copy message"} onClick={() => void copyMessage(message.id, message.content)}><Copy size={15} aria-hidden="true" /></button>}
-              {message === lastMessage && !busy && <button type="button" className="text-icon-button" aria-label={message.status === "failed" || message.status === "stopped" ? "Retry response" : "Regenerate response"} title="Regenerate response" disabled={!modelAvailable || !status.runtimeAvailable} onClick={() => void studio.retry()}><RotateCcw size={15} aria-hidden="true" /></button>}
-              <button type="button" className="text-icon-button" aria-label="Response details" title="Response details" aria-expanded={infoId === message.id} onClick={() => setInfoId(infoId === message.id ? null : message.id)}><Info size={15} aria-hidden="true" /></button>
+              {message.content.trim() && <IconButton className="text-icon-button" aria-label={copiedId === message.id ? "Copied" : "Copy message"} title={copiedId === message.id ? "Copied" : "Copy message"} onClick={() => void copyMessage(message.id, message.content)}><Copy size={15} aria-hidden="true" /></IconButton>}
+              {message === lastMessage && !busy && <IconButton className="text-icon-button" aria-label={message.status === "failed" || message.status === "stopped" ? "Retry response" : "Regenerate response"} title="Regenerate response" disabled={!modelAvailable || !status.runtimeAvailable} onClick={() => void studio.retry()}><RotateCcw size={15} aria-hidden="true" /></IconButton>}
+              <IconButton className="text-icon-button" aria-label="Response details" title="Response details" aria-expanded={infoId === message.id} onClick={() => setInfoId(infoId === message.id ? null : message.id)}><Info size={15} aria-hidden="true" /></IconButton>
               {copiedId === message.id && <span role="status">Copied</span>}
             </div>}
             {infoId === message.id && <div className="text-response-details"><span className="text-message-label">{message.modelName ?? message.metrics?.modelName ?? "Local model"}</span>{message.metrics && <span>{message.metrics.device} · {message.metrics.inputTokens} in / {message.metrics.outputTokens} out · {message.metrics.tokensPerSecond.toFixed(1)} tokens/s · {message.metrics.generationSeconds.toFixed(1)} s<br />Temperature {message.metrics.temperature ?? "unknown"} · Top P {message.metrics.topP ?? "unknown"} · Seed {message.metrics.seed ?? "unknown"} · Max tokens {message.metrics.maxNewTokens ?? "unknown"}</span>}</div>}
@@ -144,17 +145,17 @@ export function TextWorkspace({ studio, sidebarCollapsed = false }: { studio: Te
           <div className="text-message-content">{status.job.partialText ? <TextMarkdown content={status.job.partialText} /> : <span className="text-thinking">Thinking…</span>}<span className="text-stream-cursor" aria-hidden="true" /></div>
           {!status.job.partialText && <div className="text-message-tools"><span>{status.job.phase ?? "Preparing your response…"}</span></div>}
         </article> : null}
-        {lastMessage?.role === "user" && !busy && <button type="button" className="text-secondary-button text-retry" disabled={!modelAvailable || !status.runtimeAvailable} onClick={() => void studio.retry()}><RotateCcw size={15} aria-hidden="true" />Retry response</button>}
+        {lastMessage?.role === "user" && !busy && <Button variant="secondary" className="text-retry" disabled={!modelAvailable || !status.runtimeAvailable} onClick={() => void studio.retry()}><RotateCcw size={15} aria-hidden="true" />Retry response</Button>}
 
         <div className="text-feed-end" />
       </div>
 
       <footer className="text-composer-area">
-        {showScrollButton && <button type="button" className="text-scroll-latest" aria-label="Jump to latest message" title="Jump to latest message" onClick={() => { pinnedToBottom.current = true; setShowScrollButton(false); feedRef.current?.scrollTo({ top: feedRef.current.scrollHeight, behavior: "smooth" }); }}><ArrowDown size={16} aria-hidden="true" /></button>}
-        {visibleError ? <div className="text-error" role="alert">{visibleError}<button type="button" onClick={() => { void studio.refresh(); }}>Refresh status</button></div> : null}
+        {showScrollButton && <IconButton shape="circle" className="text-scroll-latest" aria-label="Jump to latest message" title="Jump to latest message" onClick={() => { pinnedToBottom.current = true; setShowScrollButton(false); feedRef.current?.scrollTo({ top: feedRef.current.scrollHeight, behavior: "smooth" }); }}><ArrowDown size={16} aria-hidden="true" /></IconButton>}
+        {visibleError ? <div className="text-error" role="alert">{visibleError}<Button variant="secondary" onClick={() => { void studio.refresh(); }}>Refresh status</Button></div> : null}
         {selectedModel && !modelAvailable ? <div className="text-error" role="alert">{models.find((model) => model.id === selectedModel)?.error ?? "This thread’s model was removed. Add its folder again or select another model."}</div> : null}
         <form className="text-composer" onSubmit={(event) => { event.preventDefault(); submit(); }}>
-          <textarea
+          <Textarea
             ref={inputRef}
             aria-label="Message"
             name="message"
@@ -176,9 +177,9 @@ export function TextWorkspace({ studio, sidebarCollapsed = false }: { studio: Te
             </div>
             <div className="composer-send-tools">
               <TextMenu label="Text model" value={selectedModel} disabled={busy} options={modelOptions} onSelect={studio.selectModel}>
-                <button type="button" role="menuitem" onClick={openModels}>Manage models</button>
+                <MenuItem role="menuitem" onClick={openModels}>Manage models</MenuItem>
               </TextMenu>
-            {runningHere ? <button type="button" className="composer-submit is-stop" disabled={status.job.status !== "running"} onClick={() => void studio.stop()} aria-label="Stop generation" title="Stop generation"><Square size={14} fill="currentColor" aria-hidden="true" /></button> : <button type="submit" className="composer-submit" disabled={busy || !activeThread.draft.trim() || !modelAvailable || !status.runtimeAvailable || needsRetry} aria-label="Send message" title={activity || unavailableReason || "Send message"}>{studio.submitting || pendingHere ? <LoaderCircle className="spinner" size={16} aria-hidden="true" /> : <Send size={20} aria-hidden="true" />}</button>}
+            {runningHere ? <IconButton variant="danger" shape="circle" className="composer-submit is-stop" disabled={status.job.status !== "running"} onClick={() => void studio.stop()} aria-label="Stop generation" title="Stop generation"><Square size={14} fill="currentColor" aria-hidden="true" /></IconButton> : <IconButton type="submit" variant="primary" shape="circle" className="composer-submit" disabled={busy || !activeThread.draft.trim() || !modelAvailable || !status.runtimeAvailable || needsRetry} aria-label="Send message" title={activity || unavailableReason || "Send message"}>{studio.submitting || pendingHere ? <LoaderCircle className="spinner" size={16} aria-hidden="true" /> : <Send size={20} aria-hidden="true" />}</IconButton>}
             </div>
           </div>
         </form>
@@ -188,18 +189,18 @@ export function TextWorkspace({ studio, sidebarCollapsed = false }: { studio: Te
       {panel && <aside id="text-inspector" className="generation-inspector text-inspector" ref={panelRef} tabIndex={-1} aria-label="Chat settings panel" onKeyDown={(event) => { if (event.key === "Escape" && !event.defaultPrevented) { event.preventDefault(); closePanel(); } }}>
         <div className="inspector-heading">
           <div className="inspector-tabs" aria-label="Chat inspector views">
-            <button type="button" aria-pressed={panel === "settings"} onClick={() => setPanel("settings")}>Settings</button>
-            <button type="button" onClick={openModels}>Manage models</button>
+            <Button variant="ghost" aria-pressed={panel === "settings"} onClick={() => setPanel("settings")}>Settings</Button>
+            <Button variant="ghost" onClick={openModels}>Manage models</Button>
           </div>
-          <button type="button" className="btn btn-icon" aria-label="Close chat settings" onClick={closePanel}><X size={16} aria-hidden="true" /></button>
+          <IconButton aria-label="Close chat settings" onClick={closePanel}><X size={16} aria-hidden="true" /></IconButton>
         </div>
         {panel === "settings" && <div className="text-inspector-body">
           <p className="text-panel-description">Settings for this conversation. Changes apply to your next response.</p>
           {busy && <p className="text-panel-description" role="status">{activity || "Settings are locked while a response is generating."}</p>}
           <div className="text-settings-grid">
-            <label>Model<select aria-label="Settings model" value={selectedModel} disabled={busy} onChange={event => studio.selectModel(event.target.value)}>{!selectedModel && <option value="">Choose a model</option>}{models.map(model => <option key={model.id} value={model.id} disabled={!model.installed}>{model.name}{model.installed ? "" : " - Unavailable"}</option>)}</select></label>
-            <label>System prompt<textarea rows={3} maxLength={10_000} placeholder="Optional instructions for the model" value={activeThread.systemPrompt} disabled={busy} onChange={(event) => studio.updateThread(activeThread.id, { systemPrompt: event.target.value })} /></label>
-            <label>Maximum output<select aria-label="Maximum output" value={activeThread.maxNewTokens} disabled={busy} onChange={(event) => studio.updateThread(activeThread.id, { maxNewTokens: Number(event.target.value) })}>{[128, 256, 512, 1024, 2048, 4096, 8192].map((value) => <option key={value} value={value}>{value.toLocaleString()} tokens</option>)}</select></label>
+            <label>Model<Select aria-label="Settings model" value={selectedModel} disabled={busy} onChange={event => studio.selectModel(event.target.value)}>{!selectedModel && <option value="">Choose a model</option>}{models.map(model => <option key={model.id} value={model.id} disabled={!model.installed}>{model.name}{model.installed ? "" : " - Unavailable"}</option>)}</Select></label>
+            <label>System prompt<Textarea rows={3} maxLength={10_000} placeholder="Optional instructions for the model" value={activeThread.systemPrompt} disabled={busy} onChange={(event) => studio.updateThread(activeThread.id, { systemPrompt: event.target.value })} /></label>
+            <label>Maximum output<Select aria-label="Maximum output" value={activeThread.maxNewTokens} disabled={busy} onChange={(event) => studio.updateThread(activeThread.id, { maxNewTokens: Number(event.target.value) })}>{[128, 256, 512, 1024, 2048, 4096, 8192].map((value) => <option key={value} value={value}>{value.toLocaleString()} tokens</option>)}</Select></label>
             <label>Temperature<small className="text-setting-help">Lower for focused answers, higher for variety.</small><div className="text-range-control"><input aria-label="Temperature" type="range" min="0" max="2" step="0.05" value={activeThread.temperature} disabled={busy} onChange={(event) => studio.updateThread(activeThread.id, { temperature: Number(event.target.value) })} /><output>{activeThread.temperature.toFixed(2)}</output></div></label>
             <label>Top P<small className="text-setting-help">Limits the range of words the model considers.</small><div className="text-range-control"><input aria-label="Top P" type="range" min="0.1" max="1" step="0.05" value={activeThread.topP} disabled={busy} onChange={(event) => studio.updateThread(activeThread.id, { topP: Number(event.target.value) })} /><output>{activeThread.topP.toFixed(2)}</output></div></label>
           </div>

@@ -2,6 +2,7 @@ import ChevronDown from "lucide-react/dist/esm/icons/chevron-down.mjs";
 import ChevronUp from "lucide-react/dist/esm/icons/chevron-up.mjs";
 import Terminal from "lucide-react/dist/esm/icons/terminal.mjs";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Button } from "./ui/controls";
 
 interface ActivityTerminalProps {
   logs: string[];
@@ -203,13 +204,13 @@ export function ActivityTerminal({ logs, running }: ActivityTerminalProps) {
           }}
         >
           {!following ? (
-            <button
-              type="button"
+            <Button
+              variant="secondary"
               className="jump-latest"
               onClick={() => setFollowing(true)}
             >
               Jump to latest
-            </button>
+            </Button>
           ) : null}
           {logs.length === 0 ? (
             <div className="activity-terminal-line activity-terminal-line--muted">

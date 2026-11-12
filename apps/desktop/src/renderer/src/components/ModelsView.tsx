@@ -1,4 +1,6 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
+import AudioLines from "lucide-react/dist/esm/icons/audio-lines.mjs";
+import { Button, ErrorMessage, ModelCard, ModelCardActions, ModelCardHeading, ModelStatus, PageHeader, SegmentedControl } from "./ui/controls";
 import type { useTextChat } from "../hooks/useTextChat";
 import type { useQwen3Tts } from "../hooks/useQwen3Tts";
 import { ModelLibrary } from "./ModelLibrary";
@@ -11,20 +13,29 @@ export function ModelsView({ category: tab, onCategoryChange, text, audio }: {
   text: ReturnType<typeof useTextChat>; audio: ReturnType<typeof useQwen3Tts>;
 }) {
   const heading = useRef<HTMLHeadingElement>(null);
+  const body = useRef<HTMLDivElement>(null);
   useEffect(() => heading.current?.focus(), []);
+  useLayoutEffect(() => { if (body.current) body.current.scrollTop = 0; }, [tab]);
   return <section className="shell-page models-view" aria-labelledby="models-view-title">
-    <header className="shell-page-header"><div><h2 id="models-view-title" tabIndex={-1} ref={heading}>Models</h2><p>Install and manage the models that power your threads.</p></div></header>
-    <div className="models-category-bar" role="group" aria-label="Model categories">{(["image", "text", "audio"] as const).map((id) => <button type="button" key={id} aria-pressed={tab === id} onClick={() => onCategoryChange(id)}>{id === "image" ? "Image" : id === "text" ? "Text" : "Audio"}</button>)}</div>
-    <div className="shell-page-body models-body">
-      {tab === "image" ? <ModelLibrary /> : tab === "text" ? <TextModelLibrary studio={text} /> : <section aria-label="Audio models">
+    <PageHeader className="shell-page-header" id="models-view-title" title="Models" description="Install and manage the models that power your threads." titleRef={heading} />
+    <SegmentedControl className="models-category-bar" label="Model categories" value={tab} onChange={onCategoryChange} options={[{ value: "image", label: "Image" }, { value: "text", label: "Text" }, { value: "audio", label: "Audio" }]} />
+    <div className="shell-page-body models-body" ref={body}>
+      <div hidden={tab !== "image"}><ModelLibrary /></div>
+      {tab === "text" ? <TextModelLibrary studio={text} /> : tab === "audio" ? <section aria-label="Audio models">
         <div className="models-section-heading"><div><h3>Audio models</h3><p>Qwen3-TTS voice generation and cloning.</p></div></div>
-        {audio.statusError || audio.error ? <p role="alert">{audio.statusError || audio.error}</p> : null}
+        {audio.statusError || audio.error ? <ErrorMessage>{audio.statusError || audio.error}</ErrorMessage> : null}
         {!audio.statusLoaded ? <p role="status">Checking audio models…</p> : null}
         <div className="model-library-grid">{audio.status.models.map((model) => {
           const settingUp = audio.status.operation === "setup" && audio.status.model === model.id && audio.status.status === "setting_up";
-          return <article className="model-library-card" key={model.id}><h4>{model.label}</h4><p>{model.kind === "base" ? "Clone a voice from a recording" : model.kind === "voice_design" ? "Describe and create a voice" : "Generate speech with preset voices"}</p><p role="status">{model.installed ? "Installed" : settingUp ? audio.status.phase || "Installing…" : "Not installed"}</p>{settingUp ? <progress aria-label={`${model.label} installation`} /> : null}<div className="model-library-actions"><button type="button" className="btn btn-secondary" disabled={audio.busy || text.busy || model.installed} onClick={() => void audio.setupModel(model.id)}>{model.installed ? "Installed" : settingUp ? "Installing…" : "Install"}</button>{settingUp ? <button type="button" className="btn btn-secondary" disabled={audio.status.status === "stopping"} onClick={() => void audio.stopJob()}>Cancel</button> : null}</div></article>;
+          return <ModelCard key={model.id}>
+            <ModelCardHeading icon={<AudioLines size={17} />}><h4>{model.label}</h4></ModelCardHeading>
+            <p>{model.kind === "base" ? "Clone a voice from a recording" : model.kind === "voice_design" ? "Describe and create a voice" : "Generate speech with preset voices"}</p>
+            <ModelStatus installed={model.installed}>{model.installed ? "Installed" : settingUp ? audio.status.phase || "Installing…" : "Not installed"}</ModelStatus>
+            {settingUp ? <progress aria-label={`${model.label} installation`} /> : null}
+            <ModelCardActions><Button disabled={audio.busy || text.busy || model.installed} onClick={() => void audio.setupModel(model.id)}>{model.installed ? "Installed" : settingUp ? "Installing…" : "Install"}</Button>{settingUp ? <Button disabled={audio.status.status === "stopping"} onClick={() => void audio.stopJob()}>Cancel</Button> : null}</ModelCardActions>
+          </ModelCard>;
         })}</div>
-      </section>}
+      </section> : null}
     </div>
   </section>;
 }

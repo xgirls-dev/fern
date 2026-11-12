@@ -1,9 +1,11 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import ChevronDown from "lucide-react/dist/esm/icons/chevron-down.mjs";
 import type { ImageRecord } from "../lib/types";
 import { resolveAssetUrl } from "../lib/api";
 import { notify } from "../lib/notifications";
 import { useModalFocus } from "../hooks/useModalFocus";
+import { Button, MenuItem } from "./ui/controls";
 
 export function ImageActions({
   image,
@@ -63,11 +65,16 @@ export function ImageActions({
     const outside = (event: PointerEvent) => {
       if (!menu.current?.contains(event.target as Node)) close();
     };
+    const onScroll = (event: Event) => {
+      if (!(event.target instanceof Node) || !menuContent.current?.contains(event.target)) close();
+    };
     document.addEventListener("pointerdown", outside, true);
     window.addEventListener("resize", close);
+    window.addEventListener("scroll", onScroll, true);
     return () => {
       document.removeEventListener("pointerdown", outside, true);
       window.removeEventListener("resize", close);
+      window.removeEventListener("scroll", onScroll, true);
     };
   }, [menuOpen]);
   async function run(task: () => Promise<unknown>, message: string) {
@@ -106,22 +113,20 @@ export function ImageActions({
     >
       {!compact ? (
         <>
-          <button
-            className="btn btn-secondary"
-            type="button"
+          <Button
+            variant="secondary"
             disabled={busy}
             onClick={() => void save()}
           >
             Save image
-          </button>
-          <button
-            className="btn btn-secondary"
-            type="button"
+          </Button>
+          <Button
+            variant="secondary"
             disabled={busy}
             onClick={() => onRemix(image)}
           >
             Remix
-          </button>
+          </Button>
         </>
       ) : null}
       <details
@@ -143,10 +148,11 @@ export function ImageActions({
             setMenuPosition(null);
             setMenuOpen((open) => !open);
           }}
-          className="btn btn-secondary"
+          className="ui-disclosure-trigger"
           aria-label={`Image actions for ${image.name}`}
         >
-          {compact ? "Actions" : "More"} ▾
+          {compact ? "Actions" : "More"}
+          <ChevronDown size={13} aria-hidden="true" />
         </summary>
         <div
           className="image-menu-content"
@@ -160,11 +166,10 @@ export function ImageActions({
         >
           {compact ? (
             <>
-              <button type="button" disabled={busy} onClick={() => void save()}>
+              <MenuItem disabled={busy} onClick={() => void save()}>
                 Save image
-              </button>
-              <button
-                type="button"
+              </MenuItem>
+              <MenuItem
                 disabled={busy}
                 onClick={() => {
                   setMenuOpen(false);
@@ -173,11 +178,10 @@ export function ImageActions({
                 }}
               >
                 Remix
-              </button>
+              </MenuItem>
             </>
           ) : null}
-          <button
-            type="button"
+          <MenuItem
             disabled={busy}
             onClick={() => {
               setMenuOpen(false);
@@ -186,9 +190,8 @@ export function ImageActions({
             }}
           >
             Remix in new thread
-          </button>
-          <button
-            type="button"
+          </MenuItem>
+          <MenuItem
             disabled={busy || !image.prompt}
             onClick={() =>
               void run(
@@ -198,9 +201,8 @@ export function ImageActions({
             }
           >
             Copy prompt
-          </button>
-          <button
-            type="button"
+          </MenuItem>
+          <MenuItem
             disabled={busy}
             onClick={() =>
               void run(
@@ -229,9 +231,8 @@ export function ImageActions({
             }
           >
             Copy settings
-          </button>
-          <button
-            type="button"
+          </MenuItem>
+          <MenuItem
             disabled={busy}
             onClick={() =>
               void run(async () => {
@@ -241,9 +242,8 @@ export function ImageActions({
             }
           >
             Open in default app
-          </button>
-          <button
-            type="button"
+          </MenuItem>
+          <MenuItem
             disabled={busy}
             onClick={() =>
               void run(async () => {
@@ -253,11 +253,10 @@ export function ImageActions({
             }
           >
             Open output folder
-          </button>
-          <button
-            type="button"
+          </MenuItem>
+          <MenuItem
             disabled={busy}
-            className="danger-text"
+            destructive
             onClick={() => {
               setMenuOpen(false);
               setMenuPosition(null);
@@ -265,7 +264,7 @@ export function ImageActions({
             }}
           >
             Delete image
-          </button>
+          </MenuItem>
         </div>
       </details>
       {confirm
@@ -286,17 +285,15 @@ export function ImageActions({
                   restore the file from the Windows Recycle Bin.
                 </p>
                 <div className="image-actions">
-                  <button
-                    type="button"
-                    className="btn btn-secondary"
+                  <Button
+                    variant="secondary"
                     disabled={busy}
                     onClick={() => setConfirm(false)}
                   >
                     Cancel
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-danger"
+                  </Button>
+                  <Button
+                    variant="danger"
                     disabled={busy}
                     onClick={() =>
                       void run(async () => {
@@ -306,7 +303,7 @@ export function ImageActions({
                     }
                   >
                     {busy ? "Deleting…" : "Delete image"}
-                  </button>
+                  </Button>
                 </div>
               </div>
             </div>,

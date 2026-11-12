@@ -1,5 +1,10 @@
 import { useEffect, useRef, useState } from "react";
+import ImageIcon from "lucide-react/dist/esm/icons/image.mjs";
+import ChevronDown from "lucide-react/dist/esm/icons/chevron-down.mjs";
+import Plus from "lucide-react/dist/esm/icons/plus.mjs";
+import { Button, Checkbox, ErrorMessage, InlineConfirmation, Input, ModelCard, ModelCardActions, ModelCardHeading, ModelStatus, Select } from "./ui/controls";
 import { getApiBaseUrl } from "../lib/api";
+import { useReturnFocus } from "../hooks/useReturnFocus";
 interface InstalledModel {
   id: string;
   label: string;
@@ -49,13 +54,19 @@ export function ModelLibrary() {
   const [actionError, setActionError] = useState("");
   const [busy, setBusy] = useState(false);
   const [remove, setRemove] = useState<string | null>(null);
-  const [removeEncoder, setRemoveEncoder] = useState(false);
+  const [removeEncoder, setRemoveEncoder] = useState<string | null>(null);
+  const removalFocus = useReturnFocus();
   const [customFamily, setCustomFamily] = useState<string>("sdxl");
   const [customRepo, setCustomRepo] = useState("");
   const [customDownload, setCustomDownload] = useState<CustomImageDownload>({ status: "idle" });
   const [addingCustom, setAddingCustom] = useState(false);
   const [startingDownload, setStartingDownload] = useState(false);
   const customDetails = useRef<HTMLDetailsElement>(null);
+  const encoderDetails = useRef(new Map<string, HTMLDetailsElement>());
+  const encoderState = models.find((model) => model.id === "4b")?.uncensoredTextEncoder?.state;
+  useEffect(() => {
+    if (["downloading", "verifying", "removing"].includes(encoderState ?? "")) for (const details of encoderDetails.current.values()) details.open = true;
+  }, [encoderState]);
   useEffect(() => {
     if (["checking", "downloading", "validating", "failed"].includes(customDownload.status) && customDetails.current) customDetails.current.open = true;
   }, [customDownload.status]);
@@ -129,9 +140,10 @@ export function ModelLibrary() {
       setBusy(false);
     }
   };
+  const customDownloadActive = ["checking", "downloading", "validating"].includes(customDownload.status);
   const downloading = models.some((model) =>
     ["downloading", "verifying", "removing", "installing"].includes(model.state),
-  ) || models.some((model) => ["downloading", "verifying", "removing"].includes(model.uncensoredTextEncoder?.state ?? "")) || ["checking", "downloading", "validating"].includes(customDownload.status);
+  ) || models.some((model) => ["downloading", "verifying", "removing"].includes(model.uncensoredTextEncoder?.state ?? "")) || customDownloadActive;
   const actionsUnavailable = busy || Boolean(error);
   const addCustomModel = async () => {
     setAddingCustom(true);
@@ -219,29 +231,30 @@ export function ModelLibrary() {
         </div>
       </div>
       <details className="model-library-custom" ref={customDetails}>
-      <summary>Add custom model</summary>
+      <summary className="ui-disclosure-trigger model-library-custom-trigger"><Plus size={15} aria-hidden="true" />Add custom model<ChevronDown className="model-library-custom-chevron" size={14} aria-hidden="true" /></summary>
       <div className="model-library-import">
+        <p>Choose the family that matches your OpenVINO export, then download it or link a folder on this device.</p>
         <label>
           <span>Model family</span>
-          <select aria-label="Custom image model family" value={customFamily} disabled={addingCustom || startingDownload || downloading || busy} onChange={(event) => setCustomFamily(event.target.value)}>
+          <Select aria-label="Custom image model family" value={customFamily} disabled={addingCustom || startingDownload || downloading || busy} onChange={(event) => setCustomFamily(event.target.value)}>
             {CUSTOM_IMAGE_FAMILIES.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
-          </select>
+          </Select>
         </label>
-        <label className="model-library-hub-repo">
-          <span>Hugging Face repository</span>
-          <input aria-label="Hugging Face repository" name="repository" autoComplete="off" spellCheck={false} placeholder="owner/model or Hugging Face URL…" value={customRepo} disabled={startingDownload || downloading || busy} onChange={(event) => setCustomRepo(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && customRepo.trim() && !startingDownload && !downloading && !busy && !addingCustom && !error) void downloadCustomModel(); }} />
-        </label>
-        <div className="model-library-import-actions">
-          {downloading ? (
-            <button className="btn btn-secondary" type="button" disabled={busy} onClick={() => void cancelCustomDownload()}>Cancel download</button>
-          ) : (
-            <button className="btn btn-primary" type="button" disabled={!customRepo.trim() || startingDownload || addingCustom || busy || Boolean(error)} onClick={() => void downloadCustomModel()}>{startingDownload ? "Starting…" : "Download"}</button>
-          )}
-          <button className="btn btn-secondary" type="button" disabled={addingCustom || startingDownload || downloading || busy || Boolean(error)} onClick={() => void addCustomModel()}>
-            {addingCustom ? "Validating…" : "Add local folder"}
-          </button>
+        <div className="model-library-hub-repo">
+          <label htmlFor="custom-model-repository">Hugging Face repository</label>
+          <div className="model-library-download-row">
+            <Input id="custom-model-repository" name="repository" autoComplete="off" spellCheck={false} placeholder="owner/model or Hugging Face URL…" value={customRepo} disabled={startingDownload || downloading || busy} onChange={(event) => setCustomRepo(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && customRepo.trim() && !startingDownload && !downloading && !busy && !addingCustom && !error) void downloadCustomModel(); }} />
+            {customDownloadActive ? (
+              <Button disabled={busy} onClick={() => void cancelCustomDownload()}>Cancel download</Button>
+            ) : (
+              <Button variant="primary" disabled={!customRepo.trim() || startingDownload || addingCustom || downloading || busy || Boolean(error)} onClick={() => void downloadCustomModel()}>{startingDownload ? "Starting…" : "Download"}</Button>
+            )}
+          </div>
         </div>
-        <p>Use an OpenVINO export from Hugging Face or link a local folder. Choose the family that matches the export.</p>
+        <div className="model-library-local-source">
+          <div><strong>Already have an export?</strong><p>Link a local folder without copying its files.</p></div>
+          <Button disabled={addingCustom || startingDownload || downloading || busy || Boolean(error)} onClick={() => void addCustomModel()}>{addingCustom ? "Validating…" : "Add local folder"}</Button>
+        </div>
         {customDownload.status !== "idle" ? (
           <div className="model-library-download-status" role="status" aria-live="polite">
             <span>{customDownload.phase || customDownload.status}{customDownload.repoId ? ` · ${customDownload.repoId}` : ""}</span>
@@ -250,7 +263,7 @@ export function ModelLibrary() {
                 <><progress aria-label="Custom OpenVINO model download" value={customDownload.downloaded ?? 0} max={customDownload.bytes} /><small>{((customDownload.downloaded ?? 0) / 1e9).toFixed(2)} / {((customDownload.bytes ?? 0) / 1e9).toFixed(2)} GB</small></>
               ) : <progress className="model-library-indeterminate" aria-label="Custom model setup is in progress" />
             ) : null}
-            {customDownload.error ? <span role="alert">{customDownload.error}</span> : null}
+            {customDownload.error ? <ErrorMessage>{customDownload.error}</ErrorMessage> : null}
           </div>
         ) : null}
       </div>
@@ -258,16 +271,18 @@ export function ModelLibrary() {
       {!models.length && !error ? (
         <p role="status">Checking installed models…</p>
       ) : null}
-      {error ? <p role="alert">{error}</p> : null}
-      {actionError ? <p role="alert">{actionError}</p> : null}
+      {error ? <ErrorMessage>{error}</ErrorMessage> : null}
+      {actionError ? <ErrorMessage>{actionError}</ErrorMessage> : null}
       <div className="model-library-grid">
         {models.map((model) => (
-          <article
-            className={`model-library-card${model.id === "qwen21-turbo" ? " model-library-card-qwen" : model.id === "flux3-klein" ? " model-library-card-flux3" : model.id.startsWith("tame-pony-") || model.id.startsWith("custom-") ? " model-library-card-sdxl" : ""}`}
+          <ModelCard
+            className={model.id === "qwen21-turbo" ? "model-library-card-qwen" : model.id === "flux3-klein" ? "model-library-card-flux3" : model.id.startsWith("tame-pony-") || model.id.startsWith("custom-") ? "model-library-card-sdxl" : ""}
             key={model.id}
             aria-busy={["installing", "checking-runtime"].includes(model.state) || undefined}
           >
-            <h4 title={model.label}>{model.label}</h4>
+            <ModelCardHeading icon={<ImageIcon size={17} />}>
+              <h4 title={model.label}>{model.label}</h4>
+            </ModelCardHeading>
             <p>
               {model.id.startsWith("custom-")
               ? `${model.familyLabel ?? model.family ?? "Custom model"} · ${model.sourceType === "huggingface" ? "Hugging Face" : "Local folder"}`
@@ -284,7 +299,7 @@ export function ModelLibrary() {
             ) : model.id.startsWith("tame-pony-") ? (
               <details className="model-library-details"><summary>Model details</summary><p>Text to image · 1024 × 1024 · 30 steps · guidance 7.0. Licensed under FAIPL-1.0-SD.</p></details>
             ) : null}
-            {model.id === "4b-lora" ? <p className="model-library-note">Use local Klein 4B LoRAs together, with individual strengths. Intel GPU · text-to-image · Apache 2.0. <a href="https://huggingface.co/xgirls/FLUX.2-klein-4B-OpenVINO-INT4-LoRA" target="_blank" rel="noreferrer">Model details</a>.</p> : null}
+            {model.id === "4b-lora" ? <p className="model-library-note">Create with multiple LoRAs and adjust each strength. <a className="ui-link" href="https://huggingface.co/xgirls/FLUX.2-klein-4B-OpenVINO-INT4-LoRA" target="_blank" rel="noreferrer">Model details</a></p> : null}
             {model.id === "qwen21-turbo" ? (
               <details className="model-library-details"><summary>Model details</summary>
                 <p className="model-library-note">
@@ -301,49 +316,48 @@ export function ModelLibrary() {
                 <p className="model-library-note">Experimental · Text to image at 1024 × 1024. Output quality on Intel GPU is not yet verified.</p>
               </details>
             ) : null}
-            {model.id === "4b" && model.uncensoredTextEncoder ? (
-              <div className="model-library-encoder-option">
-                <strong>Optional uncensored text encoder</strong>
-                <p className="model-library-note">A separate OpenVINO Qwen3 encoder for Klein 4B only. It adds about 2.1 GB; the standard encoder stays available. Fern downloads it directly, with no Hugging Face account required while the model is publicly available. <a href={`https://huggingface.co/${model.uncensoredTextEncoder.repoId}`} target="_blank" rel="noreferrer">Model details and license</a>.</p>
+            {["4b", "4b-lora"].includes(model.id) && model.uncensoredTextEncoder ? (
+              <details className="model-library-encoder-option" ref={(element) => { if (element) encoderDetails.current.set(model.id, element); else encoderDetails.current.delete(model.id); }}>
+                <summary><span>Uncensored text encoder</span><span className="model-library-encoder-summary">{model.uncensoredTextEncoder.enabled ? "Enabled" : model.uncensoredTextEncoder.installed ? "Downloaded" : "+ 2.1 GB"}</span><ChevronDown className="model-library-encoder-chevron" size={15} aria-hidden="true" /></summary>
+                <div className="model-library-encoder-content">
+                <p className="model-library-note">Use one optional encoder with Klein 4B and Klein 4B LoRA. The standard encoders stay available. <a className="ui-link" href={`https://huggingface.co/${model.uncensoredTextEncoder.repoId}`} target="_blank" rel="noreferrer">Model details and license</a></p>
                 {!model.installed ? (
-                  <p className="model-library-note">Install Klein 4B first.</p>
+                  <p className="model-library-note">Install this model first.</p>
                 ) : model.uncensoredTextEncoder.installed ? (
                   <>
                     <label className="model-library-encoder-toggle">
-                      <input
-                        type="checkbox"
-                        aria-label="Use uncensored text encoder for Klein 4B"
+                      <Checkbox
+                        aria-label={`Use uncensored text encoder for ${model.label}`}
                         checked={model.uncensoredTextEncoder.enabled}
                         disabled={actionsUnavailable || downloading}
                         onChange={(event) => void textEncoderAction("setting", { enabled: event.target.checked })}
                       />
-                      Use uncensored text encoder for Klein 4B
+                      Use uncensored text encoder
                     </label>
-                    {removeEncoder ? (
-                      <div className="model-library-remove-confirm">
-                        <span>Remove the optional encoder? Klein 4B and its standard encoder stay installed.</span>
-                        <button className="btn btn-secondary" type="button" disabled={actionsUnavailable || downloading} onClick={() => { setRemoveEncoder(false); void textEncoderAction("remove"); }}>Confirm removal</button>
-                        <button className="btn btn-secondary" type="button" disabled={busy} onClick={() => setRemoveEncoder(false)}>Cancel</button>
-                      </div>
-                    ) : <button className="btn btn-secondary" type="button" disabled={actionsUnavailable || downloading} onClick={() => setRemoveEncoder(true)}>Remove optional encoder</button>}
+                    {removeEncoder === model.id ? (
+                      <InlineConfirmation confirmLabel="Remove encoder" disabled={actionsUnavailable || downloading} onCancel={() => { setRemoveEncoder(null); removalFocus.restore(`encoder-${model.id}`); }} onConfirm={() => { setRemoveEncoder(null); void textEncoderAction("remove"); }}>
+                        Remove the shared optional encoder? Both models and their standard encoders stay installed.
+                      </InlineConfirmation>
+                    ) : <Button ref={removalFocus.register(`encoder-${model.id}`)} type="button" disabled={actionsUnavailable || downloading} onClick={() => setRemoveEncoder(model.id)}>Remove optional encoder</Button>}
                   </>
                 ) : ["downloading", "verifying"].includes(model.uncensoredTextEncoder.state) ? (
                   <>
                     <p className="model-library-status" role="status">{model.uncensoredTextEncoder.phase || "Downloading optional text encoder…"}</p>
                     {model.uncensoredTextEncoder.bytes > 0 ? <><progress aria-label="Uncensored Klein text encoder download" value={model.uncensoredTextEncoder.downloaded} max={model.uncensoredTextEncoder.bytes} /><small>{(model.uncensoredTextEncoder.downloaded / 1e9).toFixed(2)} / {(model.uncensoredTextEncoder.bytes / 1e9).toFixed(2)} GB</small></> : <progress className="model-library-indeterminate" aria-label="Checking model download access" />}
-                    <button className="btn btn-secondary" type="button" disabled={actionsUnavailable} onClick={() => void textEncoderAction("pause")}>Cancel download</button>
+                    <Button  type="button" disabled={actionsUnavailable} onClick={() => void textEncoderAction("pause")}>Cancel download</Button>
                   </>
                 ) : (
                   <>
-                    {model.uncensoredTextEncoder.error ? <p role="alert">{model.uncensoredTextEncoder.error}</p> : null}
-                    <button className="btn btn-secondary" type="button" disabled={actionsUnavailable || downloading} onClick={() => void textEncoderAction("install")}>
+                    {model.uncensoredTextEncoder.error ? <ErrorMessage>{model.uncensoredTextEncoder.error}</ErrorMessage> : null}
+                    <Button  type="button" disabled={actionsUnavailable || downloading} onClick={() => void textEncoderAction("install")}>
                       {model.uncensoredTextEncoder.state === "paused" ? "Resume download" : model.uncensoredTextEncoder.state === "failed" ? "Retry download" : "Download · about 2.1 GB"}
-                    </button>
+                    </Button>
                   </>
                 )}
-              </div>
+                </div>
+              </details>
             ) : null}
-            <p className="model-library-status" role="status" aria-live="polite">
+            <ModelStatus installed={model.state === "installed"} aria-live="polite">
               {model.state === "not-installed"
                 ? "Not installed"
                 : model.state === "installed"
@@ -369,7 +383,7 @@ export function ModelLibrary() {
                             ? "Model files are present, but this Fern runtime cannot load OpenVINO SDXL."
                             : "Model files are present, but this Fern runtime cannot load OpenVINO Qwen."
                     : model.state}
-            </p>
+            </ModelStatus>
             {model.id === "flux3-klein" && model.state === "installing" ? (
               model.downloaded > 0 && model.downloaded < model.bytes ? (
                 <>
@@ -423,7 +437,12 @@ export function ModelLibrary() {
                 </p>
               </>
             ) : null}
-            {model.error ? <p role="alert">{model.error}</p> : null}
+            {model.error && model.state === "repair-needed" && model.id.startsWith("custom-") ? (
+              <details className="model-library-error-details">
+                <summary>Technical details</summary>
+                <pre>{model.error}</pre>
+              </details>
+            ) : model.error ? <ErrorMessage>{model.error}</ErrorMessage> : null}
             {model.id === "qwen21-turbo" && model.logs?.length ? (
               <details>
                 <summary>Setup details</summary>
@@ -436,50 +455,47 @@ export function ModelLibrary() {
                 <ul>{model.logs.slice(-12).map((line, index) => <li key={`${index}-${line}`}>{line}</li>)}</ul>
               </details>
             ) : null}
-            <div className="model-library-actions">
+            <ModelCardActions>
               {model.id.startsWith("custom-") ? (
                 remove === model.id ? (
-                  <>
-                    <span>{model.sourceType === "huggingface" ? "Remove the downloaded model files from Fern?" : "Remove this model from Fern? Its files stay untouched."}</span>
-                    <button className="btn btn-secondary" disabled={actionsUnavailable || downloading} onClick={() => void action(model.id, "remove")}>Confirm removal</button>
-                    <button className="btn btn-secondary" disabled={busy || Boolean(error)} onClick={() => setRemove(null)}>Cancel</button>
-                  </>
-                ) : <button className="btn btn-secondary" disabled={actionsUnavailable || downloading} onClick={() => setRemove(model.id)}>Remove</button>
+                  <InlineConfirmation confirmLabel="Remove model" disabled={actionsUnavailable || downloading} onCancel={() => { setRemove(null); removalFocus.restore(model.id); }} onConfirm={() => void action(model.id, "remove")}>
+                    {model.sourceType === "huggingface" ? "Remove the downloaded model files from Fern?" : "Remove this model from Fern? Its files stay untouched."}
+                  </InlineConfirmation>
+                ) : <Button ref={removalFocus.register(model.id)} disabled={actionsUnavailable || downloading} onClick={() => setRemove(model.id)}>Remove</Button>
               ) : model.state === "installing" && model.id === "flux3-klein" ? (
-                <button
-                  className="btn btn-secondary"
+                <Button
+
                   disabled={actionsUnavailable}
                   onClick={() => void action(model.id, "pause")}
                 >
                   Cancel setup
-                </button>
+                </Button>
               ) : model.state === "installing" && model.id === "qwen21-turbo" ? (
-                <button
-                  className="btn btn-secondary"
+                <Button
+
                   disabled={actionsUnavailable}
                   onClick={() => void action(model.id, "pause")}
                 >
                   Cancel setup
-                </button>
+                </Button>
               ) : model.id === "flux3-klein" && model.state === "runtime-unavailable" ? (
-                <button
-                  className="btn btn-secondary"
+                <Button
                   disabled={actionsUnavailable || downloading}
                   onClick={() => void action(model.id, "install")}
                 >
                   Repair runtime
-                </button>
+                </Button>
               ) : ["downloading", "verifying"].includes(model.state) ? (
-                <button
-                  className="btn btn-secondary"
+                <Button
+
                   disabled={actionsUnavailable}
                   onClick={() => void action(model.id, "pause")}
                 >
                   Pause
-                </button>
+                </Button>
               ) : !model.installed && model.state !== "repair-needed" ? (
-                <button
-                  className="btn btn-secondary"
+                <Button
+
                   disabled={actionsUnavailable || downloading}
                   onClick={() => void action(model.id, "install")}
                 >
@@ -494,43 +510,27 @@ export function ModelLibrary() {
                     : ["paused", "failed"].includes(model.state)
                       ? "Resume download"
                       : "Install"}
-                </button>
+                </Button>
               ) : null}
               {!model.id.startsWith("custom-") &&
               (model.installed ||
                 ["failed", "paused", "repair-needed", "runtime-unavailable"].includes(model.state)) ? (
                 remove === model.id ? (
-                  <>
-                    <span>
-                      Remove model files? Your images and threads stay.
-                    </span>
-                    <button
-                      className="btn btn-secondary"
-                      disabled={actionsUnavailable || downloading}
-                      onClick={() => void action(model.id, "remove")}
-                    >
-                      Confirm removal
-                    </button>
-                    <button
-                      className="btn btn-secondary"
-                      disabled={busy || Boolean(error)}
-                      onClick={() => setRemove(null)}
-                    >
-                      Cancel
-                    </button>
-                  </>
+                  <InlineConfirmation confirmLabel="Remove model" disabled={actionsUnavailable || downloading} onCancel={() => { setRemove(null); removalFocus.restore(model.id); }} onConfirm={() => void action(model.id, "remove")}>
+                    Remove model files? Your images and threads stay.
+                  </InlineConfirmation>
                 ) : (
-                  <button
-                    className="btn btn-secondary"
+                  <Button
+                    ref={removalFocus.register(model.id)}
                     disabled={actionsUnavailable || downloading}
                     onClick={() => setRemove(model.id)}
                   >
                     Remove
-                  </button>
+                  </Button>
                 )
               ) : null}
-            </div>
-          </article>
+            </ModelCardActions>
+          </ModelCard>
         ))}
       </div>
     </section>

@@ -47,7 +47,7 @@ try {
   await page.getByRole("button", { name: "Image model: Klein 9B" }).click();
   const modelRows = page.getByRole("menuitemradio");
   const rows = await modelRows.evaluateAll((items) => items.map((item) => ({ height: item.getBoundingClientRect().height, whitespace: getComputedStyle(item.querySelector(".composer-model-label")).whiteSpace, width: item.getBoundingClientRect().width, overflow: item.scrollWidth > item.clientWidth })));
-  assert(rows.every((row) => row.height === 34 && row.whitespace === "nowrap" && !row.overflow), JSON.stringify(rows));
+  assert(rows.every((row) => row.height === 32 && row.whitespace === "nowrap" && !row.overflow), JSON.stringify(rows));
   await page.screenshot({ path: `${dir}/navigation-model-menu.png` });
   await page.getByRole("menuitemradio", { name: "Klein 4B", exact: true }).click();
   const png = async (color) => Buffer.from(await page.evaluate((fill) => { const canvas = document.createElement("canvas"); canvas.width = canvas.height = 8; const context = canvas.getContext("2d"); context.fillStyle = fill; context.fillRect(0, 0, 8, 8); return canvas.toDataURL("image/png").split(",")[1]; }, color), "base64");

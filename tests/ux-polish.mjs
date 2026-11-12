@@ -63,20 +63,12 @@ try {
 
   const row = page.locator(".sidebar-thread-row").first();
   await row.hover();
-  const rects = await row.locator(".thread-action").evaluateAll((elements) =>
-    elements.map((el) => {
-      const r = el.getBoundingClientRect();
-      return {
-        x: r.x,
-        right: r.right,
-        y: r.y,
-        h: r.height,
-        svg: !!el.querySelector("svg"),
-      };
-    }),
-  );
-  assert(rects.every((r) => r.svg && r.h >= 26));
-  assert(rects[0].right <= rects[1].x && rects[1].right <= rects[2].x);
+  const action = row.locator(".sidebar-thread-actions-trigger");
+  const actionBox = await action.boundingBox();
+  const threadBox = await row.locator(".sidebar-thread-button").boundingBox();
+  assert.equal(await action.locator("svg").count(), 1);
+  assert(actionBox && actionBox.height >= 26 && actionBox.width >= 26);
+  assert(threadBox && threadBox.x + threadBox.width <= actionBox.x + 1, "thread title and action remain separate");
 
   await button("Library").click();
   await button("Review audit-1.png").click();

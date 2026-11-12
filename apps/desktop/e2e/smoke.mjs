@@ -197,7 +197,7 @@ try {
   assert.equal(await page.getByRole("alert").count(), 0, "Cancelling the picker should not show an error");
 
   await modelCard.getByRole("button", { name: "Remove" }).click();
-  await modelCard.getByRole("button", { name: "Confirm removal" }).click();
+  await modelCard.getByRole("button", { name: "Remove model", exact: true }).click();
   await modelCard.waitFor({ state: "detached", timeout: 30_000 });
   assert.ok((await readFile(modelIndexPath)).length > 0, "Removing a local link must preserve the source model files");
   // Return to the thread that selected this model. A new thread correctly

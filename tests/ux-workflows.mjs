@@ -134,6 +134,12 @@ try {
     "prompt 2",
   );
   await page.getByRole("searchbox", { name: "Filter images" }).fill("");
+  const imageSearch = page.getByRole("searchbox", { name: "Filter images" });
+  await imageSearch.fill("no matching image");
+  await page.getByText("No matching images", { exact: true }).waitFor();
+  await button("Clear search").click();
+  assert.equal(await imageSearch.inputValue(), "");
+  assert.equal(await imageSearch.evaluate((element) => element === document.activeElement), true, "clearing a search returns focus to the search field");
   // A gallery-card deletion must be a full viewport dialog, not clipped inside its card.
   await page.locator(".thumb-wrap").first().locator("summary").click();
   await button("Delete image").click();

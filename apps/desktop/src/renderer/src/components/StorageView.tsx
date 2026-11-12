@@ -2,9 +2,10 @@ import Database from "lucide-react/dist/esm/icons/database.mjs";
 import HardDrive from "lucide-react/dist/esm/icons/hard-drive.mjs";
 import ShieldCheck from "lucide-react/dist/esm/icons/shield-check.mjs";
 import Trash2 from "lucide-react/dist/esm/icons/trash-2.mjs";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { clearGenerationCache, fetchStorageStatus } from "../lib/api";
 import type { StorageStatus } from "../lib/types";
+import { Button, PageHeader } from "./ui/controls";
 
 interface StorageViewProps {
   active: boolean;
@@ -51,6 +52,8 @@ export function StorageView({
   const [loading, setLoading] = useState(false);
   const [action, setAction] = useState<"cache" | "reset" | null>(null);
   const [confirmingReset, setConfirmingReset] = useState(false);
+  const resetTrigger = useRef<HTMLButtonElement>(null);
+  const resetConfirmation = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
   const preferenceBytes = useMemo(
     () => (active ? storedPreferenceBytes() : 0),
@@ -75,6 +78,22 @@ export function StorageView({
     void refreshStorage();
   }, [active, refreshStorage]);
 
+  useLayoutEffect(() => {
+    if (confirmingReset) resetConfirmation.current?.scrollIntoView({ block: "nearest" });
+  }, [confirmingReset]);
+
+  useEffect(() => {
+    if (!confirmingReset || action) return;
+    const dismiss = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || document.querySelector('[aria-modal="true"]')) return;
+      event.preventDefault();
+      event.stopPropagation();
+      setConfirmingReset(false);
+      requestAnimationFrame(() => resetTrigger.current?.focus());
+    };
+    window.addEventListener("keydown", dismiss, true);
+    return () => window.removeEventListener("keydown", dismiss, true);
+  }, [confirmingReset, action]);
 
   const clearCache = async () => {
     setAction("cache");
@@ -103,6 +122,11 @@ export function StorageView({
     }
   };
 
+  const cancelReset = () => {
+    setConfirmingReset(false);
+    requestAnimationFrame(() => resetTrigger.current?.focus());
+  };
+
   const diskUsedPercent = storage
     ? Math.max(
         0,
@@ -118,13 +142,7 @@ export function StorageView({
         className="shell-page storage-view" hidden={!active}
         aria-labelledby="storage-view-title"
       >
-        <header className="shell-page-header">
-          <div>
-            <h2 tabIndex={-1} id="storage-view-title">Local data</h2>
-            <p>See what Fern stores and clean it up without opening system folders.</p>
-          </div>
-
-        </header>
+        <PageHeader className="shell-page-header" id="storage-view-title" title="Local data" description="See what Fern stores and clean it up without opening system folders." />
 
         <div className="shell-page-body storage-body">
         {loading && !storage ? (
@@ -216,7 +234,7 @@ export function StorageView({
         {error ? (
           <p className="dialog-error" role="alert">
             {error}
-            <button type="button" className="text-action" disabled={loading || Boolean(action)} onClick={() => void refreshStorage()}>Retry</button>
+            <Button variant="ghost" disabled={loading || Boolean(action)} onClick={() => void refreshStorage()}>Retry</Button>
           </p>
         ) : null}
 
@@ -225,14 +243,13 @@ export function StorageView({
             <strong>Clear Generation Cache</strong>
             <p>Removes compiled generation cache files. The next generation may start more slowly.</p>
           </div>
-          <button
-            type="button"
-            className="btn btn-secondary"
+          <Button
+            variant="secondary"
             disabled={running || loading || Boolean(action)}
             onClick={() => void clearCache()}
           >
             {action === "cache" ? "Clearing…" : "Clear Cache"}
-          </button>
+          </Button>
         </div>
 
         <div className="data-actions data-actions-danger">
@@ -240,37 +257,32 @@ export function StorageView({
             <strong>Clear Local Data</strong>
             <p>Deletes generated images, audio takes, cache, thread history, prompts, and preferences.</p>
           </div>
-          {confirmingReset ? (
-            <div className="confirm-actions">
-              <button
-                type="button"
-                className="btn btn-secondary"
-                disabled={Boolean(action)}
-                onClick={() => setConfirmingReset(false)}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="btn btn-danger"
-                disabled={running || loading || Boolean(action)}
-                onClick={() => void resetData()}
-              >
-                <Trash2 size={13} aria-hidden="true" />
-                {action === "reset" ? "Deleting…" : "Delete Local Data"}
-              </button>
-            </div>
-          ) : (
-            <button
-              type="button"
-              className="btn btn-danger-outline"
+          {!confirmingReset ? (
+            <Button
+              ref={resetTrigger}
+              variant="danger"
               disabled={running || loading || Boolean(action)}
               onClick={() => setConfirmingReset(true)}
             >
               Clear Local Data
-            </button>
-          )}
+            </Button>
+          ) : null}
         </div>
+        {confirmingReset ? (
+          <div ref={resetConfirmation} className="storage-reset-confirm" role="group" aria-labelledby="storage-reset-confirm-title">
+            <div>
+              <strong id="storage-reset-confirm-title">Delete local data?</strong>
+              <p>This permanently deletes your generated files and thread history. Downloaded models and runtimes stay installed.</p>
+            </div>
+            <div className="confirm-actions">
+              <Button variant="secondary" autoFocus disabled={Boolean(action)} onClick={cancelReset}>Cancel</Button>
+              <Button variant="danger" disabled={running || loading || Boolean(action)} onClick={() => void resetData()}>
+                <Trash2 size={13} aria-hidden="true" />
+                {action === "reset" ? "Deleting…" : "Delete local data"}
+              </Button>
+            </div>
+          </div>
+        ) : null}
 
         <footer className="data-dialog-footer">
           Downloaded models and bundled runtimes stay installed.

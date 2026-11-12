@@ -10,6 +10,7 @@ import { useEffect, useRef, useState } from "react";
 import { normalizeQwenDimension } from "../lib/imageDimensions";
 import { MAX_KLEIN_REFERENCES, readReference, type ReferenceAttachment } from "../lib/reference";
 import type { StudioSettings } from "../lib/types";
+import { Button, IconButton, Input, Textarea } from "./ui/controls";
 
 interface PromptComposerProps {
   onReferenceBusy: (busy: boolean) => void;
@@ -50,7 +51,7 @@ export function PromptComposer({
   const [seedPopoverOpen, setSeedPopoverOpen] = useState(false);
   const seedPopover = useRef<HTMLDivElement>(null);
   const referenceImage = referenceImages[0]?.dataUrl;
-  const maxReferences = !settings.model || ["9b", "4b"].includes(settings.model) ? MAX_KLEIN_REFERENCES : settings.model === "qwen21-turbo" ? 1 : 0;
+  const maxReferences = !settings.model || ["9b", "4b"].includes(settings.model) ? MAX_KLEIN_REFERENCES : ["qwen21-turbo", "4b-lora"].includes(settings.model) ? 1 : 0;
   const referencesInvalid = referenceImages.length > maxReferences;
   useEffect(() => setSeedDraft(String(settings.seed)), [settings.seed]);
   useEffect(() => {
@@ -146,26 +147,25 @@ export function PromptComposer({
               <small title={reference.label}>{reference.label}</small>
             </span>
             {referenceImages.length > 1 ? <div className="composer-reference-order">
-              <button type="button" className="btn-icon btn-icon-sm" disabled={index === 0 || loadingReference} aria-label={`Move reference ${index + 1} earlier`} title="Move earlier" onClick={() => { const next = [...referenceImages]; [next[index - 1], next[index]] = [next[index], next[index - 1]]; onReferencesChange(next); }}><ArrowLeft size={12} aria-hidden="true" /></button>
-              <button type="button" className="btn-icon btn-icon-sm" disabled={index === referenceImages.length - 1 || loadingReference} aria-label={`Move reference ${index + 1} later`} title="Move later" onClick={() => { const next = [...referenceImages]; [next[index + 1], next[index]] = [next[index], next[index + 1]]; onReferencesChange(next); }}><ArrowRight size={12} aria-hidden="true" /></button>
+              <IconButton disabled={index === 0 || loadingReference} aria-label={`Move reference ${index + 1} earlier`} title="Move earlier" onClick={() => { const next = [...referenceImages]; [next[index - 1], next[index]] = [next[index], next[index - 1]]; onReferencesChange(next); }}><ArrowLeft size={12} aria-hidden="true" /></IconButton>
+              <IconButton disabled={index === referenceImages.length - 1 || loadingReference} aria-label={`Move reference ${index + 1} later`} title="Move later" onClick={() => { const next = [...referenceImages]; [next[index + 1], next[index]] = [next[index], next[index + 1]]; onReferencesChange(next); }}><ArrowRight size={12} aria-hidden="true" /></IconButton>
             </div> : null}
-            <button
-              type="button"
-              className="btn-icon btn-icon-sm"
+            <IconButton
               aria-label={`Remove reference ${index + 1}`}
               title="Remove reference"
               disabled={loadingReference}
               onClick={() => onReferencesChange(referenceImages.filter((_, itemIndex) => index !== itemIndex))}
             >
               <X size={14} aria-hidden="true" />
-            </button>
+            </IconButton>
           </div>)}
           {maxReferences > 1 ? <p className="composer-reference-hint">{referenceImages.length}/{maxReferences} references · Refer to Image 1, Image 2, etc. in your prompt.</p> : null}
         </div> : null}
         <label className="sr-only" htmlFor="prompt">
           Image prompt
         </label>
-        <textarea
+        <Textarea
+          className="prompt-textarea"
           id="prompt"
           name="prompt"
           rows={3}
@@ -197,8 +197,7 @@ export function PromptComposer({
                     event.target.value = "";
                   }}
                 />
-                <button
-                  type="button"
+                <IconButton
                   className="composer-tool"
                   title={`Add reference images (${referenceImages.length}/${maxReferences})`}
                   aria-label="Add reference image"
@@ -206,11 +205,10 @@ export function PromptComposer({
                   onClick={() => fileInput.current?.click()}
                 >
                   <ImagePlus size={17} aria-hidden="true" />
-                </button>
+                </IconButton>
               </>
             ) : null}
-            <button
-              type="button"
+            <IconButton
               className="composer-tool"
               onClick={onToggleInspector}
               aria-expanded={inspectorOpen}
@@ -219,10 +217,9 @@ export function PromptComposer({
               aria-label="Image settings"
             >
               <SlidersHorizontal size={14} aria-hidden="true" />
-            </button>
+            </IconButton>
             <div className="seed-popover-anchor" ref={seedPopover}>
-              <button
-                type="button"
+              <IconButton
                 className="composer-settings"
                 aria-expanded={seedPopoverOpen}
                 onClick={() => setSeedPopoverOpen((open) => !open)}
@@ -230,15 +227,15 @@ export function PromptComposer({
                 aria-label="Seed settings"
               >
                 <Dices size={17} aria-hidden="true" />
-              </button>
+              </IconButton>
               {seedPopoverOpen ? (
                 <div
                   className="seed-popover"
                   role="dialog"
                   aria-label="Seed settings"
                 >
-                  <button
-                    type="button"
+                  <Button
+                    variant="secondary"
                     className="seed-mode"
                     aria-pressed={settings.seedLocked}
                     onClick={() =>
@@ -246,10 +243,11 @@ export function PromptComposer({
                     }
                   >
                     {settings.seedLocked ? "Fixed seed" : "Random seed"}
-                  </button>
+                  </Button>
                   <label className="seed-popover-input">
                     <span>Seed</span>
-                    <input
+                    <Input
+                      className="seed-input"
                       aria-label="Seed"
                       inputMode="numeric"
                       type="text"
@@ -269,9 +267,7 @@ export function PromptComposer({
                       onBlur={() => setSeedDraft(String(settings.seed))}
                     />
                   </label>
-                  <button
-                    type="button"
-                    className="btn-icon btn-icon-sm"
+                  <IconButton
                     title="Randomize seed"
                     aria-label="Randomize seed"
                     onClick={() =>
@@ -282,7 +278,7 @@ export function PromptComposer({
                     }
                   >
                     <Dices size={15} aria-hidden="true" />
-                  </button>
+                  </IconButton>
                 </div>
               ) : null}
             </div>
@@ -366,8 +362,10 @@ export function PromptComposer({
               }}
               onOpen={() => setSeedPopoverOpen(false)}
             />
-            <button
+            <IconButton
               type="submit"
+              variant="primary"
+              shape="circle"
               className="composer-submit"
               disabled={
                 running ||
@@ -392,7 +390,7 @@ export function PromptComposer({
               ) : (
                 <ArrowUp size={20} aria-hidden="true" />
               )}
-            </button>
+            </IconButton>
           </div>
         </div>
       </form>

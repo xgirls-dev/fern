@@ -809,7 +809,7 @@ export function useStudio(computeDevice: "GPU" | "CPU" = "GPU") {
       setError("Prompt is required.");
       return;
     }
-    const maxReferences = ["9b", "4b"].includes(settings.model ?? "9b") ? 4 : settings.model === "qwen21-turbo" ? 1 : 0;
+    const maxReferences = ["9b", "4b"].includes(settings.model ?? "9b") ? 4 : ["qwen21-turbo", "4b-lora"].includes(settings.model ?? "") ? 1 : 0;
     if (referenceImages.length > maxReferences) {
       setError(maxReferences ? `This model supports up to ${maxReferences} reference image${maxReferences === 1 ? "" : "s"}. Remove extra attachments or select Klein.` : "This model generates from text only. Remove the references or select Klein to edit them.");
       return;

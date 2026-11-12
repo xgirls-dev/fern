@@ -52,6 +52,7 @@ import custom_image_pipeline as custom_image
 import custom_image_registry
 import custom_image_download
 import flux2_klein_text_encoder
+import lora_download
 from generation_worker import GenerationWorker, GenerationCancelled, tame_pony_inference_loop, custom_image_inference_loop
 from tts_generation_worker import TtsGenerationWorker
 from text_generation_process import TextGenerationProcess
@@ -99,6 +100,7 @@ MODEL_MANAGER = ModelManager(MODELS_DIR)
 KLEIN_TEXT_ENCODER_MANAGER = flux2_klein_text_encoder.KleinTextEncoderManager(
     flux2.MODELS_ROOT, DATA_DIR / "flux2-klein-4b-text-encoder.json"
 )
+LORA_DOWNLOAD = lora_download.LoraDownloadManager(DATA_DIR / "loras")
 FLUX3_SETUP_LOCK = threading.Lock()
 FLUX3_SETUP_STATE: dict[str, Any] = {"status": "idle", "phase": None, "error": None, "logs": []}
 FLUX3_SETUP_CANCEL: threading.Event | None = None
@@ -401,11 +403,10 @@ def qwen_turbo_snapshot() -> dict[str, Any]:
 def model_library_snapshot() -> list[dict[str, Any]]:
     """Merge the regular catalog with Flux.3's separate runtime setup state."""
     models = MODEL_MANAGER.snapshot()
-    klein4b = next((item for item in models if item["id"] == "4b"), None)
-    if klein4b is not None:
-        klein4b["uncensoredTextEncoder"] = KLEIN_TEXT_ENCODER_MANAGER.snapshot(
-            bool(klein4b["installed"])
-        )
+    klein_installed = any(item["id"] in ("4b", "4b-lora") and item["installed"] for item in models)
+    for item in models:
+        if item["id"] in ("4b", "4b-lora"):
+            item["uncensoredTextEncoder"] = KLEIN_TEXT_ENCODER_MANAGER.snapshot(klein_installed)
     flux3_item = next((item for item in models if item["id"] == flux3.MODEL_KEY), None)
     if flux3_item is not None:
         with FLUX3_SETUP_LOCK:
@@ -1414,8 +1415,6 @@ def validate_flux_payload(payload: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(enabled, bool):
             raise ValueError("LoRA enabled must be true or false.")
         checked_loras.append({"path": str(path), "strength": strength, "enabled": enabled})
-    if model == "4b-lora" and reference_image is not None:
-        raise ValueError("Klein 4B LoRA currently supports text-to-image only.")
     if model == flux3.MODEL_KEY and reference_image is not None:
         raise ValueError("This FLUX.3 Klein OpenVINO quant currently supports text-to-image only.")
     is_tame_pony = tame_pony.is_model(model)
@@ -1469,9 +1468,9 @@ def run_flux_generation(
     cancel_event: threading.Event,
 ) -> None:
     payload["use_uncensored_text_encoder"] = bool(
-        payload.get("model") == "4b"
+        payload.get("model") in ("4b", "4b-lora")
         and KLEIN_TEXT_ENCODER_MANAGER.snapshot(
-            any(item["id"] == "4b" and item["installed"] for item in MODEL_MANAGER.snapshot())
+            any(item["id"] in ("4b", "4b-lora") and item["installed"] for item in MODEL_MANAGER.snapshot())
         )["enabled"]
     )
 
@@ -1558,7 +1557,7 @@ def run_flux_generation(
             metadata = {
                 "threadId": payload.get("thread_id"),
                 "prompt": payload["prompt"],
-                "textEncoder": "uncensored-qwen3-4b-int4-ov" if payload.get("use_uncensored_text_encoder") and payload.get("model") == "4b" else "default",
+                "textEncoder": "uncensored-qwen3-4b-int4-ov" if payload.get("use_uncensored_text_encoder") and payload.get("model") in ("4b", "4b-lora") else "default",
                 "loras": [{"name": Path(item["path"]).name, "strength": item["strength"]} for item in payload.get("loras", []) if item["enabled"]],
                 "seed": seed,
                 "width": payload["width"],
@@ -1880,6 +1879,10 @@ class Handler(BaseHTTPRequestHandler):
 
         if parsed.path == "/api/models":
             self.send_json(200, {"models": model_library_snapshot(), "customImageDownload": CUSTOM_IMAGE_DOWNLOAD.snapshot()})
+            return
+
+        if parsed.path == "/api/loras/download":
+            self.send_json(200, LORA_DOWNLOAD.snapshot())
             return
 
         if parsed.path == "/api/health":
@@ -2333,6 +2336,17 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(400, {"error": str(error)})
             return
 
+        if parsed.path in ("/api/loras/download", "/api/loras/download/cancel"):
+            try:
+                if parsed.path.endswith("/cancel"):
+                    LORA_DOWNLOAD.cancel()
+                else:
+                    LORA_DOWNLOAD.start(self.read_json_body().get("url"))
+                self.send_json(202, LORA_DOWNLOAD.snapshot())
+            except Exception as error:
+                self.send_json(400, {"error": str(error)})
+            return
+
         if parsed.path == "/api/models/custom/download":
             try:
                 if flux_job_snapshot()["status"] == "running":
@@ -2367,7 +2381,7 @@ class Handler(BaseHTTPRequestHandler):
                 if flux_job_snapshot()["status"] == "running":
                     raise ValueError("Stop image generation before changing the Klein 4B text encoder.")
                 model_installed = any(
-                    item["id"] == "4b" and item["installed"]
+                    item["id"] in ("4b", "4b-lora") and item["installed"]
                     for item in MODEL_MANAGER.snapshot()
                 )
                 if parsed.path.endswith("/setting"):
@@ -2474,12 +2488,10 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     with FLUX_JOB_LOCK:
                         if FLUX_JOB["status"] == "running": raise ValueError("Stop generation before removing a model.")
-                    if model == "4b" and KLEIN_TEXT_ENCODER_MANAGER.snapshot(True)["state"] in ("downloading", "verifying", "removing"):
+                    if model in ("4b", "4b-lora") and KLEIN_TEXT_ENCODER_MANAGER.snapshot(True)["state"] in ("downloading", "verifying", "removing"):
                         raise ValueError("Cancel or finish the optional text encoder operation before removing Klein 4B.")
-                        GENERATION_WORKER.close()
-                        if model == "4b":
-                            KLEIN_TEXT_ENCODER_MANAGER.set_enabled(False, False)
-                        MODEL_MANAGER.remove(model)
+                    GENERATION_WORKER.close()
+                    MODEL_MANAGER.remove(model)
                 self.send_json(200, {"models": model_library_snapshot()})
             except Exception as error: self.send_json(400, {"error": str(error)})
             return

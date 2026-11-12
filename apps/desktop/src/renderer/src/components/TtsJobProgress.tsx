@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Button } from "./ui/controls";
 
 interface Props {
   status: { status: string; operation: string | null; startedAt?: number | null; finishedAt?: number | null; logs: string[]; diagnostics?: string[]; phase?: string | null; error: string | null };
@@ -18,7 +19,7 @@ export function TtsJobProgress({ status, onStop }: Props) {
   const duration = `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, "0")}`;
   const title = status.status === "stopping" ? "Stopping audio…" : status.status === "complete" ? status.operation === "setup" ? "Model ready" : "Take complete" : status.status === "failed" ? "Audio job failed" : status.status === "stopped" ? "Audio job stopped" : status.operation === "setup" ? "Setting up voice model" : "Creating your take";
   return <section className="tts-job-progress" aria-label="Audio job progress">
-    <header><strong role="status">{title}</strong><span aria-label="Elapsed time">{duration} elapsed</span>{running ? <button type="button" className="btn btn-secondary" disabled={status.status === "stopping"} onClick={onStop}>Stop</button> : null}</header>
+    <header><strong role="status">{title}</strong><span aria-label="Elapsed time">{duration} elapsed</span>{running ? <Button variant="secondary" disabled={status.status === "stopping"} onClick={onStop}>Stop</Button> : null}</header>
     <p role="status">{status.phase || "Preparing speech locally…"}</p>
     {running ? <small>{status.operation === "setup" ? "Setup downloads this model once. No conversion is needed." : "The first run compiles the model and tokenizer. Later takes reuse the loaded model."}</small> : null}
     {status.logs.length ? <details><summary>Activity timeline</summary><pre>{status.logs.join("\n")}</pre></details> : null}

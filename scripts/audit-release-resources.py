@@ -9,7 +9,7 @@ from pathlib import Path
 ALLOWED_BACKEND = {
     'api_server.py', 'media_http.py', 'model_catalog.py', 'model_catalog.json',
     'model_manager.py', 'model_capabilities.py', 'device_adapters.py',
-    'flux2_klein_pipeline.py', 'flux2_klein_lora.py', 'flux2_klein_text_encoder.py', 'flux3_klein_model_catalog.json',
+    'flux2_klein_pipeline.py', 'flux2_klein_lora.py', 'flux2_klein_text_encoder.py', 'lora_download.py', 'flux3_klein_model_catalog.json',
     'flux3_klein_pipeline.py', 'flux3_klein_runtime.py',
     'tame_pony_model_catalog.json', 'tame_pony_pipeline.py',
     'custom_image_registry.py', 'custom_image_pipeline.py', 'custom_image_download.py',

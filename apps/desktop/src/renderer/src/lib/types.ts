@@ -119,7 +119,7 @@ export interface GenerationPayload {
 }
 
 export interface StudioSettings {
-  loras?: { path: string; strength: number; enabled: boolean }[];
+  loras?: { path: string; strength: number; enabled: boolean; label?: string }[];
   model?: string;
   prompt: string;
   device: DeviceId;

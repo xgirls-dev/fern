@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import ChevronDown from "lucide-react/dist/esm/icons/chevron-down.mjs";
 import Check from "lucide-react/dist/esm/icons/check.mjs";
 import type { StudioSettings } from "../lib/types";
+import { Button, MenuItem } from "./ui/controls";
 
 export interface ComposerModel {
   id: string;
@@ -80,7 +81,8 @@ export function ComposerModelMenu({
 
   return (
     <div className="composer-model-anchor" ref={root}>
-      <button
+      <Button
+        variant="ghost"
         ref={trigger}
         type="button"
         className="composer-model-trigger"
@@ -103,7 +105,7 @@ export function ComposerModelMenu({
       >
         <span>{triggerLabel}</span>
         <ChevronDown size={13} aria-hidden="true" />
-      </button>
+      </Button>
       {open ? (
         <div
           id={id}
@@ -152,8 +154,7 @@ export function ComposerModelMenu({
             const model = models.find((candidate) => candidate.id === modelId);
             const installed = Boolean(model && model.installed !== false);
             return (
-              <button
-                type="button"
+              <MenuItem
                 tabIndex={-1}
                 key={modelId}
                 role="menuitemradio"
@@ -172,10 +173,10 @@ export function ComposerModelMenu({
                 ) : !installed ? (
                   <span className="composer-model-unavailable">Not installed</span>
                 ) : null}
-              </button>
+              </MenuItem>
             );
           })}
-          <div className="composer-model-menu-footer"><button type="button" role="menuitem" onClick={() => { setOpen(false); window.dispatchEvent(new CustomEvent("fern-models", { detail: "image" })); }}>Manage models</button></div>
+          <div className="composer-model-menu-footer"><MenuItem role="menuitem" onClick={() => { setOpen(false); window.dispatchEvent(new CustomEvent("fern-models", { detail: "image" })); }}>Manage models</MenuItem></div>
         </div>
       ) : null}
     </div>

@@ -3,7 +3,10 @@ import Dices from "lucide-react/dist/esm/icons/dices.mjs";
 import ImageIcon from "lucide-react/dist/esm/icons/image.mjs";
 import Lock from "lucide-react/dist/esm/icons/lock.mjs";
 import LockOpen from "lucide-react/dist/esm/icons/lock-open.mjs";
+import Plus from "lucide-react/dist/esm/icons/plus.mjs";
 import Shuffle from "lucide-react/dist/esm/icons/shuffle.mjs";
+import X from "lucide-react/dist/esm/icons/x.mjs";
+import { Button, Checkbox, IconButton, Input, Select, ToggleChip } from "./ui/controls";
 import {
   useEffect,
   useMemo,
@@ -16,6 +19,28 @@ import type { ModelStatus, StudioSettings } from "../lib/types";
 import { notify } from "../lib/notifications";
 import { readReference, validateReference } from "../lib/reference";
 import { imageDimensionLimits } from "../lib/imageDimensions";
+import { getApiBaseUrl } from "../lib/api";
+
+function loraDisplayName(path: string): string {
+  const parts = path.split(/[\\/]/).filter(Boolean);
+  const filename = parts.at(-1)?.replace(/\.safetensors$/i, "").replace(/^[a-f0-9]{12}-/, "") ?? path;
+  return /^(pytorch_lora_weights|adapter_model)$/i.test(filename) && parts.length > 1 && parts[parts.length - 2].toLowerCase() !== "loras"
+    ? parts[parts.length - 2]
+    : filename;
+}
+
+function downloadedLoraLabel(url: string, path: string): string {
+  const fallback = loraDisplayName(path);
+  if (!/^(pytorch_lora_weights|adapter_model)$/i.test(fallback)) return fallback;
+  try {
+    const source = new URL(url);
+    const parts = source.pathname.split("/").filter(Boolean);
+    if (source.hostname.endsWith("huggingface.co") && parts.length >= 5) {
+      return decodeURIComponent(parts.length > 5 ? parts[parts.length - 2] : parts[1]);
+    }
+  } catch { /* Use the filename when the source link is unavailable. */ }
+  return fallback;
+}
 
 const STYLE_CHIPS = [
   {
@@ -212,8 +237,37 @@ export function GenerationControls({
 }: GenerationControlsProps) {
   const [customSize, setCustomSize] = useState(false);
   const [loraError, setLoraError] = useState("");
+  const [loraUrl, setLoraUrl] = useState("");
+  const [loraDownload, setLoraDownload] = useState<{ status: string; name?: string; path?: string; downloaded?: number; bytes?: number; error?: string }>({ status: "idle" });
+  const [startingLoraDownload, setStartingLoraDownload] = useState(false);
+  const [loraDownloadOpen, setLoraDownloadOpen] = useState(false);
   const isLoraModel = settings.model === "4b-lora";
   const loras = settings.loras ?? [];
+  useEffect(() => {
+    if (!isLoraModel || !loraDownloadOpen) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      try {
+        const response = await fetch(`${getApiBaseUrl()}/api/loras/download`, { signal: AbortSignal.timeout(5000) });
+        if (!response.ok) throw new Error("Could not check the LoRA download.");
+        const state = await response.json();
+        if (!cancelled) { setLoraDownload(state); if (["checking", "downloading"].includes(state.status)) timer = setTimeout(poll, 1200); }
+      } catch (error) { if (!cancelled) setLoraError(error instanceof Error ? error.message : "Could not check the LoRA download."); }
+    };
+    void poll();
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [isLoraModel, loraDownloadOpen, startingLoraDownload]);
+  const downloadLora = async (cancel = false) => {
+    setStartingLoraDownload(true); setLoraError("");
+    try {
+      const response = await fetch(`${getApiBaseUrl()}/api/loras/download${cancel ? "/cancel" : ""}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(cancel ? {} : { url: loraUrl }) });
+      const state = await response.json();
+      if (!response.ok) throw new Error(state.error || "Could not download the LoRA.");
+      setLoraDownload(state);
+    } catch (error) { setLoraError(error instanceof Error ? error.message : "Could not download the LoRA."); }
+    finally { setStartingLoraDownload(false); }
+  };
   const addLoras = async () => {
     try {
       const paths = await window.studio.pickLoraFiles();
@@ -454,21 +508,31 @@ export function GenerationControls({
       <div className="inspector-controls">
         <div className="control-sections">
           {isLoraModel ? (
-            <ControlSection title="LoRAs" summary={`${loras.filter((item) => item.enabled).length} active · up to 4`} defaultOpen>
-              <p className="field-note">Add Klein 4B safetensors files, then set each strength. Include any required trigger words in your prompt. AI-Toolkit and Diffusers LoRAs are supported.</p>
+            <ControlSection title="LoRAs" summary={loras.length ? `${loras.filter((item) => item.enabled).length} of ${loras.length} active` : "Optional · up to 4"} defaultOpen>
+              <p className="lora-intro">Add local LoRAs to guide your image. Include their trigger words in your prompt.</p>
+              {loras.length ? <div className="lora-list-heading" aria-hidden="true"><span>LoRA</span><span>Strength</span><span /></div> : null}
               {loras.map((lora, index) => (
-                <div className="lora-control" key={lora.path}>
-                  <label className="lora-control-name" title={lora.path}>
-                    <input type="checkbox" checked={lora.enabled} onChange={(event) => onSettingsChange({ loras: loras.map((item, i) => i === index ? { ...item, enabled: event.target.checked } : item) })} />
-                    <span>{lora.path.split(/[\\/]/).pop()}</span>
-                  </label>
-                  <label className="lora-control-strength">Strength
-                    <input type="number" min={-4} max={4} step={0.1} value={lora.strength} aria-label={`Strength for ${lora.path.split(/[\\/]/).pop()}`} onChange={(event) => onSettingsChange({ loras: loras.map((item, i) => i === index ? { ...item, strength: Number(event.target.value) } : item) })} />
-                  </label>
-                  <button type="button" className="btn btn-secondary" onClick={() => onSettingsChange({ loras: loras.filter((_, i) => i !== index) })} aria-label={`Remove ${lora.path.split(/[\\/]/).pop()}`}>Remove</button>
+                <div className={`lora-control${lora.enabled ? "" : " is-disabled"}`} key={lora.path}>
+                  <div className="lora-control-heading">
+                    <label className="lora-control-name" title={lora.path}>
+                      <Checkbox checked={lora.enabled} aria-label={lora.path.split(/[\\/]/).pop()} onChange={(event) => onSettingsChange({ loras: loras.map((item, i) => i === index ? { ...item, enabled: event.target.checked } : item) })} />
+                      <span>{lora.label || loraDisplayName(lora.path)}</span>
+                    </label>
+                    <label className="lora-control-strength"><span className="sr-only">Strength</span>
+                      <Input type="number" min={-4} max={4} step={0.1} value={lora.strength} title="LoRA strength" aria-label={`Strength for ${lora.path.split(/[\\/]/).pop()}`} onChange={(event) => onSettingsChange({ loras: loras.map((item, i) => i === index ? { ...item, strength: Number(event.target.value) } : item) })} />
+                    </label>
+                    <IconButton onClick={() => onSettingsChange({ loras: loras.filter((_, i) => i !== index) })} aria-label={`Remove ${lora.path.split(/[\\/]/).pop()}`} title="Remove LoRA"><X size={15} aria-hidden="true" /></IconButton>
+                  </div>
                 </div>
               ))}
-              <button type="button" className="btn btn-secondary" disabled={loras.length >= 4} onClick={() => void addLoras()}>Add LoRA files</button>
+              <Button variant="ghost" className="lora-add" disabled={loras.length >= 4} onClick={() => void addLoras()}><Plus size={15} aria-hidden="true" /> Add LoRA files</Button>
+              <details className="lora-download" onToggle={(event) => setLoraDownloadOpen(event.currentTarget.open)}><summary>Download from a link</summary><div className="lora-download-content">
+                <label htmlFor="lora-download-url">Hugging Face or Civitai link</label>
+                <Input id="lora-download-url" type="url" placeholder="https://…" value={loraUrl} onChange={(event) => setLoraUrl(event.target.value)} disabled={startingLoraDownload || ["checking", "downloading"].includes(loraDownload.status)} />
+                {["checking", "downloading"].includes(loraDownload.status) ? <><p role="status">{loraDownload.status === "checking" ? "Checking link…" : `Downloading ${loraDownload.name ?? "LoRA"}…`}</p><progress aria-label="LoRA download" {...(loraDownload.bytes ? { value: loraDownload.downloaded ?? 0, max: loraDownload.bytes } : {})} /><Button onClick={() => void downloadLora(true)} disabled={startingLoraDownload}>Cancel download</Button></> : <Button disabled={!loraUrl.trim() || startingLoraDownload || loras.length >= 4} onClick={() => void downloadLora()}>Download LoRA</Button>}
+                {loraDownload.status === "complete" && loraDownload.path ? <div className="lora-downloaded"><span title={loraDownload.name}>{loraDownload.name} downloaded</span><Button disabled={loras.length >= 4 || loras.some((item) => item.path.toLowerCase() === loraDownload.path!.toLowerCase())} onClick={() => onSettingsChange({ loras: [...loras, { path: loraDownload.path!, strength: 1, enabled: true, label: downloadedLoraLabel(loraUrl, loraDownload.path!) }] })}>Add to thread</Button></div> : null}
+                {loraDownload.status === "failed" ? <p role="alert" className="field-error">{loraDownload.error || "Download failed."}</p> : null}
+              </div></details>
               {loraError || errors.loras ? <p role="alert" className="field-error">{loraError || errors.loras}</p> : null}
             </ControlSection>
           ) : null}
@@ -477,7 +541,7 @@ export function GenerationControls({
             summary={`${settings.width} × ${settings.height} | ${hasFixedSampling ? "1 image" : `${settings.batchSize} image${settings.batchSize === 1 ? "" : "s"}`}`}
             defaultOpen
           >
-            {isLoraModel ? <p className="model-note field-note">Klein 4B LoRA uses the Intel GPU, guidance 1.0, and text-to-image. Reference images are not available yet.</p> : null}
+            {isLoraModel ? <p className="model-note field-note">Klein 4B LoRA uses the Intel GPU and guidance 1.0. You can add one reference image.</p> : null}
             {hasFixedSampling ? (
               <p className="model-note field-note">
                 {isFlux3Klein
@@ -490,7 +554,7 @@ export function GenerationControls({
               <div className="field-header">
                 <label htmlFor="size-preset">Resolution</label>
               </div>
-              <select
+              <Select
                 id="size-preset"
                 name="size-preset"
                 value={isFlux3Klein ? "1024x1024" : customSize ? "custom" : sizePreset}
@@ -501,7 +565,7 @@ export function GenerationControls({
                     {preset.label}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
 
             <div className="dims-row">
@@ -522,16 +586,14 @@ export function GenerationControls({
                   }
                 />
               </div>
-              <button
-                type="button"
-                className="btn-icon btn-icon-sm"
+              <IconButton
                 disabled={isFlux3Klein}
                 onClick={swapDimensions}
                 title="Swap dimensions"
                 aria-label="Swap width and height"
               >
                 <Shuffle size={15} aria-hidden="true" />
-              </button>
+              </IconButton>
               <div className="field">
                 <label htmlFor="height">Height</label>
                 <DraftNumberInput
@@ -554,7 +616,7 @@ export function GenerationControls({
             <div className="row-2">
               <div className="field">
                 <label htmlFor="batch-size">Images per render</label>
-                <select
+                <Select
                   id="batch-size"
                   name="batch-size"
                   value={hasFixedSampling ? 1 : settings.batchSize}
@@ -567,7 +629,7 @@ export function GenerationControls({
                   <option value={2}>2 images</option>
                   <option value={3}>3 images</option>
                   <option value={4}>4 images</option>
-                </select>
+                </Select>
                 {hasFixedSampling ? <small className="field-note">{isFlux3Klein ? "FLUX.3 Klein generates one image per request." : "Qwen Turbo generates one image per request."}</small> : null}
               </div>
             </div>
@@ -606,16 +668,16 @@ export function GenerationControls({
                     Save a prompt, size, steps, and guidance for later.
                   </small>
                 </div>
-                <button
-                  type="button"
+                <Button
+                  variant="ghost"
                   className="text-action"
                   onClick={() => setRecipeEditorOpen((open) => !open)}
                 >
                   {recipeEditorOpen ? "Close" : "Save current"}
-                </button>
+                </Button>
               </div>
               <div className="prompt-recipe-row">
-                <select
+                <Select
                   aria-label="Prompt recipe"
                   value={selectedRecipeId}
                   onChange={(event) => applyPromptRecipe(event.target.value)}
@@ -627,21 +689,20 @@ export function GenerationControls({
                       {recipe.builtIn ? " · Fern" : " · Saved"}
                     </option>
                   ))}
-                </select>
+                </Select>
                 {selectedRecipeId.startsWith("custom-") ? (
-                  <button
-                    type="button"
-                    className="btn btn-secondary btn-compact"
+                  <Button
+                    variant="secondary"
                     onClick={removeSelectedRecipe}
                     title="Remove this saved recipe"
                   >
                     Remove
-                  </button>
+                  </Button>
                 ) : null}
               </div>
               {recipeEditorOpen ? (
                 <div className="prompt-recipe-save">
-                  <input
+                  <Input
                     value={recipeName}
                     placeholder="Name this recipe"
                     aria-label="Recipe name"
@@ -654,29 +715,26 @@ export function GenerationControls({
                       }
                     }}
                   />
-                  <button
-                    type="button"
-                    className="btn btn-primary btn-compact"
+                  <Button
+                    variant="primary"
                     disabled={!recipeName.trim() || !settings.prompt.trim()}
                     onClick={savePromptRecipe}
                   >
                     Save recipe
-                  </button>
+                  </Button>
                 </div>
               ) : null}
             </div>
             <div className="field">
-              <div className="chips" aria-label="Style modifiers">
+              <div className="ui-chip-group" role="group" aria-label="Style modifiers">
                 {STYLE_CHIPS.map((chip) => (
-                  <button
+                  <ToggleChip
                     key={chip.id}
-                    type="button"
-                    className={`chip ${activeChips.has(chip.id) ? "active" : ""}`}
-                    aria-pressed={activeChips.has(chip.id)}
+                    selected={activeChips.has(chip.id)}
                     onClick={() => toggleChip(chip.id, chip.suffix)}
                   >
                     {chip.id.charAt(0).toUpperCase() + chip.id.slice(1)}
-                  </button>
+                  </ToggleChip>
                 ))}
               </div>
             </div>
@@ -728,9 +786,8 @@ export function GenerationControls({
                       : "Drop an image here, or choose a file to guide the render."}
                   </span>
                 </div>
-                <button
-                  type="button"
-                  className="btn btn-secondary"
+                <Button
+                  variant="secondary"
                   disabled={referenceBusy}
                   onClick={() => {
                     setReferenceBusy(true);
@@ -742,19 +799,17 @@ export function GenerationControls({
                   }}
                 >
                   {referenceImage && ["9b", "4b"].includes(settings.model ?? "9b") ? "Add image" : referenceImage ? "Replace image" : "Choose image"}
-                </button>
+                </Button>
               </div>
               <div className="meta-actions">
-                <button
-                  type="button"
-                  className="btn btn-secondary"
+                <Button
+                  variant="secondary"
                   onClick={onClearReference}
                 >
                   Clear references
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-secondary"
+                </Button>
+                <Button
+                  variant="secondary"
                   disabled={!canUseOutput || referenceBusy}
                   onClick={() => {
                     setReferenceError("");
@@ -775,7 +830,7 @@ export function GenerationControls({
                   }}
                 >
                   {referenceBusy ? "Loading reference…" : "Use current output"}
-                </button>
+                </Button>
               </div>
               <p className="model-note field-note">{referenceLabel}</p>
               {referenceError ? (
@@ -803,9 +858,7 @@ export function GenerationControls({
                     onSettingsChange({ seed: Number(event.target.value) })
                   }
                 />
-                <button
-                  type="button"
-                  className="btn-icon btn-icon-sm"
+                <IconButton
                   title="Randomize seed"
                   aria-label="Randomize seed"
                   onClick={() =>
@@ -815,10 +868,8 @@ export function GenerationControls({
                   }
                 >
                   <Dices size={15} aria-hidden="true" />
-                </button>
-                <button
-                  type="button"
-                  className="btn-icon btn-icon-sm"
+                </IconButton>
+                <IconButton
                   title={settings.seedLocked ? "Unlock seed" : "Lock seed"}
                   aria-label={settings.seedLocked ? "Unlock seed" : "Lock seed"}
                   aria-pressed={settings.seedLocked}
@@ -831,7 +882,7 @@ export function GenerationControls({
                   ) : (
                     <LockOpen size={15} aria-hidden="true" />
                   )}
-                </button>
+                </IconButton>
               </div>
             </div>
 

@@ -2,6 +2,7 @@ import { createRoot } from "react-dom/client";
 import type { StudioApi, ThemeMode } from "../../preload/types";
 import "./styles/globals.css";
 import "./styles/studio.css";
+import "./styles/design-system.css";
 
 const query = new URLSearchParams(window.location.search);
 const apiBaseUrl = (

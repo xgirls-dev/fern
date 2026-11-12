@@ -6,6 +6,7 @@ import PanelLeft from "lucide-react/dist/esm/icons/panel-left.mjs";
 import Sun from "lucide-react/dist/esm/icons/sun.mjs";
 import type { ModelStatus } from "../lib/types";
 import type { ComputePreference } from "../hooks/useComputePreference";
+import { ChoiceCard, PageHeader, Select, ToggleRow } from "./ui/controls";
 
 interface PreferencesViewProps {
   active: boolean;
@@ -60,14 +61,7 @@ export function PreferencesView({
       className="shell-page preferences-view"
       aria-labelledby="preferences-view-title"
     >
-      <header className="shell-page-header">
-        <div>
-          <h2 tabIndex={-1} id="preferences-view-title">
-            Preferences
-          </h2>
-          <p>Appearance, workspace, and application settings.</p>
-        </div>
-      </header>
+      <PageHeader className="shell-page-header" id="preferences-view-title" title="Preferences" description="Appearance, workspace, and application settings." />
 
       <div className="shell-page-body preferences-body">
         <section
@@ -86,13 +80,12 @@ export function PreferencesView({
             )}
           </div>
           <div className="preference-choice-grid">
-            <button
-              type="button"
-              className={`preference-choice ${theme === "dark" ? "is-selected" : ""}`}
+            <ChoiceCard
+              className="preference-choice"
+              selected={theme === "dark"}
               onClick={() => {
                 if (theme !== "dark") onToggleTheme();
               }}
-              aria-pressed={theme === "dark"}
             >
               <span className="preference-choice-preview preference-choice-preview--dark" />
               <span>
@@ -100,14 +93,13 @@ export function PreferencesView({
                 <small>Low-glare charcoal surfaces</small>
               </span>
               {theme === "dark" ? <Check size={15} aria-hidden="true" /> : null}
-            </button>
-            <button
-              type="button"
-              className={`preference-choice ${theme === "light" ? "is-selected" : ""}`}
+            </ChoiceCard>
+            <ChoiceCard
+              className="preference-choice"
+              selected={theme === "light"}
               onClick={() => {
                 if (theme !== "light") onToggleTheme();
               }}
-              aria-pressed={theme === "light"}
             >
               <span className="preference-choice-preview preference-choice-preview--light" />
               <span>
@@ -117,7 +109,7 @@ export function PreferencesView({
               {theme === "light" ? (
                 <Check size={15} aria-hidden="true" />
               ) : null}
-            </button>
+            </ChoiceCard>
           </div>
         </section>
 
@@ -132,30 +124,14 @@ export function PreferencesView({
             </div>
             <PanelLeft size={17} aria-hidden="true" />
           </div>
-          <button
-            type="button"
-            className="preference-toggle-row"
+          <ToggleRow
+            className="preferences-toggle-row"
+            icon={<PanelLeft size={15} />}
+            title="Persistent sidebar"
+            description={sidebarCollapsed ? "Collapsed to an icon rail" : "Showing navigation and threads"}
+            pressed={!sidebarCollapsed}
             onClick={onToggleSidebar}
-            aria-pressed={!sidebarCollapsed}
-          >
-            <span className="preference-row-icon">
-              <PanelLeft size={15} aria-hidden="true" />
-            </span>
-            <span className="preference-row-copy">
-              <strong>Persistent sidebar</strong>
-              <small>
-                {sidebarCollapsed
-                  ? "Collapsed to an icon rail"
-                  : "Showing navigation and threads"}
-              </small>
-            </span>
-            <span
-              className={`preference-switch ${sidebarCollapsed ? "" : "is-on"}`}
-              aria-hidden="true"
-            >
-              <span />
-            </span>
-          </button>
+          />
         </section>
 
         <section
@@ -169,26 +145,21 @@ export function PreferencesView({
             </div>
             <Cpu size={17} aria-hidden="true" />
           </div>
-          <button
-            type="button"
-            className="preference-toggle-row"
+          <ToggleRow
+            className="preferences-toggle-row"
+            icon={<Cpu size={15} />}
+            title="Allow CPU selection"
+            description={allowCpu ? "CPU is available below; GPU remains selected until you change it." : "CPU is hidden and cannot be selected. Fern uses an available GPU."}
+            pressed={allowCpu}
             onClick={() => onAllowCpuChange(!allowCpu)}
-            aria-pressed={allowCpu}
-          >
-            <span className="preference-row-icon"><Cpu size={15} aria-hidden="true" /></span>
-            <span className="preference-row-copy">
-              <strong>Allow CPU selection</strong>
-              <small>{allowCpu ? "CPU is available below; GPU remains selected until you change it." : "CPU is hidden and cannot be selected. Fern uses an available GPU."}</small>
-            </span>
-            <span className={`preference-switch ${allowCpu ? "is-on" : ""}`} aria-hidden="true"><span /></span>
-          </button>
+          />
           {allowCpu ? (
             <label className="field preference-compute-device">
               <span>Generation device</span>
-              <select aria-label="Generation device" value={computeDevice} onChange={(event) => onComputeDeviceChange(event.target.value as ComputePreference)}>
+              <Select aria-label="Generation device" value={computeDevice} onChange={(event) => onComputeDeviceChange(event.target.value as ComputePreference)}>
                 <option value="GPU">Available GPU</option>
                 <option value="CPU">CPU</option>
-              </select>
+              </Select>
             </label>
           ) : null}
           <div className="preferences-runtime-grid">
