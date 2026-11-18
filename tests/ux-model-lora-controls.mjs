@@ -143,9 +143,13 @@ try {
   assert.deepEqual(state.payloads.at(-1)?.loras, [{ path: 'C:\\styles\\9b-edit.safetensors', strength: 1, enabled: true }]);
   await page.getByRole('button', { name: 'Library', exact: true }).click();
   const header = page.locator('.library-view-header');
-  const folder = await header.getByRole('button', { name: 'Open folder' }).boundingBox();
-  const create = await header.getByRole('button', { name: 'New thread' }).boundingBox();
-  assert(folder && create && folder.height === 32 && create.height === 32, 'page actions use the shared button height');
+  const folderButton = await header.getByRole('button', { name: 'Open folder' }).elementHandle();
+  const createButton = await header.getByRole('button', { name: 'New thread' }).elementHandle();
+  const [folder, create] = await page.evaluate(
+    (buttons) => buttons.map((button) => button.getBoundingClientRect().toJSON()),
+    [folderButton, createButton],
+  );
+  assert(folder.height === 32 && create.height === 32, 'page actions use the shared button height');
   assert(Math.abs((folder.y + folder.height / 2) - (create.y + create.height / 2)) < 1, 'page actions are vertically aligned');
   assert.deepEqual(errors, []);
   console.log('Model disclosures, download state, responsive layout and LoRA controls passed.');
