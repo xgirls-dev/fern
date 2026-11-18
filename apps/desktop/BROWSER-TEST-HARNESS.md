@@ -23,6 +23,29 @@ This additionally checks first-run runtime extraction and verifies that Electron
 is running as a packaged application. Native page capture keeps the production
 window hidden while taking screenshots.
 
+## Real Klein LoRA edit smoke test
+
+Use an Intel GPU with the packaged Windows app. Provide a local `.safetensors`
+adapter trained for the selected Klein model and a JSON array of PNG, JPEG, or
+WebP paths. The test attaches the images in order and checks the completed
+image's device, adapter, and reference metadata.
+
+```powershell
+$env:FERN_E2E_EXECUTABLE = Join-Path (Get-Location).Path 'apps\desktop\release\win-unpacked\Fern.exe'
+$env:FERN_E2E_MODEL = '9b-lora'
+$env:FERN_E2E_DEVICE = 'INTEL_GPU'
+$env:FERN_E2E_LORA_FILE = 'C:/fern-test/klein-9b-edit.safetensors'
+$env:FERN_E2E_REFERENCES = '["C:/fern-test/reference-1.png","C:/fern-test/reference-2.png"]'
+$env:FERN_E2E_PROMPT = 'Use the subject from Image 1 and the background from Image 2.'
+$env:FERN_E2E_WIDTH = '384'
+$env:FERN_E2E_HEIGHT = '384'
+npm.cmd run test:model --workspace @fern/desktop
+```
+
+Use `4b-lora` and a matching 4B adapter to test the other model. For a private
+candidate, place the model snapshot under `models/flux2-klein-9b-lora-int4`
+in the `FERN_E2E_DATA_ROOT` folder before running the smoke test.
+
 Run `npm.cmd run test:ui` for the renderer regression suite. It uses mocked API
 responses with the real React app and headless Chrome. Live inference scripts
 are excluded. An installed Chrome or Edge is detected on Windows; set

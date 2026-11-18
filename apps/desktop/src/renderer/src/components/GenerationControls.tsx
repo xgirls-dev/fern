@@ -19,6 +19,7 @@ import type { ModelStatus, StudioSettings } from "../lib/types";
 import { notify } from "../lib/notifications";
 import { readReference, validateReference } from "../lib/reference";
 import { imageDimensionLimits } from "../lib/imageDimensions";
+import { isKleinLoraModel, maxReferenceImages, selectedKleinLoras } from "../lib/imageModels";
 import { getApiBaseUrl } from "../lib/api";
 
 function loraDisplayName(path: string): string {
@@ -241,8 +242,8 @@ export function GenerationControls({
   const [loraDownload, setLoraDownload] = useState<{ status: string; name?: string; path?: string; downloaded?: number; bytes?: number; error?: string }>({ status: "idle" });
   const [startingLoraDownload, setStartingLoraDownload] = useState(false);
   const [loraDownloadOpen, setLoraDownloadOpen] = useState(false);
-  const isLoraModel = settings.model === "4b-lora";
-  const loras = settings.loras ?? [];
+  const isLoraModel = isKleinLoraModel(settings.model);
+  const loras = selectedKleinLoras(settings);
   useEffect(() => {
     if (!isLoraModel || !loraDownloadOpen) return;
     let cancelled = false;
@@ -541,7 +542,7 @@ export function GenerationControls({
             summary={`${settings.width} × ${settings.height} | ${hasFixedSampling ? "1 image" : `${settings.batchSize} image${settings.batchSize === 1 ? "" : "s"}`}`}
             defaultOpen
           >
-            {isLoraModel ? <p className="model-note field-note">Klein 4B LoRA uses the Intel GPU and guidance 1.0. You can add one reference image.</p> : null}
+            {isLoraModel ? <p className="model-note field-note">Klein LoRA uses the Intel GPU and guidance 1.0. Attach up to four reference images.</p> : null}
             {hasFixedSampling ? (
               <p className="model-note field-note">
                 {isFlux3Klein
@@ -798,7 +799,7 @@ export function GenerationControls({
                     });
                   }}
                 >
-                  {referenceImage && ["9b", "4b"].includes(settings.model ?? "9b") ? "Add image" : referenceImage ? "Replace image" : "Choose image"}
+                  {referenceImage && maxReferenceImages(settings.model) > 1 ? "Add image" : referenceImage ? "Replace image" : "Choose image"}
                 </Button>
               </div>
               <div className="meta-actions">

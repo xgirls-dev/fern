@@ -32,7 +32,7 @@ try {
   assert(presetValues.includes("custom"));
 
   await modelTrigger.click();
-  await page.getByRole("menuitemradio", { name: "Klein 9B" }).click();
+  await page.getByRole("menuitemradio", { name: "Klein 9B", exact: true }).click();
   assert.equal(await page.locator("#width").inputValue(), "720");
   assert.equal(await page.locator("#height").inputValue(), "1280");
   assert.deepEqual(errors, []);

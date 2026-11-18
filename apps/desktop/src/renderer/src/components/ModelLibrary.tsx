@@ -4,6 +4,7 @@ import ChevronDown from "lucide-react/dist/esm/icons/chevron-down.mjs";
 import Plus from "lucide-react/dist/esm/icons/plus.mjs";
 import { Button, Checkbox, ErrorMessage, InlineConfirmation, Input, ModelCard, ModelCardActions, ModelCardHeading, ModelStatus, Select } from "./ui/controls";
 import { getApiBaseUrl } from "../lib/api";
+import { isKleinLoraModel } from "../lib/imageModels";
 import { useReturnFocus } from "../hooks/useReturnFocus";
 interface InstalledModel {
   id: string;
@@ -20,6 +21,7 @@ interface InstalledModel {
   family?: string;
   familyLabel?: string;
   sourceType?: "local" | "huggingface";
+  repo?: string;
   repoId?: string;
   uncensoredTextEncoder?: {
     repoId: string;
@@ -292,14 +294,14 @@ export function ModelLibrary() {
                   ? `16 steps · INT4/INT8 · ${(model.bytes / 1e9).toFixed(2)} GB`
                   : model.id.startsWith("tame-pony-")
                     ? `SDXL · ${model.id.endsWith("-int8") ? "INT8" : "FP16"} · ${(model.bytes / 1e9).toFixed(2)} GB`
-                    : `${model.bytes > 0 ? `${(model.bytes / 1e9).toFixed(2)} GB · ` : ""}${model.id === "4b-lora" ? "LoRA-ready · Intel GPU" : model.id === "4b" ? "Smaller download and lower memory use" : "Larger model"}`}
+                    : `${model.bytes > 0 ? `${(model.bytes / 1e9).toFixed(2)} GB · ` : ""}${isKleinLoraModel(model.id) ? "LoRA-ready · Intel GPU" : model.id === "4b" ? "Smaller download and lower memory use" : "Larger model"}`}
             </p>
               {model.id.startsWith("custom-") ? (
               <p className="model-library-note" title={model.repoId}>Text to image · {model.sourceType === "huggingface" ? model.repoId : "Linked in place; source files are kept on removal."}</p>
             ) : model.id.startsWith("tame-pony-") ? (
               <details className="model-library-details"><summary>Model details</summary><p>Text to image · 1024 × 1024 · 30 steps · guidance 7.0. Licensed under FAIPL-1.0-SD.</p></details>
             ) : null}
-            {model.id === "4b-lora" ? <p className="model-library-note">Create with multiple LoRAs and adjust each strength. <a className="ui-link" href="https://huggingface.co/xgirls/FLUX.2-klein-4B-OpenVINO-INT4-LoRA" target="_blank" rel="noreferrer">Model details</a></p> : null}
+            {isKleinLoraModel(model.id) ? <p className="model-library-note">Use LoRAs trained for this model size.{model.repo ? <> <a className="ui-link" href={`https://huggingface.co/${model.repo}`} target="_blank" rel="noreferrer">Model details</a></> : null}</p> : null}
             {model.id === "qwen21-turbo" ? (
               <details className="model-library-details"><summary>Model details</summary>
                 <p className="model-library-note">

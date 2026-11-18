@@ -1,13 +1,15 @@
-"""LoRA-enabled OpenVINO GenAI inference for the dedicated Klein 4B model."""
+"""LoRA-enabled OpenVINO GenAI inference for dedicated Klein models."""
 from __future__ import annotations
 
 import gc
+import json
 import os
 import shutil
 import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Callable
 
 _cache: dict[str, Any] = {"key": None, "pipeline": None, "temporary": None, "adapters": []}
@@ -57,10 +59,25 @@ def release() -> None:
         temporary.cleanup()
 
 
+def _normalize_adapter_keys(state: dict[str, Any], name: str) -> dict[str, Any]:
+    normalized = {}
+    for key, value in state.items():
+        target = key
+        if key.endswith(".lora.down.weight"):
+            target = key.removesuffix(".lora.down.weight") + ".lora_A.weight"
+        elif key.endswith(".lora.up.weight"):
+            target = key.removesuffix(".lora.up.weight") + ".lora_B.weight"
+        if target in normalized:
+            raise ValueError(f"{name} has more than one tensor for {target}.")
+        normalized[target] = value
+    return normalized
+
+
 def _prepare_adapters(model_dir: Path, selections: list[dict[str, Any]], output_dir: Path):
     import openvino as ov
     import openvino_genai as genai
     from diffusers.loaders.lora_conversion_utils import _convert_non_diffusers_flux2_lora_to_diffusers
+    from safetensors import SafetensorError
     from safetensors.torch import load_file, save_file
 
     graph = ov.Core().read_model(str(model_dir / "transformer" / "openvino_model.xml"))
@@ -75,11 +92,15 @@ def _prepare_adapters(model_dir: Path, selections: list[dict[str, Any]], output_
         path = Path(selection["path"]).expanduser().resolve(strict=True)
         if path.suffix.lower() != ".safetensors" or not path.is_file():
             raise ValueError("Choose a local .safetensors LoRA file.")
-        state = load_file(str(path), device="cpu")
+        try:
+            state = load_file(str(path), device="cpu")
+        except SafetensorError as exc:
+            raise ValueError(f"{path.name} is an incomplete or invalid safetensors file. Download it again.") from exc
         if state and all(key.startswith("base_model.model.") for key in state):
             state = {"diffusion_model." + key[len("base_model.model."):]: value for key, value in state.items()}
         if state and all(key.startswith("diffusion_model.") for key in state):
             state = _convert_non_diffusers_flux2_lora_to_diffusers(state)
+        state = _normalize_adapter_keys(state, path.name)
         if not state:
             raise ValueError(f"{path.name} contains no LoRA tensors.")
         targets: dict[str, dict[str, Any]] = {}
@@ -103,23 +124,83 @@ def _prepare_adapters(model_dir: Path, selections: list[dict[str, Any]], output_
     return registered, adapters
 
 
+def _active_adapters(genai, adapters, selections, *, static: bool = False):
+    config = genai.AdapterConfig(genai.AdapterConfig.Mode.MODE_STATIC) if static else genai.AdapterConfig()
+    for adapter, selection in zip(adapters, selections):
+        if selection.get("enabled", True):
+            config.add(adapter, float(selection["strength"]))
+    return config
+
+
+def _multi_image_pipeline(model_dir: Path, adapters, selections):
+    """Use Klein's existing multi-reference pipeline with the GenAI LoRA transformer."""
+    import openvino as ov
+    import openvino_genai as genai
+    import torch
+    from optimum.intel import OVFlux2KleinPipeline
+
+    pipeline = OVFlux2KleinPipeline.from_pretrained(str(model_dir), device="GPU", compile=False, dynamic_shapes=False)
+    config = json.loads((model_dir / "vae_decoder" / "config.json").read_text(encoding="utf-8"))
+    pipeline.vae.bn = SimpleNamespace(
+        running_mean=torch.tensor(config["bn_running_mean_data"], dtype=torch.float32),
+        running_var=torch.tensor(config["bn_running_var_data"], dtype=torch.float32),
+    )
+    pipeline.vae.config.batch_norm_eps = config["bn_eps"]
+
+    # GenAI's full Image2ImagePipeline takes one image. Its standalone
+    # transformer accepts the combined reference latents and IDs from Diffusers.
+    # The standalone transformer sets adapter strengths at compile time.
+    transformer = genai.Flux2Transformer2DModel(model_dir / "transformer")
+    if any(selection.get("enabled", True) for selection in selections):
+        transformer.compile("GPU", adapters=_active_adapters(genai, adapters, selections, static=True))
+    else:
+        transformer.compile("GPU")
+
+    def ov_tensor(value):
+        return ov.Tensor(value.detach().cpu().float().contiguous().numpy())
+
+    def forward(*, hidden_states, timestep, encoder_hidden_states, img_ids, txt_ids, **_kwargs):
+        transformer.set_hidden_states("encoder_hidden_states", ov_tensor(encoder_hidden_states))
+        transformer.set_hidden_states("img_ids", ov_tensor(img_ids))
+        transformer.set_hidden_states("txt_ids", ov_tensor(txt_ids))
+        noise = transformer.infer(ov_tensor(hidden_states), ov_tensor(timestep))
+        return (torch.from_numpy(noise.data.copy()),)
+
+    pipeline.transformer.forward = forward
+    pipeline.set_progress_bar_config(disable=True)
+    return pipeline
+
+
 def generate(*, model_dir: Path, selections: list[dict[str, Any]], prompt: str,
              output_dir: Path, width: int, height: int, steps: int, seed: int,
              reference_image: Any | None = None,
+             reference_images: list[Any] | None = None,
+             model_size: str = "4b",
              optional_encoder_dir: Path | None = None,
              log: Callable[[str], None] | None = None) -> tuple[Path, float]:
     from PIL import Image
     import openvino_genai as genai
 
     log = log or (lambda _message: None)
+    images = reference_images if reference_images is not None else [reference_image] if reference_image is not None else []
+    if len(images) > 4:
+        raise ValueError("FLUX.2 Klein supports up to 4 reference images in Fern.")
+    multiple_references = len(images) > 1
     encoder_key = None
     if optional_encoder_dir is not None:
         encoder_files = [optional_encoder_dir / name for name in ("config.json", "openvino_model.xml", "openvino_model.bin")]
         if not all(path.is_file() for path in encoder_files):
             raise ValueError("The optional Klein text encoder is incomplete. Download it again in Models.")
         encoder_key = (str(optional_encoder_dir), *(path.stat().st_mtime_ns for path in encoder_files))
-    key = (str(model_dir), reference_image is not None, encoder_key, tuple((str(Path(x["path"]).resolve()), Path(x["path"]).stat().st_mtime_ns,
-                                  Path(x["path"]).stat().st_size) for x in selections))
+    adapter_files = []
+    for selection in selections:
+        path = Path(selection["path"]).expanduser().resolve(strict=True)
+        stat = path.stat()
+        adapter_files.append((str(path), stat.st_mtime_ns, stat.st_size))
+    static_strengths = tuple(
+        (selection.get("enabled", True), float(selection["strength"])) for selection in selections
+    ) if multiple_references else ()
+    key = (str(model_dir), min(len(images), 2), encoder_key, tuple(adapter_files), static_strengths)
     if _cache["key"] != key or _cache["pipeline"] is None:
         release()
         temporary = tempfile.TemporaryDirectory(prefix="fern-lora-", dir=model_dir.parent)
@@ -129,9 +210,12 @@ def generate(*, model_dir: Path, selections: list[dict[str, Any]], prompt: str,
             if optional_encoder_dir is not None:
                 log("Preparing the optional Klein text encoder for LoRA generation…")
                 pipeline_dir = _model_with_optional_encoder(model_dir, optional_encoder_dir, Path(temporary.name) / "model")
-            log("Loading Klein 4B LoRA model on Intel GPU…")
-            pipeline_class = genai.Image2ImagePipeline if reference_image is not None else genai.Text2ImagePipeline
-            pipeline = pipeline_class(str(pipeline_dir), "GPU", adapters=config)
+            log(f"Loading Klein {model_size.upper()} LoRA model on Intel GPU…")
+            if multiple_references:
+                pipeline = _multi_image_pipeline(pipeline_dir, adapters, selections)
+            else:
+                pipeline_class = genai.Image2ImagePipeline if images else genai.Text2ImagePipeline
+                pipeline = pipeline_class(str(pipeline_dir), "GPU", adapters=config)
         except BaseException:
             temporary.cleanup()
             raise
@@ -139,26 +223,39 @@ def generate(*, model_dir: Path, selections: list[dict[str, Any]], prompt: str,
     else:
         pipeline = _cache["pipeline"]
     log(f"Seed: {seed}")
+    for index, image in enumerate(images, start=1):
+        log(f"Reference {index}: {image.width}x{image.height}")
+
     def callback(step, total, _latent):
         log(f"Step {step + 1}/{total}")
         return False
+
     started = time.perf_counter()
-    active = genai.AdapterConfig()
-    for adapter, selection in zip(_cache["adapters"], selections):
-        if selection.get("enabled", True):
-            active.add(adapter, float(selection["strength"]))
-    options = dict(width=width, height=height, num_inference_steps=steps,
-                   guidance_scale=1.0, rng_seed=int(seed), callback=callback, adapters=active)
-    if reference_image is not None:
-        import numpy as np
-        import openvino as ov
-        pixels = np.ascontiguousarray(np.asarray(reference_image.convert("RGB"), dtype=np.uint8)[None, ...])
-        result = pipeline.generate(prompt, ov.Tensor(pixels), **options)
+    options = dict(width=width, height=height, num_inference_steps=steps, guidance_scale=1.0)
+    if multiple_references:
+        import torch
+
+        def on_step_end(_pipeline, step, _timestep, tensors):
+            callback(step, steps, None)
+            return tensors
+
+        result = pipeline(prompt=prompt, image=images, generator=torch.Generator("cpu").manual_seed(int(seed)),
+                          callback_on_step_end=on_step_end, **options)
+        image = result.images[0]
     else:
-        result = pipeline.generate(prompt, **options)
+        options.update(rng_seed=int(seed), callback=callback,
+                       adapters=_active_adapters(genai, _cache["adapters"], selections))
+        if images:
+            import numpy as np
+            import openvino as ov
+
+            pixels = np.ascontiguousarray(np.asarray(images[0].convert("RGB"), dtype=np.uint8)[None, ...])
+            result = pipeline.generate(prompt, ov.Tensor(pixels), **options)
+        else:
+            result = pipeline.generate(prompt, **options)
+        image = Image.fromarray(result.data[0])
     output_dir.mkdir(parents=True, exist_ok=True)
-    path = output_dir / f"flux2-klein-4b-lora-{datetime.now().strftime('%Y%m%d-%H%M%S')}-seed{seed}.png"
-    image = Image.fromarray(result.data[0])
+    path = output_dir / f"flux2-klein-{model_size}-lora-{datetime.now().strftime('%Y%m%d-%H%M%S')}-seed{seed}.png"
     from flux2_klein_pipeline import save_image_atomic
     save_image_atomic(image, path)
     elapsed = time.perf_counter() - started

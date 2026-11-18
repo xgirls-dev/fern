@@ -1,5 +1,4 @@
 export interface ReferenceAttachment { dataUrl: string; label: string }
-export const MAX_KLEIN_REFERENCES = 4;
 
 export async function readReference(file: File): Promise<string> {
   if (!["image/png", "image/jpeg", "image/webp"].includes(file.type))

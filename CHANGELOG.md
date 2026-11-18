@@ -6,6 +6,19 @@ lands directly on `main` instead of through labeled pull requests.
 
 ## [Unreleased]
 
+## [0.1.44] - 2026-11-17
+
+### Added
+
+- Install FLUX.2 Klein 9B · LoRA from Models for image generation and editing on Intel GPUs.
+- Attach and reorder up to four reference images with either FLUX.2 Klein LoRA model.
+- Keep separate LoRA selections for Klein 4B and 9B in each image thread.
+
+### Fixed
+
+- Load Klein adapters that mix Diffusers `.lora_A`/`.lora_B` and `.lora.down`/`.lora.up` tensor names.
+- Reject incomplete `.safetensors` downloads and replace invalid cached copies after a verified download.
+
 ## [0.1.43] - 2026-11-12
 
 ### Added

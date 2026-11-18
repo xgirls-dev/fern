@@ -8,7 +8,8 @@ import ArrowLeft from "lucide-react/dist/esm/icons/arrow-left.mjs";
 import ArrowRight from "lucide-react/dist/esm/icons/arrow-right.mjs";
 import { useEffect, useRef, useState } from "react";
 import { normalizeQwenDimension } from "../lib/imageDimensions";
-import { MAX_KLEIN_REFERENCES, readReference, type ReferenceAttachment } from "../lib/reference";
+import { isKleinLoraModel, maxReferenceImages } from "../lib/imageModels";
+import { readReference, type ReferenceAttachment } from "../lib/reference";
 import type { StudioSettings } from "../lib/types";
 import { Button, IconButton, Input, Textarea } from "./ui/controls";
 
@@ -51,7 +52,7 @@ export function PromptComposer({
   const [seedPopoverOpen, setSeedPopoverOpen] = useState(false);
   const seedPopover = useRef<HTMLDivElement>(null);
   const referenceImage = referenceImages[0]?.dataUrl;
-  const maxReferences = !settings.model || ["9b", "4b"].includes(settings.model) ? MAX_KLEIN_REFERENCES : ["qwen21-turbo", "4b-lora"].includes(settings.model) ? 1 : 0;
+  const maxReferences = maxReferenceImages(settings.model);
   const referencesInvalid = referenceImages.length > maxReferences;
   useEffect(() => setSeedDraft(String(settings.seed)), [settings.seed]);
   useEffect(() => {
@@ -291,7 +292,7 @@ export function PromptComposer({
               value={settings.model ?? "9b"}
               disabled={running || submitting || busyElsewhere || loadingReference}
               onChange={(model) => {
-                if (model === "4b-lora") {
+                if (isKleinLoraModel(model)) {
                   onSettingsChange({ model, guidance: 1, device: "AUTO" });
                   return;
                 }

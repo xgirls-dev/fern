@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { copyFile, mkdir, mkdtemp, rm, stat, statfs } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, rm, stat, statfs } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -20,6 +21,25 @@ const steps = process.env.FERN_E2E_STEPS ?? "4";
 const guidance = process.env.FERN_E2E_GUIDANCE ?? "1";
 const seed = process.env.FERN_E2E_SEED ?? "994286815";
 const artifactLabel = process.env.FERN_E2E_ARTIFACT_LABEL ?? "electron";
+const isLoraModel = ["4b-lora", "9b-lora"].includes(modelId);
+const loraFile = process.env.FERN_E2E_LORA_FILE;
+const loraPath = loraFile ? path.resolve(loraFile) : undefined;
+const referenceFiles = JSON.parse(process.env.FERN_E2E_REFERENCES ?? "[]");
+assert.ok(Array.isArray(referenceFiles) && referenceFiles.length <= 4
+  && referenceFiles.every((file) => typeof file === "string" && file.trim()),
+  "FERN_E2E_REFERENCES must be a JSON array of up to four reference image paths");
+const referencePaths = referenceFiles.map((file) => path.resolve(file));
+const referenceHashes = await Promise.all(referencePaths.map(async (file) =>
+  createHash("sha256").update(await readFile(file)).digest("hex").slice(0, 32)));
+if (loraPath) {
+  assert.ok(isLoraModel, "FERN_E2E_LORA_FILE requires a Klein LoRA model");
+  assert.equal(path.extname(loraPath).toLowerCase(), ".safetensors");
+  assert.ok((await stat(loraPath)).isFile(), "FERN_E2E_LORA_FILE must point to an adapter file");
+}
+if (isLoraModel) {
+  assert.notEqual(device, "CPU", "Klein LoRA requires an Intel GPU");
+  assert.equal(Number(guidance), 1, "Klein LoRA uses guidance 1");
+}
 const scratchRoot = await mkdtemp(path.join(os.tmpdir(), "fern-real-model-e2e-"));
 const appDataRoot = process.env.APPDATA ?? path.join(os.homedir(), "AppData", "Roaming");
 const defaultDataRoot = path.join(appDataRoot, "Fern", "studio-data");
@@ -140,11 +160,22 @@ try {
   }
   await page.getByRole("button", { name: "Image settings" }).last().click();
   await expect(page.locator("#device")).toHaveCount(0);
+  if (loraPath) {
+    await app.evaluate(({ dialog }, selectedPath) => {
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selectedPath] });
+    }, loraPath);
+    await page.getByRole("button", { name: "Add LoRA files" }).click();
+    await expect(page.getByRole("checkbox", { name: path.basename(loraPath), exact: true })).toBeChecked();
+  }
+  if (referencePaths.length) {
+    await page.getByLabel("Reference image file", { exact: true }).setInputFiles(referencePaths);
+    await expect(page.locator(".composer-reference")).toHaveCount(referencePaths.length);
+  }
   await page.locator(".control-section").filter({ hasText: "Advanced" }).locator("summary").click();
   await page.locator("#width").fill(width);
   await page.locator("#height").fill(height);
   await page.getByLabel("Step count").fill(steps);
-  await page.getByLabel("Guidance value").fill(guidance);
+  if (!isLoraModel) await page.getByLabel("Guidance value").fill(guidance);
   await page.getByRole("button", { name: "Seed settings" }).click();
   await page.getByRole("textbox", { name: "Seed", exact: true }).fill(seed);
   await page.locator("#prompt").fill(prompt);
@@ -162,7 +193,9 @@ try {
     throw new Error(`Generation runtime is not ready: ${JSON.stringify(generationStatus.model)}`);
   }
   const selectedDevice = generationStatus.model.selectedDevice;
-  if (device === "CPU") {
+  if (isLoraModel) {
+    assert.equal(selectedDevice, "INTEL_GPU", "Klein LoRA must run on an Intel GPU");
+  } else if (device === "CPU") {
     assert.equal(selectedDevice, "CPU", "Explicit CPU opt-in should select CPU for this test");
   } else {
     assert.ok(["INTEL_GPU", "NVIDIA_GPU"].includes(selectedDevice), `GPU-only smoke must select an available GPU, got ${selectedDevice || "no device"}`);
@@ -195,6 +228,16 @@ try {
   const outputName = finalStatus.job.output?.name;
   assert.ok(outputName, "Completed generation should return its output filename");
   assert.equal(finalStatus.job.output?.device, selectedDevice, "Completed image metadata should record the selected compute device");
+  if (loraPath) {
+    assert.deepEqual(finalStatus.job.output?.loras, [{ name: path.basename(loraPath), strength: 1 }]);
+  }
+  if (referenceHashes.length) {
+    const actual = finalStatus.job.output?.referenceUrls ?? [];
+    assert.equal(actual.length, referenceHashes.length, "Output metadata should record every reference");
+    referenceHashes.forEach((hash, index) => {
+      assert.ok(actual[index].startsWith(`/references/reference-${hash}.`), `Output should record reference ${index + 1} in order`);
+    });
+  }
   const outputPath = path.join(dataRoot, "outputs", outputName);
   const output = await stat(outputPath);
   assert.ok(output.size > 0, "Generated image should be saved under Fern's output folder");

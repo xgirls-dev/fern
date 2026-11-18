@@ -10,6 +10,22 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import api_server
 import gallery_store
+from flux2_klein_lora import _normalize_adapter_keys
+
+
+class KleinLoraAdapterTests(unittest.TestCase):
+    def test_normalizes_mixed_diffusers_attention_keys(self):
+        prefix = "transformer.transformer_blocks.0.attn"
+        keys = {f"{prefix}.to_k.lora.down.weight": "down", f"{prefix}.to_k.lora.up.weight": "up",
+                f"{prefix}.add_k_proj.lora_A.weight": "native"}
+        self.assertEqual(_normalize_adapter_keys(keys, "mixed.safetensors"), {
+            f"{prefix}.to_k.lora_A.weight": "down", f"{prefix}.to_k.lora_B.weight": "up",
+            f"{prefix}.add_k_proj.lora_A.weight": "native",
+        })
+
+    def test_rejects_two_weights_for_one_target(self):
+        with self.assertRaisesRegex(ValueError, "more than one tensor"):
+            _normalize_adapter_keys({"layer.lora_A.weight": "native", "layer.lora.down.weight": "alias"}, "duplicate.safetensors")
 
 
 class KleinLoraPayloadTests(unittest.TestCase):
@@ -23,17 +39,24 @@ class KleinLoraPayloadTests(unittest.TestCase):
                         "loras": [{"path": str(self.adapter), "strength": 1.9}]}
 
     def test_selected_adapter_is_carried_to_worker(self):
-        result = api_server.validate_flux_payload(self.payload)
-        self.assertEqual(result["loras"], [{"path": str(self.adapter.resolve()), "strength": 1.9, "enabled": True}])
+        for model in ("4b-lora", "9b-lora"):
+            with self.subTest(model=model):
+                result = api_server.validate_flux_payload({**self.payload, "model": model})
+                self.assertEqual(result["model"], model)
+                self.assertEqual(result["loras"], [{"path": str(self.adapter.resolve()), "strength": 1.9, "enabled": True}])
 
-    def test_lora_model_accepts_one_reference_image(self):
+    def test_lora_model_accepts_up_to_four_reference_images(self):
         image = io.BytesIO()
         Image.new("RGB", (16, 16), "blue").save(image, format="PNG")
         reference = "data:image/png;base64," + base64.b64encode(image.getvalue()).decode()
-        result = api_server.validate_flux_payload({**self.payload, "reference_images": [reference]})
-        self.assertEqual(result["reference_image"].size, (16, 16))
-        with self.assertRaises(ValueError):
-            api_server.validate_flux_payload({**self.payload, "reference_images": [reference, reference]})
+        for model in ("4b-lora", "9b-lora"):
+            with self.subTest(model=model):
+                payload = {**self.payload, "model": model}
+                result = api_server.validate_flux_payload({**payload, "reference_images": [reference] * 4})
+                self.assertEqual(result["reference_image"].size, (16, 16))
+                self.assertEqual(len(result["reference_images"]), 4)
+                with self.assertRaises(ValueError):
+                    api_server.validate_flux_payload({**payload, "reference_images": [reference] * 5})
 
     def test_rejects_incompatible_model_strength_and_missing_file(self):
         for changes in (

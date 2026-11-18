@@ -66,7 +66,7 @@ export interface DeviceAdapter {
 }
 
 export interface FluxJob {
-  model?: "9b" | "4b" | "4b-lora" | "qwen21-turbo" | "flux3-klein" | "tame-pony-v25-sdxl" | "tame-pony-v25-sdxl-int8";
+  model?: string;
   threadId?: string | null;
   id: string | null;
   status: "idle" | "running" | "complete" | "cancelled" | "failed";
@@ -118,8 +118,18 @@ export interface GenerationPayload {
   reference_images?: string[];
 }
 
+export type KleinLoraModel = "4b-lora" | "9b-lora";
+
+export interface LoraSelection {
+  path: string;
+  strength: number;
+  enabled: boolean;
+  label?: string;
+}
+
 export interface StudioSettings {
-  loras?: { path: string; strength: number; enabled: boolean; label?: string }[];
+  loras?: LoraSelection[];
+  lorasByModel?: Partial<Record<KleinLoraModel, LoraSelection[]>>;
   model?: string;
   prompt: string;
   device: DeviceId;
