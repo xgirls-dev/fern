@@ -31,6 +31,8 @@ DEFAULT_WIDTH = 1024
 DEFAULT_HEIGHT = 1024
 DEFAULT_STEPS = 4
 DEFAULT_GUIDANCE = 1.0
+LORA_MODEL_KEYS = ("4b-lora", "9b-lora")
+KLEIN_MODEL_KEYS = ("9b", "4b", *LORA_MODEL_KEYS)
 
 
 def _resolve_root() -> Path:
@@ -265,7 +267,7 @@ def _adapter_statuses(model="9b") -> list[dict[str, Any]]:
             "supportsReferenceImage": True,
         },
     ]
-    if model == "4b-lora":
+    if model in LORA_MODEL_KEYS:
         for item in statuses:
             if item["id"] != INTEL_GPU:
                 item["runtimeReady"] = False
@@ -461,13 +463,13 @@ def generate_image(
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    if model == "4b-lora":
+    if model in LORA_MODEL_KEYS:
         if selected != INTEL_GPU:
             raise ValueError("The LoRA-ready Klein model currently requires an Intel GPU.")
-        if reference_images and len(reference_images) > 1:
-            raise ValueError("The LoRA-ready Klein model supports one reference image.")
         if guidance != 1.0:
             raise ValueError("The LoRA-ready Klein model uses guidance 1.0.")
+        if use_uncensored_text_encoder and model != "4b-lora":
+            raise ValueError("The optional uncensored text encoder is available for Klein 4B only.")
         if _PIPELINE_CACHE["pipeline"] is not None:
             release_pipeline()
         import flux2_klein_lora
@@ -475,9 +477,10 @@ def generate_image(
                                          prompt=prompt, output_dir=output_dir, width=width,
                                          height=height, steps=steps, seed=seed,
                                          optional_encoder_dir=(MODELS_ROOT / "flux2-klein-4b-optional" / "text_encoder_uncensored") if use_uncensored_text_encoder else None,
-                                         reference_image=reference_image or (reference_images[0] if reference_images else None), log=log)
+                                         reference_image=reference_image, reference_images=reference_images,
+                                         model_size=model.removesuffix("-lora"), log=log)
     if loras:
-        raise ValueError("LoRAs require the Klein 4B LoRA model.")
+        raise ValueError("Choose Klein 4B LoRA or Klein 9B LoRA to use adapters.")
 
     import torch
 

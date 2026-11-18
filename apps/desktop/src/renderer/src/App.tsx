@@ -26,6 +26,7 @@ import { Notifications } from "./components/Notifications";
 import { ThreadBrowser } from "./components/ThreadBrowser";
 import { notify } from "./lib/notifications";
 import { validateReference } from "./lib/reference";
+import { isKleinLoraModel, kleinLoraLabel, maxReferenceImages } from "./lib/imageModels";
 
 const StorageView = lazy(() => import("./components/StorageView").then((module) => ({ default: module.StorageView })));
 const PreferencesView = lazy(() => import("./components/PreferencesView").then((module) => ({ default: module.PreferencesView })));
@@ -62,8 +63,9 @@ export function App() {
   const [runtimeDismissed, setRuntimeDismissed] = useState(true);
   const [referenceBusy, setReferenceBusy] = useState(false);
   const attachReference = (dataUrl: string, label: string) => {
-    if (["9b", "4b"].includes(studio.settings.model ?? "9b")) {
-      if (studio.referenceImages.length >= 4) throw new Error("Klein accepts up to 4 references. Remove an attachment in the composer first.");
+    const limit = maxReferenceImages(studio.settings.model);
+    if (limit > 1) {
+      if (studio.referenceImages.length >= limit) throw new Error(`Klein accepts up to ${limit} references. Remove an attachment in the composer first.`);
       studio.setReferenceImages([...studio.referenceImages, { dataUrl, label }]);
     } else studio.setReferenceImages([{ dataUrl, label }]);
   };
@@ -482,10 +484,8 @@ export function App() {
                           ? studio.status?.model.selectedModel.endsWith("-int8") ? "Tame Pony · SDXL INT8" : "Tame Pony · SDXL"
                         : studio.status?.model.selectedModel?.startsWith("custom-")
                           ? studio.status?.installedModels?.find((model) => model.id === studio.status?.model.selectedModel)?.label ?? "Custom image model"
-                        : studio.status?.model.selectedModel === "4b-lora"
-                        ? "FLUX.2 Klein 4B · LoRA"
                         : studio.status?.model.selectedModel
-                        ? `FLUX.2 Klein ${studio.status.model.selectedModel.toUpperCase()}`
+                        ? `FLUX.2 ${isKleinLoraModel(studio.status.model.selectedModel) ? kleinLoraLabel(studio.status.model.selectedModel) : `Klein ${studio.status.model.selectedModel.toUpperCase()}`}`
                         : "Flux.2 Klein"}
                   </span>
                 </div>

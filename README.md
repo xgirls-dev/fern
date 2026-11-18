@@ -36,12 +36,13 @@ models from an audio thread. Downloads are pinned to catalog revisions and
 verified; interrupted downloads can resume. The first model load compiles for
 the selected device and can take longer than later runs.
 
-To use LoRAs, install **Klein 4B · LoRA** in Models and select it in an image
-thread. In **Image settings → LoRAs**, choose up to four local `.safetensors`
-files, enable the ones you want, and adjust their strengths. Include the
-adapter's trigger words in the prompt. This model currently supports
-text-to-image on Intel GPUs; reference-image editing and 9B LoRAs are not yet
-available. The regular Klein 4B model remains a separate download.
+To use LoRAs, install **Klein 4B · LoRA** or **Klein 9B · LoRA** in Models and
+select it in an image thread. In **Image settings → LoRAs**, choose up to four
+`.safetensors` adapters trained for that model size. Add files from disk or
+download them from a Hugging Face or Civitai link. Enable the adapters you want,
+adjust their strengths, and include their trigger words in the prompt. The LoRA
+models use an Intel GPU and support up to four reference images per edit.
+Klein 9B is licensed under the [FLUX Non-Commercial License](https://huggingface.co/black-forest-labs/FLUX.2-klein-9B/blob/main/LICENSE.md).
 
 Fern automatically selects an available GPU where supported. CPU is available
 as an explicit fallback. The NVIDIA plugin is bundled only when present in the

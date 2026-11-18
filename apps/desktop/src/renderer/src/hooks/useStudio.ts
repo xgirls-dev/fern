@@ -30,6 +30,7 @@ import type {
 import { notify } from "../lib/notifications";
 import type { ReferenceAttachment } from "../lib/reference";
 import { imageDimensionLimits } from "../lib/imageDimensions";
+import { isKleinLoraModel, maxReferenceImages, selectedKleinLoras } from "../lib/imageModels";
 
 const SETTINGS_KEY = "fern-studio-settings:v3";
 const LEGACY_SETTINGS_KEYS = [
@@ -98,6 +99,7 @@ function loadSettings(): StudioSettings {
       seedLocked: merged.seedLocked,
       theme: merged.theme,
       loras: Array.isArray(merged.loras) ? merged.loras.filter((item) => item && typeof item.path === "string" && Number.isFinite(item.strength) && typeof item.enabled === "boolean").slice(0, 4) : [],
+      lorasByModel: merged.lorasByModel,
     };
     saveSettings(settings);
     for (const key of LEGACY_SETTINGS_KEYS) localStorage.removeItem(key);
@@ -272,6 +274,10 @@ export function useStudio(computeDevice: "GPU" | "CPU" = "GPU") {
                 }
               : thread;
           const nextSettings = { ...thread.settings, ...patch };
+          if (patch.loras && isKleinLoraModel(nextSettings.model)) {
+            nextSettings.loras = thread.settings.loras;
+            nextSettings.lorasByModel = { ...thread.settings.lorasByModel, [nextSettings.model]: patch.loras };
+          }
           return {
             ...thread,
             settings: nextSettings,
@@ -809,7 +815,7 @@ export function useStudio(computeDevice: "GPU" | "CPU" = "GPU") {
       setError("Prompt is required.");
       return;
     }
-    const maxReferences = ["9b", "4b"].includes(settings.model ?? "9b") ? 4 : ["qwen21-turbo", "4b-lora"].includes(settings.model ?? "") ? 1 : 0;
+    const maxReferences = maxReferenceImages(settings.model);
     if (referenceImages.length > maxReferences) {
       setError(maxReferences ? `This model supports up to ${maxReferences} reference image${maxReferences === 1 ? "" : "s"}. Remove extra attachments or select Klein.` : "This model generates from text only. Remove the references or select Klein to edit them.");
       return;
@@ -842,7 +848,8 @@ export function useStudio(computeDevice: "GPU" | "CPU" = "GPU") {
       invalid.guidance = `Use guidance from 0 to ${settings.model?.startsWith("custom-") ? 20 : 10}.`;
     if (!Number.isSafeInteger(settings.seed))
       invalid.seed = "Use a whole-number seed.";
-    if (settings.model === "4b-lora" && (settings.loras ?? []).some((lora) => !Number.isFinite(lora.strength) || lora.strength < -4 || lora.strength > 4))
+    const loras = selectedKleinLoras(settings);
+    if (loras.some((lora) => !Number.isFinite(lora.strength) || lora.strength < -4 || lora.strength > 4))
       invalid.loras = "Use LoRA strengths between -4 and 4.";
     if (
       !Number.isInteger(settings.batchSize) ||
@@ -876,7 +883,7 @@ export function useStudio(computeDevice: "GPU" | "CPU" = "GPU") {
         ? settings.seed
         : Math.floor(Math.random() * 1_000_000_000),
       batch_size: settings.batchSize,
-      loras: settings.model === "4b-lora" ? (settings.loras ?? []).map(({ path, strength, enabled }) => ({ path, strength, enabled })) : [],
+      loras: loras.map(({ path, strength, enabled }) => ({ path, strength, enabled })),
     };
 
     if (referenceImages.length) {

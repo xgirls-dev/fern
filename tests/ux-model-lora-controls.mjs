@@ -6,6 +6,7 @@ const models = [
   { id: '9b', label: 'Klein 9B', bytes: 9e9, downloaded: 1e9, installed: false, state: 'downloading' },
   { id: '4b', label: 'Klein 4B', bytes: 4e9, downloaded: 0, installed: false, state: 'not-installed', uncensoredTextEncoder: { repoId: 'example/encoder', installed: false, enabled: false, state: 'not-installed', downloaded: 0, bytes: 2.1e9 } },
   { id: '4b-lora', label: 'Klein 4B · LoRA', bytes: 4e9, downloaded: 4e9, installed: true, state: 'installed' },
+  { id: '9b-lora', label: 'Klein 9B · LoRA', bytes: 9e9, downloaded: 9e9, installed: true, state: 'installed' },
 ];
 try {
   await page.route('**/api/models', route => route.fulfill({ json: { models } }));
@@ -21,7 +22,7 @@ try {
   assert(repoField && Math.round(repoField.height) === 32, 'model import fields use the shared control height');
   for (const width of [1440, 1100, 800]) {
     await page.setViewportSize({ width, height: 900 });
-    const card = page.locator('.model-library-card').filter({ has: page.getByRole('heading', { name: 'Klein 9B' }) });
+    const card = page.locator('.model-library-card').filter({ has: page.getByRole('heading', { name: 'Klein 9B', exact: true }) });
     const heading = await card.getByRole('heading').boundingBox();
     const action = await card.getByRole('button', { name: 'Pause' }).boundingBox();
     assert(heading && action && heading.x + heading.width <= action.x, 'model title and action must not overlap');
@@ -71,7 +72,7 @@ try {
   await repository.clear();
   models[0].state = 'failed';
   models[0].error = `Download failed: ${'long-error-detail-'.repeat(12)}`;
-  const modelError = page.locator('.model-library-card').filter({ has: page.getByRole('heading', { name: 'Klein 9B' }) }).getByRole('alert');
+  const modelError = page.locator('.model-library-card').filter({ has: page.getByRole('heading', { name: 'Klein 9B', exact: true }) }).getByRole('alert');
   await modelError.waitFor({ timeout: 15000 });
   assert.equal(await modelError.evaluate(element => {
     const probe = document.createElement('span');
@@ -83,7 +84,7 @@ try {
   }), true, 'model errors use the error color');
   assert(await modelError.evaluate(element => element.scrollWidth <= element.clientWidth + 1), 'long errors wrap within their card');
   await page.setViewportSize({ width: 1440, height: 900 });
-  state.installedModels = [{ id: '4b-lora', label: 'Klein 4B · LoRA' }];
+  state.installedModels = models.filter(({ id }) => id.endsWith('-lora'));
   await page.evaluate(() => { window.studio.pickLoraFiles = async () => ['C:\\styles\\claymation\\pytorch_lora_weights.safetensors', 'C:\\styles\\character.safetensors']; });
   await page.getByRole('button', { name: 'Stable title', exact: true }).click();
   await page.waitForResponse(response => response.url().includes('/api/flux2/status'));
@@ -118,6 +119,28 @@ try {
   await page.getByRole('button', { name: 'Stable title', exact: true }).click();
   if (!await page.getByText('claymation', { exact: true }).isVisible()) await page.locator('.workspace-header').getByRole('button', { name: 'Image settings', exact: true }).click();
   await page.getByText('claymation', { exact: true }).waitFor();
+  const selectModel = async (name) => {
+    await page.locator('.composer-model-trigger').click();
+    await page.getByRole('menuitemradio', { name }).click();
+  };
+  await selectModel('Klein 9B · LoRA');
+  assert.equal(await page.getByRole('checkbox', { name: 'pytorch_lora_weights.safetensors' }).count(), 0);
+  await page.evaluate(() => { window.studio.pickLoraFiles = async () => ['C:\\styles\\9b-edit.safetensors']; });
+  await page.getByRole('button', { name: 'Add LoRA files' }).click();
+  await page.getByRole('checkbox', { name: '9b-edit.safetensors' }).waitFor();
+  await selectModel('Klein 4B · LoRA');
+  await page.getByRole('checkbox', { name: /pytorch_lora_weights.safetensors/ }).waitFor();
+  await selectModel('Klein 9B · LoRA');
+  await page.getByRole('checkbox', { name: '9b-edit.safetensors' }).waitFor();
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lWQAAAAASUVORK5CYII=', 'base64');
+  await page.getByLabel('Reference image file').setInputFiles(['one.png', 'two.png'].map((name) => ({ name, mimeType: 'image/png', buffer: png })));
+  await page.getByText('2/4 references', { exact: false }).waitFor();
+  const submitted = page.waitForResponse(response => response.url().endsWith('/api/flux2/generate'));
+  await page.getByRole('button', { name: 'Generate image', exact: true }).click();
+  await submitted;
+  assert.equal(state.payloads.at(-1)?.model, '9b-lora');
+  assert.equal(state.payloads.at(-1)?.reference_images?.length, 2);
+  assert.deepEqual(state.payloads.at(-1)?.loras, [{ path: 'C:\\styles\\9b-edit.safetensors', strength: 1, enabled: true }]);
   await page.getByRole('button', { name: 'Library', exact: true }).click();
   const header = page.locator('.library-view-header');
   const folder = await header.getByRole('button', { name: 'Open folder' }).boundingBox();

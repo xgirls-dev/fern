@@ -107,6 +107,11 @@ def installed(root, model):
         for part in ["transformer", "text_encoder", "vae_decoder", "vae_encoder"]
         for ext in ["bin", "xml"]
     ]
+    if model == "9b-lora":
+        required += [
+            f"{part}/config.json" for part in ("transformer", "text_encoder", "vae_decoder", "vae_encoder")
+        ]
+        required += ["tokenizer/openvino_tokenizer.xml", "tokenizer/openvino_tokenizer.bin"]
     return all(
         (folder / name).is_file() and (folder / name).stat().st_size > 0
         for name in required

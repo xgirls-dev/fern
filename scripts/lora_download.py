@@ -13,6 +13,20 @@ from pathlib import Path
 from typing import Any
 
 
+def _validate_lora_file(path: Path) -> None:
+    from safetensors import SafetensorError, safe_open
+
+    try:
+        with safe_open(str(path), framework="numpy") as handle:
+            keys = handle.keys()
+    except SafetensorError as exc:
+        raise ValueError("The downloaded safetensors file is incomplete or invalid. Try again.") from exc
+    if not keys:
+        raise ValueError("The downloaded file contains no tensors.")
+    if not any("lora" in key.lower() for key in keys):
+        raise ValueError("This safetensors file does not appear to contain a LoRA.")
+
+
 class LoraDownloadManager:
     def __init__(self, root: Path):
         self.root = Path(root).resolve()
@@ -101,8 +115,15 @@ class LoraDownloadManager:
             target = self.root / (hashlib.sha256(url.encode()).hexdigest()[:12] + "-" + name)
             stage = target.with_suffix(target.suffix + ".partial")
             if target.is_file():
-                with self.lock: self.state = {"status": "complete", "path": str(target), "name": name, "downloaded": target.stat().st_size, "bytes": target.stat().st_size}
-                return
+                try:
+                    _validate_lora_file(target)
+                except ValueError:
+                    pass  # Replace the invalid cached file after a verified download.
+                else:
+                    size = target.stat().st_size
+                    with self.lock:
+                        self.state = {"status": "complete", "path": str(target), "name": name, "downloaded": size, "bytes": size}
+                    return
             request = urllib.request.Request(download_url, headers={"User-Agent": "Fern/1.0"})
             with urllib.request.urlopen(request, timeout=30) as response, stage.open("wb") as output:
                 total = int(response.headers.get("Content-Length") or 0)
@@ -122,16 +143,7 @@ class LoraDownloadManager:
                         next_space_check = output.tell() + 64 * 1024**2
             if cancel.is_set(): raise InterruptedError()
             if total and stage.stat().st_size != total: raise ValueError("The LoRA download was incomplete. Try again.")
-            with stage.open("rb") as downloaded:
-                size_bytes = downloaded.read(8)
-                header_size = int.from_bytes(size_bytes, "little")
-                if len(size_bytes) != 8 or not 2 <= header_size <= min(stage.stat().st_size - 8, 100_000_000):
-                    raise ValueError("The downloaded file is not a valid safetensors file.")
-                header = json.loads(downloaded.read(header_size))
-                if not isinstance(header, dict) or not any(key != "__metadata__" for key in header):
-                    raise ValueError("The downloaded file contains no tensors.")
-                if not any("lora" in key.lower() for key in header if key != "__metadata__"):
-                    raise ValueError("This safetensors file does not appear to contain a LoRA.")
+            _validate_lora_file(stage)
             os.replace(stage, target)
             with self.lock: self.state.update(status="complete", path=str(target), name=name)
         except InterruptedError:

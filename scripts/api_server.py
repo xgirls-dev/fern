@@ -1152,7 +1152,7 @@ def model_snapshot(device: str, model="9b") -> dict[str, Any]:
                 MODEL_CHECK_STARTED = True
                 def check():
                     results = {}
-                    for choice in ("9b", "4b", "4b-lora", *tame_pony.MODEL_KEYS):
+                    for choice in (*flux2.KLEIN_MODEL_KEYS, *tame_pony.MODEL_KEYS):
                         for adapter in ("AUTO", "INTEL_GPU", "NVIDIA_GPU", "CPU"):
                             try:
                                 result = (
@@ -1181,7 +1181,7 @@ def model_snapshot(device: str, model="9b") -> dict[str, Any]:
             "requestedDevice": device,
             "adapters": [],
         })
-    if model not in ("auto", "9b", "4b", "4b-lora"): model = "9b"
+    if model not in ("auto", *flux2.KLEIN_MODEL_KEYS): model = "9b"
     requested_model = model
     resolved_model = flux2.resolve_model(model, device)
     with MODEL_CHECK_LOCK:
@@ -1189,7 +1189,7 @@ def model_snapshot(device: str, model="9b") -> dict[str, Any]:
             MODEL_CHECK_STARTED = True
             def check():
                 results = {}
-                for choice in ("9b", "4b", "4b-lora", *tame_pony.MODEL_KEYS):
+                for choice in (*flux2.KLEIN_MODEL_KEYS, *tame_pony.MODEL_KEYS):
                     for adapter in ("AUTO", "INTEL_GPU", "NVIDIA_GPU", "CPU"):
                         try:
                             result = (
@@ -1388,15 +1388,15 @@ def validate_flux_payload(payload: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("Attach up to 4 reference images.")
     if any(not isinstance(source, str) or not source for source in reference_sources):
         raise ValueError("Each reference image must be a PNG, JPEG, or WebP upload.")
-    if len(reference_sources) > 1 and model not in ("9b", "4b", "auto"):
+    if len(reference_sources) > 1 and model not in ("auto", *flux2.KLEIN_MODEL_KEYS):
         raise ValueError("Multiple reference images are supported by FLUX.2 Klein 4B and 9B.")
     reference_images = [decode_flux_reference_image(source) for source in reference_sources]
     reference_image = reference_images[0] if reference_images else None
     loras = payload.get("loras", [])
     if not isinstance(loras, list) or len(loras) > 4:
         raise ValueError("Choose up to four LoRAs.")
-    if loras and model != "4b-lora":
-        raise ValueError("LoRAs require the Klein 4B LoRA model.")
+    if loras and model not in flux2.LORA_MODEL_KEYS:
+        raise ValueError("Choose Klein 4B LoRA or Klein 9B LoRA to use adapters.")
     checked_loras = []
     lora_paths = set()
     for lora in loras:
@@ -1436,8 +1436,8 @@ def validate_flux_payload(payload: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("Steps are outside the supported range.")
     if guidance < 0 or guidance > (20 if custom_model else 10):
         raise ValueError("Guidance is outside the supported range.")
-    if model == "4b-lora" and guidance != 1.0:
-        raise ValueError("Klein 4B LoRA uses guidance 1.0.")
+    if model in flux2.LORA_MODEL_KEYS and guidance != 1.0:
+        raise ValueError("Klein LoRA models use guidance 1.0.")
     if batch_size < 1 or batch_size > 4:
         raise ValueError("Batch size must be 1 to 4.")
     if model in (QWEN_TURBO_MODEL_ID, flux3.MODEL_KEY) and batch_size != 1:
@@ -1513,7 +1513,7 @@ def run_flux_generation(
             TAME_PONY_GENERATION_WORKER.close()
         if not custom_image.is_model(payload.get("model", "")):
             CUSTOM_IMAGE_GENERATION_WORKER.close()
-        if payload.get("model") != "4b-lora":
+        if payload.get("model") not in flux2.LORA_MODEL_KEYS:
             GENERATION_WORKER.close()
         if payload.get("model") != flux3.MODEL_KEY:
             FLUX3_GENERATION_WORKER.close()

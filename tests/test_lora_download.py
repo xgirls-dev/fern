@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from lora_download import LoraDownloadManager
+from lora_download import LoraDownloadManager, _validate_lora_file
 
 
 class Response(io.BytesIO):
@@ -47,6 +47,12 @@ class LoraDownloadTests(unittest.TestCase):
             self.manager.state = {"status": "checking", "downloaded": 0}
             self.manager._run(url, threading.Event())
             self.assertEqual(open_url.call_count, 1)
+            Path(result["path"]).write_bytes(data[:-1])
+            self.manager.state = {"status": "checking", "downloaded": 0}
+            open_url.return_value = Response(data)
+            self.manager._run(url, threading.Event())
+            self.assertEqual(open_url.call_count, 2)
+            self.assertEqual(Path(result["path"]).read_bytes(), data)
 
     def test_invalid_download_is_removed(self):
         with patch("urllib.request.urlopen", return_value=Response(b"<html>login</html>")):
@@ -54,6 +60,13 @@ class LoraDownloadTests(unittest.TestCase):
             self.manager._run("https://huggingface.co/a/b/resolve/main/style.safetensors", threading.Event())
         self.assertEqual(self.manager.snapshot()["status"], "failed")
         self.assertEqual(list(Path(self.temp.name).iterdir()), [])
+
+    def test_valid_header_with_truncated_tensor_data_is_rejected(self):
+        header = json.dumps({"transformer.layer.lora_A.weight": {"dtype": "F32", "shape": [1], "data_offsets": [0, 4]}}).encode()
+        path = Path(self.temp.name) / "truncated.safetensors"
+        path.write_bytes(len(header).to_bytes(8, "little") + header + b"123")
+        with self.assertRaisesRegex(ValueError, "incomplete or invalid"):
+            _validate_lora_file(path)
 
     def test_untrusted_source_is_rejected(self):
         with self.assertRaises(ValueError):

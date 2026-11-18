@@ -1,4 +1,5 @@
 import type { ImageRecord } from "../lib/types";
+import { isKleinLoraModel, kleinLoraLabel } from "../lib/imageModels";
 
 interface PreviewMetadataHudProps {
   image: ImageRecord;
@@ -89,7 +90,7 @@ export function PreviewMetadataHud({ image }: PreviewMetadataHudProps) {
           ? "FLUX.3 Klein · INT4"
           : image.model === "tame-pony-v25-sdxl" || image.model === "tame-pony-v25-sdxl-int8"
             ? image.model.endsWith("-int8") ? "Tame Pony · SDXL INT8" : "Tame Pony · SDXL"
-          : image.model === "4b-lora" ? "FLUX.2 Klein 4B · LoRA" : `FLUX.2 Klein ${image.model.toUpperCase()}`),
+          : isKleinLoraModel(image.model) ? `FLUX.2 ${kleinLoraLabel(image.model)}` : `FLUX.2 Klein ${image.model.toUpperCase()}`),
     });
   if (image.modelRevision)
     rows.push({ label: "Model revision", value: image.modelRevision });
