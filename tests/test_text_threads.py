@@ -127,6 +127,37 @@ for line in sys.stdin:
                 resolve_text_device('AUTO')
             self.assertEqual(resolve_text_device('CPU'), 'CPU')
 
+    def test_chat_image_tool_returns_an_artifact_to_the_same_text_worker(self):
+        event = threading.Event()
+        call = {"id": "image-call", "type": "function", "function": {"name": "generate_image", "arguments": '{"prompt":"red teapot"}'}}
+        image = {"name": "teapot.png", "width": 512, "height": 512}
+        metrics = {"device": "GPU", "text": "", "outputTokens": 8, "inputTokens": 12, "generationSeconds": 0.3}
+        with patch.object(api, 'TEXT_MODEL_REGISTRY', self.registry), \
+             patch.object(api.TEXT_GENERATION_WORKER, 'generate', side_effect=[
+                 {**metrics, "toolCalls": [call]}, {**metrics, "text": "The image is ready."},
+             ]) as reply, patch.object(api.TEXT_GENERATION_WORKER, 'close') as close_text, \
+             patch.object(api.GENERATION_WORKER, 'close') as close_image, \
+             patch.object(api, 'generate_chat_image', return_value=image) as generate_image, \
+             patch.dict(api.TEXT_JOB, {'id': 'test-tool', 'status': 'running', 'partialText': ''}, clear=True):
+            api.run_text_generation({
+                "modelId": self.model["id"], "device": "AUTO", "imageModel": "4b-lora",
+                "threadId": "text-thread-test", "messages": [{"role": "user", "content": "Draw a teapot."}],
+                "maxNewTokens": 512, "seed": 1, "temperature": 0, "topP": 0.9,
+            }, "test-tool", event)
+            self.assertEqual(api.TEXT_JOB["status"], "complete")
+            self.assertEqual(api.TEXT_JOB["image"], image)
+            self.assertEqual(api.TEXT_JOB["partialText"], "The image is ready.")
+            generate_image.assert_called_once_with("4b-lora", "red teapot", "text-thread-test", "test-tool", event)
+            first, resumed = (item.kwargs["request"] for item in reply.call_args_list)
+            self.assertEqual(first["tools"][0]["function"]["name"], "generate_image")
+            self.assertEqual(resumed["toolChoice"], "none")
+            self.assertEqual(resumed["maxNewTokens"], 96)
+            self.assertEqual(resumed["messages"][-2]["tool_call_id"], "image-call")
+            self.assertTrue(resumed["messages"][-1]["imagePath"].endswith("teapot.png"))
+            self.assertTrue(api.TEXT_JOB["result"]["visionChecked"])
+            close_text.assert_not_called()
+            close_image.assert_not_called()
+
     def test_http_admission_and_role_validation(self):
         server = ThreadingHTTPServer(('127.0.0.1', 0), api.Handler)
         serving = threading.Thread(target=server.serve_forever, daemon=True)

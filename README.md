@@ -1,8 +1,8 @@
 # Fern
 
-Fern is a local-first Windows studio for image generation, text conversations,
-and speech generation. Each workspace has its own threads, settings, and output
-history.
+Fern is a local-first studio for image generation, text conversations, and
+speech generation. It runs on Windows and has a beta package for x86-64 Omarchy.
+Each workspace has its own threads, settings, and output history.
 
 Image threads support Flux.2 Klein, FLUX.3 Klein, Qwen Image 2.1 Turbo, and
 Tame Pony SDXL OpenVINO models. Install available image models from **Library**;
@@ -11,8 +11,7 @@ composer. Image workflows include text-to-image, supported image guidance,
 repeatable seeds, batch generation, and a local gallery. Intel GPU, NVIDIA GPU,
 and CPU execution depend on the selected model and the installed runtime.
 
-Text threads run local OpenVINO language models, with Qwen3 4B Instruct 2507 as
-the recommended model. Audio threads support Qwen3-TTS preset voices, voice
+Text threads run local OpenVINO and GGUF chat models. Audio threads support Qwen3-TTS preset voices, voice
 design, and reference-audio voice cloning. Set up downloads the selected
 ready-made OpenVINO model from [xgirls on Hugging Face](https://huggingface.co/xgirls);
 the app does not export source checkpoints during installation.
@@ -28,6 +27,31 @@ See the [changelog](CHANGELOG.md) for release-by-release updates.
 
 ## Install
 
+### Omarchy (x86-64 beta)
+
+Download `fern-*-x86_64.pkg.tar.zst` from [GitHub Releases](https://github.com/xgirls-dev/fern/releases).
+Install the package from the download directory, then open **Fern** from the
+Omarchy app launcher.
+
+```sh
+sudo pacman -U ./fern-*-x86_64.pkg.tar.zst
+```
+
+For Intel GPU image generation and GGUF vision, install the Intel OpenCL and
+Vulkan drivers from Arch's repositories.
+
+```sh
+sudo pacman -Syu intel-compute-runtime ocl-icd vulkan-intel vulkan-icd-loader
+```
+
+The package contains Python and OpenVINO. Models and the matching llama.cpp
+runtime download inside Fern. The beta targets FLUX.2 Klein, GGUF chat and
+vision, and image generation in chat on Intel GPUs. Qwen Image Turbo and
+Qwen3-TTS setup are unavailable on Linux. NVIDIA GPU support is outside the beta.
+CPU is available for models that support it.
+
+### Windows
+
 Download `Fern-Setup-*.exe` from the project's GitHub Releases page and run it.
 The installer contains the desktop app, Python, and the pinned OpenVINO runtime.
 On first launch, Fern prepares its bundled runtime. Install image models from
@@ -35,6 +59,31 @@ On first launch, Fern prepares its bundled runtime. Install image models from
 models from an audio thread. Downloads are pinned to catalog revisions and
 verified; interrupted downloads can resume. The first model load compiles for
 the selected device and can take longer than later runs.
+
+Open **Models → Text** to download **Gemma 4 E4B · GGUF**.
+The download includes the Q4_0 language model and its matching vision projector.
+Use **Import GGUF** to select a local instruction-tuned GGUF with a chat template.
+For vision, select its matching `mmproj` GGUF in the same file picker. Attach an
+image in a text thread and choose **Instant** or **Reasoning** when the model
+supports both modes. Fern installs a pinned llama.cpp runtime on first use.
+GGUF text runs through llama.cpp's OpenVINO backend. Chats with images use
+Vulkan on Intel GPUs or llama.cpp on CPU when CPU is selected. Response details
+show the backend and device used. Fern downloads the Vulkan backend on first
+use and repairs missing backend files when you retry. If Vulkan cannot find a
+compatible Intel GPU, the chat shows driver setup instructions for your platform.
+
+In a text thread with a tool-capable model, ask Fern to create an image. **Chat
+settings → Image generation** defaults to **Auto**, which prefers an installed
+Klein 4B model. Fern renders one 512 × 512 image at a time in four steps.
+The image appears in the chat and in the Library. Fern checks the generated
+pixels before replying and includes recent images in follow-up requests. The
+image tool requires a vision-capable chat model with its projector. Fern keeps
+the chat and Klein models loaded on the Intel GPU between turns when the tool is enabled.
+
+GGUF threads use an 8K token context by default. Choose 4K, 8K, or 16K in **Chat
+settings**. Fern summarizes older turns when it needs room, carries the two
+most recent images within the recent turns, and keeps the full transcript in
+the thread. Response details show the context and compaction used.
 
 To use LoRAs, install **Klein 4B · LoRA** or **Klein 9B · LoRA** in Models and
 select it in an image thread. In **Image settings → LoRAs**, choose up to four
@@ -50,7 +99,7 @@ build environment and must match the OpenVINO runtime; Fern reports when that
 plugin is unavailable rather than silently changing devices. **Stop** cancels
 generation at a supported inference boundary without closing the app.
 
-Requirements:
+Windows requirements:
 
 - Windows 10 or 11, 64-bit
 - Free disk space for the selected models and their compiled-device caches;
@@ -82,7 +131,11 @@ Generated images and WAV takes are never deleted automatically.
 This repository is an npm workspace. The Electron app lives in `apps/desktop`;
 the Python backend and packaging tools live in `scripts`.
 
-Prerequisites:
+On Omarchy or Arch x86-64, install `base-devel`, `git`, `nodejs`, `npm`, and
+`uv`. Run `npm ci` and `npm run package:omarchy` as a regular user. The package
+is written to `apps/desktop/release-omarchy/`.
+
+Windows prerequisites:
 
 - Node.js 22 or newer
 - Python 3.12

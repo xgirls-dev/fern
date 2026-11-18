@@ -15,9 +15,8 @@ if (-not $SourceVenv) {
     $SourceVenv = if (Test-Path -LiteralPath (Join-Path $Root '.venv-release/Scripts/python.exe')) { '.venv-release' } else { '.venv' }
 }
 & (Join-Path $Root "scripts\bundle-python-runtime.ps1") -SourceVenv $SourceVenv
-& (Join-Path $Root "scripts\bundle-app-resources.ps1")
 $BuildPython = Join-Path (Join-Path $Root $SourceVenv) 'Scripts/python.exe'
-& $BuildPython (Join-Path $Root 'scripts/audit-release-resources.py') (Join-Path $Desktop 'resources/scripts')
+& $BuildPython (Join-Path $Root 'scripts/audit-release-resources.py') --stage
 if ($LASTEXITCODE -ne 0) { throw 'Release backend payload verification failed.' }
 $RuntimeZip = Join-Path $Desktop "resources\runtime-release.zip"
 & $BuildPython (Join-Path $Root 'scripts/create-runtime-archive.py') (Join-Path $Desktop 'resources/runtime-release') $RuntimeZip

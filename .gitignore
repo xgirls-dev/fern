@@ -47,6 +47,7 @@ apps/desktop/.vite/
 apps/desktop/resources/runtime/
 apps/desktop/resources/runtime-slim/
 apps/desktop/resources/runtime-release/
+apps/desktop/resources/runtime-linux/
 apps/desktop/resources/runtime-release.tar
 apps/desktop/resources/runtime-release.zip
 apps/desktop/resources/runtime-release.zip.part
@@ -106,6 +107,7 @@ ui-server*.log
 *.msix
 *.appx
 *.AppImage
+*.pkg.tar.zst
 *.dmg
 
 # Local agent/terminal state

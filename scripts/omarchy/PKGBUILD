@@ -1,0 +1,35 @@
+pkgname=fern
+pkgver=${FERN_VERSION:?build with npm run package:omarchy}
+pkgrel=1
+pkgdesc='Local-first studio for OpenVINO image generation and GGUF chat'
+arch=('x86_64')
+url='https://github.com/xgirls-dev/fern'
+license=('MIT')
+depends=('alsa-lib' 'gcc-libs' 'gtk3' 'hicolor-icon-theme' 'libnotify'
+         'libsecret' 'libxss' 'libxtst' 'mesa' 'nss' 'vulkan-icd-loader' 'xdg-utils')
+optdepends=('intel-compute-runtime: OpenVINO inference on Intel GPUs'
+            'ocl-icd: OpenCL loader for Intel GPU inference'
+            'vulkan-intel: GGUF vision and image generation in chat on Intel GPUs')
+options=('!strip' '!debug')
+
+package() {
+    install -d "$pkgdir/opt/fern" "$pkgdir/usr/bin"
+    cp -a "${FERN_UNPACKED:?}/." "$pkgdir/opt/fern/"
+    chmod 4755 "$pkgdir/opt/fern/chrome-sandbox"
+    ln -s /opt/fern/fern "$pkgdir/usr/bin/fern"
+    install -Dm644 "$FERN_UNPACKED/resources/icon.png" \
+        "$pkgdir/usr/share/icons/hicolor/512x512/apps/fern.png"
+    install -Dm644 "$FERN_UNPACKED/resources/licenses/fern.txt" \
+        "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+    install -Dm644 /dev/stdin "$pkgdir/usr/share/applications/fern.desktop" <<'DESKTOP'
+[Desktop Entry]
+Type=Application
+Name=Fern
+Comment=Local AI studio
+Exec=fern
+Icon=fern
+Terminal=false
+Categories=Graphics;
+StartupWMClass=fern
+DESKTOP
+}

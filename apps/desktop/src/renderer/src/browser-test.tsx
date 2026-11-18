@@ -75,6 +75,7 @@ const browserStudio: StudioApi = {
   pickReferenceImage: async () => null,
   pickLoraFiles: async () => [],
   pickTextModelFolder: async () => null,
+  pickGgufFiles: async () => [],
   pickCustomImageModelFolder: async () => selectedCustomImageFolder,
   saveImageAs: async () => null,
   writeImageFile: async () => "",

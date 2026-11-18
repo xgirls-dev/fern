@@ -1,4 +1,4 @@
-"""Pinned installer for Fern's recommended Xgirls OpenVINO text model."""
+"""Pinned installer for Fern's recommended chat models."""
 from __future__ import annotations
 
 import hashlib
@@ -59,9 +59,23 @@ def model_spec(model_id: str) -> dict:
         if not expected_length or not re.fullmatch(rf"[a-f0-9]{{{expected_length}}}", file.get("digest", "")):
             raise ValueError("The text model manifest contains an invalid checksum.")
         seen.add(file["path"])
-    if not set(REQUIRED_MODEL_FILES).issubset(seen):
+    required = REQUIRED_MODEL_FILES
+    if spec.get("format") == "gguf":
+        required = (spec.get("modelFile"), spec.get("projectorFile"))
+        if any(not isinstance(filename, str) or not filename.endswith(".gguf")
+               or PurePosixPath(filename).name != filename for filename in required):
+            raise ValueError("The GGUF catalog must specify model and projector files.")
+        if required[0] == required[1]:
+            raise ValueError("The model and projector must be separate GGUF files.")
+    if not set(required).issubset(seen):
         raise ValueError("The text model manifest is missing required files.")
     return spec
+
+
+def model_files(folder: Path, spec: dict) -> tuple[Path, Path | None]:
+    if spec.get("format") == "gguf":
+        return folder / spec["modelFile"], folder / spec["projectorFile"]
+    return folder, None
 
 
 def digest(path: Path, file: dict) -> str:
@@ -176,8 +190,11 @@ def _install_model(model_id: str, model_root: str | Path, progress: Callable[[st
         try:
             current = json.loads(marker.read_text(encoding="utf-8"))
             if current.get("revision") == spec["revision"]:
-                inspect_model(folder)
-                progress("Recommended OpenVINO text model is already installed.")
+                model, projector = model_files(folder, spec)
+                inspect_model(model, projector_path=projector)
+                if projector and any((folder / item["path"]).stat().st_size != item["size"] for item in spec["files"]):
+                    raise ValueError("An installed GGUF file has an unexpected length.")
+                progress("Recommended text model is already installed.")
                 return folder
         except (OSError, ValueError, json.JSONDecodeError):
             pass
@@ -196,9 +213,11 @@ def _install_model(model_id: str, model_root: str | Path, progress: Callable[[st
     for file in files:
         url = f"https://huggingface.co/{spec['repo']}/resolve/{spec['revision']}/{file['path']}"
         download_file(url, stage / file["path"], file, progress)
-    convert_tokenizers(stage, progress)
+    model, projector = model_files(stage, spec)
+    if not projector:
+        convert_tokenizers(stage, progress)
     try:
-        inspect_model(stage, validate_ir=True)
+        inspect_model(model, projector_path=projector, validate_ir=True)
     except ValueError as error:
         raise RuntimeError(f"The downloaded export failed Fern's model validation: {error}") from error
     metadata = {
@@ -207,7 +226,7 @@ def _install_model(model_id: str, model_root: str | Path, progress: Callable[[st
         "repo": spec["repo"],
         "revision": spec["revision"],
         "format": spec["format"],
-        "tokenizersConvertedByFern": True,
+        "tokenizersConvertedByFern": projector is None,
         "verifiedChecksums": True,
     }
     (stage / ".fern-text-model.json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
@@ -221,7 +240,7 @@ def _install_model(model_id: str, model_root: str | Path, progress: Callable[[st
         if previous is not None:
             os.replace(previous, folder)
         raise
-    progress("Recommended OpenVINO text model installed and verified.")
+    progress("Recommended text model installed and verified.")
     return folder
 
 
@@ -262,6 +281,10 @@ def installed_model(model_id: str, model_root: str | Path) -> bool:
     folder = Path(model_root).resolve() / spec["folder"]
     try:
         metadata = json.loads((folder / ".fern-text-model.json").read_text(encoding="utf-8"))
+        if spec.get("format") == "gguf":
+            return metadata.get("modelId") == model_id and metadata.get("revision") == spec["revision"] and all(
+                (folder / file["path"]).stat().st_size == file["size"] for file in spec["files"]
+            )
         return metadata.get("modelId") == model_id and metadata.get("revision") == spec["revision"] and all(
             (folder / name).is_file() and (folder / name).stat().st_size > 0
             for name in REQUIRED_MODEL_FILES + (

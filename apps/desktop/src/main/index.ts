@@ -92,9 +92,15 @@ function createWindow(apiBaseUrl?: string): BrowserWindow {
     },
   });
 
-  window.once("ready-to-show", () => {
+  const showWindow = () => {
     if (process.env.FERN_E2E_HEADLESS !== "1") window.show();
-  });
+  };
+  // A hidden Wayland surface may never receive the frame that fires ready-to-show.
+  if (process.platform === "linux") {
+    window.webContents.once("did-finish-load", showWindow);
+  } else {
+    window.once("ready-to-show", showWindow);
+  }
 
   window.webContents.on("before-input-event", (event, input) => {
     if (input.type !== "keyDown" || !(input.control || input.meta) || input.alt) {
@@ -392,6 +398,17 @@ function registerIpc(): void {
     return result.canceled || result.filePaths.length === 0 ? null : result.filePaths[0];
   });
 
+  ipcMain.handle("studio:pick-gguf-files", async (event) => {
+    const window = BrowserWindow.fromWebContents(event.sender) ?? undefined;
+    const options = {
+      title: "Choose a GGUF model and optional vision projector",
+      properties: ["openFile", "multiSelections"] as Array<"openFile" | "multiSelections">,
+      filters: [{ name: "GGUF", extensions: ["gguf"] }],
+    };
+    const result = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options);
+    return result.canceled ? [] : result.filePaths;
+  });
+
   ipcMain.handle("studio:pick-custom-image-model-folder", async (event) => {
     const window = BrowserWindow.fromWebContents(event.sender) ?? undefined;
     const options = {
@@ -508,9 +525,8 @@ async function bootstrap(): Promise<void> {
   let setupWindow: BrowserWindow | null = null;
   try {
     await resolveProjectRoot();
-    // Development uses the repository's .venv directly. The first-run
-    // installer only applies to packaged builds with runtime-release.zip.
-    if (app.isPackaged) {
+    // Pacman installs Linux's runtime in place; Windows extracts it per profile.
+    if (app.isPackaged && process.platform === "win32") {
       setupWindow = await ensureFirstRunSetup();
     }
   } catch (error) {

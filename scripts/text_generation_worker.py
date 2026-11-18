@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import os
+import signal
 import sys
 import time
 import traceback
@@ -30,12 +32,54 @@ def emit(payload: dict[str, Any]) -> None:
     print(PREFIX + json.dumps(payload, ensure_ascii=False), flush=True)
 
 
-def run(model_path: str, device: str) -> int:
+def run_gguf(file: Path, device: str, projector: Path | None) -> int:
+    from chat_context import DEFAULT_CONTEXT_SIZE
+    from gguf_runtime import GGUFServer, ensure_runtime
+
+    runtime_root = Path(os.environ["FERN_GGUF_RUNTIME_ROOT"])
+    server = None
     try:
-        import openvino_genai as genai
-    except Exception as error:
-        emit({"type": "error", "error": f"OpenVINO GenAI is unavailable: {error}"})
-        return 1
+        while line := sys.stdin.readline():
+            try:
+                request = json.loads(line)
+                if request.get("op") == "shutdown":
+                    return 0
+                if request.get("op") != "generate":
+                    raise ValueError("Unsupported text worker request.")
+                vision = bool(request.get("tools")) or any(message.get("imagePath") for message in request["messages"])
+                context_size = request.get("contextSize", DEFAULT_CONTEXT_SIZE)
+                if vision and not projector:
+                    raise ValueError("Add the model's vision projector before sending an image.")
+                # b12498's OpenVINO backend fails in Gemma 4's image-prefill graph.
+                # Use the same GGUF files in the appropriate llama.cpp backend.
+                if vision:
+                    target = "CPU" if device == "CPU" else "GPU"
+                    backend = "cpu" if target == "CPU" else "vulkan"
+                else:
+                    target, backend = resolve_text_device(device), "openvino"
+                if server is None or server.backend != backend or server.context_size != context_size:
+                    if server is not None:
+                        server.close()
+                        server = None
+                    phase = lambda text: emit({"type": "phase", "text": text})
+                    executable = ensure_runtime(runtime_root, backend, phase)
+                    phase(f"Loading the GGUF model with {backend}…")
+                    server = GGUFServer(executable, file, projector if vision else None, target, backend, context_size)
+                emit(server.generate(request, emit))
+            except Exception as error:
+                emit({"type": "error", "error": str(error), "code": getattr(error, "code", None),
+                      "traceback": traceback.format_exc()})
+        return 0
+    finally:
+        if server is not None:
+            server.close()
+
+
+def run(model_path: str, device: str, projector_path: str = "") -> int:
+    folder = Path(model_path).resolve(strict=True)
+    if folder.is_file() and folder.suffix.lower() == ".gguf":
+        projector = Path(projector_path).resolve(strict=True) if projector_path else None
+        return run_gguf(folder, device, projector)
 
     try:
         device = resolve_text_device(device)
@@ -43,7 +87,12 @@ def run(model_path: str, device: str) -> int:
         emit({"type": "error", "error": str(error)})
         return 1
 
-    folder = Path(model_path).resolve(strict=True)
+    try:
+        import openvino_genai as genai
+    except Exception as error:
+        emit({"type": "error", "error": f"OpenVINO GenAI is unavailable: {error}"})
+        return 1
+
     pipeline = None
     tokenizer = None
     while True:
@@ -104,6 +153,11 @@ def run(model_path: str, device: str) -> int:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 3:
-        raise SystemExit("Usage: text_generation_worker.py MODEL_PATH DEVICE")
-    raise SystemExit(run(sys.argv[1], sys.argv[2]))
+    if len(sys.argv) not in (3, 4):
+        raise SystemExit("Usage: text_generation_worker.py MODEL_PATH DEVICE [PROJECTOR_PATH]")
+    if sys.platform == "linux":
+        def exit_on_terminate(_signal, _frame):
+            raise SystemExit(0)
+
+        signal.signal(signal.SIGTERM, exit_on_terminate)
+    raise SystemExit(run(*sys.argv[1:]))

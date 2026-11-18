@@ -1,22 +1,22 @@
 from __future__ import annotations
 
 import ast
-import re
+import runpy
 import unittest
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "scripts"
-BUNDLE_SCRIPT = SCRIPTS / "bundle-app-resources.ps1"
+BUNDLE_SCRIPT = SCRIPTS / "audit-release-resources.py"
 
 
 class PackagedScriptsTests(unittest.TestCase):
     def test_bundled_backend_includes_local_python_imports(self) -> None:
-        bundle_source = BUNDLE_SCRIPT.read_text(encoding="utf-8")
-        self.assertIn("\"model_catalog.json\"", bundle_source)
+        bundle_files = runpy.run_path(str(BUNDLE_SCRIPT))["ALLOWED_BACKEND"]
+        self.assertIn("model_catalog.json", bundle_files)
         self.assertTrue((SCRIPTS / "model_catalog.json").is_file())
-        bundled_files = set(re.findall(r'"([^"]+\.py)"', bundle_source))
+        bundled_files = {name for name in bundle_files if name.endswith(".py")}
         local_modules = {path.stem for path in SCRIPTS.glob("*.py")}
 
         missing: set[str] = set()

@@ -24,6 +24,7 @@ export interface StudioApi {
   pickReferenceImage: () => Promise<string | null>;
   pickLoraFiles: () => Promise<string[]>;
   pickTextModelFolder: () => Promise<string | null>;
+  pickGgufFiles: () => Promise<string[]>;
   pickCustomImageModelFolder: () => Promise<string | null>;
   saveImageAs: (defaultName: string) => Promise<string | null>;
   writeImageFile: (targetPath: string, sourceUrl: string) => Promise<string>;

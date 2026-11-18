@@ -101,6 +101,7 @@ const studioApi: StudioApi = {
   pickReferenceImage: () => ipcRenderer.invoke("studio:pick-reference-image"),
   pickLoraFiles: () => ipcRenderer.invoke("studio:pick-lora-files"),
   pickTextModelFolder: () => ipcRenderer.invoke("studio:pick-text-model-folder"),
+  pickGgufFiles: () => ipcRenderer.invoke("studio:pick-gguf-files"),
   pickCustomImageModelFolder: () => ipcRenderer.invoke("studio:pick-custom-image-model-folder"),
   saveImageAs: (defaultName) =>
     ipcRenderer.invoke("studio:save-image-as", defaultName),

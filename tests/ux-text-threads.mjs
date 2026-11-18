@@ -74,6 +74,12 @@ try {
   const sendBox = await page.getByRole('button', { name: 'Send message', exact: true }).boundingBox();
   assert(sendBox && sendBox.x >= 0 && sendBox.x + sendBox.width <= 390, 'send button outside viewport');
   await page.setViewportSize({ width: 1440, height: 900 });
+  await page.getByRole('button', { name: 'Retry response', exact: true }).click();
+  await until(() => state.textRequests.length === 6, 'driver failure retry');
+  state.textStatus.job = { ...state.textStatus.job, status: 'failed', partialText: '', error: 'Vulkan could not find a compatible Intel GPU.', errorCode: 'intel-vulkan-driver', finishedAt: Date.now()/1000 };
+  const driverLink = page.getByRole('link', { name: 'Get Intel graphics drivers', exact: true });
+  await driverLink.waitFor();
+  assert.equal(await driverLink.getAttribute('href'), 'https://www.intel.com/content/www/us/en/support/detect.html');
   // Simulate a saved in-flight job followed by a backend restart.
   await page.addInitScript(({ activeId }) => {
     const w = JSON.parse(localStorage.getItem('fern-text-threads:v1'));

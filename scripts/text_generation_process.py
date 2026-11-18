@@ -12,6 +12,12 @@ from typing import Any, Callable
 EVENT_PREFIX = "FERN_TEXT_EVENT:"
 
 
+class TextWorkerError(RuntimeError):
+    def __init__(self, message: str, code: str | None = None) -> None:
+        super().__init__(message)
+        self.code = code
+
+
 def terminate_tree(process: subprocess.Popen[str] | None) -> None:
     if process is None or process.poll() is not None:
         return
@@ -37,7 +43,7 @@ class TextGenerationProcess:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._process: subprocess.Popen[str] | None = None
-        self._key: tuple[str, str] | None = None
+        self._key: tuple[str, str, tuple[str, ...]] | None = None
 
     def _stop_unlocked(self) -> None:
         process = self._process
@@ -76,9 +82,10 @@ class TextGenerationProcess:
         env: dict[str, str],
         on_token: Callable[[str], None],
         on_phase: Callable[[str], None],
+        on_reasoning: Callable[[str], None] | None = None,
         cancel_event: threading.Event | None = None,
     ) -> dict[str, Any]:
-        key = (str(Path(model_path).resolve()), device)
+        key = (str(Path(model_path).resolve()), device, tuple(command))
         with self._lock:
             if cancel_event is not None and cancel_event.is_set():
                 raise InterruptedError("Generation stopped.")
@@ -100,7 +107,7 @@ class TextGenerationProcess:
                 )
                 self._process = process
                 self._key = key
-                on_phase("Starting the OpenVINO text worker…")
+                on_phase("Starting the text worker…")
 
             assert process is not None and process.stdin is not None and process.stdout is not None
             try:
@@ -124,6 +131,8 @@ class TextGenerationProcess:
                     kind = event.get("type")
                     if kind == "token":
                         on_token(str(event.get("text", "")))
+                    elif kind == "reasoning" and on_reasoning is not None:
+                        on_reasoning(str(event.get("text", "")))
                     elif kind == "phase":
                         on_phase(str(event.get("text", "")))
                     elif kind == "result":
@@ -132,7 +141,7 @@ class TextGenerationProcess:
                         detail = str(event.get("error") or "Text generation failed.")
                         if event.get("traceback"):
                             on_phase(str(event["traceback"])[-5000:])
-                        raise RuntimeError(detail)
+                        raise TextWorkerError(detail, event.get("code"))
                     else:
                         raise RuntimeError("The text worker sent an invalid response.")
             except (BrokenPipeError, OSError, json.JSONDecodeError):

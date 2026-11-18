@@ -140,11 +140,20 @@ export function fetchTextStatus(): Promise<TextRuntimeStatus> {
   return requestJson<TextRuntimeStatus>("/api/text/status", { signal: AbortSignal.timeout(15_000) });
 }
 
-export function addTextModel(path: string): Promise<{ model: TextModel; models: TextModel[] }> {
+export function addTextModel(source: string | string[]): Promise<{ model: TextModel; models: TextModel[] }> {
   return requestJson("/api/text/models/import", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ path }),
+    body: JSON.stringify(typeof source === "string" ? { path: source } : { ggufPaths: source }),
+  });
+}
+
+export function uploadChatImage(image: string): Promise<{ image: string }> {
+  return requestJson("/api/text/images", {
+    method: "POST",
+    signal: AbortSignal.timeout(30_000),
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ image }),
   });
 }
 
@@ -169,7 +178,10 @@ export function startTextGeneration(payload: {
   threadId: string;
   modelId: string;
   device: "AUTO" | "GPU" | "CPU";
-  messages: Array<{ role: "user" | "assistant"; content: string }>;
+  messages: Array<{ role: "user" | "assistant"; content: string; image?: string; generatedImage?: string }>;
+  mode?: "instant" | "reasoning";
+  imageModel?: string;
+  contextSize?: number;
   systemPrompt: string;
   temperature: number;
   topP: number;

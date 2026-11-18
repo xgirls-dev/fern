@@ -5,6 +5,7 @@ import Send from "lucide-react/dist/esm/icons/arrow-up.mjs";
 import ArrowDown from "lucide-react/dist/esm/icons/arrow-down.mjs";
 import RotateCcw from "lucide-react/dist/esm/icons/rotate-ccw.mjs";
 import Info from "lucide-react/dist/esm/icons/info.mjs";
+import ImagePlus from "lucide-react/dist/esm/icons/image-plus.mjs";
 import { TextMarkdown } from "./TextMarkdown";
 import { Button, IconButton, MenuItem, Select, Textarea } from "./ui/controls";
 
@@ -15,8 +16,24 @@ import Square from "lucide-react/dist/esm/icons/square.mjs";
 import LoaderCircle from "lucide-react/dist/esm/icons/loader-circle.mjs";
 import type { useTextChat } from "../hooks/useTextChat";
 import { notify } from "../lib/notifications";
+import { resolveAssetUrl } from "../lib/api";
+import type { GeneratedChatImage } from "../lib/textThreads";
 
 type TextStudio = ReturnType<typeof useTextChat>;
+
+function ChatImage({ image }: { image: GeneratedChatImage }) {
+  const open = async () => {
+    try {
+      const error = await window.studio.openOutputImage(image.name);
+      if (error) notify(error, "error");
+    } catch {
+      notify("Could not open the generated image.", "error");
+    }
+  };
+  return <button type="button" className="text-generated-image" aria-label="Open generated image" onClick={() => void open()}>
+    <img src={resolveAssetUrl(`/outputs/${encodeURIComponent(image.name)}`)} alt="Generated image" />
+  </button>;
+}
 
 export function TextWorkspace({ studio, sidebarCollapsed = false }: { studio: TextStudio; sidebarCollapsed?: boolean }) {
   const { activeThread, status, statusError, actionError, busy } = studio;
@@ -30,25 +47,31 @@ export function TextWorkspace({ studio, sidebarCollapsed = false }: { studio: Te
   const [showScrollButton, setShowScrollButton] = useState(false);
   const feedRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const attachmentInput = useRef<HTMLInputElement>(null);
   const runningHere = status.job.status === "running" && status.job.threadId === activeThread?.id;
   const models = status.models;
   const modelOptions = [
     ...models.map(model => ({ value: model.id, label: model.name, description: model.installed ? undefined : "Unavailable", disabled: !model.installed })),
-    ...(status.recommendedModels ?? []).filter(model => !models.some(installed => installed.id === model.id))
+    ...(status.recommendedModels ?? []).filter(model => !model.installed && !models.some(installed => installed.id === model.id))
       .map(model => ({ value: model.id, label: model.name, description: "Not installed", disabled: true })),
   ];
   const installedModels = models.filter((model) => model.installed);
   const preferredModel = installedModels.find((model) => model.id === status.defaultModelId) ?? installedModels[0];
   const selectedModel = activeThread?.modelId ?? preferredModel?.id ?? "";
-  const modelAvailable = models.some((model) => model.id === selectedModel && model.installed);
+  const selected = models.find((model) => model.id === selectedModel && model.installed);
+  const modelAvailable = !!selected;
+  const incompatibleImages = !selected?.supportsVision && !!(activeThread?.draftImage || activeThread?.messages.some((message) => message.image));
   const lastMessage = activeThread?.messages.at(-1);
-  const needsRetry = !!lastMessage && (lastMessage.role === "user" || !lastMessage.content.trim());
+  const needsRetry = !!lastMessage && (lastMessage.role === "user" || (!lastMessage.content.trim() && !lastMessage.generatedImage));
+  const imageModels = status.imageToolModels ?? [];
+  const generatingImage = runningHere && !!status.job.phase?.startsWith("Generating");
+  const checkingImage = runningHere && !!status.job.phase?.startsWith("Checking the generated image");
   const pinnedToBottom = useRef(true);
   const empty = !activeThread?.messages.length && !runningHere;
   const checking = !studio.statusLoaded && !statusError;
   const pendingHere = !!activeThread?.pendingJobId && !runningHere;
-  const unavailableReason = checking ? "Checking local models…" : !modelAvailable ? "Choose an installed model to send" : !status.runtimeAvailable ? "Text runtime unavailable" : needsRetry && !busy ? "Retry the response to continue" : "";
-  const activity = studio.modelAction ?? (["downloading", "preparing"].includes(status.modelInstall?.status ?? "") ? status.modelInstall?.phase ?? "Installing model…" : pendingHere ? "Preparing your response…" : busy && !runningHere ? "Another response is running" : "");
+  const unavailableReason = checking ? "Checking local models…" : !modelAvailable ? "Choose an installed model to send" : !status.runtimeAvailable ? "Text runtime unavailable" : incompatibleImages ? "Choose a vision model for the attached images" : needsRetry && !busy ? "Retry the response to continue" : "";
+  const activity = studio.modelAction ?? (studio.attachingImage ? "Attaching image…" : ["downloading", "preparing"].includes(status.modelInstall?.status ?? "") ? status.modelInstall?.phase ?? "Installing model…" : pendingHere ? "Preparing your response…" : busy && !runningHere ? "Another response is running" : "");
   const { selectModel } = studio;
 
   useEffect(() => {
@@ -60,7 +83,7 @@ export function TextWorkspace({ studio, sidebarCollapsed = false }: { studio: Te
   useEffect(() => {
     const element = feedRef.current;
     if (element && pinnedToBottom.current) element.scrollTo({ top: element.scrollHeight, behavior: busy ? "auto" : "smooth" });
-  }, [activeThread?.messages.length, status.job.partialText, status.job.status, busy]);
+  }, [activeThread?.messages.length, status.job.partialText, status.job.partialReasoning, status.job.image?.name, status.job.status, busy]);
   useEffect(() => {
     pinnedToBottom.current = true;
     setShowScrollButton(false);
@@ -93,7 +116,7 @@ export function TextWorkspace({ studio, sidebarCollapsed = false }: { studio: Te
   };
 
   const submit = () => {
-    if (busy || needsRetry || !modelAvailable || !status.runtimeAvailable) return;
+    if (busy || needsRetry || !modelAvailable || !status.runtimeAvailable || incompatibleImages) return;
     const text = activeThread?.draft ?? "";
     if (!text.trim()) return;
     pinnedToBottom.current = true;
@@ -128,24 +151,36 @@ export function TextWorkspace({ studio, sidebarCollapsed = false }: { studio: Te
 
         {activeThread.messages.map((message) => (
           <article className={`text-message text-message--${message.role}`} key={message.id}>
+            {message.image && <img className="text-message-image" src={resolveAssetUrl(`/references/${message.image}`)} alt="Attached chat image" />}
+            {message.generatedImage && <ChatImage image={message.generatedImage} />}
+            {message.reasoning && <details className="text-reasoning"><summary>Reasoning</summary><TextMarkdown content={message.reasoning} /></details>}
             <div className="text-message-content">{message.role === "user" ? message.content : <TextMarkdown content={message.content} />}</div>
-            {message.status === "failed" ? <div className="text-error" role="alert">{message.error ?? "Generation failed. Retry the response."}</div> : null}
+            {message.status === "failed" ? <div className="text-error" role="alert">
+              {message.error ?? "Generation failed. Retry the response."}
+              {message.errorCode === "intel-vulkan-driver" && window.studio.platform === "win32" && <> <a href="https://www.intel.com/content/www/us/en/support/detect.html" target="_blank" rel="noreferrer">Get Intel graphics drivers</a></>}
+            </div> : null}
             {message.status === "stopped" ? <div className="text-partial-note">Stopped{message.content ? " · Partial response" : " before any text was generated"}</div> : null}
             {message.role === "assistant" && <div className="text-message-tools">
               {message.content.trim() && <IconButton className="text-icon-button" aria-label={copiedId === message.id ? "Copied" : "Copy message"} title={copiedId === message.id ? "Copied" : "Copy message"} onClick={() => void copyMessage(message.id, message.content)}><Copy size={15} aria-hidden="true" /></IconButton>}
-              {message === lastMessage && !busy && <IconButton className="text-icon-button" aria-label={message.status === "failed" || message.status === "stopped" ? "Retry response" : "Regenerate response"} title="Regenerate response" disabled={!modelAvailable || !status.runtimeAvailable} onClick={() => void studio.retry()}><RotateCcw size={15} aria-hidden="true" /></IconButton>}
+              {message === lastMessage && !busy && <IconButton className="text-icon-button" aria-label={message.status === "failed" || message.status === "stopped" ? "Retry response" : "Regenerate response"} title="Regenerate response" disabled={!modelAvailable || !status.runtimeAvailable || incompatibleImages} onClick={() => void studio.retry()}><RotateCcw size={15} aria-hidden="true" /></IconButton>}
               <IconButton className="text-icon-button" aria-label="Response details" title="Response details" aria-expanded={infoId === message.id} onClick={() => setInfoId(infoId === message.id ? null : message.id)}><Info size={15} aria-hidden="true" /></IconButton>
               {copiedId === message.id && <span role="status">Copied</span>}
             </div>}
-            {infoId === message.id && <div className="text-response-details"><span className="text-message-label">{message.modelName ?? message.metrics?.modelName ?? "Local model"}</span>{message.metrics && <span>{message.metrics.device} · {message.metrics.inputTokens} in / {message.metrics.outputTokens} out · {message.metrics.tokensPerSecond.toFixed(1)} tokens/s · {message.metrics.generationSeconds.toFixed(1)} s<br />Temperature {message.metrics.temperature ?? "unknown"} · Top P {message.metrics.topP ?? "unknown"} · Seed {message.metrics.seed ?? "unknown"} · Max tokens {message.metrics.maxNewTokens ?? "unknown"}</span>}</div>}
+            {infoId === message.id && <div className="text-response-details"><span className="text-message-label">{message.modelName ?? message.metrics?.modelName ?? "Local model"}</span>{message.metrics && <span>{message.metrics.backend ? `${message.metrics.backend} · ` : ""}{message.metrics.device} · {message.metrics.inputTokens} in / {message.metrics.outputTokens} out · {message.metrics.tokensPerSecond.toFixed(1)} tokens/s · {message.metrics.generationSeconds.toFixed(1)} s<br />Temperature {message.metrics.temperature ?? "unknown"} · Top P {message.metrics.topP ?? "unknown"} · Seed {message.metrics.seed ?? "unknown"} · Max tokens {message.metrics.maxNewTokens ?? "unknown"}</span>}</div>}
+            {infoId === message.id && message.metrics?.context && <div className="text-response-details">
+              {message.metrics.context.size.toLocaleString()} token context · {message.metrics.context.images} images
+              {message.metrics.context.compactedMessages > 0 && ` · ${message.metrics.context.compactedMessages} earlier messages compacted`}
+            </div>}
 
           </article>
         ))}
         {runningHere ? <article className="text-message text-message--assistant text-message--streaming">
-          <div className="text-message-content">{status.job.partialText ? <TextMarkdown content={status.job.partialText} /> : <span className="text-thinking">Thinking…</span>}<span className="text-stream-cursor" aria-hidden="true" /></div>
-          {!status.job.partialText && <div className="text-message-tools"><span>{status.job.phase ?? "Preparing your response…"}</span></div>}
+          {status.job.image && <ChatImage image={status.job.image} />}
+          {status.job.partialReasoning && <details className="text-reasoning"><summary>Reasoning</summary><TextMarkdown content={status.job.partialReasoning} /></details>}
+          <div className="text-message-content">{status.job.partialText ? <TextMarkdown content={status.job.partialText} /> : <span className="text-thinking">{generatingImage ? "Creating an image…" : checkingImage ? "Checking the image…" : "Thinking…"}</span>}<span className="text-stream-cursor" aria-hidden="true" /></div>
+          {(!status.job.partialText || generatingImage || checkingImage) && <div className="text-message-tools"><span>{status.job.phase ?? "Preparing your response…"}</span></div>}
         </article> : null}
-        {lastMessage?.role === "user" && !busy && <Button variant="secondary" className="text-retry" disabled={!modelAvailable || !status.runtimeAvailable} onClick={() => void studio.retry()}><RotateCcw size={15} aria-hidden="true" />Retry response</Button>}
+        {lastMessage?.role === "user" && !busy && <Button variant="secondary" className="text-retry" disabled={!modelAvailable || !status.runtimeAvailable || incompatibleImages} onClick={() => void studio.retry()}><RotateCcw size={15} aria-hidden="true" />Retry response</Button>}
 
         <div className="text-feed-end" />
       </div>
@@ -155,6 +190,10 @@ export function TextWorkspace({ studio, sidebarCollapsed = false }: { studio: Te
         {visibleError ? <div className="text-error" role="alert">{visibleError}<Button variant="secondary" onClick={() => { void studio.refresh(); }}>Refresh status</Button></div> : null}
         {selectedModel && !modelAvailable ? <div className="text-error" role="alert">{models.find((model) => model.id === selectedModel)?.error ?? "This thread’s model was removed. Add its folder again or select another model."}</div> : null}
         <form className="text-composer" onSubmit={(event) => { event.preventDefault(); submit(); }}>
+          {activeThread.draftImage && <div className="text-draft-image">
+            <img src={resolveAssetUrl(`/references/${activeThread.draftImage}`)} alt="Image to send" />
+            <IconButton aria-label="Remove chat image" disabled={busy} onClick={() => studio.updateThread(activeThread.id, { draftImage: undefined })}><X size={14} aria-hidden="true" /></IconButton>
+          </div>}
           <Textarea
             ref={inputRef}
             aria-label="Message"
@@ -174,12 +213,24 @@ export function TextWorkspace({ studio, sidebarCollapsed = false }: { studio: Te
           />
           <div className="text-composer-bottom">
             <div className="text-composer-model-controls">
+              {selected?.supportsVision && <>
+                <input ref={attachmentInput} type="file" accept="image/png,image/jpeg,image/webp" aria-label="Chat image file" hidden onChange={(event) => {
+                  const file = event.currentTarget.files?.[0];
+                  event.currentTarget.value = "";
+                  if (file) void studio.attachImage(file);
+                }} />
+                <IconButton aria-label="Attach chat image" title="Attach chat image" disabled={busy} onClick={() => attachmentInput.current?.click()}><ImagePlus size={16} aria-hidden="true" /></IconButton>
+              </>}
+              {selected?.supportsReasoning && <Select className="text-response-mode" aria-label="Response mode" value={activeThread.mode} disabled={busy} onChange={(event) => {
+                const mode = event.target.value === "reasoning" ? "reasoning" : "instant";
+                studio.updateThread(activeThread.id, { mode, ...(mode === "reasoning" && activeThread.maxNewTokens === 512 ? { maxNewTokens: 1024 } : {}) });
+              }}><option value="instant">Instant</option><option value="reasoning">Reasoning</option></Select>}
             </div>
             <div className="composer-send-tools">
               <TextMenu label="Text model" value={selectedModel} disabled={busy} options={modelOptions} onSelect={studio.selectModel}>
                 <MenuItem role="menuitem" onClick={openModels}>Manage models</MenuItem>
               </TextMenu>
-            {runningHere ? <IconButton variant="danger" shape="circle" className="composer-submit is-stop" disabled={status.job.status !== "running"} onClick={() => void studio.stop()} aria-label="Stop generation" title="Stop generation"><Square size={14} fill="currentColor" aria-hidden="true" /></IconButton> : <IconButton type="submit" variant="primary" shape="circle" className="composer-submit" disabled={busy || !activeThread.draft.trim() || !modelAvailable || !status.runtimeAvailable || needsRetry} aria-label="Send message" title={activity || unavailableReason || "Send message"}>{studio.submitting || pendingHere ? <LoaderCircle className="spinner" size={16} aria-hidden="true" /> : <Send size={20} aria-hidden="true" />}</IconButton>}
+            {runningHere ? <IconButton variant="danger" shape="circle" className="composer-submit is-stop" disabled={status.job.status !== "running"} onClick={() => void studio.stop()} aria-label="Stop generation" title="Stop generation"><Square size={14} fill="currentColor" aria-hidden="true" /></IconButton> : <IconButton type="submit" variant="primary" shape="circle" className="composer-submit" disabled={busy || !activeThread.draft.trim() || !modelAvailable || !status.runtimeAvailable || needsRetry || incompatibleImages} aria-label="Send message" title={activity || unavailableReason || "Send message"}>{studio.submitting || pendingHere ? <LoaderCircle className="spinner" size={16} aria-hidden="true" /> : <Send size={20} aria-hidden="true" />}</IconButton>}
             </div>
           </div>
         </form>
@@ -199,6 +250,23 @@ export function TextWorkspace({ studio, sidebarCollapsed = false }: { studio: Te
           {busy && <p className="text-panel-description" role="status">{activity || "Settings are locked while a response is generating."}</p>}
           <div className="text-settings-grid">
             <label>Model<Select aria-label="Settings model" value={selectedModel} disabled={busy} onChange={event => studio.selectModel(event.target.value)}>{!selectedModel && <option value="">Choose a model</option>}{models.map(model => <option key={model.id} value={model.id} disabled={!model.installed}>{model.name}{model.installed ? "" : " - Unavailable"}</option>)}</Select></label>
+            {selected?.supportsTools && selected.supportsVision && <label>Image generation
+              <Select aria-label="Image generation model" value={activeThread.imageModel} disabled={busy || studio.computeDevice === "CPU"} onChange={(event) => studio.updateThread(activeThread.id, { imageModel: event.target.value })}>
+                <option value="auto">{imageModels.length ? `Auto · ${imageModels[0].label}` : "Auto"}</option>
+                {imageModels.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}
+                {activeThread.imageModel !== "auto" && activeThread.imageModel !== "off" && !imageModels.some((model) => model.id === activeThread.imageModel) && <option value={activeThread.imageModel} disabled>Model unavailable</option>}
+                <option value="off">Off</option>
+              </Select>
+              {studio.computeDevice === "CPU" ? <small className="text-setting-help">Select GPU in Preferences to generate images in chat.</small> : !imageModels.length &&
+                <Button type="button" variant="secondary" onClick={() => { setPanel(null); window.dispatchEvent(new CustomEvent("fern-models", { detail: "image" })); }}>Browse image models</Button>}
+            </label>}
+            {selected?.format === "gguf" && <label>Context size
+              <Select aria-label="Context size" value={activeThread.contextSize} disabled={busy} onChange={(event) => studio.updateThread(activeThread.id, { contextSize: Number(event.target.value) })}>
+                <option value={4096}>4K tokens</option>
+                <option value={8192}>8K tokens</option>
+                <option value={16384}>16K tokens</option>
+              </Select>
+            </label>}
             <label>System prompt<Textarea rows={3} maxLength={10_000} placeholder="Optional instructions for the model" value={activeThread.systemPrompt} disabled={busy} onChange={(event) => studio.updateThread(activeThread.id, { systemPrompt: event.target.value })} /></label>
             <label>Maximum output<Select aria-label="Maximum output" value={activeThread.maxNewTokens} disabled={busy} onChange={(event) => studio.updateThread(activeThread.id, { maxNewTokens: Number(event.target.value) })}>{[128, 256, 512, 1024, 2048, 4096, 8192].map((value) => <option key={value} value={value}>{value.toLocaleString()} tokens</option>)}</Select></label>
             <label>Temperature<small className="text-setting-help">Lower for focused answers, higher for variety.</small><div className="text-range-control"><input aria-label="Temperature" type="range" min="0" max="2" step="0.05" value={activeThread.temperature} disabled={busy} onChange={(event) => studio.updateThread(activeThread.id, { temperature: Number(event.target.value) })} /><output>{activeThread.temperature.toFixed(2)}</output></div></label>

@@ -6,9 +6,12 @@ import {
   removeTextModel,
   startTextGeneration,
   stopTextGeneration,
+  uploadChatImage,
 } from "../lib/api";
+import { readReference } from "../lib/reference";
 import {
   createTextThread,
+  isChatImage,
   loadTextThreads,
   saveTextThreads,
   type TextDevice,
@@ -31,6 +34,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
   const [status, setStatus] = useState(idleStatus);
   const [statusLoaded, setStatusLoaded] = useState(false);
   const [modelAction, setModelAction] = useState<string | null>(null);
+  const [attachingImage, setAttachingImage] = useState(false);
   const modelActionRef = useRef(false);
   const [statusError, setStatusError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -44,7 +48,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     [workspace],
   );
   const threads = workspace.threads;
-  const busy = !!modelAction || submitting || status.job.status === "running" || ["downloading", "preparing"].includes(status.modelInstall?.status ?? "") || threads.some((thread) => !!thread.pendingJobId);
+  const busy = !!modelAction || attachingImage || submitting || status.job.status === "running" || ["downloading", "preparing"].includes(status.modelInstall?.status ?? "") || threads.some((thread) => !!thread.pendingJobId);
 
   useEffect(() => {
     persistPendingRef.current = true;
@@ -91,7 +95,9 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     if (!["complete", "failed", "stopped"].includes(job.status) || !job.id || !job.threadId) return;
     const assistant: TextMessage = {
       id: `response-${job.id}`, jobId: job.id, role: "assistant", content: job.partialText,
-      status: job.status as "complete" | "failed" | "stopped", error: job.error,
+      status: job.status as "complete" | "failed" | "stopped", error: job.error, errorCode: job.errorCode,
+      reasoning: job.partialReasoning || undefined,
+      generatedImage: job.image ?? undefined,
       modelName: job.result?.modelName ?? status.models.find((model) => model.id === job.modelId)?.name ?? "Unavailable model",
       createdAt: job.finishedAt ? job.finishedAt * 1000 : Date.now(),
       metrics: job.result ?? undefined,
@@ -126,7 +132,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
   }, []);
 
   const newThread = useCallback(() => {
-    if (activeThread && !activeThread.archived && !activeThread.messages.length && !activeThread.draft && !activeThread.pendingJobId && activeThread.title === "New text thread") {
+    if (activeThread && !activeThread.archived && !activeThread.messages.length && !activeThread.draft && !activeThread.draftImage && !activeThread.pendingJobId && activeThread.title === "New text thread") {
       setActionError(null);
       return activeThread.id;
     }
@@ -173,15 +179,15 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     });
   }, [busy, status.job.threadId, workspace.threads]);
 
-  const importModel = useCallback(async () => {
+  const importModel = useCallback(async (format: "openvino" | "gguf" = "openvino") => {
     if (modelActionRef.current) return;
     modelActionRef.current = true;
     setModelAction("Adding model…");
     setActionError(null);
     try {
-      const path = await window.studio.pickTextModelFolder();
-      if (!path) return;
-      const result = await addTextModel(path);
+      const source = format === "gguf" ? await window.studio.pickGgufFiles() : await window.studio.pickTextModelFolder();
+      if (!source?.length) return;
+      const result = await addTextModel(source);
       setStatus((current) => ({ ...current, models: result.models }));
       setRefreshKey((value) => value + 1);
     } catch (error) {
@@ -191,6 +197,21 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
       setModelAction(null);
     }
   }, []);
+
+  const attachImage = useCallback(async (file: File) => {
+    if (!activeThread || busy) return;
+    setActionError(null);
+    setAttachingImage(true);
+    try {
+      const { image } = await uploadChatImage(await readReference(file));
+      if (!isChatImage(image)) throw new Error("Fern could not save this chat image.");
+      updateThread(activeThread.id, { draftImage: image });
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Could not attach this image.");
+    } finally {
+      setAttachingImage(false);
+    }
+  }, [activeThread, busy, updateThread]);
 
   const deleteModel = useCallback(async (id: string) => {
     if (modelActionRef.current) return false;
@@ -237,29 +258,46 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
       setActionError(status.runtimeError ?? "OpenVINO GenAI is not available in this Fern runtime.");
       return;
     }
-    if (!modelId || !status.models.some((model) => model.id === modelId && model.installed)) {
-      setActionError("Add a local OpenVINO text model before starting a conversation.");
+    const model = status.models.find((item) => item.id === modelId && item.installed);
+    if (!modelId || !model) {
+      setActionError("Add a local text model before starting a conversation.");
       return;
     }
-    const user: TextMessage = { id: `message-${crypto.randomUUID()}`, role: "user", content: text, createdAt: Date.now() };
+    const user: TextMessage = { id: `message-${crypto.randomUUID()}`, role: "user", content: text, image: activeThread.draftImage, createdAt: Date.now() };
     const lastUser = activeThread.messages.map((message) => message.role).lastIndexOf("user");
     const messages = retry ? activeThread.messages.slice(0, lastUser + 1) : [...activeThread.messages, user];
     if (!messages.length) return;
+    if (!model.supportsVision && messages.some((message) => message.image)) {
+      setActionError("Choose a vision model for this conversation's images.");
+      return;
+    }
     const title = activeThread.messages.length === 0 && activeThread.title === "New text thread"
       ? text.replace(/\s+/g, " ").slice(0, 56)
       : activeThread.title;
     const requestId = crypto.randomUUID();
+    const imageOptions = status.imageToolModels ?? [];
+    const imageModel = model.supportsTools && model.supportsVision && computeDevice === "GPU"
+      ? (activeThread.imageModel === "auto" ? imageOptions[0] : imageOptions.find((item) => item.id === activeThread.imageModel))
+      : undefined;
     sending.current = true;
     setSubmitting(true);
     ++pollVersion.current;
-    updateThread(activeThread.id, { messages, title, draft: retry ? activeThread.draft : "", modelId, pendingJobId: requestId });
+    updateThread(activeThread.id, {
+      messages, title, modelId, pendingJobId: requestId,
+      ...(retry ? {} : { draft: "", draftImage: undefined }),
+    });
     try {
       const accepted = await startTextGeneration({
         requestId,
         threadId: activeThread.id,
         modelId,
         device: computeDevice === "CPU" ? "CPU" : "AUTO",
-        messages: messages.map(({ role, content }) => ({ role, content })),
+        messages: messages.map(({ role, content, image, generatedImage }) => ({
+          role, content: content || (generatedImage ? "I generated an image." : ""), image, generatedImage: generatedImage?.name,
+        })),
+        ...(model.supportsReasoning ? { mode: activeThread.mode } : {}),
+        ...(imageModel ? { imageModel: imageModel.id } : {}),
+        ...(model.format === "gguf" ? { contextSize: activeThread.contextSize } : {}),
         systemPrompt: activeThread.systemPrompt,
         temperature: activeThread.temperature,
         topP: activeThread.topP,
@@ -290,7 +328,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
       sending.current = false;
       setSubmitting(false);
     }
-  }, [activeThread, busy, computeDevice, refresh, status.models, status.runtimeAvailable, status.runtimeError, updateThread]);
+  }, [activeThread, busy, computeDevice, status.defaultModelId, status.imageToolModels, status.models, status.runtimeAvailable, status.runtimeError, updateThread]);
 
   const retry = useCallback(() => send("", true), [send]);
 
@@ -308,8 +346,8 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
   }, [activeThread, updateThread]);
 
   return {
-    threads, activeThread, status, statusLoaded, modelAction, submitting, statusError, actionError, busy,
+    threads, activeThread, status, statusLoaded, modelAction, submitting, attachingImage, statusError, actionError, busy, computeDevice,
     newThread, selectThread, resetWorkspace, renameThread, archiveThread, deleteThread,
-    updateThread, importModel, deleteModel, installRecommendedModel, send, retry, stop, refresh, selectModel, setDevice,
+    updateThread, importModel, deleteModel, installRecommendedModel, attachImage, send, retry, stop, refresh, selectModel, setDevice,
   };
 }

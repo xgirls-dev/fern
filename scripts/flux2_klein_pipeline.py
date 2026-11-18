@@ -448,6 +448,7 @@ def generate_image(
     loras: list[dict[str, Any]] | None = None,
     reference_image: Any | None = None,
     reference_images: list[Any] | None = None,
+    compile_cache: Path | None = None,
     log: Callable[[str], None] | None = None,
 ) -> tuple[Path, float]:
     for label, value in (("Width", width), ("Height", height)):
@@ -478,7 +479,7 @@ def generate_image(
                                          height=height, steps=steps, seed=seed,
                                          optional_encoder_dir=(MODELS_ROOT / "flux2-klein-4b-optional" / "text_encoder_uncensored") if use_uncensored_text_encoder else None,
                                          reference_image=reference_image, reference_images=reference_images,
-                                         model_size=model.removesuffix("-lora"), log=log)
+                                         model_size=model.removesuffix("-lora"), compile_cache=compile_cache, log=log)
     if loras:
         raise ValueError("Choose Klein 4B LoRA or Klein 9B LoRA to use adapters.")
 

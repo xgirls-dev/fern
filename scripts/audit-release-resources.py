@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shutil
 from pathlib import Path
 
 ALLOWED_BACKEND = {
@@ -19,13 +20,40 @@ ALLOWED_BACKEND = {
     'qwen21_turbo_download.py', 'qwen21_turbo_model_catalog.json',
     'tts_model_download.py', 'tts_model_catalog.json', 'requirements-qwen3-tts-runtime.txt',
     'text_generation_worker.py', 'text_generation_process.py', 'text_model_registry.py',
-    'text_model_download.py', 'text_model_catalog.json',
+    'text_model_download.py', 'text_model_catalog.json', 'gguf_metadata.py', 'gguf_runtime.py', 'chat_image_tools.py', 'chat_context.py',
     'requirements-qwen21-turbo-export.txt', 'requirements-qwen21-turbo-overlay.txt',
     'install-qwen3-tts.ps1', 'gallery_store.py', 'generation_worker.py',
     'storage_manager.py', 'bootstrap_install.py',
 }
 LICENSES = {'LICENSE-QWEN', 'LICENSE-OPENVINO-NOTEBOOKS', 'NOTICE'}
 TOKEN = re.compile(rb'hf_[A-Za-z0-9]{20,}')
+
+
+def stage_backend() -> Path:
+    scripts = Path(__file__).resolve().parent
+    root = scripts.parent
+    resources = root / 'apps' / 'desktop' / 'resources'
+    backend = resources / 'scripts'
+    licenses = resources / 'licenses'
+    for target in (backend, licenses):
+        if target.resolve() != target or not target.is_relative_to(root):
+            raise ValueError(f'Resource target is outside the workspace: {target}')
+        if target.exists():
+            shutil.rmtree(target)
+        target.mkdir()
+
+    for name in ALLOWED_BACKEND:
+        shutil.copy2(scripts / name, backend / name)
+    for path in (scripts / 'tts_runtime').rglob('*'):
+        relative = path.relative_to(scripts)
+        if path.is_file() and '__pycache__' not in relative.parts and (path.suffix in {'.py', '.npz'} or path.name in LICENSES):
+            destination = backend / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, destination)
+    shutil.copy2(root / 'LICENSE', licenses / 'fern.txt')
+    for name in ('react', 'react-dom', 'scheduler', 'lucide-react'):
+        shutil.copy2(root / 'node_modules' / name / 'LICENSE', licenses / f'{name}.txt')
+    return backend
 
 
 def audit_backend(root: Path) -> int:
@@ -213,6 +241,9 @@ def audit_backend(root: Path) -> int:
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('backend', type=Path)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument('backend', type=Path, nargs='?')
+    source.add_argument('--stage', action='store_true')
     args = parser.parse_args()
-    print(f'Release backend payload verified: {audit_backend(args.backend)} files; no local artifacts or credentials.')
+    backend = stage_backend() if args.stage else args.backend
+    print(f'Release backend payload verified: {audit_backend(backend)} files; no local artifacts or credentials.')

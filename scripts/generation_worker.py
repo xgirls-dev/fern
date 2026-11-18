@@ -76,6 +76,11 @@ class GenerationWorker:
         self.lock = Lock()
 
     def close(self):
+        self.interrupt()
+        with self.lock:
+            self._close_unlocked()
+
+    def _close_unlocked(self):
         if self.process is not None:
             if self.process.is_alive():
                 self.process.terminate()
@@ -105,7 +110,7 @@ class GenerationWorker:
             if cancel_event.is_set():
                 raise GenerationCancelled("Generation stopped by user.")
             if self.process is None or not self.process.is_alive():
-                self.close()
+                self._close_unlocked()
                 context = multiprocessing.get_context("spawn")
                 self.connection, child = context.Pipe()
                 self.process = context.Process(target=self.target, args=(child,), daemon=True)
@@ -127,5 +132,5 @@ class GenerationWorker:
                     elif not self.process.is_alive():
                         raise RuntimeError("The generation worker exited. Try generating again.")
             except BaseException:
-                self.close()
+                self._close_unlocked()
                 raise
