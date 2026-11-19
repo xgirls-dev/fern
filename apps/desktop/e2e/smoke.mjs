@@ -175,8 +175,13 @@ try {
   await customChoice.waitFor();
   await customChoice.click();
   await expect(page.getByRole("button", { name: `Image model: ${path.basename(customModelPath)}` })).toBeVisible();
-  const selectedImageThreadId = await page.locator('.sidebar-thread-button[aria-current="page"]').getAttribute("data-thread-id");
+  const expandSidebar = page.getByRole("button", { name: "Expand sidebar", exact: true });
+  const sidebarWasCollapsed = await expandSidebar.isVisible();
+  if (sidebarWasCollapsed) await expandSidebar.click();
+  const imageThreads = page.getByRole("region", { name: "Image threads", exact: true });
+  const selectedImageThreadId = await imageThreads.locator('.sidebar-thread-button[aria-current="page"]').getAttribute("data-thread-id");
   assert.ok(selectedImageThreadId, "The custom model selection should belong to an active image thread");
+  if (sidebarWasCollapsed) await page.getByRole("button", { name: "Collapse sidebar", exact: true }).click();
   await page.getByRole("button", { name: "Image settings" }).last().click();
   await expect(page.getByRole("spinbutton", { name: "Width", exact: true })).toHaveValue("1024");
   await expect(page.getByRole("spinbutton", { name: "Height", exact: true })).toHaveValue("1024");
@@ -206,7 +211,8 @@ try {
   assert.ok((await readFile(modelIndexPath)).length > 0, "Removing a local link must preserve the source model files");
   // Return to the thread that selected this model. A new thread correctly
   // starts without a model selection on a clean CI runner.
-  await page.locator(`.sidebar-thread-button[data-thread-id="${selectedImageThreadId}"]`).click();
+  if (await expandSidebar.isVisible()) await expandSidebar.click();
+  await imageThreads.locator(`.sidebar-thread-button[data-thread-id="${selectedImageThreadId}"]`).click();
   await expect(page.getByRole("button", { name: "Image model: Custom model · Missing" })).toBeVisible();
   assert.deepEqual(pageErrors, [], `Renderer errors: ${pageErrors.join(" | ")}`);
   assert.deepEqual(consoleErrors, [], `Console errors: ${consoleErrors.join(" | ")}`);
