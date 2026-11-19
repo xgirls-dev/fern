@@ -7,14 +7,22 @@ try {
   await firstImage.waitFor();
   for (const [width, height] of [[1440, 920], [864, 547], [800, 491]]) {
     await page.setViewportSize({ width, height });
-    const title = await page.getByRole("heading", { name: "Images", exact: true }).boundingBox();
-    const toolbar = await page.getByRole("button", { name: "Select", exact: true }).boundingBox();
-    const firstTile = await page.locator(".history-grid .thumb").first().boundingBox();
-    const create = await page.getByRole("button", { name: "Create image", exact: true }).boundingBox();
-    assert(Math.abs(title.x - toolbar.x) < 1 && Math.abs(title.x - firstTile.x) < 1, "Align title, filters and image grid");
+    await page.getByRole("button", { name: width <= 900 ? "Expand sidebar" : "Collapse sidebar", exact: true }).waitFor();
+    const { title, toolbar, firstTile, create, caption, scrollport } = await page.evaluate(async () => {
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const rect = (selector) => document.querySelector(selector).getBoundingClientRect().toJSON();
+      return {
+        title: rect(".library-view-header h2"),
+        toolbar: rect(".gallery-panel-tools button"),
+        firstTile: rect(".history-grid .thumb"),
+        create: rect(".library-view-header .workspace-header-actions button:last-child"),
+        caption: rect(".history-grid .thumb-meta"),
+        scrollport: rect(".gallery-panel-body"),
+      };
+    });
+    assert(Math.abs(title.x - toolbar.x) < 1 && Math.abs(title.x - firstTile.x) < 1,
+      `Align title, filters and image grid at ${width} × ${height}: ${title.x}, ${toolbar.x}, ${firstTile.x}`);
     assert(create.width < 160 && create.y < title.y + title.height && title.y < create.y + create.height, "Keep creation beside the title");
-    const caption = await page.locator(".history-grid .thumb-meta").first().boundingBox();
-    const scrollport = await page.locator(".gallery-panel-body").boundingBox();
     assert(caption.y + caption.height <= scrollport.y + scrollport.height, "Keep the first row's artwork and its review controls visible");
   }
   await firstImage.focus();
