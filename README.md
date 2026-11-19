@@ -6,9 +6,9 @@ Talk to a model, attach a photo, or ask Fern to make an image right in the conve
 
 [Download Fern](https://github.com/xgirls-dev/fern/releases/latest) · [Get started](#get-started) · [Platform support](#platform-support) · [Changelog](CHANGELOG.md)
 
-![Fern Chat showing a generated fox in the snow, the Image checked status, and a follow-up answer about the image](assets/fern-chat.png)
+![Fern Chat showing a sharp red fox in the snow, an Image checked label, and Gemma's review of the composition](assets/fern-chat.png)
 
-*Fern Chat replaying a verified Intel Arc B390 session. Kromoss OPD DMD2 generated the image. Gemma 4 E4B inspected it and answered a follow-up.*
+*Klein 4B generated the fox on Intel Arc B390. Gemma 4 E4B inspected the image in Chat and explained how the snow and dark evergreens frame the fox.*
 
 ## Get started
 
@@ -36,7 +36,7 @@ sudo pacman -Syu intel-compute-runtime ocl-icd vulkan-intel vulkan-icd-loader
 
 - **Chat.** Go to **Models → Text**, install **Gemma 4 E4B · GGUF**, then choose **New thread → Chat**. The download includes the language model and its matching vision projector.
 - **Create an image.** Go to **Models → Image** and install a model available for your device. **Klein 4B** is the smaller FLUX.2 option. Choose **New thread → Create image**, select the model, and enter a prompt.
-- **Make an image in Chat.** Install Gemma 4 E4B and a compatible image model such as Klein 4B. On a compatible Intel GPU, keep **Preferences → Compute → Generation device** set to **Available GPU**. In a Gemma chat, choose **Auto** or the installed model under **Chat settings → Image generation**. Try “Create an illustration of a fox in falling snow,” then “What is under the fox’s feet?”
+- **Make an image in Chat.** Install Gemma 4 E4B and a compatible image model such as Klein 4B. On a compatible Intel GPU, keep **Preferences → Compute → Generation device** set to **Available GPU**. In a Gemma chat, choose **Auto** or the installed model under **Chat settings → Image generation**. Try “Create a crisp wildlife photograph of a red fox in fresh snow,” then “What works well in this shot?”
 
 First loads can take longer while Fern downloads an engine or compiles a model for your device. **Models** shows setup and download progress.
 
