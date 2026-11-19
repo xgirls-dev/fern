@@ -12,10 +12,17 @@ try {
   const setup = page.getByRole('button', { name: 'Set up model', exact: true });
   await setup.waitFor();
   await page.setViewportSize({ width: 1080, height: 720 });
+  await page.waitForFunction(() => {
+    const footer = document.querySelector('.tts-composer-footer');
+    const button = [...(footer?.querySelectorAll('button') ?? [])]
+      .find(element => element.textContent.trim() === 'Set up model');
+    if (!button) return false;
+    const panel = footer.getBoundingClientRect();
+    const box = button.getBoundingClientRect();
+    return window.innerWidth === 1080 && box.height > 0 &&
+      box.top >= Math.max(0, panel.top) && box.bottom <= Math.min(window.innerHeight, panel.bottom);
+  });
   assert.equal(setupCalls, 0, 'opening the speech composer does not start a download');
-  const box = await setup.boundingBox();
-  const panel = await page.locator('.tts-composer-footer').boundingBox();
-  assert(box && panel && box.y >= panel.y && box.y + box.height <= panel.y + panel.height, 'setup is visible in the pinned footer');
   state.ttsStatus.models[0].installed = true;
   await page.reload();
   await page.getByRole('button', { name: 'Audio thread: New audio thread', exact: true }).first().click();

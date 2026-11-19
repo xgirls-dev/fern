@@ -14,6 +14,7 @@ export async function fixture({ builtRenderer = false, firstRun = false, imageCo
         configFile: false,
         root: fileURLToPath(new URL("../apps/desktop/src/renderer", import.meta.url)),
         server: address,
+        optimizeDeps: { include: ["react/jsx-dev-runtime"] },
       });
   if (!builtRenderer) await server.listen();
   const { chromium } = await import(

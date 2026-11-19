@@ -95,20 +95,12 @@ try {
     [390, 844],
   ]) {
     await page.setViewportSize({ width, height });
-    await page.evaluate(
-      () =>
-        new Promise((resolve) =>
-          requestAnimationFrame(() => requestAnimationFrame(resolve)),
-        ),
-    );
-    const closeBox = await button("Close preview").boundingBox();
-    assert(
-      closeBox &&
-        closeBox.x >= 0 &&
-        closeBox.x + closeBox.width <= width &&
-        closeBox.y >= 0,
-      JSON.stringify({ width, closeBox }),
-    );
+    await page.waitForFunction(({ width, height }) => {
+      const close = document.querySelector('button[aria-label="Close preview"]');
+      const box = close?.getBoundingClientRect();
+      return window.innerWidth === width && window.innerHeight === height &&
+        box?.width > 0 && box.left >= 0 && box.right <= width && box.top >= 0 && box.bottom <= height;
+    }, { width, height });
     await page.screenshot({ path: `${dir}/viewer-polish-${width}.png` });
   }
   await page.setViewportSize({ width: 1440, height: 900 });
