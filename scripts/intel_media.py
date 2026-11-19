@@ -124,6 +124,7 @@ class IntelMedia:
         self.server = None
         self.server_model = None
         self.server_origin = None
+        self.server_adapter: dict[str, str | float] | None = None
         self.server_log = None
         self.server_timer = None
         self.lock = threading.RLock()
@@ -250,6 +251,9 @@ class IntelMedia:
         ]
         for role, asset in spec["assets"].items():
             args.extend((FLAGS[role], str(self.folder(model) / asset)))
+        if adapter := preset.get("lora"):
+            directory = (self.folder(model) / adapter["path"]).parent
+            args.extend(("--lora-model-dir", str(directory), "--lora-apply-mode", "at_runtime"))
         if tile := preset.get("vae_tile_size"):
             args.extend(("--vae-tiling", "--vae-tile-size", str(tile)))
         return args
@@ -268,7 +272,7 @@ class IntelMedia:
             self.server_timer.cancel()
             self.server_timer = None
         stop_process(self.server)
-        self.server = self.server_model = self.server_origin = None
+        self.server = self.server_model = self.server_origin = self.server_adapter = None
         if self.server_log:
             self.server_log.unlink(missing_ok=True)
             self.server_log = None
@@ -315,6 +319,14 @@ class IntelMedia:
                 event.wait(0.2)
                 continue
             verify_vulkan_residency(self.server_log.read_text(encoding="utf-8", errors="replace"))
+            if adapter := INTEL_MEDIA_CATALOG[model]["preset"].get("lora"):
+                expected_name = Path(adapter["path"]).name
+                for item in self.request("/sdapi/v1/loras"):
+                    if item["path"] == expected_name:
+                        self.server_adapter = {"path": item["path"], "multiplier": adapter["strength"]}
+                        break
+                if self.server_adapter is None:
+                    raise RuntimeError("The required LoRA adapter was not discovered by the Vulkan runtime.")
             self.server_model = model
             return
         detail = self.server_log.read_text(encoding="utf-8", errors="replace").strip().splitlines()
@@ -351,12 +363,25 @@ class IntelMedia:
                     check_cancel(event)
                     log("Generating on Intel GPU…")
                     started = time.perf_counter()
-                    result = self.request("/sdapi/v1/txt2img", {
+                    settings = {
                         "prompt": request["prompt"], "width": request["width"], "height": request["height"],
                         "seed": request["seed"], "steps": request["steps"], "cfg_scale": request["guidance"],
                         "batch_size": 1, "sampler_name": "Euler",
                         "scheduler": INTEL_MEDIA_CATALOG[model]["preset"]["scheduler"],
-                    }, timeout=240)
+                    }
+                    adapter = self.server_adapter
+                    if adapter:
+                        settings["lora"] = [adapter]
+                        log_offset = self.server_log.stat().st_size
+                    result = self.request("/sdapi/v1/txt2img", settings, timeout=240)
+                    if adapter:
+                        count = INTEL_MEDIA_CATALOG[model]["preset"]["lora"]["tensor_count"]
+                        with self.server_log.open("rb") as stream:
+                            stream.seek(log_offset)
+                            adapter_log = stream.read().decode("utf-8", errors="replace")
+                        if f"({count} / {count}) LoRA tensors have been applied" not in adapter_log:
+                            raise RuntimeError("The required LoRA adapter did not apply completely.")
+                        log(f"Applied {count}/{count} LoRA tensors on Intel Vulkan.")
                     image = base64.b64decode(result["images"][0].split(",")[-1], validate=True)
                     output.write_bytes(image)
                     timer = threading.Timer(120, self.expire_server, args=(self.server,))

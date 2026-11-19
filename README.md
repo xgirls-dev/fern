@@ -5,8 +5,8 @@ and speech generation. It runs on Windows and has a beta package for x86-64 Omar
 Image, text, and audio workspaces have their own threads. Video keeps a local clip history.
 
 Image threads support Flux.2 Klein, FLUX.3 Klein, Qwen Image 2.1 Turbo, and
-Tame Pony SDXL OpenVINO models, plus SANA-Sprint, MOSS Image HaDeS, and Z-Image
-Turbo on Windows Intel GPUs. Install available image models from **Models**;
+Tame Pony SDXL OpenVINO models, plus SANA-Sprint, MOSS Image HaDeS, Z-Image
+Turbo, and Kromoss OPD DMD2 on Windows Intel GPUs. Install available image models from **Models**;
 model-specific controls keep unsupported sizes and sampling options out of the
 composer. Image workflows include text-to-image, supported image guidance,
 repeatable seeds, batch generation, and a local gallery. Intel GPU, NVIDIA GPU,
@@ -89,6 +89,11 @@ crops the image to the 544 × 704 portrait canvas and renders 21 frames at 16 fp
 Play, save as WebM, or delete clips in the Video workspace. The Intel Vulkan
 runtime downloads during model setup. SANA-Sprint separately installs its
 OpenVINO dependencies and compresses the source text encoder on this machine.
+
+**Kromoss OPD · DMD2** loads the upstream adapter at runtime with the Kromoss
+OPD-priming 69,800 Q4_K GGUF. It generates one image at a time with eight
+steps, defaults to 512 × 512, and also offers 1024 × 1024 in Create Image.
+Select it explicitly in Chat settings to use it for chat images.
 
 GGUF threads use an 8K token context by default. Choose 4K, 8K, or 16K in **Chat
 settings**. Fern summarizes older turns when it needs room, carries the two

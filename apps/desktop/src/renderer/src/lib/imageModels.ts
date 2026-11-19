@@ -22,6 +22,7 @@ export function maxReferenceImages(model = "9b"): number {
 const intelImagePresets: Record<string, { sizes: number[]; steps: number; guidance: number }> = {
   "sana-sprint": { sizes: [512, 1024], steps: 2, guidance: 4.5 },
   "moss-hades": { sizes: [384, 512], steps: 4, guidance: 1 },
+  "kromoss-opd-dmd2": { sizes: [512, 1024], steps: 8, guidance: 1 },
   "z-image-turbo": { sizes: [512], steps: 8, guidance: 1 },
 };
 

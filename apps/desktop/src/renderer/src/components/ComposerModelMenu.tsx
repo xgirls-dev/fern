@@ -29,6 +29,7 @@ const MODEL_LABELS: Record<string, string> = {
   "sana-sprint": "SANA-Sprint 0.6B",
   "moss-hades": "MOSS Image · HaDeS",
   "z-image-turbo": "Z-Image Turbo",
+  "kromoss-opd-dmd2": "Kromoss OPD · DMD2",
 };
 const MODEL_CHOICES = Object.keys(MODEL_LABELS);
 

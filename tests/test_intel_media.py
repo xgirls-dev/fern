@@ -1,15 +1,18 @@
+import base64
+from io import BytesIO
 import tempfile
 import threading
 import unittest
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from PIL import Image
 
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from intel_media import verify_vulkan_residency
+from intel_media import IntelMedia, verify_vulkan_residency
+from model_catalog import INTEL_MEDIA_CATALOG
 from video_jobs import VideoJobs
 
 
@@ -23,6 +26,42 @@ class IntelMediaTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(RuntimeError, "keep all model weights"):
                 verify_vulkan_residency(placement)
+
+    def test_kromoss_requires_the_complete_pinned_adapter_for_each_render(self):
+        model = "kromoss-opd-dmd2"
+        preset = INTEL_MEDIA_CATALOG[model]["preset"]["lora"]
+        adapter = {"path": Path(preset["path"]).name, "multiplier": preset["strength"]}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            worker = IntelMedia(root)
+            worker.server = Mock()
+            worker.server.poll.return_value = None
+            worker.server_model = model
+            worker.server_adapter = adapter
+            worker.server_log = root / "server.log"
+            worker.server_log.write_text("", encoding="utf-8")
+            image = BytesIO()
+            Image.new("RGB", (512, 512)).save(image, format="PNG")
+            response = {"images": [base64.b64encode(image.getvalue()).decode("ascii")]}
+            def render_with(count):
+                def request(endpoint, settings, timeout):
+                    self.assertEqual(endpoint, "/sdapi/v1/txt2img")
+                    self.assertEqual(settings["lora"], [adapter])
+                    with worker.server_log.open("a", encoding="utf-8") as log:
+                        log.write(f"({count} / 756) LoRA tensors have been applied\n")
+                    return response
+                return request
+            request = {"model": model, "prompt": "A fox.", "seed": 1,
+                       "width": 512, "height": 512, "guidance": 1.0, "steps": 8}
+            event = threading.Event()
+            with patch("intel_media.threading.Timer"):
+                worker.request = render_with(756)
+                worker.generate_image(request, root / "complete.png", event, Mock())
+                self.assertTrue((root / "complete.png").is_file())
+                worker.request = render_with(755)
+                with self.assertRaisesRegex(RuntimeError, "did not apply completely"):
+                    worker.generate_image(request, root / "incomplete.png", event, Mock())
+                self.assertFalse((root / "incomplete.png").exists())
 
     def test_video_completion_is_persistent_and_removable(self):
         with tempfile.TemporaryDirectory() as directory:

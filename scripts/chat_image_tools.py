@@ -6,7 +6,7 @@ from typing import Any
 
 
 CHAT_IMAGE_SIZE = 512
-IMAGE_MODEL_PRIORITY = ("sana-sprint", "moss-hades", "z-image-turbo", "4b", "4b-lora", "9b", "9b-lora")
+IMAGE_MODEL_PRIORITY = ("sana-sprint", "moss-hades", "z-image-turbo", "4b", "4b-lora", "9b", "9b-lora", "kromoss-opd-dmd2")
 IMAGE_TOOL = {
     "type": "function",
     "function": {
