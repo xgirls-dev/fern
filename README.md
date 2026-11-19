@@ -1,262 +1,131 @@
 # Fern
 
-Fern is a local-first studio for image and video generation, text conversations,
-and speech generation. It runs on Windows and has a beta package for x86-64 Omarchy.
-Image, text, and audio workspaces have their own threads. Video keeps a local clip history.
+**A local AI studio for chat, images, video, and speech.**
 
-Image threads support Flux.2 Klein, FLUX.3 Klein, Qwen Image 2.1 Turbo, and
-Tame Pony SDXL OpenVINO models, plus SANA-Sprint, MOSS Image HaDeS, Z-Image
-Turbo, and Kromoss OPD DMD2 on Windows Intel GPUs. Install available image models from **Models**;
-model-specific controls keep unsupported sizes and sampling options out of the
-composer. Image workflows include text-to-image, supported image guidance,
-repeatable seeds, batch generation, and a local gallery. Intel GPU, NVIDIA GPU,
-and CPU execution depend on the selected model and the installed runtime.
+Talk to a model, attach a photo, or ask Fern to make an image right in the conversation. Create and remix images in a dedicated workspace, animate a still, or generate a speech take. Fern runs inference on your machine and keeps your threads, references, and outputs there.
 
-Text threads run local OpenVINO and GGUF chat models. Audio threads support Qwen3-TTS preset voices, voice
-design, and reference-audio voice cloning. Set up downloads the selected
-ready-made OpenVINO speech model from [xgirls on Hugging Face](https://huggingface.co/xgirls).
+[Download Fern](https://github.com/xgirls-dev/fern/releases/latest) · [Get started](#get-started) · [Platform support](#platform-support) · [Changelog](CHANGELOG.md)
 
-Use **New image thread** (Ctrl+N), **New audio thread** (Ctrl+Shift+N), or
-**New text thread** (Ctrl+Alt+N) to open a workspace. Prompts, thread settings,
-reference media, and generated outputs stay on the local machine. Threads
-persist across app restarts.
+![Fern Chat showing a generated fox in the snow, the Image checked status, and a follow-up answer about the image](assets/fern-chat.png)
 
-See the [changelog](CHANGELOG.md) for release-by-release updates.
+*Fern Chat replaying a verified Intel Arc B390 session. Kromoss OPD DMD2 generated the image. Gemma 4 E4B inspected it and answered a follow-up.*
 
-![Fern app interface](assets/app-ui.png)
+## Get started
 
-## Install
+### Windows x64
 
-### Omarchy (x86-64 beta)
+Download `Fern-Setup-*.exe` and run it. The installer includes the desktop app, Python, and OpenVINO. Fern downloads model weights and additional inference engines when you set up a workflow. [Latest release](https://github.com/xgirls-dev/fern/releases/latest)
 
-Download `fern-*-x86_64.pkg.tar.zst` from [GitHub Releases](https://github.com/xgirls-dev/fern/releases).
-Install the package from the download directory, then open **Fern** from the
-Omarchy app launcher.
+Use Windows 10 or 11 with current graphics drivers. Check the download size in **Models** and leave space for model preparation, compiled caches, and outputs.
+
+### Omarchy x86-64 beta
+
+Download the `fern-*-x86_64.pkg.tar.zst` package. Use `pacman -U` with the downloaded filename, then open **Fern** from the app launcher. [Latest release](https://github.com/xgirls-dev/fern/releases/latest)
 
 ```sh
-sudo pacman -U ./fern-*-x86_64.pkg.tar.zst
+sudo pacman -U ./fern-0.1.45-1-x86_64.pkg.tar.zst
 ```
 
-For Intel GPU image generation and GGUF vision, install the Intel OpenCL and
-Vulkan drivers from Arch's repositories.
+The package includes Python and OpenVINO. Install the Intel OpenCL and Vulkan drivers for Intel GPU inference.
 
 ```sh
 sudo pacman -Syu intel-compute-runtime ocl-icd vulkan-intel vulkan-icd-loader
 ```
 
-The package contains Python and OpenVINO. Models and the matching llama.cpp
-runtime download inside Fern. The beta targets FLUX.2 Klein, GGUF chat and
-vision, and image generation in chat on Intel GPUs. Qwen Image Turbo and
-Qwen3-TTS setup are unavailable on Linux. NVIDIA GPU support is outside the beta.
-CPU is available for models that support it. The SANA-Sprint, MOSS, Z-Image,
-and Wan integrations currently require Windows x64 with a compatible Intel GPU.
+### Start a session
 
-### Windows
+- **Chat.** Go to **Models → Text**, install **Gemma 4 E4B · GGUF**, then choose **New thread → Chat**. The download includes the language model and its matching vision projector.
+- **Create an image.** Go to **Models → Image** and install a model available for your device. **Klein 4B** is the smaller FLUX.2 option. Choose **New thread → Create image**, select the model, and enter a prompt.
+- **Make an image in Chat.** Install Gemma 4 E4B and a compatible image model such as Klein 4B. On a compatible Intel GPU, keep **Preferences → Compute → Generation device** set to **Available GPU**. In a Gemma chat, choose **Auto** or the installed model under **Chat settings → Image generation**. Try “Create an illustration of a fox in falling snow,” then “What is under the fox’s feet?”
 
-Download `Fern-Setup-*.exe` from the project's GitHub Releases page and run it.
-The installer contains the desktop app, Python, and the pinned OpenVINO runtime.
-On first launch, Fern prepares its bundled runtime. Install image models from
-**Models**, the recommended language model from a text thread, and speech
-models from an audio thread. Downloads are pinned to catalog revisions and
-verified; interrupted downloads can resume. The first model load compiles for
-the selected device and can take longer than later runs.
+First loads can take longer while Fern downloads an engine or compiles a model for your device. **Models** shows setup and download progress.
 
-Open **Models → Text** to download **Gemma 4 E4B · GGUF**.
-The download includes the Q4_0 language model and its matching vision projector.
-Use **Import GGUF** to select a local instruction-tuned GGUF with a chat template.
-For vision, select its matching `mmproj` GGUF in the same file picker. Attach an
-image in a text thread and choose **Instant** or **Reasoning** when the model
-supports both modes. Fern installs a pinned llama.cpp runtime on first use.
-GGUF text runs through llama.cpp's OpenVINO backend. Chats with images use
-Vulkan on Intel GPUs or llama.cpp on CPU when CPU is selected. Response details
-show the backend and device used. Fern downloads the Vulkan backend on first
-use and repairs missing backend files when you retry. If Vulkan cannot find a
-compatible Intel GPU, the chat shows driver setup instructions for your platform.
+## Workspaces
 
-In a text thread with a tool-capable model, ask Fern to create an image. **Chat
-settings → Image generation** defaults to **Auto**, which prefers the fastest installed compatible image model. Fern renders one
-512 × 512 image at a time using the selected model’s fast sampling preset.
-The image appears in the chat and in the Library. Fern checks the generated
-pixels before replying and includes recent images in follow-up requests. The
-image tool requires a vision-capable chat model with its projector. Fern keeps
-the chat and image models loaded on the Intel GPU between turns when the tool is enabled.
-With SANA-Sprint, MOSS, or Z-Image, Fern also requires the chat vision projector
-to run on the Intel GPU.
+### Chat and vision
 
-Open **Models → Video** to install **Wan 2.2 Turbo**, then choose **Video** in
-the sidebar. Add a PNG, JPEG, or WebP first frame and describe the motion. Fern
-crops the image to the 544 × 704 portrait canvas and renders 21 frames at 16 fps.
-Play, save as WebM, or delete clips in the Video workspace. The Intel Vulkan
-runtime downloads during model setup. SANA-Sprint separately installs its
-OpenVINO dependencies and compresses the source text encoder on this machine.
+Use a local OpenVINO text model or a compatible instruction-tuned GGUF. Attach an image to ask about it. When importing a GGUF through **Models → Text → Import GGUF**, select the matching `mmproj` file alongside the language model to enable vision. **Instant** and **Reasoning** are available on models that support both modes.
 
-**Kromoss OPD · DMD2** loads the upstream adapter at runtime with the Kromoss
-OPD-priming 69,800 Q4_K GGUF. It generates one image at a time with eight
-steps, defaults to 512 × 512, and also offers 1024 × 1024 in Create Image.
-Select it explicitly in Chat settings to use it for chat images.
+With a compatible tool-capable vision model, Chat can call Fern's image generator. It creates one **512 × 512** image per response with a fast model preset. Fern adds the image to the thread and **Images**, then sends the pixels back to the chat model for inspection. **Image checked** appears once the inspection succeeds. Recent images can be used on follow-up turns. Choose **Include this image again** to bring an older image back into context.
 
-GGUF threads use an 8K token context by default. Choose 4K, 8K, or 16K in **Chat
-settings**. Fern summarizes older turns when it needs room, carries the two
-most recent images within the recent turns, and keeps the full transcript in
-the thread. Response details show the context and compaction used.
+GGUF chats offer **4K, 8K, and 16K** context, with **8K** as the default. When a conversation outgrows the available context, Fern summarizes earlier turns for the model and keeps the original transcript in the thread. Response details show the backend, device, and context usage. Image generation in Chat needs GPU memory for both the language and image models.
 
-To use LoRAs, install **Klein 4B · LoRA** or **Klein 9B · LoRA** in Models and
-select it in an image thread. In **Image settings → LoRAs**, choose up to four
-`.safetensors` adapters trained for that model size. Add files from disk or
-download them from a Hugging Face or Civitai link. Enable the adapters you want,
-adjust their strengths, and include their trigger words in the prompt. The LoRA
-models use an Intel GPU and support up to four reference images per edit.
-Klein 9B is licensed under the [FLUX Non-Commercial License](https://huggingface.co/black-forest-labs/FLUX.2-klein-9B/blob/main/LICENSE.md).
+### Image creation and editing
 
-Fern automatically selects an available GPU where supported. CPU is available
-as an explicit fallback. The NVIDIA plugin is bundled only when present in the
-build environment and must match the OpenVINO runtime; Fern reports when that
-plugin is unavailable rather than silently changing devices. **Stop** cancels
-generation at a supported inference boundary without closing the app.
+Generate from a prompt, add reference images on supported models, and use seeds and render settings to make repeatable variations. The composer adjusts the available dimensions, steps, guidance, reference count, and batch size to the selected model.
 
-Windows requirements:
+- **FLUX.2 Klein 4B and 9B** cover generation and reference-guided edits. The Intel GPU **LoRA** variants support up to four reference images and four independently weighted adapters. Add a matching `.safetensors` file from disk or use a Hugging Face or Civitai link in **Image settings → LoRAs**.
+- **Kromoss OPD · DMD2** uses the OPD 69,800 Q4_K weights and the matching eight-step adapter. Its Create Image preset defaults to **512 × 512** and also offers **1024 × 1024**. The complete download, including companion files, is about **9 GB**. [Kromoss model card](https://huggingface.co/xgirls/Kromoss-OPD-DMD2-Q4_K-Intel-Vulkan)
+- **MOSS Image · HaDeS**, **Z-Image Turbo**, and **SANA-Sprint 0.6B** offer more text-to-image options on Windows Intel GPUs. **Tame Pony SDXL** and **Qwen Image 2.1 Turbo** use OpenVINO. **FLUX.3 Klein · INT4** is an experimental text-to-image integration.
+- **Custom OpenVINO image models** can be linked from a local export folder or downloaded from a compatible Hugging Face repository through **Models → Image → Add custom model**. Select the model family that matches the export.
 
-- Windows 10 or 11, 64-bit
-- Free disk space for the selected models and their compiled-device caches;
-  requirements vary by model
-- An internet connection for the first model download
-- An Intel GPU supported by OpenVINO, an NVIDIA GPU with a current driver and
-  compatible CUDA libraries, or a CPU fallback
-- NVIDIA support requires the OpenVINO NVIDIA plugin from `openvino_contrib`,
-  built against the same OpenVINO runtime as Fern. The upstream plugin currently
-  documents Ubuntu validation; Windows builds must use its Windows/CMake path.
+Open **Images** to browse renders, inspect settings, save a copy, or remix a result. Image, chat, and speech threads keep their own drafts, settings, and history. Use **Search threads** to pick up previous work and **Ctrl+K** to open the command palette.
 
-The installer does not require a separate Python, Node.js, Git, or terminal
-installation.
+### Video from a still
 
-## Local data and cache management
+On Windows with a compatible Intel GPU, install **Wan 2.2 Turbo** in **Models → Video**. Open **Video**, choose a PNG, JPEG, or WebP first frame, and describe the motion. You can also send a generated image to Video with **Animate image**.
 
-Open **Data** in the Fern title bar to review disk usage, clear the compiled
-generation cache, or reset local creative data. A local-data reset removes
-generated images and WAV takes, thread/gallery metadata, saved prompts, and preferences while
-preserving downloaded models and bundled runtimes.
+The current preset makes a **544 × 704** portrait clip with **21 frames at 16 fps**, about **1.3 seconds**. Preview the clip, revisit it in the clip history, or export it as WebM.
 
-Fern automatically prunes generation-cache files that have not been
-used for 30 days. The cache is also limited dynamically between 1 GiB and 40 GiB
-based on drive capacity, with a disk-relative free-space reserve of 5–20 GB.
-Generated images and WAV takes are never deleted automatically.
+### Speech
+
+Choose **New thread → Create speech** on Windows. Use a **Qwen3-TTS** preset voice, design a voice from a description, or clone a voice from a WAV or FLAC reference you have permission to use. Fern sets up the selected model in the app. Play takes in the thread and save them as WAV.
+
+## Platform support
+
+Fern publishes a Windows x64 installer and an Omarchy x86-64 beta package. The selected model and inference engine determine which devices and controls are available.
+
+| Workflow | Windows x64 | Omarchy x86-64 beta |
+| --- | --- | --- |
+| FLUX.2 Klein images and edits | Intel GPU, or CPU on supported variants. LoRA variants require Intel GPU. | Intel GPU, or CPU on supported variants |
+| Other managed image models | Kromoss, MOSS, Z-Image, and SANA-Sprint require Intel GPU. Check **Models** for other families. | The beta targets FLUX.2 Klein |
+| Chat and vision | OpenVINO or GGUF chat. GGUF vision uses Intel GPU via Vulkan or explicitly selected CPU. | OpenVINO or GGUF chat. GGUF vision uses Intel GPU via Vulkan or explicitly selected CPU. |
+| Images in Chat | Compatible Intel GPU, tool-capable chat model with a vision projector, and supported image model | Same requirements, with a compatible FLUX.2 Klein image model |
+| Wan 2.2 Turbo video | Compatible Intel GPU | Unavailable |
+| Qwen3-TTS speech | Available | Unavailable |
+
+**Available GPU** is the default in Preferences. Choose **CPU** explicitly for models that support it. NVIDIA on Windows requires a build with the matching OpenVINO NVIDIA plugin and a model that supports that path.
+
+Text-only GGUF uses llama.cpp with OpenVINO. GGUF vision on Intel uses llama.cpp with Vulkan. Fern downloads the pinned engines as needed. Your operating system supplies the graphics drivers.
+
+## Models, storage, and privacy
+
+**Models** lets you install, repair, and remove managed downloads, and link compatible local models. Fern verifies built-in downloads against pinned catalogs. Removing a linked local OpenVINO model preserves the source folder.
+
+Inference runs on your device. Prompts, conversations, reference media, and generated files stay in your local workspace. An internet connection is used to fetch model files and additional engines. Once those files are installed, generation can run offline.
+
+**Local data** shows disk usage. **Clear Cache** removes compiled generation files, which Fern rebuilds on demand. **Clear Local Data** clears creative history, outputs, and preferences and keeps installed models and runtimes. Fern prunes old cache files automatically. Save copies of outputs you want to keep before clearing local data.
 
 ## Development
 
-This repository is an npm workspace. The Electron app lives in `apps/desktop`;
-the Python backend and packaging tools live in `scripts`.
+The Electron and React app lives in [`apps/desktop`](apps/desktop), the Python backend and model catalogs in [`scripts`](scripts), and workflow and backend checks in [`tests`](tests). The desktop backend binds to localhost.
 
-On Omarchy or Arch x86-64, install `base-devel`, `git`, `nodejs`, `npm`, and
-`uv`. Run `npm ci` and `npm run package:omarchy` as a regular user. The package
-is written to `apps/desktop/release-omarchy/`.
+### Run from source on Windows
 
-Windows prerequisites:
-
-- Node.js 22 or newer
-- Python 3.12
-- PowerShell 7 (Windows PowerShell 5.1 also works for the provided scripts)
+Use Git, Node.js 22+, npm 10+, Python 3.12, and PowerShell. Run these commands from the repository root.
 
 ```powershell
-npm install
+npm ci
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --upgrade pip
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m pip install --no-deps -r requirements-release.txt
+.\.venv\Scripts\python.exe -m pip check
 npm run dev
 ```
 
-`npm run dev` launches the Electron UI directly from source; it does not need
-a release build or the bundled runtime archive. Development uses the local
-`.venv` and opens the UI even when the model has not been downloaded yet. To
-enable generation in development, download the model into the `models/`
-directory with the bootstrap command below, then relaunch the app.
+Use **Models** to set up the models you need. With the virtual environment active, run `npm run check` for TypeScript, Python, and the production build. Run `npm run test:ui` for renderer workflows and `npm run test:electron --workspace @fern/desktop` for Electron and backend integration.
 
-The development app stores downloaded models under `models/`. The Flux.2 Klein
-9B model uses:
+### Build installable packages
 
-```text
-models/flux2-klein-9b-circulus-int4
-```
+| Target | Command | Output |
+| --- | --- | --- |
+| Windows x64 | `npm run package` with the locked runtime installed in `.venv` or `.venv-release` | `apps/desktop/release/Fern-Setup-*.exe` |
+| Omarchy x86-64 | On Arch x86-64, install `base-devel`, `git`, `nodejs`, `npm`, and `uv`. Run `npm ci`, then `npm run package:omarchy` as a regular user. | `apps/desktop/release-omarchy/fern-*-x86_64.pkg.tar.zst` |
 
-Download it with the same bootstrap used by the installer:
+The release workflow builds both packages, runs smoke tests, and publishes the assets. [Release workflow](.github/workflows/release.yml) · [Contributing](CONTRIBUTING.md) · [Design system](DESIGN_SYSTEM.md)
 
-```powershell
-.\.venv\Scripts\python.exe scripts\bootstrap_install.py `
-  --model-dir models\flux2-klein-9b-circulus-int4
-```
+## Feedback and licenses
 
-To build and install the OpenVINO NVIDIA plugin from the linked upstream source:
+For an inference issue, include the Fern version, operating system, GPU and driver, selected model and device, and the error shown in Fern. Use the private reporting path for vulnerabilities. [GitHub Issues](https://github.com/xgirls-dev/fern/issues) · [Security policy](SECURITY.md)
 
-```powershell
-.\scripts\install-openvino-nvidia-plugin.ps1
-```
-
-Then prepare the shared model for NVIDIA execution:
-
-```powershell
-.\.venv\Scripts\python.exe scripts\bootstrap_install.py `
-  --adapter nvidia `
-  --models-root models
-```
-
-The NVIDIA adapter calls `OVFlux2KleinPipeline.from_pretrained` with
-`device="NVIDIA"`; Intel uses `device="GPU"`, and CPU uses `device="CPU"`.
-Fern also keeps an explicit CPU option in the Device menu.
-
-Useful commands:
-
-```powershell
-npm run typecheck
-npm run build
-npm run check:python
-npm run check
-```
-
-Generated models, virtual environments, images, caches, bundled runtimes, and
-installers are ignored by Git and must not be committed.
-
-## Build the one-click installer
-
-Prepare a clean build environment, keeping model experiment dependencies separate:
-
-```powershell
-python -m venv .venv-release
-.\.venv-release\Scripts\python.exe -m pip install -r requirements-release.txt
-npm run package
-```
-
-The build uses `.venv-release` when present, otherwise `.venv`, and rejects retired
-Qwen Image dependencies or an Optimum Intel checkout that does not match
-the locked `requirements-release.txt`. An explicit environment can be selected with
-`scripts/build-installer.ps1 -SourceVenv <folder>`. Build the optional NVIDIA plugin
-against that same environment before packaging if NVIDIA support is required.
-The build script creates a self-contained runtime and writes the one-click NSIS
-installer to `apps/desktop/release/`. Image and speech model weights are not embedded;
-they download on demand from Hugging Face.
-
-The runtime builder detects the base Python installation used by the selected environment. You
-can override it when needed:
-
-```powershell
-.\scripts\bundle-python-runtime.ps1 -PythonHome "C:\Path\To\Python312"
-```
-
-## Repository layout
-
-```text
-apps/desktop/   Electron + React image, text, and audio workspaces
-scripts/        OpenVINO model runtimes, setup, and packaging tools
-.github/        CI and contribution templates
-```
-
-## Security and privacy
-
-The API binds to `127.0.0.1` and accepts generation requests only from the local
-desktop app. See [SECURITY.md](SECURITY.md) for reporting vulnerabilities.
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for model integration and release guidance.
-
-## License
-
-MIT. See [LICENSE](LICENSE).
+Fern is MIT licensed. Models, weights, and bundled third-party components have their own terms. Review the upstream license and the download's model card before using or redistributing a model. [Fern license](LICENSE) · [Fern models on Hugging Face](https://huggingface.co/xgirls)
