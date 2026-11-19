@@ -190,6 +190,7 @@ try {
   await expect(page.locator("#width")).toHaveAttribute("min", "512");
   await expect(page.locator("#width")).toHaveAttribute("max", "1536");
   await expect(page.locator("#width")).toHaveAttribute("step", "8");
+  await page.getByRole("button", { name: "Close image settings", exact: true }).click();
   await page.getByRole("button", { name: "Models", exact: true }).click();
   await page.getByRole("heading", { name: "Image models" }).waitFor();
   await page.getByText("Add custom model", { exact: true }).click();
