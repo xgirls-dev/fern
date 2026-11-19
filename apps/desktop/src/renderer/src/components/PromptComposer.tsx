@@ -8,7 +8,7 @@ import ArrowLeft from "lucide-react/dist/esm/icons/arrow-left.mjs";
 import ArrowRight from "lucide-react/dist/esm/icons/arrow-right.mjs";
 import { useEffect, useRef, useState } from "react";
 import { normalizeQwenDimension } from "../lib/imageDimensions";
-import { isKleinLoraModel, maxReferenceImages } from "../lib/imageModels";
+import { intelImagePreset, isKleinLoraModel, maxReferenceImages } from "../lib/imageModels";
 import { readReference, type ReferenceAttachment } from "../lib/reference";
 import type { StudioSettings } from "../lib/types";
 import { Button, IconButton, Input, Textarea } from "./ui/controls";
@@ -298,8 +298,8 @@ export function PromptComposer({
                   return;
                 }
                 const isCustom = model.startsWith("custom-");
-                const isSpecial = model === "qwen21-turbo" || model === "flux3-klein" || model === "tame-pony-v25-sdxl" || model === "tame-pony-v25-sdxl-int8" || isCustom;
-                const currentIsSpecial = settings.model === "qwen21-turbo" || settings.model === "flux3-klein" || settings.model === "tame-pony-v25-sdxl" || settings.model === "tame-pony-v25-sdxl-int8" || settings.model?.startsWith("custom-");
+                const isSpecial = model === "qwen21-turbo" || model === "flux3-klein" || model === "tame-pony-v25-sdxl" || model === "tame-pony-v25-sdxl-int8" || isCustom || Boolean(intelImagePreset(model));
+                const currentIsSpecial = settings.model === "qwen21-turbo" || settings.model === "flux3-klein" || settings.model === "tame-pony-v25-sdxl" || settings.model === "tame-pony-v25-sdxl-int8" || settings.model?.startsWith("custom-") || Boolean(intelImagePreset(settings.model));
                 if (isSpecial) {
                   if (!currentIsSpecial && preSpecialSettings.current === null) {
                     preSpecialSettings.current = {
@@ -356,7 +356,7 @@ export function PromptComposer({
                   }
                   return;
                 }
-                const restore = settings.model === "qwen21-turbo" || settings.model === "flux3-klein" || settings.model === "tame-pony-v25-sdxl" || settings.model === "tame-pony-v25-sdxl-int8" || settings.model?.startsWith("custom-")
+                const restore = currentIsSpecial
                   ? preSpecialSettings.current ?? { steps: 4, guidance: 1, batchSize: 1, device: "AUTO" }
                   : undefined;
                 preSpecialSettings.current = null;

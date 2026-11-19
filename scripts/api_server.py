@@ -73,7 +73,10 @@ CUSTOM_IMAGE_GENERATION_WORKER = GenerationWorker(target=custom_image_inference_
 TTS_GENERATION_WORKER = TtsGenerationWorker()
 TEXT_GENERATION_WORKER = TextGenerationProcess()
 from model_manager import ModelManager, remove_tree
-from model_catalog import model_spec
+from model_catalog import INTEL_MEDIA_CATALOG, model_spec
+from intel_media import IntelMedia, PLATFORM_NOTE as INTEL_MEDIA_PLATFORM_NOTE, VIDEO_ID, supported as intel_media_supported
+from video_jobs import VideoJobs
+from PIL import ImageOps
 import gallery_store
 from media_http import byte_range
 import storage_manager
@@ -102,7 +105,9 @@ QWEN_TURBO_HF_CACHE = QWEN_TURBO_SOURCE_ROOT
 QWEN_TURBO_BASE_RUNTIME = ROOT / ".venv-qwen21-export"
 QWEN_TURBO_OVERLAY_RUNTIME = ROOT / ".venv-qwen21-turbo-export"
 QWEN_TURBO_PYTHON = Path(sys.executable)
-MODEL_MANAGER = ModelManager(MODELS_DIR)
+INTEL_MEDIA = IntelMedia(ROOT)
+VIDEO_JOBS = VideoJobs(INTEL_MEDIA, CACHE_DIR, DATA_DIR, OUTPUTS)
+MODEL_MANAGER = ModelManager(MODELS_DIR, prepare=INTEL_MEDIA.prepare_install, preflight=INTEL_MEDIA.preflight_install)
 KLEIN_TEXT_ENCODER_MANAGER = flux2_klein_text_encoder.KleinTextEncoderManager(
     flux2.MODELS_ROOT, DATA_DIR / "flux2-klein-4b-text-encoder.json"
 )
@@ -447,6 +452,14 @@ def model_library_snapshot() -> list[dict[str, Any]]:
         pony_item["runtimeReady"] = bool(runtime and runtime.get("installed"))
         if pony_item["installed"] and runtime and not runtime.get("installed"):
             pony_item["state"] = "runtime-unavailable"
+    for item in models:
+        if item["id"] in INTEL_MEDIA_CATALOG:
+            item.update(
+                platformSupported=intel_media_supported(),
+                runtimeReady=intel_media_supported() and item["installed"],
+                supportsReferenceImage=item["id"] == VIDEO_ID,
+                setupUnavailableReason=None if intel_media_supported() else INTEL_MEDIA_PLATFORM_NOTE,
+            )
     return models + [qwen_turbo_snapshot()] + custom_image_registry.MODEL_REGISTRY.snapshot()
 
 
@@ -630,6 +643,7 @@ def text_runtime_snapshot() -> dict[str, Any]:
     installed_image_models = {
         item["id"]: item["label"] for item in MODEL_MANAGER.snapshot()
         if item["id"] in IMAGE_MODEL_PRIORITY and item.get("installed")
+        and (item["id"] not in INTEL_MEDIA_CATALOG or intel_media_supported())
     }
     gguf_available = gguf_runtime_supported()
     return {
@@ -682,8 +696,8 @@ def start_text_job(payload: dict[str, Any], request_id: Any) -> None:
         audio_busy = TTS_JOB.get("status") in ("running", "setting_up", "stopping")
     with FLUX_JOB_LOCK:
         image_busy = FLUX_JOB.get("status") == "running"
-    if audio_busy or image_busy or qwen_turbo_setup_running() or text_model_install_running():
-        raise ValueError("Finish the active image/audio job or model setup before starting a text response.")
+    if audio_busy or image_busy or VIDEO_JOBS.running() or qwen_turbo_setup_running() or text_model_install_running():
+        raise ValueError("Finish the active media job or model setup before starting a text response.")
     job_id = request_id or str(uuid.uuid4())
     if not isinstance(job_id, str) or len(job_id) > 100:
         raise ValueError("Invalid text request ID.")
@@ -708,6 +722,8 @@ def run_text_generation(payload: dict[str, Any], job_id: str, cancel_event: thre
     try:
         image_model = payload.get("imageModel")
         inspection_image = payload.get("inspectionImage")
+        if image_model not in INTEL_MEDIA_CATALOG and not inspection_image:
+            INTEL_MEDIA.close()
         if not image_model and not inspection_image:
             GENERATION_WORKER.close()
         TAME_PONY_GENERATION_WORKER.close()
@@ -971,6 +987,7 @@ def _run_qwen_turbo_setup(job_id: str, cancel_event: threading.Event) -> None:
         FLUX3_GENERATION_WORKER.close()
         TTS_GENERATION_WORKER.close()
         TEXT_GENERATION_WORKER.close()
+        INTEL_MEDIA.close()
         flux2.release_pipeline()
         if cancel_event.is_set():
             raise TtsJobCancelled()
@@ -1133,6 +1150,7 @@ def run_tts_setup(model: str, job_id: str, cancel_event: threading.Event) -> Non
         QWEN_GENERATION_WORKER.close()
         FLUX3_GENERATION_WORKER.close()
         TEXT_GENERATION_WORKER.close()
+        INTEL_MEDIA.close()
         flux2.release_pipeline()
         TTS_GENERATION_WORKER.close()
         if not tts_environment_ready():
@@ -1185,6 +1203,7 @@ def run_tts_generation(payload: dict[str, Any], job_id: str, cancel_event: threa
         TAME_PONY_GENERATION_WORKER.close()
         QWEN_GENERATION_WORKER.close()
         FLUX3_GENERATION_WORKER.close()
+        INTEL_MEDIA.close()
         flux2.release_pipeline()
         if cancel_event.is_set():
             raise TtsJobCancelled()
@@ -1257,6 +1276,8 @@ def model_snapshot(device: str, model="9b") -> dict[str, Any]:
     """Hardware imports must never hold gallery/status requests hostage."""
     global MODEL_CHECK_STARTED
     device = normalize_device(device)
+    if model in INTEL_MEDIA_CATALOG:
+        return INTEL_MEDIA.status(model, device)
     if custom_image.is_model(model):
         try:
             return custom_image.model_status(device, model)
@@ -1470,10 +1491,9 @@ def decode_flux_reference_image(value: Any) -> Image.Image | None:
         with Image.open(io.BytesIO(raw)) as source:
             if source.format not in {"PNG", "JPEG", "WEBP"}:
                 raise ValueError("Reference image must be a PNG, JPEG, or WebP upload.")
-            source.load()
             if source.width * source.height > 16_000_000:
                 raise ValueError("Reference image is too large. Keep it at 16 megapixels or less.")
-            return source.convert("RGB")
+            return ImageOps.exif_transpose(source).convert("RGB")
     except ValueError:
         raise
     except Exception as exc:
@@ -1511,6 +1531,8 @@ def chat_image_path(filename: Any) -> str:
 
 def validate_flux_payload(payload: dict[str, Any]) -> dict[str, Any]:
     model = payload.get("model", "9b")
+    if not isinstance(model, str):
+        raise ValueError("Choose an installed Fern image model.")
     custom_model = custom_image.is_model(model)
     if model not in ("auto", QWEN_TURBO_MODEL_ID, flux3.MODEL_KEY) and not custom_model: model_spec(model)
     prompt = str(payload.get("prompt", "")).strip()
@@ -1539,9 +1561,15 @@ def validate_flux_payload(payload: dict[str, Any]) -> dict[str, Any]:
             raise ValueError("Official Qwen Turbo uses the OpenVINO Intel GPU or an explicitly selected CPU.")
         if not (qwen_turbo_runtime_ready() and qwen_turbo_model_ready()):
             raise ValueError("Install the official Qwen Turbo OpenVINO INT8 model from Models before generating.")
+    intel_spec = INTEL_MEDIA_CATALOG.get(model)
+    if intel_spec:
+        if intel_spec["category"] != "image":
+            raise ValueError("Open Video to generate with Wan.")
+        if device not in ("AUTO", "INTEL_GPU"):
+            raise ValueError("Choose Intel GPU or Auto to generate with this model.")
     backend = flux2
-    width = int(payload.get("width", backend.DEFAULT_WIDTH))
-    height = int(payload.get("height", backend.DEFAULT_HEIGHT))
+    width = int(payload.get("width", intel_spec["defaultWidth"] if intel_spec else backend.DEFAULT_WIDTH))
+    height = int(payload.get("height", intel_spec["defaultHeight"] if intel_spec else backend.DEFAULT_HEIGHT))
     steps = int(payload.get("steps", backend.DEFAULT_STEPS))
     guidance = float(payload.get("guidance", backend.DEFAULT_GUIDANCE))
     seed = int(payload.get("seed", 42))
@@ -1564,6 +1592,18 @@ def validate_flux_payload(payload: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("Multiple reference images are supported by FLUX.2 Klein 4B and 9B.")
     reference_images = [decode_flux_reference_image(source) for source in reference_sources]
     reference_image = reference_images[0] if reference_images else None
+    if intel_spec and reference_image is not None:
+        raise ValueError("This model generates images from a text prompt.")
+    if intel_spec and (width != height or width not in intel_spec["dimensions"]):
+        sizes = " or ".join(f"{size}×{size}" for size in intel_spec["dimensions"])
+        raise ValueError(f"Choose {sizes} for {intel_spec['label']}.")
+    if intel_spec:
+        steps = intel_spec["defaultSteps"]
+        guidance = intel_spec["defaultGuidance"]
+        if batch_size != 1:
+            raise ValueError("Generate one image at a time with this model.")
+        if not 0 <= seed <= 2_147_483_647:
+            raise ValueError("Seed must be an integer between 0 and 2,147,483,647.")
     loras = payload.get("loras", [])
     if not isinstance(loras, list) or len(loras) > 4:
         raise ValueError("Choose up to four LoRAs.")
@@ -1684,7 +1724,10 @@ def run_flux_generation(
             raise FluxGenerationCancelled("Generation stopped by user.")
 
     stage = CACHE_DIR / ("generation-" + job_id)
+    intel_model = payload["model"] in INTEL_MEDIA_CATALOG
     try:
+        if not intel_model:
+            INTEL_MEDIA.close()
         if on_chat_progress is None:
             TEXT_GENERATION_WORKER.close()
         TTS_GENERATION_WORKER.close()
@@ -1747,7 +1790,9 @@ def run_flux_generation(
                 "guidance": payload["guidance"],
                 "device": resolve_qwen_turbo_device(payload["device"]) if payload["model"] == QWEN_TURBO_MODEL_ID else payload["device"],
                 "modelPath": str(
-                    QWEN_TURBO_MODEL_ROOT
+                    INTEL_MEDIA.folder(payload["model"])
+                    if intel_model
+                    else QWEN_TURBO_MODEL_ROOT
                     if payload["model"] == QWEN_TURBO_MODEL_ID
                     else flux3.MODEL_DIR
                     if payload["model"] == flux3.MODEL_KEY
@@ -1775,7 +1820,12 @@ def run_flux_generation(
                 ),
                 "createdAt": time.time(),
             }
-            if payload["model"] == QWEN_TURBO_MODEL_ID:
+            if intel_model:
+                output_path, generation_time = INTEL_MEDIA.generate_image(
+                    {**payload, "seed": seed}, stage / f"{payload['model']}-{job_id}-{index + 1}.png",
+                    cancel_event, log_generation,
+                )
+            elif payload["model"] == QWEN_TURBO_MODEL_ID:
                 python = sys.executable
                 output_name = f"qwen21-turbo-{job_id}-{index + 1}.png"
                 result = QWEN_GENERATION_WORKER.generate(
@@ -1945,6 +1995,8 @@ def run_flux_generation(
         )
         if payload["model"] == QWEN_TURBO_MODEL_ID:
             mark_runtime(status="ready", device=payload["device"], message="Qwen Turbo is ready for another image.", error=None)
+        elif intel_model:
+            mark_runtime(status="ready", device=payload["device"], message=f"{model_spec(payload['model'])['label']} is ready for another image.", error=None)
         elif payload["model"] == flux3.MODEL_KEY:
             mark_runtime(status="ready", device=payload["device"], message="FLUX.3 Klein is ready for another image.", error=None)
         elif tame_pony.is_model(payload["model"]):
@@ -1953,6 +2005,8 @@ def run_flux_generation(
             mark_runtime(status="ready", device=payload["device"], message=f"{custom_image.model_spec(payload['model'])['label']} is ready for another image.", error=None)
         cleanup_cache_when_model_idle()
     except FluxGenerationCancelled:
+        if intel_model:
+            INTEL_MEDIA.close()
         if on_chat_progress is not None:
             raise
         QWEN_GENERATION_WORKER.close()
@@ -1963,6 +2017,8 @@ def run_flux_generation(
         append_flux_log("Generation stopped by user.")
         mark_flux_job(status="cancelled", finishedAt=time.time(), output=None, error=None)
     except Exception as exc:
+        if intel_model:
+            INTEL_MEDIA.close()
         if on_chat_progress is not None:
             raise
         if cancel_event.is_set():
@@ -2025,6 +2081,7 @@ def prepare_image_inspection(payload: dict[str, Any]) -> dict[str, Any]:
         prompt += f" The image was requested as follows: {artifact['prompt']}. Mention any obvious mismatch."
     return {
         "modelId": model_id, "threadId": thread_id, "device": device, "inspectionImage": artifact,
+        "requireGpuVision": metadata.get("model") in INTEL_MEDIA_CATALOG,
         "messages": [{"role": "user", "content": prompt, "imagePath": str(path)}],
         "mode": "instant", "toolChoice": "none", "contextSize": DEFAULT_CONTEXT_SIZE,
         "systemPrompt": "", "temperature": 0.2, "topP": 0.9, "maxNewTokens": 96, "seed": 0,
@@ -2035,7 +2092,7 @@ def generate_chat_image(
     model: str, prompt: str, thread_id: str,
     job_id: str, cancel_event: threading.Event,
 ) -> dict[str, Any]:
-    status = flux2.model_status("INTEL_GPU", model)
+    status = model_snapshot("INTEL_GPU", model) if model in INTEL_MEDIA_CATALOG else flux2.model_status("INTEL_GPU", model)
     if not status["runtimeReady"] or status["selectedDevice"] != "INTEL_GPU":
         raise RuntimeError(str(status["runtimeNote"]))
     image_request = validate_flux_payload({
@@ -2147,6 +2204,14 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(200, {"image": recover_chat_image(thread_id, job_id)})
             return
 
+        if parsed.path == "/api/video/status":
+            self.send_json(200, {
+                "job": VIDEO_JOBS.snapshot(),
+                "model": INTEL_MEDIA.status(VIDEO_ID, "AUTO"),
+                "clips": VIDEO_JOBS.history() if "job=1" not in parsed.query.split("&") else None,
+            })
+            return
+
         if parsed.path == "/api/tts/status":
             self.send_json(200, tts_snapshot())
             return
@@ -2173,7 +2238,7 @@ class Handler(BaseHTTPRequestHandler):
                 {
                     "job": flux_job_snapshot(),
                     "images": latest_images() if query.get("images", ["1"])[0] != "0" else None,
-                    "installedModels": [{key: item[key] for key in ("id", "label", "family", "familyLabel", "defaultSteps", "defaultGuidance", "defaultWidth", "defaultHeight", "installed") if key in item} for item in model_library_snapshot() if item["installed"] or item["id"].startswith("custom-")]
+                    "installedModels": [{key: item[key] for key in ("id", "label", "family", "familyLabel", "defaultSteps", "defaultGuidance", "defaultWidth", "defaultHeight", "dimensions", "installed") if key in item} for item in model_library_snapshot() if item.get("category") != "video" and item.get("platformSupported", True) and (item["installed"] or item["id"].startswith("custom-"))]
                     + ([{"id": QWEN_TURBO_MODEL_ID, "label": "Qwen Image 2.1 Turbo · official"}] if qwen_model_ready and qwen_runtime_ready is not False else []),
                     "model": model_snapshot(requested_device, query.get("model", ["9b"])[0]),
                     "runtime": runtime_snapshot(),
@@ -2258,9 +2323,67 @@ class Handler(BaseHTTPRequestHandler):
         with JOB_ADMISSION_LOCK:
             self.handle_post()
 
+    def start_video(self, payload: dict[str, Any]) -> None:
+        if (
+            VIDEO_JOBS.running() or flux_job_snapshot()["status"] == "running" or text_job_running()
+            or tts_job_running() or qwen_turbo_setup_running() or text_model_install_running()
+        ):
+            self.send_json(409, {"error": "Finish or stop the current job before generating video."})
+            return
+        raw_device = str(payload.get("device", "AUTO")).upper()
+        if raw_device not in ("AUTO", "GPU", "INTEL_GPU", "CPU", "NVIDIA_GPU"):
+            raise ValueError("Choose Auto or Intel GPU to generate video.")
+        device = normalize_device(raw_device)
+        status = INTEL_MEDIA.status(VIDEO_ID, device)
+        if not status["runtimeReady"]:
+            raise ValueError(status["runtimeNote"])
+        prompt = payload.get("prompt")
+        if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > 2000:
+            raise ValueError("Enter a motion prompt of up to 2,000 characters.")
+        seed = payload.get("seed", 42)
+        if type(seed) is not int or not 0 <= seed <= 2_147_483_647:
+            raise ValueError("Seed must be an integer between 0 and 2,147,483,647.")
+        reference = decode_flux_reference_image(payload.get("referenceImage"))
+        if reference is None:
+            raise ValueError("Choose an image to use as the clip’s first frame.")
+        spec = INTEL_MEDIA_CATALOG[VIDEO_ID]
+        frame = ImageOps.fit(reference, (spec["defaultWidth"], spec["defaultHeight"]), Image.Resampling.LANCZOS)
+
+        def release_models():
+            for worker in (
+                GENERATION_WORKER, TAME_PONY_GENERATION_WORKER, CUSTOM_IMAGE_GENERATION_WORKER,
+                TTS_GENERATION_WORKER, QWEN_GENERATION_WORKER, FLUX3_GENERATION_WORKER, TEXT_GENERATION_WORKER,
+            ):
+                worker.close()
+            flux2.release_pipeline()
+        self.send_json(202, {"job": VIDEO_JOBS.start({
+            "prompt": prompt.strip(), "seed": seed, "reference": frame,
+        }, release_models)})
+
     def handle_post(self) -> None:
         global FLUX_CANCEL_EVENT, TTS_CANCEL_EVENT
         parsed = urllib.parse.urlparse(self.path)
+
+        if parsed.path in ("/api/video/generate", "/api/video/stop", "/api/video/remove"):
+            try:
+                if parsed.path.endswith("/stop"):
+                    self.send_json(202, {"job": VIDEO_JOBS.stop()})
+                elif parsed.path.endswith("/remove"):
+                    VIDEO_JOBS.remove(self.read_json_body().get("id"))
+                    self.send_json(200, {"job": VIDEO_JOBS.snapshot(), "clips": VIDEO_JOBS.history()})
+                else:
+                    self.start_video(self.read_json_body())
+            except ValueError as error:
+                self.send_json(400, {"error": str(error)})
+            return
+
+        if VIDEO_JOBS.running() and parsed.path in (
+            "/api/flux2/generate", "/api/text/generate", "/api/text/inspect-image",
+            "/api/text/models/install", "/api/tts/setup", "/api/tts/generate",
+            "/api/storage/cleanup-cache", "/api/storage/clear-local-data",
+        ):
+            self.send_json(409, {"error": "Finish or stop the current video generation first."})
+            return
 
         if parsed.path == "/api/text/stop":
             with TEXT_JOB_LOCK:
@@ -2272,6 +2395,7 @@ class Handler(BaseHTTPRequestHandler):
                         cancel_event.set()
             if running:
                 TEXT_GENERATION_WORKER.interrupt()
+                INTEL_MEDIA.interrupt()
             self.send_json(202, {"job": text_runtime_snapshot()})
             return
 
@@ -2384,6 +2508,7 @@ class Handler(BaseHTTPRequestHandler):
                 total_chars = 0
                 image_count = 0
                 generated_images = None
+                require_gpu_vision = False
                 for message in messages:
                     if not isinstance(message, dict) or message.get("role") not in ("user", "assistant"):
                         raise ValueError("The conversation contains an unsupported message.")
@@ -2404,6 +2529,7 @@ class Handler(BaseHTTPRequestHandler):
                             path = (OUTPUTS / filename).resolve()
                             if model.get("supportsVision") and path.parent == OUTPUTS.resolve() and path.is_file():
                                 turn["imagePath"] = str(path)
+                                require_gpu_vision |= saved.get("model") in INTEL_MEDIA_CATALOG
                     if message.get("image") is not None:
                         if message["role"] != "user" or not model.get("supportsVision"):
                             raise ValueError("Choose a vision-capable GGUF model to use chat images.")
@@ -2442,10 +2568,10 @@ class Handler(BaseHTTPRequestHandler):
                         raise ValueError("Select a vision-capable chat model with tool calling and its vision projector.")
                     if device == "CPU":
                         raise ValueError("Select GPU in Preferences to use the image tool in chat.")
-                    if image_model not in flux2.KLEIN_MODEL_KEYS or not any(
+                    if not isinstance(image_model, str) or image_model not in IMAGE_MODEL_PRIORITY or not any(
                         item["id"] == image_model and item.get("installed") for item in MODEL_MANAGER.snapshot()
                     ):
-                        raise ValueError("Select an installed Klein image model in Chat settings.")
+                        raise ValueError("Select an installed image model in Chat settings.")
                 context_size = payload.get("contextSize", DEFAULT_CONTEXT_SIZE)
                 if type(context_size) is not int or context_size not in CONTEXT_SIZES:
                     raise ValueError("Choose a context size of 4K, 8K, or 16K tokens.")
@@ -2469,6 +2595,7 @@ class Handler(BaseHTTPRequestHandler):
                     "seed": seed,
                     "mode": mode,
                     "threadId": thread_id, "imageModel": image_model, "contextSize": context_size,
+                    "requireGpuVision": require_gpu_vision or image_model in INTEL_MEDIA_CATALOG,
                 }
                 start_text_job(generation, payload.get("requestId"))
                 self.send_json(202, {"job": text_runtime_snapshot()})
@@ -2582,7 +2709,9 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(409, {"error": "The generation job cannot be stopped.", "job": current})
                 return
             cancel_event.set()
-            if FLUX_JOB.get("model") == QWEN_TURBO_MODEL_ID:
+            if FLUX_JOB.get("model") in INTEL_MEDIA_CATALOG:
+                INTEL_MEDIA.interrupt()
+            elif FLUX_JOB.get("model") == QWEN_TURBO_MODEL_ID:
                 QWEN_GENERATION_WORKER.interrupt()
             elif FLUX_JOB.get("model") == flux3.MODEL_KEY:
                 FLUX3_GENERATION_WORKER.interrupt()
@@ -2608,6 +2737,7 @@ class Handler(BaseHTTPRequestHandler):
                 QWEN_GENERATION_WORKER.close()
                 FLUX3_GENERATION_WORKER.close()
                 TEXT_GENERATION_WORKER.close()
+                INTEL_MEDIA.close()
                 flux2.release_pipeline()
                 result = storage_manager.cleanup_cache(ROOT, CACHE_DIR, force=True)
             self.send_json(
@@ -2641,8 +2771,10 @@ class Handler(BaseHTTPRequestHandler):
                 TEXT_GENERATION_WORKER.close()
                 with TEXT_JOB_LOCK:
                     TEXT_JOB.update(id=None, threadId=None, status="idle", partialText="", partialReasoning="", result=None, image=None, error=None, errorCode=None)
+                INTEL_MEDIA.close()
                 flux2.release_pipeline()
                 cache_result = storage_manager.cleanup_cache(ROOT, CACHE_DIR, force=True)
+                VIDEO_JOBS.clear()
                 output_files, output_bytes = storage_manager.clear_directory(OUTPUTS)
                 metadata_files, metadata_bytes = storage_manager.clear_directory(DATA_DIR)
                 mark_flux_job(
@@ -2709,7 +2841,7 @@ class Handler(BaseHTTPRequestHandler):
                 repo_id, family = body.get("repoId"), body.get("family")
                 if not isinstance(repo_id, str) or not isinstance(family, str):
                     raise ValueError("Enter a Hugging Face repository and supported model family.")
-                if any(item["state"] in ("downloading", "verifying", "removing") for item in MODEL_MANAGER.snapshot()):
+                if any(item["state"] in ("downloading", "verifying", "preparing", "removing") for item in MODEL_MANAGER.snapshot()):
                     raise ValueError("Wait for the current model operation to finish.")
                 CUSTOM_IMAGE_DOWNLOAD.start(repo_id, family)
                 self.send_json(202, {"models": model_library_snapshot(), "customImageDownload": CUSTOM_IMAGE_DOWNLOAD.snapshot()})
@@ -2744,7 +2876,7 @@ class Handler(BaseHTTPRequestHandler):
                     GENERATION_WORKER.close()
                 elif parsed.path.endswith("/install"):
                     if any(
-                        item["state"] in ("downloading", "verifying", "removing")
+                        item["state"] in ("downloading", "verifying", "preparing", "removing")
                         for item in MODEL_MANAGER.snapshot()
                     ):
                         raise ValueError("Wait for the active model operation to finish before downloading the text encoder.")
@@ -2785,7 +2917,7 @@ class Handler(BaseHTTPRequestHandler):
                         if flux_job_snapshot()["status"] == "running" or tts_job_running() or text_job_running() or text_model_install_running():
                             raise ValueError("Finish the active image, audio, or text job before setting up FLUX.3 Klein.")
                         if any(
-                            item["state"] in ("downloading", "verifying", "removing")
+                            item["state"] in ("downloading", "verifying", "preparing", "removing")
                             for item in MODEL_MANAGER.snapshot()
                         ):
                             raise ValueError("Wait for the current model operation to finish.")
@@ -2837,6 +2969,13 @@ class Handler(BaseHTTPRequestHandler):
                     self.send_json(200, {"models": model_library_snapshot()})
                     return
                 model_spec(model)
+                if model in INTEL_MEDIA_CATALOG:
+                    if parsed.path.endswith("install") and not intel_media_supported():
+                        raise ValueError(INTEL_MEDIA_PLATFORM_NOTE)
+                    if parsed.path.endswith("remove"):
+                        if VIDEO_JOBS.running() or text_job_running() or flux_job_snapshot()["status"] == "running":
+                            raise ValueError("Finish or stop the current job before removing an Intel media model.")
+                        INTEL_MEDIA.close()
                 if parsed.path.endswith("install"): MODEL_MANAGER.start(model)
                 elif parsed.path.endswith("pause"): MODEL_MANAGER.cancel(model)
                 else:
@@ -2844,7 +2983,7 @@ class Handler(BaseHTTPRequestHandler):
                         raise ValueError("Wait for the active chat response before removing a Klein image model.")
                     with FLUX_JOB_LOCK:
                         if FLUX_JOB["status"] == "running": raise ValueError("Stop generation before removing a model.")
-                    if model in ("4b", "4b-lora") and KLEIN_TEXT_ENCODER_MANAGER.snapshot(True)["state"] in ("downloading", "verifying", "removing"):
+                    if model in ("4b", "4b-lora") and KLEIN_TEXT_ENCODER_MANAGER.snapshot(True)["state"] in ("downloading", "verifying", "preparing", "removing"):
                         raise ValueError("Cancel or finish the optional text encoder operation before removing Klein 4B.")
                     GENERATION_WORKER.close()
                     MODEL_MANAGER.remove(model)
@@ -2878,7 +3017,7 @@ class Handler(BaseHTTPRequestHandler):
         with operation_lock:
             status = (
                 model_snapshot(payload["device"], payload["model"])
-                if payload["model"] == QWEN_TURBO_MODEL_ID
+                if payload["model"] in (QWEN_TURBO_MODEL_ID, *INTEL_MEDIA_CATALOG)
                 else flux3.model_status(payload["device"])
                 if payload["model"] == flux3.MODEL_KEY
                 else custom_image.model_status(payload["device"], payload["model"])
@@ -2972,6 +3111,8 @@ def run_server(port: int = 8000, *, allow_cors: bool = False) -> None:
         QWEN_GENERATION_WORKER.close()
         FLUX3_GENERATION_WORKER.close()
         TEXT_GENERATION_WORKER.close()
+        VIDEO_JOBS.close()
+        INTEL_MEDIA.close()
         server.server_close()
 
 

@@ -25,9 +25,11 @@ def remove_tree(path):
 
 
 class ModelManager:
-    def __init__(self, root):
+    def __init__(self, root, prepare=None, preflight=None):
         self.root = Path(root).resolve()
         self.lock = threading.RLock()
+        self.prepare = prepare
+        self.preflight = preflight
         self.jobs = {}
         self.events = {}
 
@@ -76,7 +78,7 @@ class ModelManager:
         model_spec(model)
         with self.lock:
             if any(
-                j["state"] in ("downloading", "verifying", "removing")
+                j["state"] in ("downloading", "verifying", "preparing", "removing")
                 for j in self.jobs.values()
             ):
                 raise ValueError("Wait for the current model operation to finish.")
@@ -101,7 +103,7 @@ class ModelManager:
         model_spec(model)
         with self.lock:
             if any(
-                j["state"] in ("downloading", "verifying", "removing")
+                j["state"] in ("downloading", "verifying", "preparing", "removing")
                 for j in self.jobs.values()
             ):
                 raise ValueError("Pause downloads before removing a model.")
@@ -153,6 +155,12 @@ class ModelManager:
                 raise ValueError(
                     "Not enough free disk space; leave at least 2 GB after installation."
                 )
+            def set_phase(phase):
+                self._update(model, state="preparing", phase=phase)
+
+            if self.preflight:
+                self.preflight(model, stage, event, set_phase)
+                self._update(model, state="downloading", phase=None)
             done = 0
             for item in spec["files"]:
                 if event.is_set():
@@ -166,7 +174,7 @@ class ModelManager:
                     target.unlink()
                     offset = 0
                 if offset < item["size"]:
-                    url = f"https://huggingface.co/{spec['repo']}/resolve/{spec['revision']}/{item['path']}"
+                    url = item.get("url") or f"https://huggingface.co/{spec['repo']}/resolve/{spec['revision']}/{item['path']}"
                     req = urllib.request.Request(
                         url, headers={"Range": f"bytes={offset}-"} if offset else {}
                     )
@@ -206,12 +214,21 @@ class ModelManager:
                 self._update(model, state="downloading", downloaded=done)
             if event.is_set():
                 raise InterruptedError()
+            if self.prepare:
+                self.prepare(model, stage, event, set_phase)
+            if event.is_set():
+                raise InterruptedError()
             (stage / ".fern-model.json").write_text(
                 json.dumps({"model": model, "revision": spec["revision"]})
             )
-            stage.rename(self.folder(model))
-            self._update(model, state="installed")
+            destination = self.folder(model)
+            stage.rename(destination)
+            if spec.get("temporarySources"):
+                # Downloaded inputs for a locally converted model can be removed
+                # only after the prepared installation is ready to use.
+                shutil.rmtree(destination / "source", ignore_errors=True)
+            self._update(model, state="installed", phase=None)
         except InterruptedError:
-            self._update(model, state="paused")
+            self._update(model, state="paused", phase=None)
         except Exception as error:
-            self._update(model, state="failed", error=str(error))
+            self._update(model, state="failed", phase=None, error=str(error))

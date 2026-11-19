@@ -1,11 +1,12 @@
 # Fern
 
-Fern is a local-first studio for image generation, text conversations, and
-speech generation. It runs on Windows and has a beta package for x86-64 Omarchy.
-Each workspace has its own threads, settings, and output history.
+Fern is a local-first studio for image and video generation, text conversations,
+and speech generation. It runs on Windows and has a beta package for x86-64 Omarchy.
+Image, text, and audio workspaces have their own threads. Video keeps a local clip history.
 
 Image threads support Flux.2 Klein, FLUX.3 Klein, Qwen Image 2.1 Turbo, and
-Tame Pony SDXL OpenVINO models. Install available image models from **Library**;
+Tame Pony SDXL OpenVINO models, plus SANA-Sprint, MOSS Image HaDeS, and Z-Image
+Turbo on Windows Intel GPUs. Install available image models from **Models**;
 model-specific controls keep unsupported sizes and sampling options out of the
 composer. Image workflows include text-to-image, supported image guidance,
 repeatable seeds, batch generation, and a local gallery. Intel GPU, NVIDIA GPU,
@@ -13,8 +14,7 @@ and CPU execution depend on the selected model and the installed runtime.
 
 Text threads run local OpenVINO and GGUF chat models. Audio threads support Qwen3-TTS preset voices, voice
 design, and reference-audio voice cloning. Set up downloads the selected
-ready-made OpenVINO model from [xgirls on Hugging Face](https://huggingface.co/xgirls);
-the app does not export source checkpoints during installation.
+ready-made OpenVINO speech model from [xgirls on Hugging Face](https://huggingface.co/xgirls).
 
 Use **New image thread** (Ctrl+N), **New audio thread** (Ctrl+Shift+N), or
 **New text thread** (Ctrl+Alt+N) to open a workspace. Prompts, thread settings,
@@ -48,14 +48,15 @@ The package contains Python and OpenVINO. Models and the matching llama.cpp
 runtime download inside Fern. The beta targets FLUX.2 Klein, GGUF chat and
 vision, and image generation in chat on Intel GPUs. Qwen Image Turbo and
 Qwen3-TTS setup are unavailable on Linux. NVIDIA GPU support is outside the beta.
-CPU is available for models that support it.
+CPU is available for models that support it. The SANA-Sprint, MOSS, Z-Image,
+and Wan integrations currently require Windows x64 with a compatible Intel GPU.
 
 ### Windows
 
 Download `Fern-Setup-*.exe` from the project's GitHub Releases page and run it.
 The installer contains the desktop app, Python, and the pinned OpenVINO runtime.
 On first launch, Fern prepares its bundled runtime. Install image models from
-**Library**, the recommended language model from a text thread, and speech
+**Models**, the recommended language model from a text thread, and speech
 models from an audio thread. Downloads are pinned to catalog revisions and
 verified; interrupted downloads can resume. The first model load compiles for
 the selected device and can take longer than later runs.
@@ -73,12 +74,21 @@ use and repairs missing backend files when you retry. If Vulkan cannot find a
 compatible Intel GPU, the chat shows driver setup instructions for your platform.
 
 In a text thread with a tool-capable model, ask Fern to create an image. **Chat
-settings → Image generation** defaults to **Auto**, which prefers an installed
-Klein 4B model. Fern renders one 512 × 512 image at a time in four steps.
+settings → Image generation** defaults to **Auto**, which prefers the fastest installed compatible image model. Fern renders one
+512 × 512 image at a time using the selected model’s fast sampling preset.
 The image appears in the chat and in the Library. Fern checks the generated
 pixels before replying and includes recent images in follow-up requests. The
 image tool requires a vision-capable chat model with its projector. Fern keeps
-the chat and Klein models loaded on the Intel GPU between turns when the tool is enabled.
+the chat and image models loaded on the Intel GPU between turns when the tool is enabled.
+With SANA-Sprint, MOSS, or Z-Image, Fern also requires the chat vision projector
+to run on the Intel GPU.
+
+Open **Models → Video** to install **Wan 2.2 Turbo**, then choose **Video** in
+the sidebar. Add a PNG, JPEG, or WebP first frame and describe the motion. Fern
+crops the image to the 544 × 704 portrait canvas and renders 21 frames at 16 fps.
+Play, save as WebM, or delete clips in the Video workspace. The Intel Vulkan
+runtime downloads during model setup. SANA-Sprint separately installs its
+OpenVINO dependencies and compresses the source text encoder on this machine.
 
 GGUF threads use an 8K token context by default. Choose 4K, 8K, or 16K in **Chat
 settings**. Fern summarizes older turns when it needs room, carries the two

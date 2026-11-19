@@ -354,6 +354,22 @@ function registerIpc(): void {
     return result.filePath;
   });
 
+  ipcMain.handle("studio:save-output-video", async (event, name: unknown) => {
+    if (typeof name !== "string" || !/^wan-\d{13}-[a-f0-9]{8}\.webm$/.test(name)) {
+      throw new Error("Invalid video output name.");
+    }
+    const source = join(getOutputsDir(), name);
+    const owner = BrowserWindow.fromWebContents(event.sender);
+    const options = { title: "Save video", defaultPath: name, filters: [{ name: "WebM Video", extensions: ["webm"] }] };
+    const result = owner ? await dialog.showSaveDialog(owner, options) : await dialog.showSaveDialog(options);
+    if (result.canceled || !result.filePath) return null;
+    if (resolve(result.filePath).toLowerCase() !== resolve(source).toLowerCase()) {
+      const { copyFile } = await import("node:fs/promises");
+      await copyFile(source, result.filePath);
+    }
+    return result.filePath;
+  });
+
   ipcMain.handle(
     "studio:show-image-in-folder",
     async (_event, filePath: string) => {

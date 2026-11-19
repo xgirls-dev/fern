@@ -130,14 +130,16 @@ def ensure_runtime(root: Path, backend: str, progress: Callable[[str], None]) ->
 class GGUFServer:
     def __init__(
         self, executable: Path, model: Path, projector: Path | None, device: str, backend: str,
-        context_size: int = DEFAULT_CONTEXT_SIZE,
+        context_size: int = DEFAULT_CONTEXT_SIZE, *, gpu_projector: bool = False,
     ):
         self.backend = backend
         self.device = device
         self.context_size = context_size
+        self.gpu_projector = gpu_projector
         self.history: dict[str, CompactedHistory] = {}
         self.process: subprocess.Popen[bytes] | None = None
-        self.log = tempfile.TemporaryFile()
+        self.diagnostics = tempfile.TemporaryDirectory(prefix="fern-llama-")
+        self.log_path = Path(self.diagnostics.name) / "runtime.log"
         self.key = secrets.token_urlsafe(32)
         self.http = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         try:
@@ -159,12 +161,25 @@ class GGUFServer:
                 "--jinja", "--no-context-shift",
             ]
             if projector:
-                command += ["--mmproj", str(projector), "--no-mmproj-offload", "--image-max-tokens", str(MAX_IMAGE_TOKENS)]
-            self.process = subprocess.Popen(
-                command, cwd=executable.parent, env=env, stdin=subprocess.DEVNULL,
-                stdout=self.log, stderr=subprocess.STDOUT, creationflags=flags,
-            )
+                command += ["--mmproj", str(projector), "--image-max-tokens", str(MAX_IMAGE_TOKENS)]
+                command.append("--mmproj-offload" if gpu_projector else "--no-mmproj-offload")
+                if gpu_projector:
+                    command.extend(("-lv", "4"))
+            with self.log_path.open("wb") as log:
+                self.process = subprocess.Popen(
+                    command, cwd=executable.parent, env=env, stdin=subprocess.DEVNULL,
+                    stdout=log, stderr=subprocess.STDOUT, creationflags=flags,
+                )
             self._wait_ready()
+            if gpu_projector:
+                placement = self.log_path.read_text(encoding="utf-8", errors="replace")
+                layers = re.search(r"offloaded (\d+)/(\d+) layers to GPU", placement)
+                if not layers or layers[1] != layers[2] or f"mtmd_backends: using {selected} backend" not in placement:
+                    projector_lines = [line.strip() for line in placement.splitlines() if "mtmd_backends:" in line]
+                    detail = f" Layers: {layers[1]}/{layers[2]}." if layers else ""
+                    if projector_lines:
+                        detail += f" {projector_lines[-1]}"
+                    raise RuntimeError("The chat model and vision projector could not both load on Intel GPU. Free GPU memory and retry." + detail)
         except BaseException:
             self.close()
             raise
@@ -209,9 +224,9 @@ class GGUFServer:
         deadline = time.monotonic() + 180
         while time.monotonic() < deadline:
             if self.process.poll() is not None:
-                self.log.seek(0, os.SEEK_END)
-                self.log.seek(max(0, self.log.tell() - 2200))
-                detail = self.log.read().decode("utf-8", errors="replace")
+                with self.log_path.open("rb") as log:
+                    log.seek(max(0, self.log_path.stat().st_size - 2200))
+                    detail = log.read().decode("utf-8", errors="replace")
                 raise RuntimeError(f"Could not load the GGUF model on {self.backend} {self.device}. {detail[-1400:]}")
             try:
                 with self.http.open(self._request("/health"), timeout=2) as response:
@@ -235,7 +250,7 @@ class GGUFServer:
             except subprocess.TimeoutExpired:
                 self.process.kill()
                 self.process.wait()
-        self.log.close()
+        self.diagnostics.cleanup()
 
     def _post(self, route: str, body: dict, timeout: float = 30) -> dict:
         with self.http.open(self._request(route, body), timeout=timeout) as response:

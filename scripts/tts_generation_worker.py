@@ -81,6 +81,7 @@ class TtsGenerationWorker:
         cwd: Path, env: dict[str, str], log: Callable[[str], None],
         runtime_label: str = "Qwen3-TTS",
         progress_prefix: str = PROGRESS_PREFIX,
+        event_prefix: str = EVENT_PREFIX,
     ) -> dict[str, Any]:
         with self._lock:
             self._epoch += 1
@@ -111,10 +112,10 @@ class TtsGenerationWorker:
                         continue
                     qwen_prefix = "FERN_QWEN_EVENT:"
                     flux3_prefix = "FERN_FLUX3_EVENT:"
-                    if line.startswith((EVENT_PREFIX, qwen_prefix, flux3_prefix)):
+                    if line.startswith((event_prefix, qwen_prefix, flux3_prefix)):
                         prefix = next(
                             prefix
-                            for prefix in (EVENT_PREFIX, qwen_prefix, flux3_prefix)
+                            for prefix in (event_prefix, qwen_prefix, flux3_prefix)
                             if line.startswith(prefix)
                         )
                         event = json.loads(line[len(prefix):])

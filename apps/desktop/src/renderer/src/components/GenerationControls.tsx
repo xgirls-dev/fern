@@ -19,7 +19,7 @@ import type { ModelStatus, StudioSettings } from "../lib/types";
 import { notify } from "../lib/notifications";
 import { readReference, validateReference } from "../lib/reference";
 import { imageDimensionLimits } from "../lib/imageDimensions";
-import { isKleinLoraModel, maxReferenceImages, selectedKleinLoras } from "../lib/imageModels";
+import { intelImagePreset, isKleinLoraModel, maxReferenceImages, selectedKleinLoras } from "../lib/imageModels";
 import { getApiBaseUrl } from "../lib/api";
 
 function loraDisplayName(path: string): string {
@@ -289,11 +289,13 @@ export function GenerationControls({
   const isQwenTurbo = settings.model === "qwen21-turbo";
   const isFlux3Klein = settings.model === "flux3-klein";
   const isCustomImage = settings.model?.startsWith("custom-") ?? false;
-  const hasFixedSampling = isQwenTurbo || isFlux3Klein;
+  const intelPreset = intelImagePreset(settings.model);
+  const hasFixedSampling = isQwenTurbo || isFlux3Klein || Boolean(intelPreset);
   const { multiple: dimensionMultiple, minimum: minimumDimension, maximum: maximumDimension } = imageDimensionLimits(settings.model, modelStatus);
   const availableSizePresets = useMemo(
     () =>
-      SIZE_PRESETS.filter((preset) => {
+      intelPreset ? intelPreset.sizes.map((size) => ({ value: `${size}x${size}`, label: `${size} × ${size}` }))
+      : SIZE_PRESETS.filter((preset) => {
         if (isFlux3Klein) return preset.value === "1024x1024";
         if (preset.value === "custom") return true;
         const [width, height] = preset.value.split("x").map(Number);
@@ -301,7 +303,7 @@ export function GenerationControls({
           && width <= maximumDimension && height <= maximumDimension
           && width % dimensionMultiple === 0 && height % dimensionMultiple === 0;
       }),
-    [dimensionMultiple, isFlux3Klein, maximumDimension, minimumDimension],
+    [dimensionMultiple, intelPreset, isFlux3Klein, maximumDimension, minimumDimension],
   );
   const [referenceBusy, setReferenceBusy] = useState(false);
   const activeChips = new Set(
@@ -392,10 +394,10 @@ export function GenerationControls({
     });
     onSettingsChange({
       prompt: recipe.prompt,
-      width: isFlux3Klein ? 1024 : recipe.width,
-      height: isFlux3Klein ? 1024 : recipe.height,
-      steps: hasFixedSampling ? (isFlux3Klein ? 16 : 8) : recipe.steps,
-      guidance: hasFixedSampling ? (isFlux3Klein ? 0 : 1) : recipe.guidance,
+      width: intelPreset ? settings.width : isFlux3Klein ? 1024 : recipe.width,
+      height: intelPreset ? settings.height : isFlux3Klein ? 1024 : recipe.height,
+      steps: intelPreset?.steps ?? (hasFixedSampling ? (isFlux3Klein ? 16 : 8) : recipe.steps),
+      guidance: intelPreset?.guidance ?? (hasFixedSampling ? (isFlux3Klein ? 0 : 1) : recipe.guidance),
     });
   };
 
@@ -545,7 +547,7 @@ export function GenerationControls({
             {isLoraModel ? <p className="model-note field-note">Klein LoRA uses the Intel GPU and guidance 1.0. Attach up to four reference images.</p> : null}
             {hasFixedSampling ? (
               <p className="model-note field-note">
-                {isFlux3Klein
+                {intelPreset ? "Text to image on Intel GPU. Choose a validated canvas size." : isFlux3Klein
                   ? "FLUX.3 Klein uses 16 fixed steps and text-to-image only. GPU runs now use FP32 transformer inference; keep the canvas at 1024 × 1024 while output quality is rechecked."
                   : "Official Turbo runs 8 fixed steps and generates 1 image per request. Fern uses an available GPU automatically. This OpenVINO graph does not use the checkpoint’s KV cache, so it can be slower than CUDA Turbo. Larger canvases need more memory and take longer."}
               </p>
@@ -558,7 +560,7 @@ export function GenerationControls({
               <Select
                 id="size-preset"
                 name="size-preset"
-                value={isFlux3Klein ? "1024x1024" : customSize ? "custom" : sizePreset}
+                value={isFlux3Klein ? "1024x1024" : customSize && !intelPreset ? "custom" : sizePreset}
                 onChange={(event) => applySizePreset(event.target.value)}
               >
                 {availableSizePresets.map((preset) => (
@@ -569,7 +571,7 @@ export function GenerationControls({
               </Select>
             </div>
 
-            <div className="dims-row">
+            <div className="dims-row" hidden={Boolean(intelPreset)}>
               <div className="field">
                 <label htmlFor="width">Width</label>
                 <DraftNumberInput
@@ -631,7 +633,7 @@ export function GenerationControls({
                   <option value={3}>3 images</option>
                   <option value={4}>4 images</option>
                 </Select>
-                {hasFixedSampling ? <small className="field-note">{isFlux3Klein ? "FLUX.3 Klein generates one image per request." : "Qwen Turbo generates one image per request."}</small> : null}
+                {hasFixedSampling ? <small className="field-note">{"This model generates one image per request."}</small> : null}
               </div>
             </div>
             <p
@@ -844,7 +846,7 @@ export function GenerationControls({
 
           <ControlSection
             title="Advanced"
-            summary={hasFixedSampling ? (isFlux3Klein ? "16 steps | no guidance (fixed)" : "8 steps | guidance 1.0 (fixed)") : `${settings.steps} steps | guidance ${settings.guidance}`}
+            summary={intelPreset ? `${intelPreset.steps} steps · guidance ${intelPreset.guidance} (fixed)` : hasFixedSampling ? (isFlux3Klein ? "16 steps | no guidance (fixed)" : "8 steps | guidance 1.0 (fixed)") : `${settings.steps} steps | guidance ${settings.guidance}`}
           >
             <div className="field">
               <label htmlFor="seed">Seed</label>

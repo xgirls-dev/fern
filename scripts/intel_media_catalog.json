@@ -1,0 +1,302 @@
+{
+  "moss-hades": {
+    "id": "moss-hades",
+    "label": "MOSS Image \u00b7 HaDeS",
+    "folder": "moss-image-intel-vulkan",
+    "repo": "xgirls/MOSS-Image-SFT-HaDeS-Intel-GGUF",
+    "revision": "9f90d0af89480cfac37041d56e90dbcb261bd0c5",
+    "description": "Fast image generation with the fused HaDeS acceleration adapter.",
+    "category": "image",
+    "runtimeBackend": "Vulkan",
+    "quantization": "Q3_K \u00b7 Vulkan",
+    "memoryGiB": 8,
+    "defaultWidth": 512,
+    "defaultHeight": 512,
+    "defaultSteps": 4,
+    "defaultGuidance": 1.0,
+    "dimensions": [
+      384,
+      512
+    ],
+    "preset": {
+      "flow_shift": 5,
+      "scheduler": "simple",
+      "gpu_budget_gib": 8
+    },
+    "assets": {
+      "diffusion": "MOSS-Image-SFT-HaDeS-v0.6-Q3_K.gguf",
+      "llm": "Qwen3.5-9B-Q3_K_S.gguf",
+      "tokenizer": "tokenizer/tokenizer.json",
+      "tae": "taef2.safetensors"
+    },
+    "files": [
+      {
+        "path": "MOSS-Image-SFT-HaDeS-v0.6-Q3_K.gguf",
+        "size": 2695707648,
+        "sha256": "7d216fc11e0d2239b23d09073b8ee747581d42d49e89c18d1b994b9fbfa38313",
+        "url": "https://huggingface.co/xgirls/MOSS-Image-SFT-HaDeS-Intel-GGUF/resolve/acb32f2297276d0f4cb82286047d7315e247849a/MOSS-Image-SFT-HaDeS-v0.6-Q3_K.gguf"
+      },
+      {
+        "path": "Qwen3.5-9B-Q3_K_S.gguf",
+        "size": 4316865760,
+        "sha256": "162050d39ebae6b8a87435f282bcb7a0e3fab7b2444db730966b3fef1ed0179e",
+        "url": "https://huggingface.co/unsloth/Qwen3.5-9B-GGUF/resolve/3885219b6810b007914f3a7950a8d1b469d598a5/Qwen3.5-9B-Q3_K_S.gguf"
+      },
+      {
+        "path": "tokenizer/tokenizer.json",
+        "size": 19989325,
+        "sha256": "06b9509352d2af50381ab2247e083b80d32d5c0aba91c272ca9ff729b6a0e523",
+        "url": "https://huggingface.co/OpenMOSS-Team/MOSS-Image-Base/resolve/85975793d8b3d432f1b6e27f352abaa4c2a4c0d3/tokenizer/tokenizer.json"
+      },
+      {
+        "path": "taef2.safetensors",
+        "size": 10723524,
+        "sha256": "701d31c0ecbef3b609fe236e2e3a65ffb17f3a94237acdd771e8ea3194df557a",
+        "url": "https://huggingface.co/madebyollin/taef2/resolve/bd244ebfe4398c84fbf312a2f1c868c676b500e3/taef2.safetensors"
+      }
+    ]
+  },
+  "z-image-turbo": {
+    "id": "z-image-turbo",
+    "label": "Z-Image Turbo",
+    "folder": "z-image-turbo-intel-vulkan",
+    "repo": "xgirls/Z-Image-Turbo-Intel-Vulkan",
+    "revision": "4c3f5026570df4c8a831731a594dd79e32e56efd",
+    "description": "Compact quantization for photorealistic image generation.",
+    "category": "image",
+    "runtimeBackend": "Vulkan",
+    "quantization": "Q3_K \u00b7 Vulkan",
+    "memoryGiB": 6,
+    "defaultWidth": 512,
+    "defaultHeight": 512,
+    "defaultSteps": 8,
+    "defaultGuidance": 1.0,
+    "dimensions": [
+      512
+    ],
+    "preset": {
+      "flow_shift": 3,
+      "scheduler": "discrete",
+      "gpu_budget_gib": 6
+    },
+    "assets": {
+      "diffusion": "z_image_turbo-Q3_K.gguf",
+      "llm": "Qwen3-4B-Instruct-2507-Q3_K_S.gguf",
+      "vae": "split_files/vae/ae.safetensors"
+    },
+    "files": [
+      {
+        "path": "z_image_turbo-Q3_K.gguf",
+        "size": 3143559104,
+        "sha256": "4b44bdaa7814f20d7cf144e3939bd93aa32f50660204dd0c2aea5c5376232980",
+        "url": "https://huggingface.co/leejet/Z-Image-Turbo-GGUF/resolve/c61c0e422dc8b541b7548cf33a4ef8302b0f8085/z_image_turbo-Q3_K.gguf"
+      },
+      {
+        "path": "Qwen3-4B-Instruct-2507-Q3_K_S.gguf",
+        "size": 1886997600,
+        "sha256": "0ce20058cc0ed6b6c9213bb383589327e458c12ffce0842fc96867042d669c75",
+        "url": "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/a06e946bb6b655725eafa393f4a9745d460374c9/Qwen3-4B-Instruct-2507-Q3_K_S.gguf"
+      },
+      {
+        "path": "split_files/vae/ae.safetensors",
+        "size": 335304388,
+        "sha256": "afc8e28272cd15db3919bacdb6918ce9c1ed22e96cb12c4d5ed0fba823529e38",
+        "url": "https://huggingface.co/Comfy-Org/z_image_turbo/resolve/6fc90a3b1b653e935a0d175e260736de25b84df5/split_files/vae/ae.safetensors"
+      }
+    ]
+  },
+  "wan22-turbo": {
+    "id": "wan22-turbo",
+    "label": "Wan 2.2 Turbo",
+    "folder": "wan-turbo-intel-vulkan",
+    "repo": "xgirls/Wan2.2-TI2V-5B-Turbo-Intel-Vulkan",
+    "revision": "9806f497503361492c26f9d87d48b515ba0878ec",
+    "description": "Animate a still image into a short portrait video.",
+    "category": "video",
+    "runtimeBackend": "Vulkan",
+    "quantization": "Q4_0 \u00b7 Vulkan",
+    "memoryGiB": 8,
+    "defaultWidth": 544,
+    "defaultHeight": 704,
+    "defaultSteps": 4,
+    "defaultGuidance": 1.0,
+    "dimensions": [
+      544,
+      704
+    ],
+    "preset": {
+      "flow_shift": 8,
+      "scheduler": "simple",
+      "gpu_budget_gib": 8,
+      "vae_tile_size": 128
+    },
+    "assets": {
+      "diffusion": "Wan2_2-TI2V-5B-Turbo-Q4_0.gguf",
+      "t5": "umt5-xxl-encoder-Q4_K_M.gguf",
+      "tae": "taew2_2.safetensors"
+    },
+    "files": [
+      {
+        "path": "Wan2_2-TI2V-5B-Turbo-Q4_0.gguf",
+        "size": 3033897696,
+        "sha256": "8aa3a98c254bd02a9cc7e4f1db37720fe291cef8b0c32fb78e7a2391125d6b28",
+        "url": "https://huggingface.co/hum-ma/Wan2.2-TI2V-5B-Turbo-GGUF/resolve/9873ba175b4b204a81f4a43c9644e6c385ee4459/Wan2_2-TI2V-5B-Turbo-Q4_0.gguf"
+      },
+      {
+        "path": "umt5-xxl-encoder-Q4_K_M.gguf",
+        "size": 3655145312,
+        "sha256": "17cf97a5bbbc60a646d6105b832b6f657ce904a8a1ad970e4b59df0c67584a40",
+        "url": "https://huggingface.co/off-grid-ai/Video-Companions-GGUF/resolve/18b5ae5e93799acd6cd20819f898ff60f4b822d1/umt5-xxl-encoder-Q4_K_M.gguf"
+      },
+      {
+        "path": "taew2_2.safetensors",
+        "size": 22848048,
+        "sha256": "b84609b2a133d48434bd9636bfcb44bf05168dc436e2d3cecf26256faa1f5325",
+        "url": "https://raw.githubusercontent.com/madebyollin/taehv/9055eee0391548d1787938d040a161cbe396bf98/safetensors/taew2_2.safetensors"
+      }
+    ],
+    "frames": 21,
+    "fps": 16
+  },
+  "sana-sprint": {
+    "id": "sana-sprint",
+    "label": "SANA-Sprint 0.6B",
+    "folder": "sana-sprint-06b-intel-openvino",
+    "temporarySources": true,
+    "repo": "xgirls/SANA-Sprint-0.6B-Intel-OpenVINO",
+    "revision": "eae070fed7402d391ceae7365f896a2829183bdf",
+    "description": "Two-step image generation with an OpenVINO INT4 denoiser and locally compressed Gemma encoder.",
+    "category": "image",
+    "runtimeBackend": "OpenVINO",
+    "quantization": "INT4 \u00b7 OpenVINO",
+    "defaultWidth": 512,
+    "defaultHeight": 512,
+    "defaultSteps": 2,
+    "defaultGuidance": 4.5,
+    "dimensions": [
+      512,
+      1024
+    ],
+    "files": [
+      {
+        "path": "model_index.json",
+        "size": 490,
+        "sha256": "9727f28ee7c4a45d088a3dcde127e111c9d35e260748ae95d588696019ae3178"
+      },
+      {
+        "path": "scheduler/scheduler_config.json",
+        "size": 162,
+        "sha256": "a15c36c31191476547eecb268b2d2745cba69d3c9dc4715eb48190125c13d7b4"
+      },
+      {
+        "path": "transformer/config.json",
+        "size": 867,
+        "sha256": "7e8177e64c2b9e86fb68fd62ccab850699b905fc13bf3c9ed4f6796f5d8b7864"
+      },
+      {
+        "path": "transformer/openvino_model.xml",
+        "size": 4097126,
+        "sha256": "760aedaab2ae32ad0445b7765f460b5c87bfc30b0e5da42bbf51fe87f6a21812"
+      },
+      {
+        "path": "transformer/openvino_model.bin",
+        "size": 450562196,
+        "sha256": "9bd494b0aeea6905687be83795e446efa8169b00bc26004a51469444eb3b2659"
+      },
+      {
+        "path": "vae_encoder/config.json",
+        "size": 1488,
+        "sha256": "504a5dd424fe523acf5d2ae64b0fbc59c3ac5b148de222ca26b04f69da8e4f4f"
+      },
+      {
+        "path": "vae_encoder/openvino_model.xml",
+        "size": 957962,
+        "sha256": "f680b9cd257f7931877cf78422ca22ac868ef011e0bb1a9f3c15264a00d597aa"
+      },
+      {
+        "path": "vae_encoder/openvino_model.bin",
+        "size": 306054444,
+        "sha256": "ba6dae354b8f90f732e4ac29a075ade0f41483056dfa78c69e2b78b275668942"
+      },
+      {
+        "path": "vae_decoder/config.json",
+        "size": 1488,
+        "sha256": "504a5dd424fe523acf5d2ae64b0fbc59c3ac5b148de222ca26b04f69da8e4f4f"
+      },
+      {
+        "path": "vae_decoder/openvino_model.xml",
+        "size": 1057537,
+        "sha256": "6f25baf4405ab6f6828969491dee1d6cdad88f5a8075ee720385b39b5f20afc5"
+      },
+      {
+        "path": "vae_decoder/openvino_model.bin",
+        "size": 318446574,
+        "sha256": "e857ac026ba4711377fbe6a60e64a4b94c8c1b21b1840834ec5f2c0546b82349"
+      },
+      {
+        "path": "wheels/optimum-2.4.0.dev0-py3-none-any.whl",
+        "size": 160910,
+        "sha256": "fe07ba50fff9df0a426efcd2674f4f3bead244a62c8332a7d03de06d96cc4f69"
+      },
+      {
+        "path": "wheels/optimum_intel-1.27.0.dev0-py3-none-any.whl",
+        "size": 332836,
+        "sha256": "bbde86eb71e3318e6171ed2f73884e093e27aa5bbb2d3d713e164a5fc8174660"
+      },
+      {
+        "path": "wheels/optimum_onnx-0.1.0.dev0-py3-none-any.whl",
+        "size": 198219,
+        "sha256": "c551dfde1068e3eca843d552d6d5ea54c01b18a34ab167cb902e4192150cb07a"
+      },
+      {
+        "path": "source/text_encoder/config.json",
+        "size": 1108,
+        "sha256": null,
+        "blob": "e145cc874ff285987120d9c66af4d7c46aa80cdc",
+        "url": "https://huggingface.co/rupeshs/sana-sprint-0.6b-openvino-int4/resolve/323b7f09f2a9845c7b30aa9f1b524244c204add8/text_encoder/config.json"
+      },
+      {
+        "path": "source/text_encoder/openvino_model.bin",
+        "size": 5229168418,
+        "sha256": "e205c46b7f825a1637ec1e55efad1a788e94ada3060ddaea37ba08a786b7afaf",
+        "blob": "3aaefa566f8ec2231bc36e1309f287521013ffc5",
+        "url": "https://huggingface.co/rupeshs/sana-sprint-0.6b-openvino-int4/resolve/323b7f09f2a9845c7b30aa9f1b524244c204add8/text_encoder/openvino_model.bin"
+      },
+      {
+        "path": "source/text_encoder/openvino_model.xml",
+        "size": 1865487,
+        "sha256": null,
+        "blob": "0968aafc511a0e441d77c3e9ba00cae2776a61f0",
+        "url": "https://huggingface.co/rupeshs/sana-sprint-0.6b-openvino-int4/resolve/323b7f09f2a9845c7b30aa9f1b524244c204add8/text_encoder/openvino_model.xml"
+      },
+      {
+        "path": "source/tokenizer/special_tokens_map.json",
+        "size": 670,
+        "sha256": null,
+        "blob": "872a791cc662710bca05196ffeb47be7a80759fd",
+        "url": "https://huggingface.co/rupeshs/sana-sprint-0.6b-openvino-int4/resolve/323b7f09f2a9845c7b30aa9f1b524244c204add8/tokenizer/special_tokens_map.json"
+      },
+      {
+        "path": "source/tokenizer/tokenizer.json",
+        "size": 34362873,
+        "sha256": "5f7eee611703c5ce5d1eee32d9cdcfe465647b8aff0c1dfb3bed7ad7dbb05060",
+        "blob": "a4a305d1de4d8f47c0252b4d7fe65a10dd8e2c22",
+        "url": "https://huggingface.co/rupeshs/sana-sprint-0.6b-openvino-int4/resolve/323b7f09f2a9845c7b30aa9f1b524244c204add8/tokenizer/tokenizer.json"
+      },
+      {
+        "path": "source/tokenizer/tokenizer.model",
+        "size": 4241003,
+        "sha256": "61a7b147390c64585d6c3543dd6fc636906c9af3865a5548f27f31aee1d4c8e2",
+        "blob": "796efe9ab515c15e146ce7588e6d7b9b8134dbf8",
+        "url": "https://huggingface.co/rupeshs/sana-sprint-0.6b-openvino-int4/resolve/323b7f09f2a9845c7b30aa9f1b524244c204add8/tokenizer/tokenizer.model"
+      },
+      {
+        "path": "source/tokenizer/tokenizer_config.json",
+        "size": 49040,
+        "sha256": null,
+        "blob": "04ec0209c1cfc87383a28c0452f54df8be376d3e",
+        "url": "https://huggingface.co/rupeshs/sana-sprint-0.6b-openvino-int4/resolve/323b7f09f2a9845c7b30aa9f1b524244c204add8/tokenizer/tokenizer_config.json"
+      }
+    ]
+  }
+}

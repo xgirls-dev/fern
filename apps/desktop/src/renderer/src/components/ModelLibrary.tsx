@@ -1,3 +1,4 @@
+import Clapperboard from "lucide-react/dist/esm/icons/clapperboard.mjs";
 import { useEffect, useRef, useState } from "react";
 import ImageIcon from "lucide-react/dist/esm/icons/image.mjs";
 import ChevronDown from "lucide-react/dist/esm/icons/chevron-down.mjs";
@@ -16,6 +17,11 @@ export interface InstalledModel {
   phase?: string;
   logs?: string[];
   runtimeReady?: boolean;
+  category?: "image" | "video";
+  quantization?: string;
+  description?: string;
+  memoryGiB?: number;
+  defaultSteps?: number;
   setupUnavailableReason?: string | null;
   supportsReferenceImage?: boolean;
   error?: string;
@@ -51,7 +57,8 @@ const CUSTOM_IMAGE_FAMILIES = [
   ["flux2-klein", "FLUX.2 Klein"],
   ["lcm", "Latent Consistency Model"],
 ] as const;
-export function ModelLibrary({ recommendedId, onCatalogChange }: {
+export function ModelLibrary({ recommendedId, category = "image", onCatalogChange }: {
+  category?: "image" | "video";
   recommendedId?: string;
   onCatalogChange?: (models: InstalledModel[]) => void;
 }) {
@@ -93,7 +100,7 @@ export function ModelLibrary({ recommendedId, onCatalogChange }: {
         const data = await response.json();
         if (!Array.isArray(data.models)) throw new Error("Model status response is invalid.");
         failures = 0;
-        setupActive = data.models.some((model: InstalledModel) => ["installing", "checking-runtime"].includes(model.state));
+        setupActive = data.models.some((model: InstalledModel) => ["downloading", "verifying", "preparing", "installing", "checking-runtime"].includes(model.state));
         encoderDownloadActive = data.models.some((model: InstalledModel) => ["downloading", "verifying", "removing"].includes(model.uncensoredTextEncoder?.state ?? ""));
         customDownloadActive = ["checking", "downloading", "validating"].includes(data.customImageDownload?.status);
         if (alive) {
@@ -149,8 +156,9 @@ export function ModelLibrary({ recommendedId, onCatalogChange }: {
   };
   const customDownloadActive = ["checking", "downloading", "validating"].includes(customDownload.status);
   const downloading = models.some((model) =>
-    ["downloading", "verifying", "removing", "installing"].includes(model.state),
+    ["downloading", "verifying", "preparing", "removing", "installing"].includes(model.state),
   ) || models.some((model) => ["downloading", "verifying", "removing"].includes(model.uncensoredTextEncoder?.state ?? "")) || customDownloadActive;
+  const displayed = models.filter((model) => (model.category ?? "image") === category);
   const actionsUnavailable = busy || Boolean(error);
   const addCustomModel = async () => {
     setAddingCustom(true);
@@ -231,13 +239,13 @@ export function ModelLibrary({ recommendedId, onCatalogChange }: {
     <section className="preferences-section" aria-labelledby="models-title">
       <div className="preferences-section-heading">
         <div>
-          <h3 id="models-title">Image models</h3>
+          <h3 id="models-title">{category === "video" ? "Video models" : "Image models"}</h3>
           <p>
-            Install the image models you need. They load when you generate.
+            {category === "video" ? "Generate short clips from a still image." : "Install the image models you need. They load when you generate."}
           </p>
         </div>
       </div>
-      <details className="model-library-custom" ref={customDetails}>
+      {category === "image" ? <details className="model-library-custom" ref={customDetails}>
       <summary className="ui-disclosure-trigger model-library-custom-trigger"><Plus size={15} aria-hidden="true" />Add custom model<ChevronDown className="model-library-custom-chevron" size={14} aria-hidden="true" /></summary>
       <div className="model-library-import">
         <p>Choose the family that matches your OpenVINO export, then download it or link a folder on this device.</p>
@@ -274,24 +282,24 @@ export function ModelLibrary({ recommendedId, onCatalogChange }: {
           </div>
         ) : null}
       </div>
-      </details>
+      </details> : null}
       {!models.length && !error ? (
         <p role="status">Checking installed models…</p>
       ) : null}
       {error ? <ErrorMessage>{error}</ErrorMessage> : null}
       {actionError ? <ErrorMessage>{actionError}</ErrorMessage> : null}
       <div className="model-library-grid">
-        {(recommendedId ? [...models].sort((a, b) => Number(b.id === recommendedId) - Number(a.id === recommendedId)) : models).map((model) => (
+        {(recommendedId ? [...displayed].sort((a, b) => Number(b.id === recommendedId) - Number(a.id === recommendedId)) : displayed).map((model) => (
           <ModelCard
             className={model.id === "qwen21-turbo" ? "model-library-card-qwen" : model.id === "flux3-klein" ? "model-library-card-flux3" : model.id.startsWith("tame-pony-") || model.id.startsWith("custom-") ? "model-library-card-sdxl" : ""}
             key={model.id}
-            aria-busy={["installing", "checking-runtime"].includes(model.state) || undefined}
+            aria-busy={["downloading", "verifying", "preparing", "installing", "checking-runtime"].includes(model.state) || undefined}
           >
-            <ModelCardHeading icon={<ImageIcon size={17} />}>
+            <ModelCardHeading icon={category === "video" ? <Clapperboard size={17} /> : <ImageIcon size={17} />}>
               <h4 title={model.label}>{model.label}</h4>
             </ModelCardHeading>
             <p>
-              {model.id.startsWith("custom-")
+              {model.quantization ? `${model.quantization} · ${(model.bytes / 1e9).toFixed(2)} GB download` : model.id.startsWith("custom-")
               ? `${model.familyLabel ?? model.family ?? "Custom model"} · ${model.sourceType === "huggingface" ? "Hugging Face" : "Local folder"}`
               : model.id === "qwen21-turbo"
               ? `8 steps · INT8 · ${(model.bytes / 1e9).toFixed(1)} GB`
@@ -301,6 +309,7 @@ export function ModelLibrary({ recommendedId, onCatalogChange }: {
                     ? `SDXL · ${model.id.endsWith("-int8") ? "INT8" : "FP16"} · ${(model.bytes / 1e9).toFixed(2)} GB`
                     : `${model.bytes > 0 ? `${(model.bytes / 1e9).toFixed(2)} GB · ` : ""}${isKleinLoraModel(model.id) ? "LoRA-ready · Intel GPU" : model.id === "4b" ? "Smaller download and lower memory use" : "Larger model"}`}
             </p>
+            {model.quantization ? <p className="model-library-note">{model.description}{model.memoryGiB ? ` Recommended GPU memory budget: ${model.memoryGiB} GiB.` : ""}</p> : null}
               {model.id.startsWith("custom-") ? (
               <p className="model-library-note" title={model.repoId}>Text to image · {model.sourceType === "huggingface" ? model.repoId : "Linked in place; source files are kept on removal."}</p>
             ) : model.id.startsWith("tame-pony-") ? (
@@ -365,7 +374,9 @@ export function ModelLibrary({ recommendedId, onCatalogChange }: {
               </details>
             ) : null}
             <ModelStatus installed={model.state === "installed"} aria-live="polite">
-              {model.state === "not-installed"
+              {model.state === "preparing" ? model.phase || "Preparing Intel GPU runtime…"
+                : model.state === "installed" && model.quantization ? "Installed · Intel GPU"
+                : model.state === "not-installed"
                 ? "Not installed"
                 : model.state === "installed"
                   ? model.id.startsWith("custom-")
@@ -391,6 +402,7 @@ export function ModelLibrary({ recommendedId, onCatalogChange }: {
                             : "Model files are present, but this Fern runtime cannot load OpenVINO Qwen."
                     : model.state}
             </ModelStatus>
+            {model.state === "preparing" ? <progress aria-label={`${model.label} setup`} /> : null}
             {model.id === "flux3-klein" && model.state === "installing" ? (
               model.downloaded > 0 && model.downloaded < model.bytes ? (
                 <>
@@ -493,13 +505,13 @@ export function ModelLibrary({ recommendedId, onCatalogChange }: {
                 >
                   Repair runtime
                 </Button>
-              ) : ["downloading", "verifying"].includes(model.state) ? (
+              ) : ["downloading", "verifying", "preparing"].includes(model.state) ? (
                 <Button
 
                   disabled={actionsUnavailable}
                   onClick={() => void action(model.id, "pause")}
                 >
-                  Pause
+                  {model.state === "preparing" ? "Cancel setup" : "Pause"}
                 </Button>
               ) : !model.installed && !model.setupUnavailableReason && !["repair-needed", "checking-runtime"].includes(model.state) ? (
                 <Button
@@ -525,7 +537,7 @@ export function ModelLibrary({ recommendedId, onCatalogChange }: {
                 ["failed", "paused", "repair-needed", "runtime-unavailable"].includes(model.state)) ? (
                 remove === model.id ? (
                   <InlineConfirmation confirmLabel="Remove model" disabled={actionsUnavailable || downloading} onCancel={() => { setRemove(null); removalFocus.restore(model.id); }} onConfirm={() => void action(model.id, "remove")}>
-                    Remove model files? Your images and threads stay.
+                    {category === "video" ? "Remove model files? Your saved clips stay." : "Remove model files? Your images and threads stay."}
                   </InlineConfirmation>
                 ) : (
                   <Button

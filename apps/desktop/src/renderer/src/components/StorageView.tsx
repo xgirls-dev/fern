@@ -207,6 +207,7 @@ export function StorageView({
               </article>
               <article className="storage-card">
                 <span className="storage-icon"><HardDrive size={16} aria-hidden="true" /></span>
+                {storage.video ? <div><span>Video clips</span><strong>{formatBytes(storage.video.bytes)}</strong><small>{storage.video.fileCount} WebM files</small></div> : null}
                 <div><span>Audio takes</span><strong>{formatBytes(storage.audio.bytes)}</strong><small>{storage.audio.fileCount} WAV files</small></div>
               </article>
               <article className="storage-card">

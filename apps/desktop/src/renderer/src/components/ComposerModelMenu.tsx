@@ -26,6 +26,9 @@ const MODEL_LABELS: Record<string, string> = {
   "flux3-klein": "FLUX.3 Klein · INT4",
   "tame-pony-v25-sdxl": "Tame Pony · SDXL",
   "tame-pony-v25-sdxl-int8": "Tame Pony · SDXL INT8",
+  "sana-sprint": "SANA-Sprint 0.6B",
+  "moss-hades": "MOSS Image · HaDeS",
+  "z-image-turbo": "Z-Image Turbo",
 };
 const MODEL_CHOICES = Object.keys(MODEL_LABELS);
 

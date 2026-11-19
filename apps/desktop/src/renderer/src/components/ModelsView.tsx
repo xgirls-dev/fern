@@ -7,7 +7,7 @@ import { ModelLibrary, type InstalledModel } from "./ModelLibrary";
 import { TextModelLibrary } from "./TextModelLibrary";
 import type { ModelSetup, SetupSelection } from "../lib/modelSetup";
 
-export type ModelCategory = "image" | "text" | "audio";
+export type ModelCategory = "image" | "text" | "audio" | "video";
 export function ModelsView({ category: tab, onCategoryChange, text, audio, setup, onReturnToDraft, intelAvailable }: {
   category: ModelCategory;
   onCategoryChange: (category: ModelCategory) => void;
@@ -28,7 +28,7 @@ export function ModelsView({ category: tab, onCategoryChange, text, audio, setup
   const recommendedText = text.status.recommendedModels?.find((model) =>
     needsVision ? model.format === "gguf" && text.status.ggufAvailable === true : model.id === text.status.defaultModelId);
   const installedTool = text.status.imageToolModels?.[0];
-  const installedImage = needsVision ? installedTool : imageCatalog.find((model) => model.installed && ["4b", "9b"].includes(model.id));
+  const installedImage = needsVision ? installedTool : imageCatalog.find((model) => model.installed && (["4b", "9b"].includes(model.id) || (model.category === "image" && !model.setupUnavailableReason)));
   const recommendedImage = imageCatalog.find((model) => model.id === "4b" && !model.setupUnavailableReason);
   const visionBlock = needsVision && (text.computeDevice === "CPU"
     ? "Select GPU in Preferences to generate images in chat."
@@ -46,7 +46,7 @@ export function ModelsView({ category: tab, onCategoryChange, text, audio, setup
       id="models-view-title"
       title="Models"
       titleRef={heading}
-      actions={<SegmentedControl label="Model categories" value={tab} onChange={onCategoryChange} options={[{ value: "image", label: "Image" }, { value: "text", label: "Text" }, { value: "audio", label: "Audio" }]} />}
+      actions={<SegmentedControl label="Model categories" value={tab} onChange={onCategoryChange} options={[{ value: "image", label: "Image" }, { value: "text", label: "Text" }, { value: "audio", label: "Audio" }, { value: "video", label: "Video" }]} />}
     />
     {setup ? <section className="model-setup-summary" aria-label="Draft setup">
       <div className="model-setup-summary-copy">
@@ -73,7 +73,7 @@ export function ModelsView({ category: tab, onCategoryChange, text, audio, setup
       </div>
     </section> : null}
     <div className="shell-page-body models-body" ref={body}>
-      <div hidden={tab !== "image"}><ModelLibrary recommendedId={setup && needsImage ? recommendedImage?.id : undefined} onCatalogChange={setImageCatalog} /></div>
+      <div hidden={tab !== "image" && tab !== "video"}><ModelLibrary category={tab === "video" ? "video" : "image"} recommendedId={setup && needsImage ? recommendedImage?.id : undefined} onCatalogChange={setImageCatalog} /></div>
       {tab === "text" ? <TextModelLibrary studio={text} recommendedId={setup ? recommendedText?.id : undefined} /> : tab === "audio" ? <section aria-label="Audio models">
         <div className="models-section-heading"><div><h3>Audio models</h3><p>Qwen3-TTS voice generation and cloning.</p></div></div>
         {audio.statusError || audio.error ? <ErrorMessage>{audio.statusError || audio.error}</ErrorMessage> : null}

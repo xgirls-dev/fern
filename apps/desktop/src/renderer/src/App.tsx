@@ -7,6 +7,9 @@ import { PromptComposer } from "./components/PromptComposer";
 import X from "lucide-react/dist/esm/icons/x.mjs";
 import { resolveAssetUrl } from "./lib/api";
 import { useStudio } from "./hooks/useStudio";
+import { useVideo } from "./hooks/useVideo";
+import { readReference } from "./lib/reference";
+import Clapperboard from "lucide-react/dist/esm/icons/clapperboard.mjs";
 import { useQwen3Tts } from "./hooks/useQwen3Tts";
 import { useTextChat } from "./hooks/useTextChat";
 import { useSidebarLayout } from "./hooks/useSidebarLayout";
@@ -29,11 +32,12 @@ import { notify } from "./lib/notifications";
 import { validateReference } from "./lib/reference";
 import { loadModelSetup, saveModelSetup, type SetupSelection, type SetupTask } from "./lib/modelSetup";
 import { loadLastWorkspace, matchesShortcut, saveLastWorkspace, shortcuts } from "./lib/workspaceNavigation";
-import { isKleinLoraModel, kleinLoraLabel, maxReferenceImages } from "./lib/imageModels";
+import { intelImagePreset, isKleinLoraModel, kleinLoraLabel, maxReferenceImages } from "./lib/imageModels";
 
 const StorageView = lazy(() => import("./components/StorageView").then((module) => ({ default: module.StorageView })));
 const PreferencesView = lazy(() => import("./components/PreferencesView").then((module) => ({ default: module.PreferencesView })));
 const Qwen3TtsWorkspace = lazy(() => import("./components/Qwen3TtsWorkspace").then((module) => ({ default: module.Qwen3TtsWorkspace })));
+const VideoWorkspace = lazy(() => import("./components/VideoWorkspace").then((module) => ({ default: module.VideoWorkspace })));
 const TextWorkspace = lazy(() => import("./components/TextWorkspace").then((module) => ({ default: module.TextWorkspace })));
 const ModelsView = lazy(() => import("./components/ModelsView").then((module) => ({ default: module.ModelsView })));
 
@@ -77,9 +81,11 @@ export function App() {
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [modelSetup, setModelSetup] = useState(loadModelSetup);
   const [activeSection, setActiveSection] = useState<
-    "create" | "tts" | "text" | "library" | "models" | "preferences" | "storage"
+    "create" | "tts" | "text" | "video" | "library" | "models" | "preferences" | "storage"
   >(() => modelSetup && modelSetup.viewing !== false ? "models" : loadLastWorkspace());
-  const [modelCategory, setModelCategory] = useState<"image" | "text" | "audio">(
+  const video = useVideo(studio.ready, activeSection === "video");
+  const audioBusy = ["running", "setting_up", "stopping"].includes(tts.status.status);
+  const [modelCategory, setModelCategory] = useState<"image" | "text" | "audio" | "video">(
     modelSetup && modelSetup.task !== "image" ? "text" : "image",
   );
   const [chatFocusRequest, setChatFocusRequest] = useState(0);
@@ -140,6 +146,19 @@ export function App() {
 
   const openThreadSearch = useCallback(() => setThreadSearchQuery(""), []);
   const openStorage = useCallback(() => setActiveSection("storage"), []);
+  const openVideo = useCallback(() => setActiveSection("video"), []);
+  const openVideoModels = useCallback(() => { setModelCategory("video"); setActiveSection("models"); }, []);
+  const animateImage = async (image: ImageRecord) => {
+    try {
+      const response = await fetch(resolveAssetUrl(image.url), { signal: AbortSignal.timeout(5000) });
+      if (!response.ok) throw new Error("The saved image could not be opened.");
+      const file = new File([await response.blob()], image.name, { type: "image/png" });
+      video.setReference({ dataUrl: await readReference(file), label: image.name });
+      openVideo();
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "The saved image could not be opened.", "error");
+    }
+  };
   const openModels = useCallback(() => { setModelCategory("image"); setActiveSection("models"); }, []);
   const openPreferences = useCallback(
     () => setActiveSection("preferences"),
@@ -223,7 +242,13 @@ export function App() {
     if (task === "image") {
       const thread = studio.threads.find((item) => item.id === threadId);
       if (thread && !thread.archived) {
-        if (selection?.imageModelId) studio.updateSettings({ model: selection.imageModelId }, threadId);
+        if (selection?.imageModelId) {
+          const preset = intelImagePreset(selection.imageModelId);
+          studio.updateSettings({
+            model: selection.imageModelId,
+            ...(preset ? { width: 512, height: 512, steps: preset.steps, guidance: preset.guidance, batchSize: 1, device: "AUTO" as const } : {}),
+          }, threadId);
+        }
         studio.selectThread(threadId);
       }
       focusPrompt();
@@ -298,7 +323,7 @@ export function App() {
     };
     const models = (event: Event) => {
       const category = (event as CustomEvent<string>).detail;
-      setModelCategory(category === "text" || category === "audio" ? category : "image");
+      setModelCategory(category === "text" || category === "audio" || category === "video" ? category : "image");
       setActiveSection("models");
     };
     window.addEventListener("fern-models", models);
@@ -501,6 +526,7 @@ export function App() {
           activeSection={activeSection}
           onOpenLibrary={openLibrary}
           openingImages={openingImages}
+          onOpenVideo={openVideo}
           onOpenModels={openModels}
           onOpenData={openStorage}
           onOpenPreferences={openPreferences}
@@ -515,9 +541,9 @@ export function App() {
           {activeSection === "models" ? <Suspense fallback={<div className="dashboard-loading" role="status">Opening models…</div>}><ModelsView category={modelCategory} onCategoryChange={setModelCategory} text={text} audio={tts} setup={modelSetup} onReturnToDraft={returnToDraft} intelAvailable={intelAvailable} /></Suspense> : null}
           {activeSection === "storage" ? <Suspense fallback={<div className="dashboard-loading" role="status">Opening storage…</div>}><StorageView
             active={activeSection === "storage"}
-            running={studio.running || tts.status.status === "running" || tts.status.status === "setting_up" || tts.status.status === "stopping" || text.busy}
+            running={studio.running || audioBusy || text.busy || video.running}
             onOpenModels={openModels}
-            onResetLocalData={async () => { await studio.resetLocalData(); tts.resetWorkspace(); text.resetWorkspace(); saveModelSetup(null); setModelSetup(null); }}
+            onResetLocalData={async () => { await studio.resetLocalData(); tts.resetWorkspace(); text.resetWorkspace(); video.reset(); saveModelSetup(null); setModelSetup(null); }}
           /></Suspense> : null}
           {activeSection === "preferences" ? <Suspense fallback={<div className="dashboard-loading" role="status">Opening preferences…</div>}><PreferencesView
             active={activeSection === "preferences"}
@@ -540,6 +566,11 @@ export function App() {
           {activeSection === "models" || activeSection === "preferences" ||
           activeSection === "storage" ? null : activeSection === "text" ? (
             <Suspense fallback={<div className="dashboard-loading" role="status">Opening text workspace…</div>}><TextWorkspace studio={text} sidebarCollapsed={sidebarIsCollapsed} onSetupModels={openModelSetup} focusRequest={chatFocusRequest} intelAvailable={intelAvailable} onOpenImage={openImage} onCreateImage={newThread} onCreateSpeech={newAudioThread} onOpenCompute={openComputePreferences} /></Suspense>
+          ) : activeSection === "video" ? (
+            <Suspense fallback={<div className="dashboard-loading" role="status">Opening video workspace…</div>}>
+              <VideoWorkspace video={video} device={compute.device} busyElsewhere={studio.running || studio.submitting || audioBusy || text.busy}
+                openModels={openVideoModels} openCompute={openComputePreferences} />
+            </Suspense>
           ) : activeSection === "tts" ? (
             <Suspense fallback={<div className="dashboard-loading" role="status">Opening audio workspace…</div>}><Qwen3TtsWorkspace studio={tts} sidebarCollapsed={sidebarIsCollapsed} /></Suspense>
           ) : activeSection === "create" ? (
@@ -570,7 +601,7 @@ export function App() {
                         ? "FLUX.3 Klein · INT4"
                         : studio.status?.model.selectedModel === "tame-pony-v25-sdxl" || studio.status?.model.selectedModel === "tame-pony-v25-sdxl-int8"
                           ? studio.status?.model.selectedModel.endsWith("-int8") ? "Tame Pony · SDXL INT8" : "Tame Pony · SDXL"
-                        : studio.status?.model.selectedModel?.startsWith("custom-")
+                        : studio.status?.model.selectedModel?.startsWith("custom-") || intelImagePreset(studio.status?.model.selectedModel)
                           ? studio.status?.installedModels?.find((model) => model.id === studio.status?.model.selectedModel)?.label ?? "Custom image model"
                         : studio.status?.model.selectedModel
                         ? `FLUX.2 ${isKleinLoraModel(studio.status.model.selectedModel) ? kleinLoraLabel(studio.status.model.selectedModel) : `Klein ${studio.status.model.selectedModel.toUpperCase()}`}`
@@ -578,6 +609,10 @@ export function App() {
                   </span>
                 </div>
                 <div className="workspace-header-actions">
+                  {studio.preview && !video.running ? <IconButton title="Animate image" aria-label="Animate image"
+                    onClick={() => { if (studio.preview) void animateImage(studio.preview); }}>
+                    <Clapperboard size={15} aria-hidden="true" />
+                  </IconButton> : null}
                   {studio.running && !studio.activeThreadRunning && studio.status?.job.threadId ? (
                     <button
                       type="button"
@@ -641,7 +676,7 @@ export function App() {
                     onReferenceBusy={setReferenceBusy}
                     key={`composer-${studio.activeThread.id}`}
                     busyElsewhere={
-                      studio.running && !studio.activeThreadRunning
+                      (studio.running && !studio.activeThreadRunning) || video.running
                     }
                     settings={studio.settings}
                     referenceImages={studio.referenceImages}
@@ -823,7 +858,7 @@ export function App() {
             </section>
           )}
 
-          {studio.error && activeSection !== "tts" && activeSection !== "text" && !startupDialogOpen && (
+          {studio.error && activeSection !== "tts" && activeSection !== "text" && activeSection !== "video" && !startupDialogOpen && (
             <div className="dashboard-error" role="alert">
               {studio.error}
               {studio.status?.job.model === "9b" &&
@@ -940,6 +975,9 @@ export function App() {
         onNewAudio={newAudioThread}
         onNewText={newTextThread}
         onOpenAudio={() => setActiveSection("tts")}
+        onOpenVideo={openVideo}
+        videoRunning={video.running}
+        onStopVideo={() => void video.update("stop")}
         onOpenText={() => setActiveSection("text")}
         onOpenLibrary={openLibrary}
         onOpenData={openStorage}

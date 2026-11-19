@@ -18,3 +18,13 @@ export function maxReferenceImages(model = "9b"): number {
   if (model === "4b" || model === "9b" || isKleinLoraModel(model)) return 4;
   return model === "qwen21-turbo" ? 1 : 0;
 }
+
+const intelImagePresets: Record<string, { sizes: number[]; steps: number; guidance: number }> = {
+  "sana-sprint": { sizes: [512, 1024], steps: 2, guidance: 4.5 },
+  "moss-hades": { sizes: [384, 512], steps: 4, guidance: 1 },
+  "z-image-turbo": { sizes: [512], steps: 8, guidance: 1 },
+};
+
+export function intelImagePreset(model?: string) {
+  return model && Object.hasOwn(intelImagePresets, model) ? intelImagePresets[model] : undefined;
+}

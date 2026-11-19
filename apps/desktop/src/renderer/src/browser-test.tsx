@@ -74,6 +74,7 @@ const browserStudio: StudioApi = {
   openOutputAudio: async () => "",
   revealOutputAudio: async () => undefined,
   deleteOutputAudio: async () => undefined,
+  saveOutputVideo: async () => null,
   saveOutputAudio: async () => null,
   showImageInFolder: async () => undefined,
   pickReferenceImage: async () => null,

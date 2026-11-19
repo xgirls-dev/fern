@@ -57,14 +57,23 @@ def run_gguf(file: Path, device: str, projector: Path | None) -> int:
                     backend = "cpu" if target == "CPU" else "vulkan"
                 else:
                     target, backend = resolve_text_device(device), "openvino"
-                if server is None or server.backend != backend or server.context_size != context_size:
+                gpu_projector = vision and bool(request.get("requireGpuVision"))
+                if gpu_projector and backend != "vulkan":
+                    raise ValueError("This image conversation requires Intel GPU for vision. Select GPU in Preferences.")
+                if (
+                    server is None or server.backend != backend or server.context_size != context_size
+                    or server.gpu_projector != gpu_projector
+                ):
                     if server is not None:
                         server.close()
                         server = None
                     phase = lambda text: emit({"type": "phase", "text": text})
                     executable = ensure_runtime(runtime_root, backend, phase)
                     phase(f"Loading the GGUF model with {backend}…")
-                    server = GGUFServer(executable, file, projector if vision else None, target, backend, context_size)
+                    server = GGUFServer(
+                        executable, file, projector if vision else None, target, backend, context_size,
+                        gpu_projector=gpu_projector,
+                    )
                 emit(server.generate(request, emit))
             except Exception as error:
                 emit({"type": "error", "error": str(error), "code": getattr(error, "code", None),

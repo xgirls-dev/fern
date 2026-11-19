@@ -183,6 +183,7 @@ def storage_status(
     output_bytes = _size(outputs)
     images = [path for path in outputs if path.suffix.lower() == ".png"]
     audio = [path for path in outputs if path.suffix.lower() == ".wav"]
+    video = [path for path in outputs if path.suffix.lower() == ".webm"]
     data_files = _files(data_dir)
     model_files = _files(models_dir)
     data_bytes = _size(data_files)
@@ -200,6 +201,7 @@ def storage_status(
         },
         "images": {"bytes": _size(images), "fileCount": len(images)},
         "audio": {"bytes": _size(audio), "fileCount": len(audio)},
+        "video": {"bytes": _size(video), "fileCount": len(video)},
         "metadata": {
             "bytes": data_bytes,
         },

@@ -109,6 +109,7 @@ const studioApi: StudioApi = {
     ipcRenderer.invoke("studio:reveal-output-audio", audioName),
   deleteOutputAudio: (audioName) =>
     ipcRenderer.invoke("studio:delete-output-audio", audioName),
+  saveOutputVideo: (name) => ipcRenderer.invoke("studio:save-output-video", name),
   saveOutputAudio: (audioName) =>
     ipcRenderer.invoke("studio:save-output-audio", audioName),
   showImageInFolder: (filePath) =>

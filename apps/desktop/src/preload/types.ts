@@ -20,6 +20,7 @@ export interface StudioApi {
   openOutputAudio: (audioName: string) => Promise<string>;
   revealOutputAudio: (audioName: string) => Promise<void>;
   deleteOutputAudio: (audioName: string) => Promise<void>;
+  saveOutputVideo: (name: string) => Promise<string | null>;
   saveOutputAudio: (audioName: string) => Promise<string | null>;
   showImageInFolder: (filePath: string) => Promise<void>;
   pickReferenceImage: () => Promise<string | null>;

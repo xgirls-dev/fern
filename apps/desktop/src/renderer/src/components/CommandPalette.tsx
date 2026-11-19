@@ -1,3 +1,4 @@
+import Clapperboard from "lucide-react/dist/esm/icons/clapperboard.mjs";
 import ArrowDownUp from "lucide-react/dist/esm/icons/arrow-down-up.mjs";
 import Command from "lucide-react/dist/esm/icons/command.mjs";
 import HardDrive from "lucide-react/dist/esm/icons/hard-drive.mjs";
@@ -19,6 +20,9 @@ interface CommandPaletteProps {
   open: boolean;
   running: boolean;
   audioRunning: boolean;
+  videoRunning: boolean;
+  onOpenVideo: () => void;
+  onStopVideo: () => void;
   textRunning: boolean;
   threads: Array<{ id: string; title: string; updatedAt: number; archived?: boolean; excerpt?: string }>;
   onOpenThread: (id: string) => void;
@@ -53,6 +57,9 @@ export function CommandPalette({
   open,
   running,
   audioRunning,
+  videoRunning,
+  onOpenVideo,
+  onStopVideo,
   textRunning,
   threads,
   onOpenThread,
@@ -108,7 +115,8 @@ export function CommandPalette({
         icon: <Images size={16} aria-hidden="true" />,
         onSelect: onOpenLibrary,
       },
-      { id: "models", label: "Manage models", description: "Install image, text, and audio models", icon: <Images size={16} aria-hidden="true" />, onSelect: () => window.dispatchEvent(new CustomEvent("fern-models")) },
+      { id: "video", label: "Open Video", description: "Animate an image or browse saved clips", icon: <Clapperboard size={16} aria-hidden="true" />, onSelect: onOpenVideo },
+      { id: "models", label: "Manage models", description: "Install image, text, audio, and video models", icon: <Images size={16} aria-hidden="true" />, onSelect: () => window.dispatchEvent(new CustomEvent("fern-models")) },
       {
         id: "toggle-sidebar",
         label: sidebarCollapsed ? "Show sidebar" : "Hide sidebar",
@@ -149,6 +157,7 @@ export function CommandPalette({
             },
           ]
         : []),
+      ...(videoRunning ? [{ id: "stop-video", label: "Stop video generation", description: "Cancel the active video render", icon: <Square size={16} fill="currentColor" aria-hidden="true" />, onSelect: onStopVideo }] : []),
       ...(audioRunning ? [{ id: "stop-audio", label: "Stop audio job", description: "Cancel Qwen3-TTS setup or generation", icon: <Square size={16} fill="currentColor" aria-hidden="true" />, onSelect: onStopAudio }] : []),
       ...(textRunning ? [{ id: "stop-text", label: "Stop text generation", description: "Stop the active local LLM response", icon: <Square size={16} fill="currentColor" aria-hidden="true" />, onSelect: onStopText }] : []),
     ],
@@ -168,6 +177,9 @@ export function CommandPalette({
       onStopText,
       running,
       audioRunning,
+      videoRunning,
+      onOpenVideo,
+      onStopVideo,
       textRunning,
       sidebarCollapsed,
     ],

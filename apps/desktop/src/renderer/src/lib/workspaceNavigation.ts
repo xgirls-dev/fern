@@ -1,8 +1,8 @@
 const workspaceKey = "fern-last-workspace:v1";
-type Workspace = "create" | "text" | "tts" | "library";
+type Workspace = "create" | "text" | "tts" | "video" | "library";
 
 function isWorkspace(value: unknown): value is Workspace {
-  return value === "create" || value === "text" || value === "tts" || value === "library";
+  return value === "create" || value === "text" || value === "tts" || value === "video" || value === "library";
 }
 
 export function loadLastWorkspace(): Workspace {

@@ -156,6 +156,7 @@ export interface StorageStatus {
   };
   images: { bytes: number; fileCount: number };
   audio: { bytes: number; fileCount: number };
+  video?: { bytes: number; fileCount: number };
   metadata: {
     bytes: number;
   };

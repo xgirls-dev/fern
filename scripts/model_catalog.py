@@ -10,7 +10,10 @@ FLUX3_CATALOG = json.loads(
 TAME_PONY_CATALOG = json.loads(
     Path(__file__).with_name("tame_pony_model_catalog.json").read_text()
 )
-MODEL_CATALOG = {**CATALOG, **FLUX3_CATALOG, **TAME_PONY_CATALOG}
+INTEL_MEDIA_CATALOG = json.loads(
+    Path(__file__).with_name("intel_media_catalog.json").read_text(encoding="utf-8")
+)
+MODEL_CATALOG = {**CATALOG, **FLUX3_CATALOG, **TAME_PONY_CATALOG, **INTEL_MEDIA_CATALOG}
 
 
 def model_spec(model="9b"):
@@ -22,6 +25,24 @@ def model_spec(model="9b"):
 def installed(root, model):
     spec = model_spec(model)
     folder = Path(root) / spec["folder"]
+    if model in INTEL_MEDIA_CATALOG:
+        try:
+            files = (item for item in spec["files"] if not item["path"].startswith("source/"))
+            return (
+                revision(root, model) == spec["revision"]
+                and all((folder / item["path"]).stat().st_size == item["size"] for item in files)
+                and (model != "sana-sprint" or all(
+                    (folder / name).stat().st_size > 0
+                    for name in (
+                        "prepared/text_encoder/openvino_model.xml",
+                        "prepared/text_encoder/openvino_model.bin",
+                        "prepared/tokenizer/tokenizer_config.json",
+                        ".runtime/ready",
+                    )
+                ))
+            )
+        except (OSError, ValueError):
+            return False
     if model in ("tame-pony-v25-sdxl", "tame-pony-v25-sdxl-int8"):
         required = [
             "model_index.json",

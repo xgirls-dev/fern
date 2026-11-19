@@ -1,3 +1,4 @@
+import Clapperboard from "lucide-react/dist/esm/icons/clapperboard.mjs";
 import { trashName } from "../lib/trash";
 import { shortcutLabel, shortcuts } from "../lib/workspaceNavigation";
 import HardDrive from "lucide-react/dist/esm/icons/hard-drive.mjs";
@@ -168,7 +169,8 @@ interface StudioSidebarProps {
   onOpenSearch: () => void;
   submitting: boolean;
   collapsed: boolean;
-  activeSection: "create" | "tts" | "text" | "library" | "models" | "preferences" | "storage";
+  onOpenVideo: () => void;
+  activeSection: "create" | "tts" | "text" | "video" | "library" | "models" | "preferences" | "storage";
   onOpenLibrary: () => void;
   openingImages: boolean;
   onOpenModels: () => void;
@@ -211,6 +213,7 @@ export const StudioSidebar = memo(function StudioSidebar({
   onOpenLibrary,
   openingImages,
   onOpenModels,
+  onOpenVideo,
   onOpenData,
   onOpenPreferences,
 }: StudioSidebarProps) {
@@ -362,6 +365,10 @@ export const StudioSidebar = memo(function StudioSidebar({
         >
           {openingImages ? <LoaderCircle className="spinner" size={15} aria-hidden="true" /> : <Images size={15} aria-hidden="true" />}
           <span>{openingImages ? "Opening Images…" : "Images"}</span>
+        </NavigationButton>
+        <NavigationButton className="sidebar-nav-button" selected={activeSection === "video"}
+          onClick={() => navigate(onOpenVideo)} aria-label="Video" title="Create and play videos">
+          <Clapperboard size={15} aria-hidden="true" /><span>Video</span>
         </NavigationButton>
       </nav>
 

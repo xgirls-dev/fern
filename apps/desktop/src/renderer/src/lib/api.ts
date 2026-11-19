@@ -238,3 +238,44 @@ export async function deleteThreadAssets(
   invalidateImages();
   return result.deleted;
 }
+
+export interface VideoClip {
+  id: string;
+  name: string;
+  url: string;
+  posterUrl: string;
+  prompt: string;
+  seed: number;
+  width: number;
+  height: number;
+  duration: number;
+  generationTime: number;
+  modelLabel: string;
+}
+
+export interface VideoJob {
+  id: string | null;
+  status: "idle" | "running" | "stopping" | "complete" | "cancelled" | "failed";
+  phase: string | null;
+  output: VideoClip | null;
+  error: string | null;
+}
+
+export interface VideoSnapshot {
+  job: VideoJob;
+  model: { runtimeReady: boolean; runtimeNote: string; platformSupported: boolean };
+  clips: VideoClip[];
+}
+
+export function fetchVideoStatus(jobOnly: boolean): Promise<Omit<VideoSnapshot, "clips"> & { clips: VideoClip[] | null }> {
+  return requestJson(jobOnly ? "/api/video/status?job=1" : "/api/video/status", { signal: AbortSignal.timeout(5000) });
+}
+
+export function mutateVideo(action: "generate" | "stop" | "remove", payload?: object): Promise<Pick<VideoSnapshot, "job"> & Partial<Pick<VideoSnapshot, "clips">>> {
+  return requestJson(`/api/video/${action}`, {
+    method: "POST",
+    signal: AbortSignal.timeout(30_000),
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}

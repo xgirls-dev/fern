@@ -15,6 +15,8 @@ ALLOWED_BACKEND = {
     'tame_pony_model_catalog.json', 'tame_pony_pipeline.py',
     'custom_image_registry.py', 'custom_image_pipeline.py', 'custom_image_download.py',
     'requirements-flux3-klein-overlay.txt',
+    'intel_media.py', 'intel_media_catalog.json', 'intel_media_runtime.json',
+    'sana_sprint_worker.py', 'sana_sprint_requirements.txt', 'video_jobs.py',
     'qwen3_tts_worker.py', 'tts_generation_worker.py',
     'qwen21_turbo_openvino.py',
     'qwen21_turbo_download.py', 'qwen21_turbo_model_catalog.json',
