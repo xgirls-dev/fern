@@ -55,8 +55,11 @@ try {
   assert.equal(await composer.inputValue(), "Earlier draft");
   await page.mouse.move(0, 0);
   await page.keyboard.press("Control+k");
+  await search.waitFor();
+  assert.equal(await search.inputValue(), "");
   await search.fill("poster");
   await matches.nth(1).waitFor();
+  await matches.first().and(page.locator('[aria-selected="true"]')).waitFor();
   await search.press("ArrowDown");
   await matches.nth(1).and(page.locator('[aria-selected="true"]')).waitFor();
   await search.press("ArrowDown");

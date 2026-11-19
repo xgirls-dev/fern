@@ -11,7 +11,7 @@ import AudioLines from "lucide-react/dist/esm/icons/audio-lines.mjs";
 import MessageSquare from "lucide-react/dist/esm/icons/message-square.mjs";
 import Square from "lucide-react/dist/esm/icons/square.mjs";
 import X from "lucide-react/dist/esm/icons/x.mjs";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useModalFocus } from "../hooks/useModalFocus";
 import { IconButton, Input } from "./ui/controls";
 import { shortcutLabel, shortcuts } from "../lib/workspaceNavigation";
@@ -87,7 +87,7 @@ export function CommandPalette({
   const [activeIndex, setActiveIndex] = useState(0);
   useModalFocus(open, dialogRef, onClose);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!open) return;
     setQuery("");
     setActiveIndex(0);
