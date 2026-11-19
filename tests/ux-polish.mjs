@@ -26,7 +26,7 @@ try {
   await page.locator(".workspace-header").getByRole("button", { name: "Image settings", exact: true }).click();
   await page
     .getByRole("group", { name: "Inspector view" })
-    .getByRole("button", { name: "Render info", exact: true })
+    .getByRole("button", { name: "Selected image", exact: true })
     .click();
   assert.equal(await page.locator(".generation-inspector:visible").count(), 1);
   assert.equal(await page.locator("#width").isVisible(), false);
@@ -35,13 +35,13 @@ try {
   await page.screenshot({ path: `${dir}/shared-inspector.png` });
   await page
     .getByRole("group", { name: "Inspector view" })
-    .getByRole("button", { name: "Image settings", exact: true })
+    .getByRole("button", { name: "Next image", exact: true })
     .click();
   assert(await page.locator("#width").isVisible());
   await button("Close image settings").click();
 
-  await button("Library").click();
-  const firstCard = page.locator(".thumb-wrap").filter({ has: button("Review audit-1.png") });
+  await button("Images").click();
+  const firstCard = page.locator(".thumb-wrap").filter({ has: button(/^Review.*audit-1\.png$/) });
   await firstCard.hover();
   await firstCard.locator('.image-menu summary[aria-label="Image actions for audit-1.png"]').click();
   await firstCard.getByRole("button", { name: "Remix", exact: true }).click();
@@ -70,8 +70,8 @@ try {
   assert(actionBox && actionBox.height >= 26 && actionBox.width >= 26);
   assert(threadBox && threadBox.x + threadBox.width <= actionBox.x + 1, "thread title and action remain separate");
 
-  await button("Library").click();
-  await button("Review audit-1.png").click();
+  await button("Images").click();
+  await button(/^Review.*audit-1\.png$/).click();
   await button("Render info").click();
   assert(await page.locator(".viewer-info .render-metadata").isVisible());
   await page.getByText("8m", { exact: true }).waitFor({ state: "visible" });
@@ -114,6 +114,15 @@ try {
   await page.setViewportSize({ width: 1440, height: 900 });
   await button("Close preview").click();
   await button("Stable title").click();
+  await button("Render info").click();
+  const selected = page.getByRole("complementary", { name: "Selected image" });
+  await selected.getByText("1920 x 1088", { exact: true }).waitFor();
+  await selected.getByRole("button", { name: "Use render settings" }).click();
+  const nextImage = page.getByRole("complementary", { name: "Next image" });
+  assert.equal(await nextImage.getByRole("spinbutton", { name: "Width", exact: true }).inputValue(), "1920");
+  assert.equal(await nextImage.getByRole("spinbutton", { name: "Height", exact: true }).inputValue(), "1088");
+  assert.equal(await page.locator("#prompt").inputValue(), "Original unfinished draft");
+  await button("Close image settings").click();
 
   await page.evaluate(async () => {
     const { notify } = await import("/src/lib/notifications.ts");

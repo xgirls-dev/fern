@@ -1,6 +1,7 @@
+import { trashName } from "../lib/trash";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import ChevronDown from "lucide-react/dist/esm/icons/chevron-down.mjs";
+import MoreHorizontal from "lucide-react/dist/esm/icons/more-horizontal.mjs";
 import type { ImageRecord } from "../lib/types";
 import { resolveAssetUrl } from "../lib/api";
 import { notify } from "../lib/notifications";
@@ -79,6 +80,7 @@ export function ImageActions({
   }, [menuOpen]);
   async function run(task: () => Promise<unknown>, message: string) {
     if (busy) return;
+    if (menuOpen) menu.current?.querySelector("summary")?.focus();
     setBusy(true);
     setMenuOpen(false);
     setMenuPosition(null);
@@ -108,20 +110,21 @@ export function ImageActions({
   return (
     <div
       className="image-actions"
+      role="group"
       aria-label={`Actions for ${image.name}`}
       aria-busy={busy}
     >
       {!compact ? (
         <>
           <Button
-            variant="secondary"
+            variant="ghost"
             disabled={busy}
             onClick={() => void save()}
           >
             Save image
           </Button>
           <Button
-            variant="secondary"
+            variant="ghost"
             disabled={busy}
             onClick={() => onRemix(image)}
           >
@@ -148,13 +151,13 @@ export function ImageActions({
             setMenuPosition(null);
             setMenuOpen((open) => !open);
           }}
-          className="ui-disclosure-trigger"
+          className="ui-icon-button image-menu-trigger"
+          title="Image actions"
           aria-label={`Image actions for ${image.name}`}
         >
-          {compact ? "Actions" : "More"}
-          <ChevronDown size={13} aria-hidden="true" />
+          <MoreHorizontal size={16} aria-hidden="true" />
         </summary>
-        <div
+        {menuOpen && <div
           className="image-menu-content"
           ref={menuContent}
           style={{
@@ -258,6 +261,7 @@ export function ImageActions({
             disabled={busy}
             destructive
             onClick={() => {
+              menu.current?.querySelector("summary")?.focus();
               setMenuOpen(false);
               setMenuPosition(null);
               setConfirm(true);
@@ -265,7 +269,7 @@ export function ImageActions({
           >
             Delete image
           </MenuItem>
-        </div>
+        </div>}
       </details>
       {confirm
         ? createPortal(
@@ -278,11 +282,11 @@ export function ImageActions({
                 aria-label="Delete image"
                 tabIndex={-1}
               >
-                <h3>Move image to Recycle Bin?</h3>
+                <h3>Move image to {trashName}?</h3>
                 <p>{image.name}</p>
                 <p>
                   It will disappear from Library and every thread. You can
-                  restore the file from the Windows Recycle Bin.
+                  restore the file from {trashName}.
                 </p>
                 <div className="image-actions">
                   <Button
@@ -299,7 +303,7 @@ export function ImageActions({
                       void run(async () => {
                         await onDelete(image);
                         setConfirm(false);
-                      }, "Image moved to Recycle Bin.")
+                      }, `Image moved to ${trashName}.`)
                     }
                   >
                     {busy ? "Deleting…" : "Delete image"}

@@ -11,6 +11,7 @@ import {
 } from "../lib/api";
 import {
   createImageThread,
+  hasImageThreadWork,
   loadThreadWorkspace,
   normalizeImageSettings,
   readThreadReferences,
@@ -281,6 +282,8 @@ export function useStudio(computeDevice: "GPU" | "CPU" = "GPU") {
           return {
             ...thread,
             settings: nextSettings,
+            configured: thread.configured || (Object.keys(patch) as Array<keyof StudioSettings>).some((key) =>
+              key !== "prompt" && key !== "theme" && !Object.is(thread.settings[key], patch[key])),
             updatedAt: thread.updatedAt,
             title: thread.title,
           };
@@ -429,6 +432,14 @@ export function useStudio(computeDevice: "GPU" | "CPU" = "GPU") {
     const previous = current.threads.find(
       (thread) => thread.id === current.activeId,
     )!;
+    const untouched = current.threads.find((thread) => !thread.archived && !hasImageThreadWork(thread) &&
+      (thread.id !== current.activeId || !referenceImagesRef.current.length));
+    if (untouched) {
+      if (untouched.id === current.activeId) commitWorkspace((workspace) => workspace);
+      else selectThread(untouched.id);
+      setError(null);
+      return untouched.id;
+    }
     const thread = createImageThread(previous.settings);
     commitWorkspace((value) => ({
       ...value,
@@ -440,7 +451,7 @@ export function useStudio(computeDevice: "GPU" | "CPU" = "GPU") {
     setReferenceLoading(true);
     setError(null);
     return thread.id;
-  }, [commitWorkspace]);
+  }, [commitWorkspace, selectThread]);
 
   const renameThread = useCallback(
     (id: string, title: string) => {
@@ -556,10 +567,9 @@ export function useStudio(computeDevice: "GPU" | "CPU" = "GPU") {
       const selected = workspaceRef.current.threads.find(
         (thread) => thread.id === workspaceRef.current.activeId,
       )!;
+      const imageNames = new Set(selected.imageNames);
       const images = data.images.filter(
-        (image) =>
-          image.threadId === selected.id ||
-          selected.imageNames.includes(image.name),
+        (image) => image.threadId === selected.id || imageNames.has(image.name),
       );
       const output = data.job.output;
       if (output && data.job.id !== previewedJobIdRef.current) {
@@ -1082,69 +1092,49 @@ export function useStudio(computeDevice: "GPU" | "CPU" = "GPU") {
     await refresh();
   }, [commitWorkspace, refresh, running, submitting]);
 
-  const stateLabel = useMemo(() => {
-    if (runtimeLoading) return "Loading Model";
-    if (runtimeNeedsAttention) return "Needs Attention";
-    if (running) {
-      const startedAt =
-        normalizeStartedAt(status?.job.startedAt) ??
-        normalizeStartedAt(localStartedAt);
-      if (startedAt != null) {
-        return `Generating ${elapsedSeconds(startedAt)}s`;
-      }
-      return "Generating";
-    }
-    if (!modelInstalled) return "Model Missing";
-    return "Ready";
-  }, [
-    clockTick,
-    localStartedAt,
-    modelInstalled,
-    running,
-    runtimeLoading,
-    runtimeNeedsAttention,
-    status?.job.startedAt,
-  ]);
+  const elapsed = useMemo(() => {
+    const startedAt = normalizeStartedAt(status?.job.startedAt) ?? normalizeStartedAt(localStartedAt);
+    return running && startedAt != null ? elapsedSeconds(startedAt) : null;
+  }, [clockTick, localStartedAt, running, status?.job.startedAt]);
 
-  const threadImages = useMemo(
-    () =>
-      (status?.images ?? []).filter(
-        (image) =>
-          image.threadId === activeThread.id ||
-          activeThread.imageNames.includes(image.name),
-      ),
-    [status?.images, activeThread.id, activeThread.imageNames],
-  );
-  const navigationCache = useRef<
-    Array<Pick<typeof activeThread, "id" | "title" | "archived" | "updatedAt">>
-  >([]);
+  const threadImages = useMemo(() => {
+    const imageNames = new Set(activeThread.imageNames);
+    return (status?.images ?? []).filter(
+      (image) => image.threadId === activeThread.id || imageNames.has(image.name),
+    );
+  }, [status?.images, activeThread.id, activeThread.imageNames]);
+
+  type ThreadRow = Pick<typeof activeThread, "id" | "title" | "archived" | "updatedAt"> & { hasWork: boolean };
+  const navigationCache = useRef<{ source: ThreadRow[]; sorted: ThreadRow[] } | null>(null);
   const threads = useMemo(() => {
-    const next = workspace.threads
-      .map(({ id, title, archived, updatedAt }) => ({
-        id,
-        title,
-        archived,
-        updatedAt,
-      }))
-      .sort((a, b) => b.updatedAt - a.updatedAt);
     const previous = navigationCache.current;
-    if (
-      previous.length === next.length &&
-      next.every(
-        (thread, index) =>
-          thread.id === previous[index].id &&
-          thread.title === previous[index].title &&
-          thread.archived === previous[index].archived &&
-          thread.updatedAt === previous[index].updatedAt,
-      )
-    )
-      return previous;
-    navigationCache.current = next;
-    return next;
+    const source = workspace.threads.map((thread, index) => {
+      const hasWork = hasImageThreadWork(thread);
+      const row = previous?.source[index];
+      if (row && row.id === thread.id && row.title === thread.title &&
+          row.archived === thread.archived && row.updatedAt === thread.updatedAt && row.hasWork === hasWork) {
+        return row;
+      }
+      const { id, title, archived, updatedAt } = thread;
+      return { id, title, archived, updatedAt, hasWork };
+    });
+    if (previous && previous.source.length === source.length &&
+        source.every((row, index) => row === previous.source[index])) {
+      return previous.sorted;
+    }
+    const sorted = [...source].sort((a, b) => b.updatedAt - a.updatedAt);
+    navigationCache.current = { source, sorted };
+    return sorted;
   }, [workspace.threads]);
+
+  const searchThreads = () => {
+    const excerpts = new Map(workspace.threads.map((thread) => [thread.id, thread.settings.prompt.trim().slice(0, 160)]));
+    return threads.map((thread) => ({ ...thread, excerpt: excerpts.get(thread.id) }));
+  };
 
   return {
     threads,
+    searchThreads,
     activeThread,
     threadImages,
     activeThreadRunning: running && status?.job.threadId === activeThread.id,
@@ -1159,6 +1149,7 @@ export function useStudio(computeDevice: "GPU" | "CPU" = "GPU") {
     updateSettings,
     status,
     error: persistenceError ?? connectionError ?? error,
+    connectionError,
     fieldErrors,
     dismissError: () => {
       setError(null);
@@ -1185,7 +1176,7 @@ export function useStudio(computeDevice: "GPU" | "CPU" = "GPU") {
     runtimeDialogOpen,
     runtimeStatus,
     modelInstalled,
-    stateLabel,
+    elapsed,
     generate,
     stopGeneration,
     remixImage,

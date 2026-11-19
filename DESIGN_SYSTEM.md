@@ -8,6 +8,8 @@ Fern uses a restrained, utility-first interface: content leads, controls are qui
 - Standard controls are 32 px high, with a 7 px radius and 12 px type. Icon buttons use a 32 px square target. A checkbox is always 16 × 16 px, including its minimum and maximum dimensions.
 - Use the existing light/dark semantic colors (`--background`, `--card`, `--foreground`, `--muted`, and `--border`). Use one surface border; use a divider or whitespace for nested content rather than another boxed surface.
 - Align controls by their center, truncate long names only when the full value remains available to assistive technology or in a tooltip, and allow descriptions and errors to wrap.
+- Keep the workspace title visible at the same scale when the sidebar collapses. A quiet switch control beside it can open the native thread list. In keyboard search, keep the focused field, active choice, and pointer hover visually distinct when all three are present. Align result rows and shortcut labels on shared columns.
+- At compact widths the sidebar opens over the workspace from the icon rail. It uses the same history rows and actions as the expanded sidebar. Escape and outside dismissal restore focus. Choosing a destination closes the sidebar and keeps the saved workspace drafts and wide-window preference.
 
 ## Components
 

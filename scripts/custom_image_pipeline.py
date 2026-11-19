@@ -70,7 +70,6 @@ def model_status(device: str, model_id: str) -> dict[str, Any]:
 
                     core = ov.Core()
                     devices = [str(device) for device in core.available_devices]
-                    has_optimum = importlib.util.find_spec("optimum.intel") is not None
                     has_openvino = importlib.util.find_spec("openvino") is not None
                     result = {
                         "installed": has_openvino,
@@ -88,7 +87,10 @@ def model_status(device: str, model_id: str) -> dict[str, Any]:
     genai_available = importlib.util.find_spec("openvino_genai") is not None
     uses_diffusers = item["family"] in ("stable-diffusion", "sdxl")
     uses_flux2_klein = item["family"] == "flux2-klein"
-    optimum_available = importlib.util.find_spec("optimum.intel") is not None
+    optimum_available = (
+        importlib.util.find_spec("optimum") is not None
+        and importlib.util.find_spec("optimum.intel") is not None
+    )
     diffusers_available = importlib.util.find_spec("diffusers") is not None and optimum_available
     backend_available = diffusers_available if uses_diffusers else optimum_available if uses_flux2_klein else genai_available
     backend_label = "OpenVINO · Diffusers" if uses_diffusers else "OpenVINO · Optimum Intel" if uses_flux2_klein else "OpenVINO GenAI"

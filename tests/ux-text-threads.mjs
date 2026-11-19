@@ -19,7 +19,7 @@ async function complete(text) {
 }
 try {
   await page.locator('.sidebar-new-menu > button').click();
-  await page.getByRole('menuitem', { name: 'New text thread', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Chat', exact: true }).click();
   await page.getByLabel('Message', { exact: true }).fill('Remember the word fern.');
   await page.getByRole('button', { name: 'Send message', exact: true }).click();
   await until(() => state.textRequests.length === 1, 'first request');
@@ -52,7 +52,7 @@ try {
   await until(async () => await messages().count() === 4, 'persisted messages');
   await new Promise(r => setTimeout(r, 4500));
   assert.equal(await messages().count(), 4, 'completion duplicated after reload');
-  await page.getByRole('button', { name: 'Text model', exact: true }).click();
+  await page.getByRole('button', { name: /^Text model:/ }).click();
   await page.getByRole('menuitemradio', { name: 'Second model', exact: true }).click();
   await page.getByRole('button', { name: 'Response details', exact: true }).first().click();
   assert.equal(await page.locator('.text-message--assistant .text-message-label').first().textContent(), 'Qwen INT4');
@@ -74,6 +74,12 @@ try {
   const sendBox = await page.getByRole('button', { name: 'Send message', exact: true }).boundingBox();
   assert(sendBox && sendBox.x >= 0 && sendBox.x + sendBox.width <= 390, 'send button outside viewport');
   await page.setViewportSize({ width: 1440, height: 900 });
+  await page.getByRole('button', { name: 'Retry response', exact: true }).click();
+  await until(() => state.textRequests.length === 6, 'driver failure retry');
+  state.textStatus.job = { ...state.textStatus.job, status: 'failed', partialText: '', error: 'Vulkan could not find a compatible Intel GPU.', errorCode: 'intel-vulkan-driver', finishedAt: Date.now()/1000 };
+  const driverLink = page.getByRole('link', { name: 'Get Intel graphics drivers', exact: true });
+  await driverLink.waitFor();
+  assert.equal(await driverLink.getAttribute('href'), 'https://www.intel.com/content/www/us/en/support/detect.html');
   // Simulate a saved in-flight job followed by a backend restart.
   await page.addInitScript(({ activeId }) => {
     const w = JSON.parse(localStorage.getItem('fern-text-threads:v1'));

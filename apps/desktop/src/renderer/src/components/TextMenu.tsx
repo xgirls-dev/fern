@@ -11,6 +11,7 @@ export function TextMenu({ label, value, options, onSelect, disabled, children }
   const root = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const id = useId();
+  const displayedName = options.find((option) => option.value === value)?.label ?? "Select model";
   useEffect(() => { if (disabled) setOpen(false); }, [disabled]);
   useEffect(() => {
     if (!open) return;
@@ -21,9 +22,9 @@ export function TextMenu({ label, value, options, onSelect, disabled, children }
     return () => document.removeEventListener("pointerdown", outside);
   }, [open]);
   return <div className="text-menu" ref={root} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false); }}>
-    <Button ref={trigger} variant="ghost" className="composer-model-trigger text-menu-trigger" aria-label={label} title={options.find(option => option.value === value)?.label ?? label} aria-haspopup="menu" aria-expanded={open} aria-controls={open ? id : undefined} disabled={disabled}
+    <Button ref={trigger} variant="ghost" className="composer-model-trigger text-menu-trigger" aria-label={`${label}: ${displayedName}`} title={displayedName} aria-haspopup="menu" aria-expanded={open} aria-controls={open ? id : undefined} disabled={disabled}
       onClick={() => setOpen(!open)} onKeyDown={(event) => { if (["ArrowDown", "ArrowUp"].includes(event.key)) { event.preventDefault(); setOpen(true); } }}>
-      <span>{options.find(option => option.value === value)?.label ?? "Select model"}</span><ChevronDown size={13} aria-hidden="true" />
+      <span>{displayedName}</span><ChevronDown size={13} aria-hidden="true" />
     </Button>
     {open && <div className="composer-model-menu text-menu-panel" id={id} role="menu" aria-label={label} onKeyDown={(event) => {
       if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setOpen(false); trigger.current?.focus(); }

@@ -51,7 +51,7 @@ export function Lightbox({
         className="lightbox image-viewer"
         role="dialog"
         aria-modal="true"
-        aria-label={`Review ${image.name}`}
+        aria-label={`Review image ${Math.max(1, index + 1)} of ${images.length || 1}: ${image.prompt?.trim().slice(0, 140) || image.name}`}
         tabIndex={-1}
         onMouseDown={(event) => event.stopPropagation()}
         onKeyDown={(event) => {
@@ -71,7 +71,7 @@ export function Lightbox({
           }
         }}
       >
-        <header className="viewer-toolbar">
+        <div className="viewer-toolbar" role="group" aria-label="Image review controls">
           <div className="viewer-navigation">
             <IconButton
               className="viewer-icon"
@@ -140,11 +140,12 @@ export function Lightbox({
               <X size={20} />
             </IconButton>
           </div>
-        </header>
+        </div>
         <div className={`viewer-body${infoOpen ? " has-info" : ""}`}>
           <div
             className={`viewer-canvas${zoom ? " is-zoomed" : ""}`}
             tabIndex={0}
+            role="group"
             aria-label="Image canvas. Use arrow keys to pan when zoomed."
           >
             {failed ? (
@@ -188,7 +189,7 @@ export function Lightbox({
         </div>
         <footer className="viewer-details">
           <span className="viewer-filename" title={image.name}>
-            {image.name}
+            {image.prompt?.trim() || image.name}
           </span>
           <ImageActions
             image={image}

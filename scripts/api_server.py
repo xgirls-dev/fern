@@ -8,8 +8,10 @@ import importlib.util
 import json
 import math
 from contextlib import nullcontext
+from functools import lru_cache
 import mimetypes
 import os
+import re
 import shutil
 import sys
 import subprocess
@@ -19,7 +21,7 @@ import uuid
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from PIL import Image
 
@@ -55,11 +57,15 @@ import flux2_klein_text_encoder
 import lora_download
 from generation_worker import GenerationWorker, GenerationCancelled, tame_pony_inference_loop, custom_image_inference_loop
 from tts_generation_worker import TtsGenerationWorker
-from text_generation_process import TextGenerationProcess
+from text_generation_process import TextGenerationProcess, TextWorkerError
 from text_model_registry import TextModelRegistry
 from text_model_download import DEFAULT_MODEL_ID as DEFAULT_TEXT_MODEL_ID
-from text_model_download import catalog as text_model_catalog, install_model as install_text_model
-from tts_model_download import model_ready as tts_export_ready
+from text_model_download import catalog as text_model_catalog, install_model as install_text_model, model_files as text_model_files
+from gguf_metadata import is_projector, read_metadata as read_gguf_metadata
+from gguf_runtime import RUNTIME_PLATFORM_ERROR, runtime_supported as gguf_runtime_supported
+from chat_image_tools import CHAT_IMAGE_SIZE, IMAGE_MODEL_PRIORITY, IMAGE_TOOL, image_tool_prompt
+from chat_context import CONTEXT_SIZES, DEFAULT_CONTEXT_SIZE
+from tts_model_download import catalog_spec as tts_catalog_spec, model_ready as tts_export_ready
 
 GENERATION_WORKER = GenerationWorker()
 TAME_PONY_GENERATION_WORKER = GenerationWorker(target=tame_pony_inference_loop)
@@ -127,8 +133,8 @@ JOB_ADMISSION_LOCK = threading.RLock()
 TEXT_CANCEL_EVENT: threading.Event | None = None
 TEXT_JOB: dict[str, Any] = {
     "id": None, "threadId": None, "modelId": None, "status": "idle",
-    "phase": None, "partialText": "", "startedAt": None, "finishedAt": None,
-    "result": None, "error": None,
+    "phase": None, "partialText": "", "partialReasoning": "", "startedAt": None, "finishedAt": None,
+    "result": None, "image": None, "error": None, "errorCode": None,
 }
 
 
@@ -145,7 +151,8 @@ def run_text_model_install(model_id: str, job_id: str) -> None:
     try:
         TEXT_GENERATION_WORKER.close()
         folder = install_text_model(model_id, TEXT_MODEL_ROOT, progress)
-        model = TEXT_MODEL_REGISTRY.add(str(folder))
+        model_path, projector_path = text_model_files(folder, text_model_catalog()[model_id])
+        model = TEXT_MODEL_REGISTRY.add(str(model_path), str(projector_path) if projector_path else None)
         with TEXT_MODEL_INSTALL_LOCK:
             TEXT_MODEL_INSTALL.update(status="complete", phase="Installed and verified.", error=None, modelId=model["id"])
     except Exception as error:
@@ -362,6 +369,12 @@ def resolve_qwen_turbo_device(device: str) -> str:
     raise ValueError("OpenVINO GPU is unavailable. Select CPU explicitly to continue.")
 
 
+def qwen_turbo_setup_unavailable() -> str | None:
+    if sys.platform == "linux":
+        return "Qwen Image Turbo setup is unavailable in the Linux beta. Choose a FLUX.2 Klein model."
+    return None
+
+
 def qwen_turbo_snapshot() -> dict[str, Any]:
     with QWEN_JOB_LOCK:
         job = dict(QWEN_JOB)
@@ -396,6 +409,7 @@ def qwen_turbo_snapshot() -> dict[str, Any]:
         "phase": job.get("phase"),
         "logs": job["logs"],
         "runtimeReady": runtime_ready is True,
+        "setupUnavailableReason": qwen_turbo_setup_unavailable(),
         "supportsReferenceImage": True,
     }
 
@@ -545,16 +559,35 @@ def tts_environment_ready() -> bool:
     return (TTS_MODEL_ROOT / "qwen_3_tts_helper.py").is_file() and (TTS_MODEL_ROOT / "Qwen3-TTS" / "qwen_tts").is_dir()
 
 
+def tts_setup_unavailable() -> str | None:
+    if sys.platform == "linux":
+        return "Qwen3-TTS setup is unavailable in the Linux beta."
+    return None
+
+
+@lru_cache(maxsize=5)
+def tts_download_bytes(model: str) -> int | None:
+    try:
+        return int(tts_catalog_spec(model)["bytes"])
+    except (OSError, KeyError, TypeError, ValueError, RuntimeError):
+        return None
+
+
 def tts_snapshot() -> dict[str, Any]:
     with TTS_JOB_LOCK:
         job = dict(TTS_JOB)
         job["logs"] = list(TTS_JOB["logs"])
         job["diagnostics"] = list(TTS_JOB.get("diagnostics", []))
-    job["models"] = [
-        {"id": key, **spec, "installed": tts_model_ready(key)}
-        for key, spec in TTS_MODELS.items()
-    ]
-    job["environmentReady"] = tts_environment_ready()
+    environment_ready = tts_environment_ready()
+    job["models"] = []
+    for key, spec in TTS_MODELS.items():
+        files_ready = tts_export_ready(TTS_MODEL_ROOT / f"{key}-OV", key)
+        job["models"].append({
+            "id": key, **spec, "installed": files_ready, "ready": files_ready and environment_ready,
+            "bytes": tts_download_bytes(key),
+        })
+    job["environmentReady"] = environment_ready
+    job["setupUnavailableReason"] = tts_setup_unavailable()
     return job
 
 
@@ -584,28 +617,41 @@ def text_runtime_snapshot() -> dict[str, Any]:
     recommended = []
     for model_id, spec in text_model_catalog().items():
         folder = TEXT_MODEL_ROOT / spec["folder"]
-        entry = next((model for model in models if Path(model.get("path", "")).resolve() == folder), None)
+        model_path, _ = text_model_files(folder, spec)
+        entry = next((model for model in models if Path(model.get("path", "")).resolve() == model_path), None)
         recommended.append({
             "id": model_id,
             "name": spec["name"],
             "repo": spec["repo"],
             "bytes": sum(file["size"] for file in spec["files"]),
             "installed": bool(entry and entry.get("installed")),
+            "format": spec["format"],
         })
+    installed_image_models = {
+        item["id"]: item["label"] for item in MODEL_MANAGER.snapshot()
+        if item["id"] in IMAGE_MODEL_PRIORITY and item.get("installed")
+    }
+    gguf_available = gguf_runtime_supported()
     return {
         "job": job,
         "models": models,
         "recommendedModels": recommended,
+        "imageToolModels": [
+            {"id": key, "label": installed_image_models[key]}
+            for key in IMAGE_MODEL_PRIORITY if key in installed_image_models
+        ],
         "defaultModelId": DEFAULT_TEXT_MODEL_ID,
         "modelInstall": model_install,
         "registryError": registry_error,
         "runtimeAvailable": runtime_available,
         "runtimeError": runtime_error,
+        "ggufAvailable": gguf_available,
+        "ggufUnavailableReason": None if gguf_available else RUNTIME_PLATFORM_ERROR,
         "devices": ["AUTO", "GPU", "CPU"],
     }
 
 
-def append_text_event(job_id: str, *, phase: str | None = None, token: str | None = None) -> None:
+def append_text_event(job_id: str, *, phase: str | None = None, token: str | None = None, reasoning: str | None = None) -> None:
     with TEXT_JOB_LOCK:
         if TEXT_JOB.get("id") != job_id or TEXT_JOB.get("status") != "running":
             return
@@ -615,6 +661,9 @@ def append_text_event(job_id: str, *, phase: str | None = None, token: str | Non
             current = str(TEXT_JOB.get("partialText") or "")
             if len(current) < 100_000:
                 TEXT_JOB["partialText"] = current + token[:100_000 - len(current)]
+        if reasoning:
+            current = str(TEXT_JOB.get("partialReasoning") or "")
+            TEXT_JOB["partialReasoning"] = (current + reasoning)[:100_000]
 
 
 def text_job_running() -> bool:
@@ -627,10 +676,42 @@ def qwen_turbo_setup_running() -> bool:
         return QWEN_JOB.get("status") in ("setting_up", "downloading")
 
 
+def start_text_job(payload: dict[str, Any], request_id: Any) -> None:
+    global TEXT_CANCEL_EVENT
+    with TTS_JOB_LOCK:
+        audio_busy = TTS_JOB.get("status") in ("running", "setting_up", "stopping")
+    with FLUX_JOB_LOCK:
+        image_busy = FLUX_JOB.get("status") == "running"
+    if audio_busy or image_busy or qwen_turbo_setup_running() or text_model_install_running():
+        raise ValueError("Finish the active image/audio job or model setup before starting a text response.")
+    job_id = request_id or str(uuid.uuid4())
+    if not isinstance(job_id, str) or len(job_id) > 100:
+        raise ValueError("Invalid text request ID.")
+    with TEXT_JOB_LOCK:
+        if TEXT_JOB.get("id") == job_id and TEXT_JOB.get("threadId") == payload["threadId"]:
+            return
+        if TEXT_JOB.get("status") == "running":
+            raise ValueError("A text response is already running.")
+        cancel_event = threading.Event()
+        TEXT_CANCEL_EVENT = cancel_event
+        TEXT_JOB.update(
+            id=job_id, threadId=payload["threadId"], modelId=payload["modelId"],
+            status="running", phase="Queued…", partialText="", partialReasoning="",
+            startedAt=time.time(), finishedAt=None, result=None, image=payload.get("inspectionImage"),
+            inspection=payload.get("inspectionImage") is not None,
+            error=None, errorCode=None,
+        )
+    threading.Thread(target=run_text_generation, args=(payload, job_id, cancel_event), daemon=True).start()
+
+
 def run_text_generation(payload: dict[str, Any], job_id: str, cancel_event: threading.Event) -> None:
     try:
-        GENERATION_WORKER.close()
+        image_model = payload.get("imageModel")
+        inspection_image = payload.get("inspectionImage")
+        if not image_model and not inspection_image:
+            GENERATION_WORKER.close()
         TAME_PONY_GENERATION_WORKER.close()
+        CUSTOM_IMAGE_GENERATION_WORKER.close()
         QWEN_GENERATION_WORKER.close()
         FLUX3_GENERATION_WORKER.close()
         TTS_GENERATION_WORKER.close()
@@ -642,25 +723,82 @@ def run_text_generation(payload: dict[str, Any], job_id: str, cancel_event: thre
             None,
         )
         if model is None or not model.get("installed"):
-            raise ValueError("Add this OpenVINO model again; its folder is no longer available.")
+            raise ValueError("Add this text model again; its files are no longer available.")
         device = payload["device"]
         append_text_event(job_id, phase=f"Loading {model['name']} on {device_label(device)}…")
-        result = TEXT_GENERATION_WORKER.generate(
-            model_path=model["path"],
-            device=device,
-            command=[str(Path(sys.executable)), "-u", str(SCRIPTS / "text_generation_worker.py"), model["path"], device],
-            request={**payload, "op": "generate"},
-            cwd=ROOT,
-            env={
-                **os.environ,
-                "PYTHONUNBUFFERED": "1",
-                "PYTHONUTF8": "1",
-                "PYTHONIOENCODING": "utf-8",
-            },
-            on_token=lambda token: append_text_event(job_id, token=token),
-            on_phase=lambda phase: append_text_event(job_id, phase=phase),
-            cancel_event=cancel_event,
-        )
+
+        def generate(request: dict[str, Any]) -> dict[str, Any]:
+            return TEXT_GENERATION_WORKER.generate(
+                model_path=model["path"],
+                device=device,
+                command=[
+                    str(Path(sys.executable)), "-u", str(SCRIPTS / "text_generation_worker.py"), model["path"], device,
+                    *([model["projectorPath"]] if model.get("projectorPath") else []),
+                ],
+                request={**request, "op": "generate"},
+                cwd=ROOT,
+                env={
+                    **os.environ,
+                    "PYTHONUNBUFFERED": "1",
+                    "PYTHONUTF8": "1",
+                    "PYTHONIOENCODING": "utf-8",
+                    "FERN_GGUF_RUNTIME_ROOT": str(DATA_DIR / "gguf-runtime"),
+                },
+                on_token=lambda token: append_text_event(job_id, token=token),
+                on_phase=lambda phase: append_text_event(job_id, phase=phase),
+                on_reasoning=lambda token: append_text_event(job_id, reasoning=token),
+                cancel_event=cancel_event,
+            )
+
+        request = {**payload, **({"tools": [IMAGE_TOOL]} if image_model else {})}
+        result = generate(request)
+        calls = result.pop("toolCalls", [])
+        if inspection_image and result.get("text", "").strip():
+            result["visionChecked"] = True
+        elif inspection_image:
+            raise RuntimeError("The model returned an empty image inspection. Try again.")
+        if calls and image_model:
+            if result.get("device") != "GPU":
+                raise RuntimeError("Select GPU in Preferences to use the image tool in chat.")
+            prompt = image_tool_prompt(calls)
+            append_text_event(job_id, phase="Generating an image…")
+            image = generate_chat_image(image_model, prompt, payload["threadId"], job_id, cancel_event)
+            with TEXT_JOB_LOCK:
+                if TEXT_JOB.get("id") == job_id:
+                    TEXT_JOB["image"] = image
+            append_text_event(job_id, phase="Checking the generated image…")
+            prior = result.get("text", "").strip()
+            tool_reply = json.dumps({
+                "status": "created", "prompt": prompt, "width": image["width"], "height": image["height"],
+                "instruction": "The image is displayed in the chat. Briefly confirm it is ready.",
+            })
+            continuation = generate({
+                **request, "toolChoice": "none", "mode": "instant",
+                "maxNewTokens": min(request["maxNewTokens"], 96),
+                "messages": [
+                    *request["messages"],
+                    {"role": "assistant", "content": prior, "tool_calls": calls},
+                    {"role": "tool", "name": "generate_image", "tool_call_id": calls[0]["id"], "content": tool_reply},
+                    {
+                        "role": "user",
+                        "content": "Inspect the attached generated image. Briefly tell me what is actually visible and mention any obvious mismatch with my request.",
+                        "imagePath": str(OUTPUTS / image["name"]),
+                    },
+                ],
+            })
+            if not continuation.get("text", "").strip():
+                raise RuntimeError("The model returned an empty image inspection. Try again.")
+            result["text"] = "\n\n".join(
+                part for part in (prior, continuation["text"].strip()) if part
+            )
+            result["reasoning"] = "\n\n".join(
+                part for part in (result.get("reasoning"), continuation.get("reasoning")) if part
+            )
+            for field in ("inputTokens", "outputTokens", "generationSeconds"):
+                result[field] += continuation[field]
+            result["tokensPerSecond"] = result["outputTokens"] / max(result["generationSeconds"], 0.001)
+            result["visionChecked"] = True
+            result["context"] = continuation.get("context")
         if cancel_event.is_set():
             raise InterruptedError()
         with TEXT_JOB_LOCK:
@@ -669,10 +807,11 @@ def run_text_generation(payload: dict[str, Any], job_id: str, cancel_event: thre
             if TEXT_JOB.get("id") == job_id:
                 result.update(modelId=model["id"], modelName=model["name"], device=result.get("device", device),
                               seed=payload["seed"], temperature=payload["temperature"],
-                              topP=payload["topP"], maxNewTokens=payload["maxNewTokens"])
+                              topP=payload["topP"], maxNewTokens=result.get("maxNewTokens", payload["maxNewTokens"]))
                 TEXT_JOB.update(
                     status="complete", finishedAt=time.time(), phase="Response complete.",
-                    partialText=result.get("text", ""), result=result, error=None,
+                    partialText=result.get("text", ""), partialReasoning=result.get("reasoning", ""),
+                    result=result, error=None,
                 )
     except InterruptedError:
         with TEXT_JOB_LOCK:
@@ -684,7 +823,8 @@ def run_text_generation(payload: dict[str, Any], job_id: str, cancel_event: thre
                 stopped = cancel_event.is_set()
                 TEXT_JOB.update(status="stopped" if stopped else "failed", finishedAt=time.time(),
                                 phase="Generation stopped." if stopped else "Generation failed.",
-                                error=None if stopped else (str(error) or type(error).__name__)[-1000:])
+                                error=None if stopped else (str(error) or type(error).__name__)[-1000:],
+                                errorCode=error.code if not stopped and isinstance(error, TextWorkerError) else None)
 
 
 def tts_job_running() -> bool:
@@ -910,6 +1050,9 @@ def run_qwen_turbo_setup(job_id: str, cancel_event: threading.Event) -> None:
 
 def start_qwen_turbo_setup() -> dict[str, Any]:
     global QWEN_CANCEL_EVENT
+    unavailable = qwen_turbo_setup_unavailable()
+    if unavailable:
+        raise ValueError(unavailable)
     with QWEN_MODEL_OPERATION_LOCK:
         if qwen_turbo_model_ready() and qwen_turbo_runtime_ready():
             raise ValueError("Official Qwen Turbo is already installed.")
@@ -1337,6 +1480,35 @@ def decode_flux_reference_image(value: Any) -> Image.Image | None:
         raise ValueError("Could not read the reference image.") from exc
 
 
+def store_chat_image(value: Any) -> str:
+    image = decode_flux_reference_image(value)
+    if image is None:
+        raise ValueError("Choose an image to attach.")
+    image.thumbnail((1536, 1536), Image.Resampling.LANCZOS)
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    content = buffer.getvalue()
+    filename = f"chat-image-{hashlib.sha256(content).hexdigest()[:32]}.png"
+    directory = DATA_DIR / "references"
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / filename
+    if not path.exists():
+        temporary = path.with_suffix(".upload")
+        temporary.write_bytes(content)
+        temporary.replace(path)
+    return filename
+
+
+def chat_image_path(filename: Any) -> str:
+    if not isinstance(filename, str) or not re.fullmatch(r"chat-image-[a-f0-9]{32}\.png", filename):
+        raise ValueError("The attached chat image is invalid.")
+    directory = (DATA_DIR / "references").resolve()
+    path = (directory / filename).resolve()
+    if path.parent != directory or not path.is_file() or path.stat().st_size > 8 * 1024 * 1024:
+        raise ValueError("The attached chat image is missing or invalid. Attach it again.")
+    return str(path)
+
+
 def validate_flux_payload(payload: dict[str, Any]) -> dict[str, Any]:
     model = payload.get("model", "9b")
     custom_model = custom_image.is_model(model)
@@ -1466,7 +1638,11 @@ def run_flux_generation(
     job_id: str,
     payload: dict[str, Any],
     cancel_event: threading.Event,
-) -> None:
+    *,
+    on_chat_progress: Callable[[str], None] | None = None,
+    chat_job_id: str | None = None,
+) -> dict[str, Any] | None:
+    log_event = on_chat_progress or append_flux_log
     payload["use_uncensored_text_encoder"] = bool(
         payload.get("model") in ("4b", "4b-lora")
         and KLEIN_TEXT_ENCODER_MANAGER.snapshot(
@@ -1480,7 +1656,11 @@ def run_flux_generation(
             if display_message.startswith(prefix):
                 display_message = display_message[len(prefix):].strip()
                 break
-        append_flux_log(display_message)
+        log_event(display_message)
+        if on_chat_progress is not None:
+            if cancel_event.is_set():
+                raise FluxGenerationCancelled("Generation stopped by user.")
+            return
         if message.startswith(("Loading Flux", "Loading Qwen", "Loading Tame Pony", "Loading the OpenVINO", "Loading ")):
             mark_runtime(status="loading", message="Loading model for generation…", error=None)
         elif message.startswith(("Seed:", "Step ", "Qwen denoising step", "Tame Pony SDXL ")):
@@ -1505,7 +1685,8 @@ def run_flux_generation(
 
     stage = CACHE_DIR / ("generation-" + job_id)
     try:
-        TEXT_GENERATION_WORKER.close()
+        if on_chat_progress is None:
+            TEXT_GENERATION_WORKER.close()
         TTS_GENERATION_WORKER.close()
         if payload.get("model") != QWEN_TURBO_MODEL_ID:
             QWEN_GENERATION_WORKER.close()
@@ -1513,7 +1694,7 @@ def run_flux_generation(
             TAME_PONY_GENERATION_WORKER.close()
         if not custom_image.is_model(payload.get("model", "")):
             CUSTOM_IMAGE_GENERATION_WORKER.close()
-        if payload.get("model") not in flux2.LORA_MODEL_KEYS:
+        if on_chat_progress is None and payload.get("model") not in flux2.LORA_MODEL_KEYS:
             GENERATION_WORKER.close()
         if payload.get("model") != flux3.MODEL_KEY:
             FLUX3_GENERATION_WORKER.close()
@@ -1553,7 +1734,7 @@ def run_flux_generation(
             if cancel_event.is_set():
                 raise FluxGenerationCancelled("Generation stopped by user.")
             seed = payload["seed"] + index
-            append_flux_log(f"Batch image {index + 1}/{payload['batch_size']} | seed {seed}")
+            log_event(f"Batch image {index + 1}/{payload['batch_size']} | seed {seed}")
             metadata = {
                 "threadId": payload.get("thread_id"),
                 "prompt": payload["prompt"],
@@ -1734,6 +1915,7 @@ def run_flux_generation(
                     device=payload["device"],
                     reference_image=payload["reference_image"],
                     reference_images=payload.get("reference_images"),
+                    compile_cache=CACHE_DIR / "openvino" / f"chat-{payload['model']}" if on_chat_progress is not None else None,
                     output_dir=stage,
                     log=log_generation,
                 )
@@ -1744,11 +1926,16 @@ def run_flux_generation(
                 output_path.replace(destination)
             output_path = destination
             metadata["referenceUsed"] = payload["reference_image"] is not None
+            if on_chat_progress is not None:
+                metadata["source"] = "chat"
+                metadata["chatJobId"] = chat_job_id
             if reference_urls:
                 metadata["referenceUrl"] = reference_urls[0]
                 metadata["referenceUrls"] = reference_urls
             metadata["generationTime"] = round(generation_time, 1)
             last_record = image_record(output_path, metadata)
+        if on_chat_progress is not None:
+            return last_record
         append_flux_log(f"Batch complete | {payload['batch_size']} image(s).")
         mark_flux_job(
             status="complete",
@@ -1766,6 +1953,8 @@ def run_flux_generation(
             mark_runtime(status="ready", device=payload["device"], message=f"{custom_image.model_spec(payload['model'])['label']} is ready for another image.", error=None)
         cleanup_cache_when_model_idle()
     except FluxGenerationCancelled:
+        if on_chat_progress is not None:
+            raise
         QWEN_GENERATION_WORKER.close()
         FLUX3_GENERATION_WORKER.close()
         TAME_PONY_GENERATION_WORKER.close()
@@ -1774,6 +1963,8 @@ def run_flux_generation(
         append_flux_log("Generation stopped by user.")
         mark_flux_job(status="cancelled", finishedAt=time.time(), output=None, error=None)
     except Exception as exc:
+        if on_chat_progress is not None:
+            raise
         if cancel_event.is_set():
             QWEN_GENERATION_WORKER.close()
             FLUX3_GENERATION_WORKER.close()
@@ -1803,6 +1994,79 @@ def run_flux_generation(
         with FLUX_JOB_LOCK:
             if FLUX_CANCEL_EVENT is cancel_event:
                 FLUX_CANCEL_EVENT = None
+    return None
+
+
+def prepare_image_inspection(payload: dict[str, Any]) -> dict[str, Any]:
+    thread_id = payload.get("threadId")
+    filename = payload.get("image")
+    model_id = payload.get("modelId")
+    device = payload.get("device", "AUTO")
+    if not isinstance(thread_id, str) or not thread_id.startswith("text-thread-") or len(thread_id) > 100:
+        raise ValueError("The text conversation is invalid.")
+    if not isinstance(filename, str) or not re.fullmatch(r"[a-zA-Z0-9_-]+\.png", filename):
+        raise ValueError("Choose a saved image from this conversation.")
+    if device not in ("AUTO", "GPU", "CPU"):
+        raise ValueError("Choose Auto, Intel GPU, or CPU.")
+    model = next((item for item in TEXT_MODEL_REGISTRY.snapshot() if item["id"] == model_id), None)
+    if not model or not model.get("installed") or not model.get("supportsVision"):
+        raise ValueError("Choose an installed vision model before checking this image.")
+    if model.get("format") == "gguf" and not gguf_runtime_supported():
+        raise ValueError(RUNTIME_PLATFORM_ERROR)
+    metadata = gallery_store.get_image_metadata(filename)
+    if not metadata or metadata.get("threadId") != thread_id or metadata.get("source") != "chat":
+        raise ValueError("Choose a saved image from this conversation.")
+    path = (OUTPUTS / filename).resolve()
+    if path.parent != OUTPUTS.resolve() or not path.is_file():
+        raise ValueError("The image file is missing. Restore it before retrying the check.")
+    artifact = {key: metadata[key] for key in ("name", "width", "height", "modelLabel", "prompt")}
+    prompt = "Inspect the attached image. Briefly describe what is actually visible."
+    if artifact["prompt"]:
+        prompt += f" The image was requested as follows: {artifact['prompt']}. Mention any obvious mismatch."
+    return {
+        "modelId": model_id, "threadId": thread_id, "device": device, "inspectionImage": artifact,
+        "messages": [{"role": "user", "content": prompt, "imagePath": str(path)}],
+        "mode": "instant", "toolChoice": "none", "contextSize": DEFAULT_CONTEXT_SIZE,
+        "systemPrompt": "", "temperature": 0.2, "topP": 0.9, "maxNewTokens": 96, "seed": 0,
+    }
+
+
+def generate_chat_image(
+    model: str, prompt: str, thread_id: str,
+    job_id: str, cancel_event: threading.Event,
+) -> dict[str, Any]:
+    status = flux2.model_status("INTEL_GPU", model)
+    if not status["runtimeReady"] or status["selectedDevice"] != "INTEL_GPU":
+        raise RuntimeError(str(status["runtimeNote"]))
+    image_request = validate_flux_payload({
+        "model": model, "prompt": prompt, "width": CHAT_IMAGE_SIZE, "height": CHAT_IMAGE_SIZE,
+        "device": "INTEL_GPU", "steps": 4, "guidance": 1.0, "thread_id": thread_id,
+        "seed": uuid.uuid4().int % 2_147_483_647,
+    })
+    image_request["modelRevision"] = status["modelRevision"]
+    record = run_flux_generation(
+        uuid.uuid4().hex, image_request, cancel_event,
+        on_chat_progress=lambda message: append_text_event(job_id, phase=f"Generating image · {message}"),
+        chat_job_id=job_id,
+    )
+    if record is None:
+        raise RuntimeError("The image tool did not return a saved image.")
+    return {key: record[key] for key in ("name", "width", "height", "modelLabel", "prompt")}
+
+
+def recover_chat_image(thread_id: str, job_id: str) -> dict[str, Any] | None:
+    """Match a saved render to a pending chat request after a backend restart."""
+    for filename, metadata in gallery_store.metadata_snapshot().items():
+        if (
+            metadata.get("source") != "chat"
+            or metadata.get("threadId") != thread_id
+            or metadata.get("chatJobId") != job_id
+        ):
+            continue
+        path = (OUTPUTS / filename).resolve()
+        if path.parent == OUTPUTS.resolve() and path.suffix.lower() == ".png" and path.is_file():
+            return {key: metadata[key] for key in ("name", "width", "height", "modelLabel", "prompt")}
+    return None
 
 
 def delete_thread_assets(thread_id: str, legacy_names: list[str]) -> list[str]:
@@ -1871,6 +2135,16 @@ class Handler(BaseHTTPRequestHandler):
 
         if parsed.path == "/api/text/status":
             self.send_json(200, text_runtime_snapshot())
+            return
+
+        if parsed.path == "/api/text/recover-image":
+            query = urllib.parse.parse_qs(parsed.query)
+            thread_id = query.get("threadId", [""])[0]
+            job_id = query.get("jobId", [""])[0]
+            if not thread_id.startswith("text-thread-") or len(thread_id) > 100 or not job_id or len(job_id) > 100:
+                self.send_json(400, {"error": "The pending chat request could not be identified."})
+            else:
+                self.send_json(200, {"image": recover_chat_image(thread_id, job_id)})
             return
 
         if parsed.path == "/api/tts/status":
@@ -1985,7 +2259,7 @@ class Handler(BaseHTTPRequestHandler):
             self.handle_post()
 
     def handle_post(self) -> None:
-        global FLUX_CANCEL_EVENT, TTS_CANCEL_EVENT, TEXT_CANCEL_EVENT
+        global FLUX_CANCEL_EVENT, TTS_CANCEL_EVENT
         parsed = urllib.parse.urlparse(self.path)
 
         if parsed.path == "/api/text/stop":
@@ -2005,8 +2279,11 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 payload = self.read_json_body()
                 model_id = payload.get("modelId")
-                if not isinstance(model_id, str) or model_id not in text_model_catalog():
-                    raise ValueError("Choose a recommended OpenVINO text model.")
+                catalog = text_model_catalog()
+                if not isinstance(model_id, str) or model_id not in catalog:
+                    raise ValueError("Choose a recommended text model.")
+                if catalog[model_id]["format"] == "gguf" and not gguf_runtime_supported():
+                    raise ValueError(RUNTIME_PLATFORM_ERROR)
                 with TTS_JOB_LOCK:
                     audio_busy = TTS_JOB.get("status") in ("running", "setting_up", "stopping")
                 with FLUX_JOB_LOCK:
@@ -2022,16 +2299,40 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(400, {"error": str(error)})
             return
 
+        if parsed.path == "/api/text/images":
+            try:
+                image = store_chat_image(self.read_json_body().get("image"))
+                self.send_json(201, {"image": image})
+            except Exception as error:
+                self.send_json(400, {"error": str(error)})
+            return
+
         if parsed.path in ("/api/text/models/import", "/api/text/models/remove"):
             try:
                 payload = self.read_json_body()
                 if text_job_running() or text_model_install_running():
                     raise ValueError("Wait for the current text response or model installation before changing models.")
                 if parsed.path.endswith("/import"):
-                    folder = payload.get("path")
-                    if not isinstance(folder, str) or not folder.strip() or len(folder) > 4096:
-                        raise ValueError("Choose a local OpenVINO model folder.")
-                    model = TEXT_MODEL_REGISTRY.add(folder)
+                    paths = payload.get("ggufPaths")
+                    if paths is None:
+                        folder = payload.get("path")
+                        if not isinstance(folder, str) or not folder.strip() or len(folder) > 4096:
+                            raise ValueError("Choose a local model folder or GGUF model.")
+                        model = TEXT_MODEL_REGISTRY.add(folder)
+                    else:
+                        if not gguf_runtime_supported():
+                            raise ValueError(RUNTIME_PLATFORM_ERROR)
+                        if not isinstance(paths, list) or not 1 <= len(paths) <= 2 or any(
+                            not isinstance(path, str) or not path.strip() or len(path) > 4096 for path in paths
+                        ):
+                            raise ValueError("Select one GGUF model and its optional vision projector.")
+                        models, projectors = [], []
+                        for path in paths:
+                            metadata = read_gguf_metadata(Path(path).expanduser().resolve(strict=True))
+                            (projectors if is_projector(metadata) else models).append(path)
+                        if len(models) != 1 or len(projectors) > 1:
+                            raise ValueError("Select one language model and at most one GGUF projector.")
+                        model = TEXT_MODEL_REGISTRY.add(models[0], projectors[0] if projectors else None)
                 else:
                     model_id = payload.get("modelId")
                     if not isinstance(model_id, str) or len(model_id) > 64:
@@ -2046,23 +2347,43 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(400, {"error": str(error)})
             return
 
+        if parsed.path == "/api/text/inspect-image":
+            try:
+                payload = self.read_json_body()
+                start_text_job(prepare_image_inspection(payload), payload.get("requestId"))
+                self.send_json(202, {"job": text_runtime_snapshot()})
+            except Exception as error:
+                self.send_json(400, {"error": str(error)})
+            return
+
         if parsed.path == "/api/text/generate":
             try:
                 payload = self.read_json_body()
                 model_id = payload.get("modelId")
                 if not isinstance(model_id, str) or len(model_id) > 64:
-                    raise ValueError("Select an OpenVINO text model first.")
+                    raise ValueError("Select a text model first.")
                 model = next((item for item in TEXT_MODEL_REGISTRY.snapshot() if item["id"] == model_id), None)
                 if model is None or not model.get("installed"):
-                    raise ValueError("Add the selected OpenVINO model folder again.")
+                    raise ValueError("Add the selected text model again.")
+                if model.get("format") == "gguf" and not gguf_runtime_supported():
+                    raise ValueError(RUNTIME_PLATFORM_ERROR)
+                mode = payload.get("mode", "instant")
+                if mode not in ("instant", "reasoning"):
+                    raise ValueError("Choose Instant or Reasoning mode.")
+                if mode == "reasoning" and not model.get("supportsReasoning"):
+                    raise ValueError("The selected model has no reasoning mode.")
                 thread_id = payload.get("threadId")
                 if not isinstance(thread_id, str) or not thread_id.startswith("text-thread-") or len(thread_id) > 100:
                     raise ValueError("The text conversation is invalid. Start a new text thread and retry.")
                 messages = payload.get("messages")
-                if not isinstance(messages, list) or not 1 <= len(messages) <= 100:
-                    raise ValueError("A conversation must contain 1 to 100 messages.")
+                gguf = model.get("format") == "gguf"
+                message_limit = 300 if gguf else 100
+                if not isinstance(messages, list) or not 1 <= len(messages) <= message_limit:
+                    raise ValueError(f"A conversation must contain 1 to {message_limit} messages.")
                 safe_messages = []
                 total_chars = 0
+                image_count = 0
+                generated_images = None
                 for message in messages:
                     if not isinstance(message, dict) or message.get("role") not in ("user", "assistant"):
                         raise ValueError("The conversation contains an unsupported message.")
@@ -2070,10 +2391,44 @@ class Handler(BaseHTTPRequestHandler):
                     if not isinstance(content, str) or not content.strip() or len(content) > 20_000:
                         raise ValueError("Each message must contain between 1 and 20,000 characters.")
                     total_chars += len(content)
-                    safe_messages.append({"role": message["role"], "content": content})
+                    turn = {"role": message["role"], "content": content}
+                    if message["role"] == "assistant" and isinstance(message.get("generatedImage"), str):
+                        if generated_images is None:
+                            generated_images = gallery_store.metadata_snapshot()
+                        saved = generated_images.get(message["generatedImage"], {})
+                        if saved.get("threadId") == thread_id and saved.get("source") == "chat":
+                            description = str(saved.get("prompt", ""))[:2000]
+                            turn["content"] += "\n\nImage generated in this turn: " + description
+                            total_chars += len(description)
+                            filename = message["generatedImage"]
+                            path = (OUTPUTS / filename).resolve()
+                            if model.get("supportsVision") and path.parent == OUTPUTS.resolve() and path.is_file():
+                                turn["imagePath"] = str(path)
+                    if message.get("image") is not None:
+                        if message["role"] != "user" or not model.get("supportsVision"):
+                            raise ValueError("Choose a vision-capable GGUF model to use chat images.")
+                        image_count += 1
+                        if image_count > 8:
+                            raise ValueError("Start a new conversation to attach more than eight images.")
+                        turn["imagePath"] = chat_image_path(message["image"])
+                    included_name = message.get("includedImage")
+                    if included_name is not None:
+                        if message["role"] != "user" or not model.get("supportsVision") or "imagePath" in turn:
+                            raise ValueError("Choose a vision model and one image for this message.")
+                        if not isinstance(included_name, str) or not re.fullmatch(r"[a-zA-Z0-9_-]+\.png", included_name):
+                            raise ValueError("Choose a saved image from this conversation.")
+                        if generated_images is None:
+                            generated_images = gallery_store.metadata_snapshot()
+                        saved = generated_images.get(included_name, {})
+                        path = (OUTPUTS / included_name).resolve()
+                        if saved.get("threadId") == thread_id and saved.get("source") == "chat" and path.parent == OUTPUTS.resolve() and path.is_file():
+                            turn["imagePath"] = str(path)
+                        elif message is messages[-1]:
+                            raise ValueError("The selected image is unavailable. Remove it from the draft or restore the file.")
+                    safe_messages.append(turn)
                 if safe_messages[-1]["role"] != "user" or any(item["role"] != ("user" if index % 2 == 0 else "assistant") for index, item in enumerate(safe_messages)):
                     raise ValueError("The last conversation message must be from you.")
-                if total_chars > 80_000:
+                if total_chars > (200_000 if gguf else 80_000):
                     raise ValueError("This conversation is too long. Start a new text thread to continue.")
                 system_prompt = payload.get("systemPrompt", "")
                 if not isinstance(system_prompt, str) or len(system_prompt) > 10_000:
@@ -2081,6 +2436,19 @@ class Handler(BaseHTTPRequestHandler):
                 device = payload.get("device", "AUTO")
                 if device not in ("AUTO", "GPU", "CPU"):
                     raise ValueError("Choose Auto, Intel GPU, or CPU.")
+                image_model = payload.get("imageModel")
+                if image_model is not None:
+                    if not (model.get("supportsTools") and model.get("supportsVision")):
+                        raise ValueError("Select a vision-capable chat model with tool calling and its vision projector.")
+                    if device == "CPU":
+                        raise ValueError("Select GPU in Preferences to use the image tool in chat.")
+                    if image_model not in flux2.KLEIN_MODEL_KEYS or not any(
+                        item["id"] == image_model and item.get("installed") for item in MODEL_MANAGER.snapshot()
+                    ):
+                        raise ValueError("Select an installed Klein image model in Chat settings.")
+                context_size = payload.get("contextSize", DEFAULT_CONTEXT_SIZE)
+                if type(context_size) is not int or context_size not in CONTEXT_SIZES:
+                    raise ValueError("Choose a context size of 4K, 8K, or 16K tokens.")
                 max_new_tokens = payload.get("maxNewTokens", 512)
                 if isinstance(max_new_tokens, bool) or not isinstance(max_new_tokens, int) or not 1 <= max_new_tokens <= 8192:
                     raise ValueError("Maximum output length must be between 1 and 8,192 tokens.")
@@ -2093,33 +2461,16 @@ class Handler(BaseHTTPRequestHandler):
                 seed = payload.get("seed", 0)
                 if isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed <= 2_147_483_647:
                     raise ValueError("Seed must be an integer between 0 and 2,147,483,647.")
-                with TTS_JOB_LOCK:
-                    audio_busy = TTS_JOB.get("status") in ("running", "setting_up", "stopping")
-                with FLUX_JOB_LOCK:
-                    image_busy = FLUX_JOB.get("status") == "running"
-                if audio_busy or image_busy or tts_job_running() or qwen_turbo_setup_running() or text_model_install_running():
-                    raise ValueError("Finish the active image/audio job or model setup before starting a text response.")
-                with TEXT_JOB_LOCK:
-                    if TEXT_JOB.get("status") == "running":
-                        raise ValueError("A text response is already running.")
-                    job_id = payload.get("requestId") or str(uuid.uuid4())
-                    if not isinstance(job_id, str) or len(job_id) > 100:
-                        raise ValueError("Invalid text request ID.")
-                    cancel_event = threading.Event()
-                    TEXT_CANCEL_EVENT = cancel_event
-                    TEXT_JOB.update(
-                        id=job_id, threadId=thread_id, modelId=model_id,
-                        status="running", phase="Queued…", partialText="",
-                        startedAt=time.time(), finishedAt=None, result=None, error=None,
-                    )
                 generation = {
                     "modelId": model_id, "device": device,
                     "messages": safe_messages, "systemPrompt": system_prompt.strip(),
                     "temperature": float(temperature), "topP": float(top_p),
                     "maxNewTokens": max_new_tokens,
                     "seed": seed,
+                    "mode": mode,
+                    "threadId": thread_id, "imageModel": image_model, "contextSize": context_size,
                 }
-                threading.Thread(target=run_text_generation, args=(generation, job_id, cancel_event), daemon=True).start()
+                start_text_job(generation, payload.get("requestId"))
                 self.send_json(202, {"job": text_runtime_snapshot()})
             except Exception as error:
                 self.send_json(400, {"error": str(error)})
@@ -2143,6 +2494,9 @@ class Handler(BaseHTTPRequestHandler):
 
         if parsed.path in ("/api/tts/setup", "/api/tts/generate"):
             try:
+                unavailable = tts_setup_unavailable() if parsed.path.endswith("setup") else None
+                if unavailable:
+                    raise ValueError(unavailable)
                 payload = self.read_json_body()
                 if text_job_running() or flux_job_snapshot()["status"] == "running" or qwen_turbo_setup_running() or text_model_install_running():
                     raise ValueError("Stop the active image/text response or model setup before starting an audio job.")
@@ -2286,7 +2640,7 @@ class Handler(BaseHTTPRequestHandler):
                 FLUX3_GENERATION_WORKER.close()
                 TEXT_GENERATION_WORKER.close()
                 with TEXT_JOB_LOCK:
-                    TEXT_JOB.update(id=None, threadId=None, status="idle", partialText="", result=None, error=None)
+                    TEXT_JOB.update(id=None, threadId=None, status="idle", partialText="", partialReasoning="", result=None, image=None, error=None, errorCode=None)
                 flux2.release_pipeline()
                 cache_result = storage_manager.cleanup_cache(ROOT, CACHE_DIR, force=True)
                 output_files, output_bytes = storage_manager.clear_directory(OUTPUTS)
@@ -2486,6 +2840,8 @@ class Handler(BaseHTTPRequestHandler):
                 if parsed.path.endswith("install"): MODEL_MANAGER.start(model)
                 elif parsed.path.endswith("pause"): MODEL_MANAGER.cancel(model)
                 else:
+                    if model in flux2.KLEIN_MODEL_KEYS and text_job_running():
+                        raise ValueError("Wait for the active chat response before removing a Klein image model.")
                     with FLUX_JOB_LOCK:
                         if FLUX_JOB["status"] == "running": raise ValueError("Stop generation before removing a model.")
                     if model in ("4b", "4b-lora") and KLEIN_TEXT_ENCODER_MANAGER.snapshot(True)["state"] in ("downloading", "verifying", "removing"):

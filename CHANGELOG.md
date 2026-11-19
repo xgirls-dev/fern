@@ -6,6 +6,13 @@ lands directly on `main` instead of through labeled pull requests.
 
 ## [Unreleased]
 
+### Added
+
+- Omarchy x86-64 beta package with bundled Python and OpenVINO, FLUX.2 Klein, and managed GGUF chat and vision.
+- Install Gemma 4 E4B or import local GGUF chat models in the Text model library.
+- Attach images with a matching GGUF projector and select Instant or Reasoning on supported models.
+- Generate images inside chat with tool-capable text models and an installed FLUX.2 Klein model.
+
 ## [0.1.44] - 2026-11-17
 
 ### Added

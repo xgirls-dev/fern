@@ -78,13 +78,13 @@ try {
     workspace.threads.find((t) => t.id === "study").settings.prompt,
     "Draft after generation",
   );
-  await button("Library").click();
+  await button("Images").click();
   await page.getByRole("searchbox", { name: "Filter images" }).fill("prompt 2");
   assert.equal(
     await page.locator(".gallery-panel-count").innerText(),
     "1 of 3 images",
   );
-  await button("Review audit-2.png").click();
+  await button(/^Review.*audit-2\.png$/).click();
   await page.keyboard.press("Control+n");
   await page.waitForTimeout(300);
   assert.equal(
@@ -117,18 +117,15 @@ try {
   assert.equal(state.images.length, 2);
   assert.equal(await page.locator(".image-viewer").count(), 0);
   await button("Preferences").click();
-  const cpuPreference = page.getByRole("button", { name: /Allow CPU selection/ });
-  assert.equal(await cpuPreference.getAttribute("aria-pressed"), "false");
-  assert.equal(await page.getByLabel("Generation device").count(), 0);
-  await cpuPreference.click();
   const devicePreference = page.getByLabel("Generation device");
+  assert.equal(await devicePreference.inputValue(), "GPU");
   assert.deepEqual(await devicePreference.locator("option").allTextContents(), ["Available GPU", "CPU"]);
   await devicePreference.selectOption("CPU");
-  assert.equal(await devicePreference.inputValue(), "CPU");
-  await cpuPreference.click();
-  assert.equal(await page.getByLabel("Generation device").count(), 0);
+  await page.getByText("Image creation in chat is unavailable with CPU selected.", { exact: true }).waitFor();
+  await devicePreference.selectOption("GPU");
+  assert.equal(await devicePreference.inputValue(), "GPU");
   assert.equal(await page.locator("#device").count(), 0);
-  await button("Library").click();
+  await button("Images").click();
   assert.equal(
     await page.getByRole("searchbox", { name: "Filter images" }).inputValue(),
     "prompt 2",
@@ -203,8 +200,8 @@ try {
   };
   await page.waitForTimeout(900);
   assert.equal(await page.getByRole("dialog").count(), 0);
-  await button("Library").click();
-  assert(await page.locator("#library-view").isVisible());
+  await button("Images").click();
+  await page.locator("#library-view").waitFor();
   assert.deepEqual(errors, []);
   await writeFile(
     `${dir}/results.json`,

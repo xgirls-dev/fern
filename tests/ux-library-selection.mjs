@@ -3,10 +3,10 @@ import { fixture } from './ui-fixture.mjs';
 
 const { page, state, errors, close } = await fixture({ imageCount: 4 });
 try {
-  await page.getByRole('button', { name: 'Library', exact: true }).click();
+  await page.getByRole('button', { name: 'Images', exact: true }).click();
   await page.getByRole('button', { name: 'Select', exact: true }).click();
-  await page.getByRole('button', { name: 'Select audit-1.png', exact: true }).click();
-  await page.getByRole('button', { name: 'Select audit-2.png', exact: true }).click();
+  await page.getByRole('button', { name: /^Select.*audit-1\.png$/, exact: true }).click();
+  await page.getByRole('button', { name: /^Select.*audit-2\.png$/, exact: true }).click();
   await page.getByText('2 selected', { exact: true }).waitFor();
   await page.getByRole('button', { name: 'Delete selected' }).click();
   const dialog = page.getByRole('alertdialog', { name: 'Delete selected images' });

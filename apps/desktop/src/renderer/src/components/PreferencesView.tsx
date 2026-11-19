@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import Check from "lucide-react/dist/esm/icons/check.mjs";
 import Command from "lucide-react/dist/esm/icons/command.mjs";
 import Cpu from "lucide-react/dist/esm/icons/cpu.mjs";
@@ -6,16 +7,18 @@ import PanelLeft from "lucide-react/dist/esm/icons/panel-left.mjs";
 import Sun from "lucide-react/dist/esm/icons/sun.mjs";
 import type { ModelStatus } from "../lib/types";
 import type { ComputePreference } from "../hooks/useComputePreference";
-import { ChoiceCard, PageHeader, Select, ToggleRow } from "./ui/controls";
+import { Button, ChoiceCard, PageHeader, Select, ToggleRow } from "./ui/controls";
+import { shortcutLabel, shortcuts } from "../lib/workspaceNavigation";
 
 interface PreferencesViewProps {
   active: boolean;
+  computeFocusRequest: number;
+  onReturnToChat?: () => void;
   theme: "light" | "dark";
   sidebarCollapsed: boolean;
+  compactLayout: boolean;
   modelStatus: ModelStatus | null;
-  allowCpu: boolean;
   computeDevice: ComputePreference;
-  onAllowCpuChange: (allow: boolean) => void;
   onComputeDeviceChange: (device: ComputePreference) => void;
   onToggleTheme: () => void;
   onToggleSidebar: () => void;
@@ -38,22 +41,28 @@ function adapterState(
   adapter: NonNullable<ModelStatus["adapters"]>[number],
 ): string {
   if (!adapter.available) return "Unavailable";
-  if (!adapter.runtimeReady) return "Model missing";
+  if (!adapter.runtimeReady) return "Setup required";
   return "Ready";
 }
 
 export function PreferencesView({
   active,
+  computeFocusRequest,
+  onReturnToChat,
   theme,
   sidebarCollapsed,
+  compactLayout,
   modelStatus,
-  allowCpu,
   computeDevice,
-  onAllowCpuChange,
   onComputeDeviceChange,
   onToggleTheme,
   onToggleSidebar,
 }: PreferencesViewProps) {
+  const device = useRef<HTMLSelectElement>(null);
+  useEffect(() => {
+    if (active && computeFocusRequest) device.current?.focus();
+  }, [active, computeFocusRequest]);
+
   if (!active) return null;
 
   return (
@@ -128,7 +137,9 @@ export function PreferencesView({
             className="preferences-toggle-row"
             icon={<PanelLeft size={15} />}
             title="Persistent sidebar"
-            description={sidebarCollapsed ? "Collapsed to an icon rail" : "Showing navigation and threads"}
+            description={compactLayout
+              ? sidebarCollapsed ? "Icon rail on wider windows" : "Expanded on wider windows"
+              : sidebarCollapsed ? "Collapsed to an icon rail" : "Showing navigation and threads"}
             pressed={!sidebarCollapsed}
             onClick={onToggleSidebar}
           />
@@ -140,61 +151,54 @@ export function PreferencesView({
         >
           <div className="preferences-section-heading">
             <div>
-              <h3 id="preferences-runtime">Compute & image runtime</h3>
-              <p>The compute choice applies to image, text, and audio generation. GPU is the default.</p>
+              <h3 id="preferences-runtime">Compute</h3>
+              <p>The compute choice applies to image, text, and audio generation. Image generation in chat requires a compatible Intel GPU.</p>
             </div>
             <Cpu size={17} aria-hidden="true" />
           </div>
-          <ToggleRow
-            className="preferences-toggle-row"
-            icon={<Cpu size={15} />}
-            title="Allow CPU selection"
-            description={allowCpu ? "CPU is available below; GPU remains selected until you change it." : "CPU is hidden and cannot be selected. Fern uses an available GPU."}
-            pressed={allowCpu}
-            onClick={() => onAllowCpuChange(!allowCpu)}
-          />
-          {allowCpu ? (
-            <label className="field preference-compute-device">
-              <span>Generation device</span>
-              <Select aria-label="Generation device" value={computeDevice} onChange={(event) => onComputeDeviceChange(event.target.value as ComputePreference)}>
-                <option value="GPU">Available GPU</option>
-                <option value="CPU">CPU</option>
-              </Select>
-            </label>
-          ) : null}
+          <label className="field preference-compute-device">
+            <span>Generation device</span>
+            <Select ref={device} aria-label="Generation device" value={computeDevice} onChange={(event) => onComputeDeviceChange(event.target.value as ComputePreference)}>
+              <option value="GPU">Available GPU</option>
+              <option value="CPU">CPU</option>
+            </Select>
+          </label>
+          {computeDevice === "CPU" ? <p className="model-library-note">Image creation in chat is unavailable with CPU selected.</p> : null}
+          {onReturnToChat && <Button variant="ghost" onClick={onReturnToChat}>Return to chat</Button>}
+          <h4>Image workspace runtime</h4>
           <div className="preferences-runtime-grid">
             <div>
               <span>Model</span>
-              <strong>{modelStatus?.modelId ?? "Flux.2 Klein 9B"}</strong>
+              <strong>{modelStatus?.modelId ?? "Unknown"}</strong>
             </div>
             <div>
               <span>Device</span>
-              <strong>{computeDevice === "CPU" ? "CPU" : deviceLabel(modelStatus?.selectedDevice)}</strong>
+              <strong>{modelStatus?.selectedDevice ? deviceLabel(modelStatus.selectedDevice) : "Unknown"}</strong>
             </div>
             <div>
               <span>Backend</span>
-              <strong>{modelStatus?.runtimeBackend ?? "OpenVINO"}</strong>
+              <strong>{modelStatus?.runtimeBackend ?? "Unknown"}</strong>
             </div>
             <div>
               <span>Reference images</span>
               <strong>
-                {modelStatus?.supportsReferenceImage === false
-                  ? "Unavailable"
-                  : "Supported"}
+                {modelStatus?.supportsReferenceImage === undefined
+                  ? "Unknown"
+                  : modelStatus.supportsReferenceImage ? "Supported" : "Unavailable"}
               </strong>
             </div>
           </div>
           <div
             className="preferences-adapters"
+            role="group"
             aria-label="Device availability"
           >
-            {(modelStatus?.adapters ?? []).filter((adapter) => adapter.id !== "CPU" || allowCpu).map((adapter) => {
+            {(modelStatus?.adapters ?? []).map((adapter) => {
               const state = adapterState(adapter);
               return (
                 <div
                   key={adapter.id}
                   className={`preferences-adapter-row${state === "Ready" ? " is-ready" : ""}`}
-                  aria-label={`${adapter.label}: ${state}`}
                 >
                   <span
                     className="preferences-adapter-dot"
@@ -202,7 +206,7 @@ export function PreferencesView({
                   />
                   <span className="preferences-adapter-copy">
                     <strong>{adapter.label}</strong>
-                    <small>{adapter.runtimeBackend ?? "OpenVINO"}</small>
+                    <small>{adapter.runtimeBackend ?? adapter.note ?? "Runtime details unavailable"}</small>
                   </span>
                   <span className="preferences-adapter-state">{state}</span>
                 </div>
@@ -218,28 +222,15 @@ export function PreferencesView({
           <div className="preferences-section-heading">
             <div>
               <h3 id="preferences-shortcuts">Keyboard shortcuts</h3>
-              <p>Move between image and audio workspaces quickly.</p>
+              <p>Move between workspaces and find recent threads.</p>
             </div>
             <Command size={17} aria-hidden="true" />
           </div>
           <div className="shortcut-list">
-            <div>
-              <span>Open commands</span>
-              <span className="kbd">Ctrl K</span>
-            </div>
-            <div>
-              <span>New image thread</span>
-              <span className="kbd">Ctrl N</span>
-            </div>
-            <div><span>New audio thread</span><span className="kbd">Ctrl Shift N</span></div>
-            <div>
-              <span>Open library</span>
-              <span className="kbd">Ctrl L</span>
-            </div>
-            <div>
-              <span>Toggle sidebar</span>
-              <span className="kbd">Ctrl B</span>
-            </div>
+            {Object.values(shortcuts).map((shortcut) => <div key={shortcut.label}>
+              <span>{shortcut.label}</span>
+              <span className="kbd">{shortcutLabel(shortcut)}</span>
+            </div>)}
             <div>
               <span>Generate image or speech</span>
               <span>

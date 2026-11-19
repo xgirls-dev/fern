@@ -13,6 +13,7 @@ const customModelPath = path.join(scratchRoot, "fixture-sdxl-openvino");
 const modelIndexPath = path.join(customModelPath, "model_index.json");
 const profilePath = path.join(scratchRoot, "profile");
 const packagedExecutable = process.env.FERN_E2E_EXECUTABLE;
+const visible = process.env.FERN_E2E_VISIBLE === "1";
 let electronApp;
 const pageErrors = [];
 const consoleErrors = [];
@@ -44,7 +45,7 @@ try {
     ...process.env,
     FERN_ROOT: dataRoot,
     INTEL_IRIS_ROOT: dataRoot,
-    FERN_E2E_HEADLESS: "1",
+    FERN_E2E_HEADLESS: visible ? "0" : "1",
     FERN_CUSTOM_IMAGE_REGISTRY: path.join(scratchRoot, "custom-image-models.json"),
     FERN_TEXT_MODEL_REGISTRY: path.join(scratchRoot, "text-models.json"),
     HF_HOME: path.join(scratchRoot, "huggingface"),
@@ -53,6 +54,7 @@ try {
 
   electronApp = await electron.launch({
     ...(packagedExecutable ? { executablePath: packagedExecutable } : {}),
+    chromiumSandbox: process.env.FERN_E2E_CHROMIUM_SANDBOX === "1",
     args: [...(packagedExecutable ? [] : [path.join(desktopRoot, "out", "main", "index.js")]), `--user-data-dir=${profilePath}`, "--disable-gpu", "--disable-gpu-compositing", "--use-gl=swiftshader", "--use-angle=swiftshader", "--disable-features=Vulkan"],
     cwd: repoRoot,
     env,
@@ -73,7 +75,7 @@ try {
       }
       if (!found) await new Promise((resolve) => setTimeout(resolve, 250));
     }
-    assert.ok(found, "Packaged Fern should finish runtime extraction and open its main renderer");
+    assert.ok(found, "Packaged Fern should start its runtime and open its main renderer");
     assert.equal(await electronApp.evaluate(({ app }) => app.isPackaged), true, "This run must use the packaged executable");
   }
   page.on("pageerror", (error) => pageErrors.push(error.message));
@@ -109,7 +111,9 @@ try {
   assert.equal(bridge.url, apiBaseUrl, "The preload bridge should keep the assigned API URL");
   assert.equal(healthStatus, 200, `Fern backend should become healthy (${lastHealthError})`);
   assert.ok(bridge.isolated, "Renderer should expose only the context-isolated preload bridge");
-  assert.equal(await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isVisible()), false, "Electron smoke must keep its isolated window hidden");
+  await expect.poll(() => browserWindow.evaluate((window) => window.isVisible())).toBe(visible);
+  await expect(page.getByRole("textbox", { name: "Message", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Create image", exact: true }).click();
   await captureWindow(page, path.join(scratchRoot, "electron-create.png"));
   const referencePng = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=", "base64");
   await page.getByLabel("Reference image file").setInputFiles([{ name: "reference-one.png", mimeType: "image/png", buffer: referencePng }, { name: "reference-two.png", mimeType: "image/png", buffer: referencePng }]);
@@ -163,7 +167,7 @@ try {
   await captureWindow(page, path.join(repoRoot, "artifacts", "ux-verification", "electron-models.png"));
 
   await page.locator(".sidebar-new-menu > button").click();
-  await page.getByRole("menuitem", { name: "New image thread" }).click();
+  await page.getByRole("menuitem", { name: "Create image" }).click();
   const modelTrigger = page.getByRole("button", { name: "Image model: Klein 9B" });
   await modelTrigger.waitFor();
   await modelTrigger.click();
@@ -207,7 +211,7 @@ try {
   assert.deepEqual(pageErrors, [], `Renderer errors: ${pageErrors.join(" | ")}`);
   assert.deepEqual(consoleErrors, [], `Console errors: ${consoleErrors.join(" | ")}`);
 
-  console.log("Electron smoke passed: hidden main window, real preload/API bridge, multi-reference persistence, Models navigation, family/repository controls, dialog IPC, local model add/remove, composer model selection, cancellation, and source preservation.");
+  console.log(`Electron smoke passed: ${visible ? "visible" : "hidden"} main window, real preload/API bridge, multi-reference persistence, Models navigation, family/repository controls, dialog IPC, local model add/remove, composer model selection, cancellation, and source preservation.`);
   console.log(`Isolated profile: ${profilePath}`);
   succeeded = true;
 } finally {

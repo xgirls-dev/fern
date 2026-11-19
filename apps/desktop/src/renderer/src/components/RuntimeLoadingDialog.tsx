@@ -8,6 +8,8 @@ interface RuntimeLoadingDialogProps {
   runtime: RuntimeStatus | null;
   onRetry: () => void;
   onOpenPreferences: () => void;
+  connecting: boolean;
+  connectionError?: string | null;
 }
 
 function formatDevice(device: string | null): string {
@@ -28,10 +30,12 @@ export function RuntimeLoadingDialog({
   runtime,
   onRetry,
   onOpenPreferences,
+  connecting,
+  connectionError,
 }: RuntimeLoadingDialogProps) {
   const dialogRef = useRef<HTMLElement>(null);
-  const failed = runtime?.status === "failed" || runtime?.status === "blocked";
-  const message = runtime?.message ?? "Preparing the Fern runtime…";
+  const failed = connecting ? !!connectionError : runtime?.status === "failed" || runtime?.status === "blocked";
+  const message = connecting ? "Waiting for the local Fern service." : runtime?.message ?? "Checking the image runtime…";
   const device = runtime?.device ?? null;
   const logs = runtime?.logs ?? [];
   useModalFocus(true, dialogRef, onDismiss);
@@ -48,14 +52,9 @@ export function RuntimeLoadingDialog({
       >
         <header className="data-dialog-header">
           <div>
-            <p className="eyebrow">Runtime Startup</p>
             <h2 id="runtime-loading-title">
-              {failed ? "Generation unavailable" : "Preparing generation"}
+              {connecting ? failed ? "Connection interrupted" : "Connecting to Fern" : failed ? "Image generation unavailable" : "Preparing image generation"}
             </h2>
-            <p>
-              Fern loads the model into the selected device memory before
-              generation.
-            </p>
           </div>
           <Button variant="secondary" onClick={onDismiss}>
             Continue to workspace
@@ -75,33 +74,28 @@ export function RuntimeLoadingDialog({
             {failed ? "!" : null}
           </span>
           <strong>{message}</strong>
-          <span className="runtime-loading-device">{formatDevice(device)}</span>
+          {!connecting && device ? <span className="runtime-loading-device">{formatDevice(device)}</span> : null}
         </div>
 
-        {logs.length > 0 ? (
-          <div
-            className="runtime-loading-log"
-            aria-label="Runtime loading activity"
-          >
+        {logs.length > 0 || (connecting && connectionError) ? (
+          <details className="runtime-loading-log">
+            <summary>Technical details</summary>
+            {connecting && connectionError ? <div>{connectionError}</div> : null}
             {logs.slice(-4).map((log, index) => (
               <div key={`${log}-${index}`}>{log}</div>
             ))}
-          </div>
+          </details>
         ) : null}
 
         {failed ? (
           <div className="runtime-loading-actions">
-            <p>
-              Fern could not start the available GPU. Retry startup, or open
-              Preferences to explicitly enable and select CPU.
-            </p>
             <div className="runtime-loading-buttons">
               <Button variant="primary" onClick={onRetry}>
-                Retry startup
+                {connecting ? "Retry connection" : "Check again"}
               </Button>
-              <Button variant="secondary" onClick={onOpenPreferences}>
+              {!connecting ? <Button variant="secondary" onClick={onOpenPreferences}>
                 Open Preferences
-              </Button>
+              </Button> : null}
             </div>
           </div>
         ) : (

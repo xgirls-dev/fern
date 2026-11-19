@@ -11,6 +11,7 @@ interface StorageViewProps {
   active: boolean;
   running: boolean;
   onResetLocalData: () => Promise<void>;
+  onOpenModels: () => void;
 }
 
 const numberFormatter = new Intl.NumberFormat(undefined, {
@@ -47,6 +48,7 @@ export function StorageView({
   active,
   running,
   onResetLocalData,
+  onOpenModels,
 }: StorageViewProps) {
   const [storage, setStorage] = useState<StorageStatus | null>(null);
   const [loading, setLoading] = useState(false);
@@ -127,7 +129,7 @@ export function StorageView({
     requestAnimationFrame(() => resetTrigger.current?.focus());
   };
 
-  const diskUsedPercent = storage
+  const diskUsedPercent = storage && storage.disk.totalBytes > 0
     ? Math.max(
         0,
         Math.min(
@@ -175,7 +177,7 @@ export function StorageView({
                 <span style={{ width: `${diskUsedPercent}%` }} />
               </div>
               <p>
-                Fern protects a {formatBytes(storage.disk.reserveBytes)} free-space reserve.
+                {Math.round(diskUsedPercent)}% used. {formatBytes(Math.max(0, storage.disk.freeBytes - storage.disk.reserveBytes))} available to Fern after the {formatBytes(storage.disk.reserveBytes)} reserve.
               </p>
             </div>
 
@@ -224,7 +226,7 @@ export function StorageView({
                 <div>
                   <span>Downloaded models</span>
                   <strong>{formatBytes(storage.models.bytes)}</strong>
-                  <small>Preserved when local data is cleared</small>
+                  <Button variant="ghost" onClick={onOpenModels}>Manage models</Button>
                 </div>
               </article>
             </div>

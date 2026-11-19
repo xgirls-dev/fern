@@ -4,7 +4,7 @@ import { fixture } from './ui-fixture.mjs';
 const { page, errors, close } = await fixture({ imageCount: 12, threadCount: 100 });
 try {
   await page.setViewportSize({ width: 900, height: 320 });
-  await page.getByRole('button', { name: 'Library', exact: true }).click();
+  await page.getByRole('button', { name: 'Images', exact: true }).click();
   const details = page.locator('.thumb-wrap').first().locator('.image-menu');
   await details.locator('summary').scrollIntoViewIfNeeded();
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));

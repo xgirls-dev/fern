@@ -1,3 +1,4 @@
+import { trashName } from "../lib/trash";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import Check from "lucide-react/dist/esm/icons/check.mjs";
@@ -21,6 +22,12 @@ interface Props {
   onDelete: (image: ImageRecord) => Promise<void>;
   onToggleRenderInfo?: () => void;
   onOpenImage?: (image: ImageRecord, images: ImageRecord[]) => void;
+  onSetupModel?: () => void;
+  onCreateImage?: () => void;
+  onStop?: () => void;
+  phase?: string;
+  elapsed?: number | null;
+  stopping?: boolean;
 }
 interface View {
   query: string;
@@ -51,10 +58,10 @@ export function renderProgress(logs: string[]) {
   }
   return {
     label: `Image ${image} of ${count} — ${total ? `step ${current} of ${total}` : "preparing…"}`,
-    percent: Math.min(
+    percent: total || image > 1 ? Math.min(
       99,
       Math.round(((image - 1 + (total ? current / total : 0)) / count) * 100),
-    ),
+    ) : null,
   };
 }
 export function OutputWorkspace({
@@ -71,6 +78,12 @@ export function OutputWorkspace({
   onDelete,
   onToggleRenderInfo,
   onOpenImage,
+  onSetupModel,
+  onCreateImage,
+  onStop,
+  phase,
+  elapsed,
+  stopping,
 }: Props) {
   const [view, setView] = useState<View>(
     () =>
@@ -110,20 +123,14 @@ export function OutputWorkspace({
   useEffect(() => {
     if (scroll.current) scroll.current.scrollTop = view.scroll;
   }, [stateKey, view.gallery]);
-  const filtered = useMemo(
-    () =>
-      images
-        .filter((image) =>
-          `${image.name} ${image.prompt ?? ""}`
-            .toLowerCase()
-            .includes(view.query.trim().toLowerCase()),
-        )
-        .sort((a, b) =>
-          view.sort === "newest" ? b.mtime - a.mtime : a.mtime - b.mtime,
-        ),
-    [images, view.query, view.sort],
-  );
   const gallery = mode === "library" || view.gallery;
+  const sorted = useMemo(() => gallery ? [...images].sort((a, b) =>
+    view.sort === "newest" ? b.mtime - a.mtime : a.mtime - b.mtime,
+  ) : [], [gallery, images, view.sort]);
+  const filtered = useMemo(() => {
+    const query = view.query.trim().toLowerCase();
+    return query ? sorted.filter((image) => `${image.name} ${image.prompt ?? ""}`.toLowerCase().includes(query)) : sorted;
+  }, [sorted, view.query]);
   const progress = renderProgress(logs);
   return (
     <section
@@ -139,10 +146,14 @@ export function OutputWorkspace({
           onChange={(value) => setView((current) => ({ ...current, gallery: value === "gallery" }))}
         />
       ) : null}
-      {running ? (
-        <div className="generation-progress-strip" role="status">
-          <span>{progress.label}</span>
-          <div
+      {running && mode === "create" ? (
+        <div className="generation-progress-strip">
+          <div className="generation-progress-header">
+            <span role="status">{stopping ? "Stopping generation…" : progress.percent === null ? phase ?? "Preparing image…" : progress.label}</span>
+            {elapsed != null ? <span className="generation-elapsed" role="timer">{elapsed}s elapsed</span> : null}
+            {onStop ? <Button variant="secondary" disabled={stopping} aria-label="Stop generation" onClick={onStop}>{stopping ? "Stopping…" : "Stop"}</Button> : null}
+          </div>
+          {progress.percent !== null && !stopping ? <div
             className="render-progress-track"
             role="progressbar"
             aria-label={progress.label}
@@ -151,7 +162,7 @@ export function OutputWorkspace({
             aria-valuenow={progress.percent}
           >
             <span style={{ width: `${progress.percent}%` }} />
-          </div>
+          </div> : null}
         </div>
       ) : null}
       {!gallery ? (
@@ -162,7 +173,7 @@ export function OutputWorkspace({
                 className="stage-image-button"
                 type="button"
                 onClick={onOpenLightbox}
-                aria-label={`Open preview of ${preview?.name}`}
+                aria-label={`Open preview of ${preview?.prompt?.trim().slice(0, 140) || preview?.name}`}
               >
                 <img
                   className="stage-image"
@@ -176,7 +187,7 @@ export function OutputWorkspace({
             ) : url ? (
               <div className="empty-state">
                 <strong>Preview unavailable</strong>
-                <span>Retry, or use More to open the output folder.</span>
+                <span>Retry, or open the output folder from Image actions.</span>
                 <Button
                   variant="secondary"
                   onClick={() => {
@@ -190,11 +201,14 @@ export function OutputWorkspace({
             ) : (
               <div className="empty-state creation-welcome">
                 <h3>
-                  {running ? "Creating your image…" : "What will you create?"}
+                  {running ? "Creating your image…" : onSetupModel ? "Set up image creation" : "What will you create?"}
                 </h3>
-                {!running ? (
-                  <span className="welcome-hint">Write your first prompt</span>
-                ) : null}
+                {!running && onSetupModel ? (
+                  <>
+                    <p>Choose a model to run on this device. Your prompt stays here.</p>
+                    <Button variant="primary" onClick={onSetupModel}>Set up an image model</Button>
+                  </>
+                ) : !running ? <p>Describe your image in the prompt below.</p> : null}
               </div>
             )}
           </div>
@@ -202,6 +216,7 @@ export function OutputWorkspace({
             <>
               <div className="output-bar">
                 <span className="output-name">
+                  {running && <span className="output-prior-label">Last completed · </span>}
                   {preview.width} × {preview.height}
                 </span>
                 <div className="output-bar-actions">
@@ -216,7 +231,7 @@ export function OutputWorkspace({
                   />
                   {onToggleRenderInfo ? (
                     <Button
-                      variant="secondary"
+                      variant="ghost"
                       onClick={onToggleRenderInfo}
                     >
                       Render info
@@ -233,7 +248,7 @@ export function OutputWorkspace({
           id="recent-renders"
           aria-label="Image gallery"
         >
-          <div className="gallery-panel-header">
+          {images.length ? <div className="gallery-panel-header">
             <span className="gallery-panel-count" role="status">
               {view.query
                 ? `${filtered.length} of ${images.length} images`
@@ -277,7 +292,7 @@ export function OutputWorkspace({
                 <option value="oldest">Oldest</option>
               </Select>
             </div>
-          </div>
+          </div> : null}
           <div
             className="gallery-panel-body"
             ref={scroll}
@@ -290,7 +305,7 @@ export function OutputWorkspace({
               <div className="gallery-no-results ui-empty-state">
                 <strong>{images.length ? "No matching images" : "No images yet"}</strong>
                 <p>{images.length ? "Try another search to find an image." : mode === "library" ? "Images you create will appear here." : "Images created in this thread will appear here."}</p>
-                {view.query ? (
+                {!images.length && onCreateImage ? <Button variant="primary" onClick={onCreateImage}>Create an image</Button> : images.length && view.query ? (
                   <Button
                     onClick={() => { setView((v) => ({ ...v, query: "" })); search.current?.focus(); }}
                   >
@@ -300,10 +315,11 @@ export function OutputWorkspace({
               </div>
             ) : (
               <div className="history-grid">
-                {filtered.slice(0, view.limit).map((image) => (
+                {filtered.slice(0, view.limit).map((image, index) => (
                   <ImageCard
                     key={`${image.name}:${image.mtime}`}
                     image={image}
+                    ordinal={index + 1}
                     selecting={mode === "library" && selecting}
                     selected={selected.has(image.name)}
                     onToggleSelect={() => setSelected((previous) => { const next = new Set(previous); if (next.has(image.name)) next.delete(image.name); else next.add(image.name); return next; })}
@@ -337,8 +353,8 @@ export function OutputWorkspace({
         </section>
       )}
       {confirmDelete ? createPortal(<div className="dialog-backdrop image-delete-backdrop"><div className="delete-image-dialog" role="alertdialog" aria-modal="true" aria-label="Delete selected images" tabIndex={-1} ref={deleteDialog}>
-        <h3>Move {selected.size} {selected.size === 1 ? "image" : "images"} to Recycle Bin?</h3>
-        <p>They will disappear from Library and their threads. You can restore the files from the Windows Recycle Bin.</p>
+        <h3>Move {selected.size} {selected.size === 1 ? "image" : "images"} to {trashName}?</h3>
+        <p>They will disappear from Library and their threads. You can restore the files from {trashName}.</p>
         {deleteError ? <p role="alert">{deleteError}</p> : null}
         <div className="image-actions"><Button disabled={deleting} onClick={() => setConfirmDelete(false)}>Cancel</Button><Button variant="danger" disabled={deleting || !selected.size} onClick={() => void (async () => {
           setDeleting(true); setDeleteError("");
@@ -352,7 +368,7 @@ export function OutputWorkspace({
               setSelected((previous) => { const next = new Set(previous); next.delete(image.name); return next; });
             }
             setConfirmDelete(false); setSelecting(false);
-            notify(`${deletedCount} ${deletedCount === 1 ? "image" : "images"} moved to Recycle Bin.`);
+            notify(`${deletedCount} ${deletedCount === 1 ? "image" : "images"} moved to ${trashName}.`);
           } catch (error) { setDeleteError(`${deletedCount ? `${deletedCount} moved. ` : ""}${error instanceof Error ? error.message : "Could not delete the remaining images. Try again."}`); }
           finally { setDeleting(false); }
         })()}>{deleting ? "Deleting…" : "Delete images"}</Button></div>
@@ -362,6 +378,7 @@ export function OutputWorkspace({
 }
 function ImageCard({
   image,
+  ordinal,
   selecting,
   selected,
   onToggleSelect,
@@ -371,6 +388,7 @@ function ImageCard({
   onDelete,
 }: {
   image: ImageRecord;
+  ordinal: number;
   selecting: boolean;
   selected: boolean;
   onToggleSelect: () => void;
@@ -382,6 +400,7 @@ function ImageCard({
   const [failed, setFailed] = useState(false);
   const [retry, setRetry] = useState(0);
   const [copied, setCopied] = useState(false);
+  const subject = image.prompt?.trim().replace(/\s+/g, " ").slice(0, 140);
   const copyTimer = useRef<number | null>(null);
   useEffect(() => () => { if (copyTimer.current !== null) window.clearTimeout(copyTimer.current); }, []);
   return (
@@ -390,7 +409,7 @@ function ImageCard({
         type="button"
         className="thumb"
         onClick={selecting ? onToggleSelect : onOpen}
-        aria-label={`${selecting ? "Select" : "Review"} ${image.name}`}
+        aria-label={`${selecting ? "Select" : "Review"} image ${ordinal}: ${subject ? `${subject} · ` : ""}${image.name}`}
         aria-pressed={selecting ? selected : undefined}
       >
         {selecting ? <span className={`gallery-select-indicator${selected ? " is-selected" : ""}`} aria-hidden="true">{selected ? <Check size={14} /> : null}</span> : null}
@@ -403,6 +422,7 @@ function ImageCard({
             width={image.width ?? 256}
             height={image.height ?? 256}
             loading="lazy"
+            decoding="async"
             onError={() => setFailed(true)}
           />
         )}

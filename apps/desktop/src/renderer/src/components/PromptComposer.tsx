@@ -21,13 +21,13 @@ interface PromptComposerProps {
   running: boolean;
   busyElsewhere: boolean;
   submitting: boolean;
-  stopping: boolean;
   ready: boolean;
   inspectorOpen: boolean;
   onSettingsChange: (patch: Partial<StudioSettings>) => void;
   onReferencesChange: (references: ReferenceAttachment[]) => void | Promise<void>;
   onToggleInspector: () => void;
   onGenerate: () => void;
+  onManageModels: () => void;
 }
 
 export function PromptComposer({
@@ -38,13 +38,13 @@ export function PromptComposer({
   running,
   busyElsewhere,
   submitting,
-  stopping,
   ready,
   inspectorOpen,
   onSettingsChange,
   onReferencesChange,
   onToggleInspector,
   onGenerate,
+  onManageModels,
 }: PromptComposerProps) {
   const fileInput = useRef<HTMLInputElement>(null);
   const preSpecialSettings = useRef<Pick<StudioSettings, "width" | "height" | "steps" | "guidance" | "batchSize" | "device"> | null>(null);
@@ -160,7 +160,7 @@ export function PromptComposer({
               <X size={14} aria-hidden="true" />
             </IconButton>
           </div>)}
-          {maxReferences > 1 ? <p className="composer-reference-hint">{referenceImages.length}/{maxReferences} references · Refer to Image 1, Image 2, etc. in your prompt.</p> : null}
+          {maxReferences > 0 ? <p className="composer-reference-hint">{referenceImages.length} of {maxReferences} reference images. {maxReferences > 1 ? "Use Image 1, Image 2, and so on in your prompt." : ""}</p> : null}
         </div> : null}
         <label className="sr-only" htmlFor="prompt">
           Image prompt
@@ -169,7 +169,7 @@ export function PromptComposer({
           className="prompt-textarea"
           id="prompt"
           name="prompt"
-          rows={3}
+          rows={1}
           value={settings.prompt}
           required
           autoComplete="off"
@@ -177,7 +177,7 @@ export function PromptComposer({
           placeholder={
             referenceImage
               ? referenceImages.length > 1 ? "Describe how to combine or edit these images…" : "Describe how you want to change this image…"
-              : "Describe an image. Make it yours."
+              : "Describe an image…"
           }
           onChange={(event) => onSettingsChange({ prompt: event.target.value })}
         />
@@ -287,6 +287,7 @@ export function PromptComposer({
 
           <div className="composer-send-tools">
             <ComposerModelMenu
+              onManageModels={onManageModels}
               models={installedModels ?? []}
               loading={installedModels === undefined}
               value={settings.model ?? "9b"}
@@ -384,7 +385,7 @@ export function PromptComposer({
                     ? "Starting generation"
                     : "Generate image"
               }
-              title="Generate image · Ctrl Enter"
+              title={ready ? "Generate image · Ctrl Enter" : "Generate image"}
             >
               {running || submitting ? (
                 <span className="spinner" aria-hidden="true" />
@@ -403,15 +404,9 @@ export function PromptComposer({
       {referencesInvalid ? <p className="composer-error" role="alert">{maxReferences ? `This model supports ${maxReferences} reference image. Remove extra attachments or switch to Klein.` : "This model generates from text only. Remove the references or select Klein to edit them."}</p> : null}
       <div className="composer-caption">
         <span>
-          {busyElsewhere
-            ? "Another thread is rendering on this device"
-            : running
-              ? stopping
-                ? "Stopping after the current step…"
-                : "Rendering on your device"
-              : "Your prompts and images stay on this device"}
+          {busyElsewhere ? "Another thread is rendering on this device" : running ? "" : "Your prompts and images stay on this device"}
         </span>
-        {!running && !busyElsewhere ? (
+        {ready && !running && !busyElsewhere ? (
           <span className="composer-keyboard-hint">Ctrl ↵ to generate</span>
         ) : null}
       </div>

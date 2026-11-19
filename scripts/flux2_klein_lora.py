@@ -177,6 +177,7 @@ def generate(*, model_dir: Path, selections: list[dict[str, Any]], prompt: str,
              reference_images: list[Any] | None = None,
              model_size: str = "4b",
              optional_encoder_dir: Path | None = None,
+             compile_cache: Path | None = None,
              log: Callable[[str], None] | None = None) -> tuple[Path, float]:
     from PIL import Image
     import openvino_genai as genai
@@ -215,7 +216,11 @@ def generate(*, model_dir: Path, selections: list[dict[str, Any]], prompt: str,
                 pipeline = _multi_image_pipeline(pipeline_dir, adapters, selections)
             else:
                 pipeline_class = genai.Image2ImagePipeline if images else genai.Text2ImagePipeline
-                pipeline = pipeline_class(str(pipeline_dir), "GPU", adapters=config)
+                properties = {}
+                if compile_cache is not None and not images and not selections and optional_encoder_dir is None:
+                    compile_cache.mkdir(parents=True, exist_ok=True)
+                    properties["CACHE_DIR"] = str(compile_cache)
+                pipeline = pipeline_class(str(pipeline_dir), "GPU", adapters=config, **properties)
         except BaseException:
             temporary.cleanup()
             raise

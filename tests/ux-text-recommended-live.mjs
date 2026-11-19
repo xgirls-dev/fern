@@ -56,12 +56,12 @@ try {
   });
 
   await page.locator('.sidebar-new-menu > button').click();
-  await page.getByRole('menuitem', { name: 'New text thread', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Chat', exact: true }).click();
   await page.getByRole('button', { name: 'Browse models', exact: true }).click();
   await page.getByRole('button', { name: 'Download', exact: true }).click();
-  await page.getByRole('button', { name: 'Installed', exact: true }).waitFor({ timeout: 30000 });
+  await page.getByText('Installed', { exact: true }).waitFor({ timeout: 30000 });
   await page.locator('.sidebar-text-threads .sidebar-thread-button').first().click();
-  await page.getByRole('button', { name: 'Text model', exact: true }).waitFor();
+  await page.getByRole('button', { name: /^Text model:/ }).waitFor();
   const installed = await apiJson('/api/text/status');
   assert.equal(installed.recommendedModels[0].installed, true);
   assert.equal(installed.models.length, 1);

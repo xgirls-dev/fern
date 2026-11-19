@@ -115,7 +115,7 @@ try {
   await page.getByRole('button', { name: 'Download LoRA' }).click();
   await page.getByRole('button', { name: 'Add to thread' }).click();
   await page.getByText('claymation', { exact: true }).waitFor();
-  await page.getByRole('button', { name: 'Library', exact: true }).click();
+  await page.getByRole('button', { name: 'Images', exact: true }).click();
   await page.getByRole('button', { name: 'Stable title', exact: true }).click();
   if (!await page.getByText('claymation', { exact: true }).isVisible()) await page.locator('.workspace-header').getByRole('button', { name: 'Image settings', exact: true }).click();
   await page.getByText('claymation', { exact: true }).waitFor();
@@ -134,17 +134,17 @@ try {
   await page.getByRole('checkbox', { name: '9b-edit.safetensors' }).waitFor();
   const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lWQAAAAASUVORK5CYII=', 'base64');
   await page.getByLabel('Reference image file').setInputFiles(['one.png', 'two.png'].map((name) => ({ name, mimeType: 'image/png', buffer: png })));
-  await page.getByText('2/4 references', { exact: false }).waitFor();
+  await page.getByText('2 of 4 reference images', { exact: false }).waitFor();
   const submitted = page.waitForResponse(response => response.url().endsWith('/api/flux2/generate'));
   await page.getByRole('button', { name: 'Generate image', exact: true }).click();
   await submitted;
   assert.equal(state.payloads.at(-1)?.model, '9b-lora');
   assert.equal(state.payloads.at(-1)?.reference_images?.length, 2);
   assert.deepEqual(state.payloads.at(-1)?.loras, [{ path: 'C:\\styles\\9b-edit.safetensors', strength: 1, enabled: true }]);
-  await page.getByRole('button', { name: 'Library', exact: true }).click();
+  await page.getByRole('button', { name: 'Images', exact: true }).click();
   const header = page.locator('.library-view-header');
   const folderButton = await header.getByRole('button', { name: 'Open folder' }).elementHandle();
-  const createButton = await header.getByRole('button', { name: 'New thread' }).elementHandle();
+  const createButton = await header.getByRole('button', { name: 'Create image', exact: true }).elementHandle();
   const [folder, create] = await page.evaluate(
     (buttons) => buttons.map((button) => button.getBoundingClientRect().toJSON()),
     [folderButton, createButton],

@@ -11,6 +11,7 @@ export interface StudioApi {
   onThemeChanged: (listener: (theme: "light" | "dark") => void) => () => void;
   minimizeWindow: () => Promise<void>;
   toggleMaximizeWindow: () => Promise<boolean>;
+  onWindowMaximizedChanged: (listener: (maximized: boolean) => void) => () => void;
   closeWindow: () => Promise<void>;
   openOutputsFolder: () => Promise<string>;
   openPath: (filePath: string) => Promise<string>;
@@ -24,6 +25,7 @@ export interface StudioApi {
   pickReferenceImage: () => Promise<string | null>;
   pickLoraFiles: () => Promise<string[]>;
   pickTextModelFolder: () => Promise<string | null>;
+  pickGgufFiles: () => Promise<string[]>;
   pickCustomImageModelFolder: () => Promise<string | null>;
   saveImageAs: (defaultName: string) => Promise<string | null>;
   writeImageFile: (targetPath: string, sourceUrl: string) => Promise<string>;

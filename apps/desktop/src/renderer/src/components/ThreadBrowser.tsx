@@ -5,24 +5,26 @@ import X from "lucide-react/dist/esm/icons/x.mjs";
 import { Button, Checkbox, IconButton, Input, SegmentedControl } from "./ui/controls";
 export function ThreadBrowser({
   threads,
+  initialQuery,
   onOpen,
   onClose,
 }: {
-  threads: Array<Pick<ImageThread, "id" | "title" | "archived">>;
+  threads: Array<Pick<ImageThread, "id" | "title" | "archived"> & { excerpt?: string }>;
+  initialQuery: string;
   onOpen: (id: string) => void;
   onClose: () => void;
 }) {
   const dialog = useRef<HTMLDivElement>(null);
   const search = useRef<HTMLInputElement>(null);
   useModalFocus(true, dialog, onClose);
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(initialQuery);
   const [kind, setKind] = useState("All");
   const [archivedOnly, setArchivedOnly] = useState(false);
   const [limit, setLimit] = useState(60);
-  const threadKind = (id: string) => id.startsWith("audio-thread-") ? "Audio" : id.startsWith("text-thread-") ? "Text" : "Image";
+  const threadKind = (id: string) => id.startsWith("audio-thread-") ? "Speech" : id.startsWith("text-thread-") ? "Chat" : "Image";
   const filtered = threads.filter(
     (thread) =>
-      thread.title.toLowerCase().includes(query.trim().toLowerCase()) &&
+      `${thread.title} ${thread.excerpt ?? ""}`.toLowerCase().includes(query.trim().toLowerCase()) &&
       (kind === "All" || threadKind(thread.id) === kind) && (!archivedOnly || thread.archived),
   );
   const hasFilters = Boolean(query.trim()) || kind !== "All" || archivedOnly;
@@ -51,15 +53,17 @@ export function ThreadBrowser({
           }}
         /><IconButton aria-label="Close thread search" onClick={onClose}><X size={16} aria-hidden="true" /></IconButton></div>
         <div className="thread-browser-filters">
-          <SegmentedControl label="Thread type" value={kind} options={["All", "Image", "Audio", "Text"].map(value => ({ value, label: value }))} onChange={value => { setKind(value); setLimit(60); }} />
+          <SegmentedControl label="Thread type" value={kind} options={["All", "Chat", "Image", "Speech"].map(value => ({ value, label: value }))} onChange={value => { setKind(value); setLimit(60); }} />
           <label><Checkbox checked={archivedOnly} onChange={event => { setArchivedOnly(event.target.checked); setLimit(60); }} />Archived only</label>
         </div>
         <div className="thread-browser-list">
           {filtered.slice(0, limit).map((thread) => (
             <article key={thread.id}>
               <button type="button" className="thread-browser-open" title={thread.title} onClick={() => { onOpen(thread.id); onClose(); }}>
-                <span>{thread.title}</span>
-                <small>{thread.id.startsWith("audio-thread-") ? "Audio thread" : thread.id.startsWith("text-thread-") ? "Text thread" : "Image thread"}{thread.archived ? " · Archived" : ""}</small>
+                <span className="thread-browser-result"><strong>{thread.title}</strong>
+                  {thread.excerpt?.trim() && thread.excerpt.trim() !== thread.title && <span>{thread.excerpt.trim()}</span>}
+                </span>
+                <small>{threadKind(thread.id)}{thread.archived ? " · Archived" : ""}</small>
               </button>
             </article>
           ))}

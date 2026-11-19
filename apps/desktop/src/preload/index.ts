@@ -80,6 +80,21 @@ const studioApi: StudioApi = {
   minimizeWindow: () => ipcRenderer.invoke("studio:window-minimize"),
   toggleMaximizeWindow: () =>
     ipcRenderer.invoke("studio:window-toggle-maximize"),
+  onWindowMaximizedChanged: (listener) => {
+    let receivedUpdate = false;
+    const handler = (_event: Electron.IpcRendererEvent, maximized: boolean) => {
+      receivedUpdate = true;
+      listener(maximized);
+    };
+    ipcRenderer.on("studio:window-maximized-changed", handler);
+    void ipcRenderer.invoke("studio:window-is-maximized").then((maximized: boolean) => {
+      if (!receivedUpdate) listener(maximized);
+    });
+    return () => {
+      receivedUpdate = true;
+      ipcRenderer.off("studio:window-maximized-changed", handler);
+    };
+  },
   closeWindow: () => ipcRenderer.invoke("studio:window-close"),
 
   openOutputsFolder: () => ipcRenderer.invoke("studio:open-outputs-folder"),
@@ -101,6 +116,7 @@ const studioApi: StudioApi = {
   pickReferenceImage: () => ipcRenderer.invoke("studio:pick-reference-image"),
   pickLoraFiles: () => ipcRenderer.invoke("studio:pick-lora-files"),
   pickTextModelFolder: () => ipcRenderer.invoke("studio:pick-text-model-folder"),
+  pickGgufFiles: () => ipcRenderer.invoke("studio:pick-gguf-files"),
   pickCustomImageModelFolder: () => ipcRenderer.invoke("studio:pick-custom-image-model-folder"),
   saveImageAs: (defaultName) =>
     ipcRenderer.invoke("studio:save-image-as", defaultName),

@@ -36,6 +36,7 @@ export function ComposerModelMenu({
   disabled,
   onChange,
   onOpen,
+  onManageModels,
 }: {
   models: ComposerModel[];
   loading?: boolean;
@@ -43,6 +44,7 @@ export function ComposerModelMenu({
   disabled: boolean;
   onChange: (model: string) => void;
   onOpen: () => void;
+  onManageModels: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
@@ -178,7 +180,7 @@ export function ComposerModelMenu({
               </MenuItem>
             );
           })}
-          <div className="composer-model-menu-footer"><MenuItem role="menuitem" onClick={() => { setOpen(false); window.dispatchEvent(new CustomEvent("fern-models", { detail: "image" })); }}>Manage models</MenuItem></div>
+          <div className="composer-model-menu-footer"><MenuItem role="menuitem" onClick={() => { setOpen(false); onManageModels(); }}>Manage models</MenuItem></div>
         </div>
       ) : null}
     </div>

@@ -33,6 +33,7 @@ export class PythonBackend {
         env: getPythonEnvironment(),
         stdio: ["ignore", "pipe", "pipe"],
         windowsHide: true,
+        detached: process.platform === "linux",
       },
     );
 
@@ -45,6 +46,11 @@ export class PythonBackend {
       process.stderr.write(`[python] ${chunk.toString("utf8")}`);
     });
 
+    let spawnError: Error | undefined;
+    proc.once("error", (error) => {
+      spawnError = error;
+      this.process = null;
+    });
     proc.on("exit", (code, signal) => {
       if (code !== 0 && code !== null) {
         console.error(`Python backend exited with code ${code} (${signal ?? "no signal"})`);
@@ -52,7 +58,10 @@ export class PythonBackend {
       this.process = null;
     });
 
-    await this.waitForHealth();
+    await this.waitForHealth(() => {
+      if (spawnError) throw spawnError;
+      if (this.process !== proc) throw new Error("Fern's Python backend exited during startup.");
+    });
   }
 
   async stop(): Promise<void> {
@@ -65,19 +74,35 @@ export class PythonBackend {
 
     await new Promise<void>((resolve) => {
       const finish = () => resolve();
+      const signalBackend = (signal: NodeJS.Signals) => {
+        if (process.platform !== "linux" || !proc.pid) {
+          proc.kill(signal);
+          return;
+        }
+        // Image and llama.cpp workers share this backend's process group.
+        try {
+          process.kill(-proc.pid, signal);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ESRCH") {
+            console.error("Could not stop Fern's Python process group:", error);
+            proc.kill(signal);
+          }
+        }
+      };
 
       const timeout = setTimeout(() => {
         if (process.platform === "win32" && proc.pid) {
           spawn("taskkill", ["/pid", String(proc.pid), "/f", "/t"], { windowsHide: true });
         } else {
-          proc.kill("SIGKILL");
+          signalBackend("SIGKILL");
         }
         finish();
       }, 2_000);
       timeout.unref();
 
-      proc.once("exit", () => {
+      proc.once("close", () => {
         clearTimeout(timeout);
+        if (process.platform === "linux") signalBackend("SIGKILL");
         finish();
       });
 
@@ -85,15 +110,16 @@ export class PythonBackend {
         // Graceful tree kill first; /f only via timeout fallback above.
         spawn("taskkill", ["/pid", String(proc.pid), "/t"], { windowsHide: true });
       } else {
-        proc.kill("SIGTERM");
+        signalBackend("SIGTERM");
       }
     });
   }
 
-  private async waitForHealth(): Promise<void> {
+  private async waitForHealth(checkProcess: () => void): Promise<void> {
     const deadline = Date.now() + HEALTH_TIMEOUT_MS;
 
     while (Date.now() < deadline) {
+      checkProcess();
       try {
         const response = await fetch(`${this.baseUrl}/api/health`);
         if (response.ok) {

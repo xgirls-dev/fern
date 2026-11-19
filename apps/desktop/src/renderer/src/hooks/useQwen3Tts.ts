@@ -2,8 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { getApiBaseUrl, resolveAssetUrl } from "../lib/api";
 import { createAudioThread, loadAudioThreads, saveAudioThreads, type AudioOutput, type AudioThread, type AudioThreadWorkspace, type QwenTtsModel } from "../lib/ttsThreads";
 
-export interface TtsModelStatus { id: QwenTtsModel; label: string; kind: "custom_voice" | "base" | "voice_design"; installed: boolean }
-interface TtsStatus { startedAt?: number | null; finishedAt?: number | null; diagnostics?: string[]; phase?: string | null }
+export interface TtsModelStatus { id: QwenTtsModel; label: string; kind: "custom_voice" | "base" | "voice_design"; installed: boolean; ready?: boolean; bytes?: number | null }
+interface TtsStatus { startedAt?: number | null; finishedAt?: number | null; diagnostics?: string[]; phase?: string | null; setupUnavailableReason?: string | null }
 interface TtsStatus { id: string | null; threadId: string | null; model: QwenTtsModel | null; status: "idle" | "setting_up" | "running" | "stopping" | "stopped" | "complete" | "failed"; operation: "setup" | "generate" | null; logs: string[]; output: Omit<AudioOutput, "prompt" | "createdAt"> | null; error: string | null; models: TtsModelStatus[]; environmentReady: boolean }
 
 function validateStatus(value: TtsStatus): TtsStatus {
@@ -78,7 +78,7 @@ export function useQwen3Tts(apiReady: boolean, computeDevice: "GPU" | "CPU" = "G
       };
       commit((current) => ({ ...current, threads: current.threads.map((thread) => thread.id === pending.threadId && !thread.outputs.some((item) => item.name === output.name) ? {
         ...thread,
-        title: thread.title === "New audio thread" ? pending.text.trim().slice(0, 60) : thread.title,
+        title: !thread.renamed && thread.title === "New audio thread" ? pending.text.trim().slice(0, 60) : thread.title,
         outputs: [output, ...thread.outputs],
         updatedAt: Date.now(),
       } : thread) }));
@@ -162,12 +162,23 @@ export function useQwen3Tts(apiReady: boolean, computeDevice: "GPU" | "CPU" = "G
   }, [commit]);
 
   const newThread = useCallback(() => {
+    const untouched = workspaceRef.current.threads.find((thread) => !thread.archived && !thread.renamed &&
+      thread.title === "New audio thread" && !thread.text && !thread.outputs.length && !thread.instruction &&
+      !thread.designInstruction && !thread.referenceText && !referenceFiles[thread.id] && pendingJob.current?.threadId !== thread.id);
+    if (untouched) {
+      commit((current) => current.activeId === untouched.id ? current : { ...current, activeId: untouched.id });
+      setError(null);
+      return;
+    }
     const thread = createAudioThread();
     commit((current) => ({ activeId: thread.id, threads: [thread, ...current.threads] }));
-  }, [commit]);
+  }, [commit, referenceFiles]);
 
   const selectThread = useCallback((id: string) => commit((current) => current.threads.some((thread) => thread.id === id) ? { ...current, activeId: id } : current), [commit]);
-  const renameThread = useCallback((id: string, title: string) => updateThread(id, { title: title.trim().slice(0, 80) || "New audio thread" }), [updateThread]);
+  const renameThread = useCallback((id: string, title: string) => {
+    const clean = title.trim().slice(0, 80);
+    if (clean) updateThread(id, { title: clean, renamed: true });
+  }, [updateThread]);
   const archiveThread = useCallback((id: string) => commit((current) => {
     const thread = current.threads.find((item) => item.id === id);
     if (!thread) return current;
@@ -245,7 +256,7 @@ export function useQwen3Tts(apiReady: boolean, computeDevice: "GPU" | "CPU" = "G
   }, [reconcileJob]);
 
   const setupModel = useCallback(async (model: QwenTtsModel) => {
-    if (requestActive.current) return;
+    if (requestActive.current || status.setupUnavailableReason) return;
     requestActive.current = true;
     setBusy(true); setError(null);
     try {
@@ -256,7 +267,7 @@ export function useQwen3Tts(apiReady: boolean, computeDevice: "GPU" | "CPU" = "G
       await refresh();
     } catch (caught) { setError(caught instanceof Error ? caught.message : String(caught)); }
     finally { requestActive.current = false; setBusy(false); }
-  }, [activeThread.id, refresh, waitForJob]);
+  }, [activeThread.id, refresh, status.setupUnavailableReason, waitForJob]);
 
   const generate = useCallback(async () => {
     if (requestActive.current) return;

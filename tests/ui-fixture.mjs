@@ -1,15 +1,21 @@
-import { createServer } from "vite";
+import { createServer, preview } from "vite";
 import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-export async function fixture({ imageCount = 3, threadCount = 1, textStatus = null, imageGenerationTime = 65 } = {}) {
-  const server = await createServer({
-    configFile: false,
-    root: fileURLToPath(
-      new URL("../apps/desktop/src/renderer", import.meta.url),
-    ),
-    server: { host: "127.0.0.1", port: 0 },
-  });
-  await server.listen();
+export async function fixture({ builtRenderer = false, firstRun = false, imageCount = 3, threadCount = 1, textStatus = null, imageGenerationTime = 65, platform = "win32", viewport = { width: 1440, height: 900 }, installedModels = [{ id: "9b", label: "Klein 9B" }] } = {}) {
+  const address = { host: "127.0.0.1", port: 0 };
+  const server = builtRenderer
+    ? await preview({
+        configFile: false,
+        root: fileURLToPath(new URL("..", import.meta.url)),
+        build: { outDir: "apps/desktop/out/renderer" },
+        preview: address,
+      })
+    : await createServer({
+        configFile: false,
+        root: fileURLToPath(new URL("../apps/desktop/src/renderer", import.meta.url)),
+        server: address,
+      });
+  if (!builtRenderer) await server.listen();
   const { chromium } = await import(
     process.env.FERN_PLAYWRIGHT_MODULE || "playwright"
   );
@@ -20,7 +26,7 @@ export async function fixture({ imageCount = 3, threadCount = 1, textStatus = nu
       : {}),
   });
   const page = await browser.newPage({
-    viewport: { width: 1440, height: 900 },
+    viewport,
     reducedMotion: "reduce",
   });
   page.setDefaultTimeout(10000);
@@ -49,16 +55,31 @@ export async function fixture({ imageCount = 3, threadCount = 1, textStatus = nu
     referenceLabel: "",
   }));
   await page.addInitScript(
-    ({ threads }) => {
+    ({ firstRun, threads, platform }) => {
+      let maximized = false;
+      const maximizedListeners = new Set();
       window.studio = new Proxy(
         {
-          platform: "win32",
+          platform,
           getApiBaseUrl: async () => location.origin,
           onApiBaseUrl: () => () => {},
           onBackendError: () => () => {},
           onThemeChanged: () => () => {},
+          onWindowMaximizedChanged: (listener) => {
+            maximizedListeners.add(listener);
+            listener(maximized);
+            return () => maximizedListeners.delete(listener);
+          },
+          toggleMaximizeWindow: async () => {
+            maximized = !maximized;
+            maximizedListeners.forEach((listener) => listener(maximized));
+            return maximized;
+          },
           copyText: async () => {},
-          openOutputImage: async () => "",
+          openOutputImage: async (name) => {
+            await fetch("/fixture/open-image", { method: "POST", body: name });
+            return "";
+          },
           openOutputsFolder: async () => "",
           deleteOutputImage: async (name) => {
             await fetch("/fixture/delete", { method: "POST", body: name });
@@ -66,13 +87,13 @@ export async function fixture({ imageCount = 3, threadCount = 1, textStatus = nu
         },
         { get: (o, k) => o[k] ?? (async () => null) },
       );
-      if (!localStorage.getItem("fern-threads:v1"))
+      if (!firstRun && !localStorage.getItem("fern-threads:v1"))
         localStorage.setItem(
           "fern-threads:v1",
           JSON.stringify({ activeId: "study", threads }),
         );
     },
-    { threads },
+    { firstRun, threads, platform },
   );
   const svg =
     "data:image/svg+xml," +
@@ -97,7 +118,8 @@ export async function fixture({ imageCount = 3, threadCount = 1, textStatus = nu
       generationTime: imageGenerationTime,
       device: "CPU",
     })),
-    installedModels: [{ id: "9b", label: "Klein 9B" }],
+    installedModels,
+    openedImages: [],
     payloads: [],
     imageListings: 0,
     statusCalls: 0,
@@ -106,7 +128,12 @@ export async function fixture({ imageCount = 3, threadCount = 1, textStatus = nu
     ttsStatus: { id: null, threadId: null, model: null, status: "idle", operation: null, logs: [], output: null, error: null, models: [{ id: "custom-0.6b", label: "Custom Voice · 0.6B", kind: "custom_voice", installed: true }], environmentReady: true },
     rejectText: null,
   };
+  await page.route("**/fixture/open-image", (route) => {
+    state.openedImages.push(route.request().postData());
+    return route.fulfill({ json: { ok: true } });
+  });
   await page.route('**/api/text/status', r => r.fulfill({ json: state.textStatus }));
+  await page.route('**/api/text/recover-image?*', r => r.fulfill({ json: { image: null } }));
   await page.route('**/api/tts/status', r => r.fulfill({ json: state.ttsStatus }));
   await page.route('**/api/text/generate', async r => {
     const payload = r.request().postDataJSON();
@@ -152,7 +179,7 @@ export async function fixture({ imageCount = 3, threadCount = 1, textStatus = nu
         installedModels: state.installedModels,
         model: {
           selectedModel: new URL(r.request().url()).searchParams.get("model") || "9b",
-          runtimeReady: state.modelReady ?? true,
+          runtimeReady: state.modelReady ?? Boolean(state.installedModels.length),
           selectedDevice: "NVIDIA_GPU",
           runtimeBackend: "OpenVINO",
           supportsReferenceImage: true,
@@ -177,8 +204,15 @@ export async function fixture({ imageCount = 3, threadCount = 1, textStatus = nu
   });
   const dir = process.env.FERN_UI_SCREENSHOTS || "artifacts/ux-verification";
   await mkdir(dir, { recursive: true });
-  await page.goto(server.resolvedUrls.local[0]);
-  await page.locator("#prompt").waitFor();
+  // The initial Vite transform can take longer than an interaction on slower CI hosts.
+  try {
+    await page.goto(server.resolvedUrls.local[0], { timeout: 30_000 });
+    await page.locator(firstRun ? 'textarea[name="message"]' : "#prompt").waitFor({ timeout: 30_000 });
+  } catch (error) {
+    await browser.close();
+    await server.close();
+    throw error;
+  }
   return {
     page,
     state,

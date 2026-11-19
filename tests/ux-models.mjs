@@ -17,7 +17,7 @@ try {
  await card.getByRole('button',{name:'Pause',exact:true}).click();
  await card.getByRole('button',{name:'Resume download',exact:true}).waitFor();
  await page.screenshot({path:`${dir}/models-library.png`});
- await page.getByRole('button',{name:'Library',exact:true}).click();
+ await page.getByRole('button',{name:'Images',exact:true}).click();
  await page.locator('.history-grid').waitFor();
  assert.deepEqual(errors,[]);console.log('Model selection, install, pause, resume and gallery navigation passed');
 }finally{await close();}

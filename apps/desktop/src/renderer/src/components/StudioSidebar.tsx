@@ -1,5 +1,8 @@
+import { trashName } from "../lib/trash";
+import { shortcutLabel, shortcuts } from "../lib/workspaceNavigation";
 import HardDrive from "lucide-react/dist/esm/icons/hard-drive.mjs";
 import Images from "lucide-react/dist/esm/icons/images.mjs";
+import LoaderCircle from "lucide-react/dist/esm/icons/loader-circle.mjs";
 import Plus from "lucide-react/dist/esm/icons/plus.mjs";
 import Settings2 from "lucide-react/dist/esm/icons/settings-2.mjs";
 import MessageSquare from "lucide-react/dist/esm/icons/message-square.mjs";
@@ -8,7 +11,7 @@ import AudioLines from "lucide-react/dist/esm/icons/audio-lines.mjs";
 import Box from "lucide-react/dist/esm/icons/box.mjs";
 import ChevronDown from "lucide-react/dist/esm/icons/chevron-down.mjs";
 import MoreHorizontal from "lucide-react/dist/esm/icons/more-horizontal.mjs";
-import { memo, useEffect, useId, useRef, useState } from "react";
+import { memo, useEffect, useId, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { Button, IconButton, Input, MenuItem, NavigationButton } from "./ui/controls";
 import type { ImageThread } from "../lib/threads";
@@ -135,9 +138,12 @@ function ThreadActions({
 }
 
 interface StudioSidebarProps {
-  threads: Array<Pick<ImageThread, "id" | "title" | "archived">>;
-  audioThreads: Array<Pick<AudioThread, "id" | "title" | "archived" | "outputs">>;
-  textThreads: Array<Pick<TextThread, "id" | "title" | "archived" | "messages">>;
+  sidebarRef: RefObject<HTMLElement | null>;
+  onNavigate: () => void;
+  onExpandForNew?: () => void;
+  threads: Array<Pick<ImageThread, "id" | "title" | "archived"> & { hasWork: boolean }>;
+  audioThreads: Array<Pick<AudioThread, "id" | "title" | "archived" | "outputs" | "text" | "renamed" | "designInstruction" | "instruction" | "referenceText">>;
+  textThreads: Array<Pick<TextThread, "id" | "title" | "archived" | "messages" | "renamed" | "draft" | "draftImage" | "draftContextImage" | "systemPrompt">>;
   activeThreadId: string;
   activeAudioThreadId: string;
   activeTextThreadId: string;
@@ -164,12 +170,16 @@ interface StudioSidebarProps {
   collapsed: boolean;
   activeSection: "create" | "tts" | "text" | "library" | "models" | "preferences" | "storage";
   onOpenLibrary: () => void;
+  openingImages: boolean;
   onOpenModels: () => void;
   onOpenData: () => void;
   onOpenPreferences: () => void;
 }
 
 export const StudioSidebar = memo(function StudioSidebar({
+  sidebarRef,
+  onNavigate,
+  onExpandForNew,
   threads,
   audioThreads,
   textThreads,
@@ -199,12 +209,17 @@ export const StudioSidebar = memo(function StudioSidebar({
   collapsed,
   activeSection,
   onOpenLibrary,
+  openingImages,
   onOpenModels,
   onOpenData,
   onOpenPreferences,
 }: StudioSidebarProps) {
   const [newMenuOpen, setNewMenuOpen] = useState(false);
   const newMenuRef = useRef<HTMLDivElement>(null);
+  const openNewMenu = () => {
+    onExpandForNew?.();
+    setNewMenuOpen(true);
+  };
   useEffect(() => {
     if (!newMenuOpen) return;
     newMenuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus();
@@ -220,16 +235,32 @@ export const StudioSidebar = memo(function StudioSidebar({
   const [textDeleteId, setTextDeleteId] = useState<string | null>(null);
   const [textDeletingBusy, setTextDeletingBusy] = useState(false);
   const [textDeleteError, setTextDeleteError] = useState<string | null>(null);
-  const filtered = threads.filter((thread) => !thread.archived);
-  const visibleAudioThreads = audioThreads.filter((thread) => !thread.archived || thread.id === activeAudioThreadId);
+  const filtered = threads.filter((thread) => !thread.archived && (
+    (activeSection === "create" && thread.id === activeThreadId) || thread.id === runningThreadId || thread.hasWork
+  ));
+  const visibleAudioThreads = audioThreads.filter((thread) =>
+    (activeSection === "tts" && thread.id === activeAudioThreadId) || (!thread.archived && (
+      thread.id === runningAudioThreadId || thread.renamed || thread.title !== "New audio thread" ||
+      thread.text.trim() || thread.outputs.length || thread.instruction || thread.designInstruction || thread.referenceText
+    ))
+  );
+  const visibleTextThreads = textThreads.filter((thread) =>
+    (activeSection === "text" && thread.id === activeTextThreadId) || (!thread.archived && (
+      thread.id === runningTextThreadId || thread.renamed || thread.title !== "New text thread" ||
+      thread.messages.length || thread.draft.trim() || thread.draftImage || thread.draftContextImage || thread.systemPrompt
+    ))
+  );
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [threadName, setThreadName] = useState("");
   const [deletingBusy, setDeletingBusy] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [audioDeletingId, setAudioDeletingId] = useState<string | null>(null);
   const [audioDeleteError, setAudioDeleteError] = useState<string | null>(null);
-  const sidebarRef = useRef<HTMLElement>(null);
   const cancelRename = useRef(false);
+  const navigate = (action: () => void) => {
+    onNavigate();
+    action();
+  };
   const focusThread = (id?: string) =>
     requestAnimationFrame(() => {
       const buttons = sidebarRef.current?.querySelectorAll<HTMLButtonElement>(
@@ -291,7 +322,7 @@ export const StudioSidebar = memo(function StudioSidebar({
       <div className="sidebar-new-menu" ref={newMenuRef} onBlur={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget)) setNewMenuOpen(false);
       }} onKeyDown={(event) => {
-        if (event.key === "Escape") {
+        if (newMenuOpen && event.key === "Escape") {
           event.preventDefault(); event.stopPropagation(); setNewMenuOpen(false);
           newMenuRef.current?.querySelector<HTMLButtonElement>(".sidebar-new-button")?.focus();
         }
@@ -302,13 +333,13 @@ export const StudioSidebar = memo(function StudioSidebar({
           items[event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 : (index + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length]?.focus();
         }
       }}>
-        <Button variant="ghost" className="sidebar-new-button" aria-label="New thread" title="New thread" aria-haspopup="menu" aria-expanded={newMenuOpen} aria-controls={newMenuOpen ? "new-thread-menu" : undefined} onClick={() => setNewMenuOpen((value) => !value)} onKeyDown={(event) => {
-          if (!newMenuOpen && ["ArrowDown", "ArrowUp"].includes(event.key)) { event.preventDefault(); setNewMenuOpen(true); }
+        <Button variant="ghost" className="sidebar-new-button" aria-label="New thread" title="New thread" aria-haspopup="menu" aria-expanded={newMenuOpen} aria-controls={newMenuOpen ? "new-thread-menu" : undefined} onClick={() => newMenuOpen ? setNewMenuOpen(false) : openNewMenu()} onKeyDown={(event) => {
+          if (!newMenuOpen && ["ArrowDown", "ArrowUp"].includes(event.key)) { event.preventDefault(); openNewMenu(); }
         }}>
           <Plus size={16} aria-hidden="true" /><span>New thread</span><ChevronDown size={13} className="sidebar-new-chevron" aria-hidden="true" />
         </Button>
         {newMenuOpen ? <div id="new-thread-menu" className="sidebar-new-options" role="menu" aria-label="New thread type">
-          {[{ label: "Image", Icon: Images, create: onNewThread }, { label: "Text", Icon: MessageSquare, create: onNewTextThread }, { label: "Audio", Icon: AudioLines, create: onNewAudioThread }].map(({ label, Icon, create }) => <MenuItem className="sidebar-new-option" role="menuitem" key={label} aria-label={`New ${label.toLowerCase()} thread`} title={`New ${label.toLowerCase()} thread`} onClick={() => { setNewMenuOpen(false); create(); }}><Icon size={16} aria-hidden="true" /><span>{label}</span></MenuItem>)}
+          {[{ label: shortcuts.image.label, Icon: Images, create: onNewThread }, { label: shortcuts.chat.label, Icon: MessageSquare, create: onNewTextThread }, { label: shortcuts.speech.label, Icon: AudioLines, create: onNewAudioThread }].map(({ label, Icon, create }) => <MenuItem className="sidebar-new-option" role="menuitem" key={label} aria-label={label} title={collapsed ? label : undefined} onClick={() => { setNewMenuOpen(false); navigate(create); }}><Icon size={16} aria-hidden="true" /><span>{label}</span></MenuItem>)}
         </div> : null}
       </div>
 
@@ -317,29 +348,26 @@ export const StudioSidebar = memo(function StudioSidebar({
         <NavigationButton
           className="sidebar-nav-button"
           selected={activeSection === "models"}
-          onClick={onOpenModels}
+          onClick={() => navigate(onOpenModels)}
           aria-label="Models"
           title="Install and manage models"
         ><Box size={15} aria-hidden="true" /><span>Models</span></NavigationButton>
         <NavigationButton
           className="sidebar-nav-button"
           selected={activeSection === "library"}
-          onClick={onOpenLibrary}
-          aria-label="Library"
-          aria-controls="recent-renders"
-          title="Library · Ctrl L"
+          onClick={() => navigate(onOpenLibrary)}
+          aria-label="Images"
+          aria-busy={openingImages || undefined}
+          title={`Images · ${shortcutLabel(shortcuts.images)}`}
         >
-          <Images size={15} aria-hidden="true" />
-          <span>Library</span>
+          {openingImages ? <LoaderCircle className="spinner" size={15} aria-hidden="true" /> : <Images size={15} aria-hidden="true" />}
+          <span>{openingImages ? "Opening Images…" : "Images"}</span>
         </NavigationButton>
       </nav>
 
-      <div className="sidebar-scroll-area" aria-label="Threads">
-      <section className="sidebar-threads" aria-label="Image threads">
+      {!collapsed && <div className="sidebar-scroll-area" role="group" aria-label="Threads">
+      {filtered.length > 0 && <section className="sidebar-threads" aria-label="Image threads">
         <div className="sidebar-threads-heading">Image threads</div>
-        {!filtered.length ? (
-          <p className="thread-empty">No active threads.</p>
-        ) : null}
         {filtered.slice(0, limit).map((thread) => (
           <div
             className={`sidebar-thread-row${activeSection === "create" && thread.id === activeThreadId ? " is-active" : ""}`}
@@ -388,7 +416,7 @@ export const StudioSidebar = memo(function StudioSidebar({
                   }
                   onClick={() => {
                     setDeletingId(null);
-                    onSelectThread(thread.id);
+                    navigate(() => onSelectThread(thread.id));
                   }}
                   aria-current={
                     activeSection === "create" && thread.id === activeThreadId
@@ -397,7 +425,7 @@ export const StudioSidebar = memo(function StudioSidebar({
                   }
                   title={thread.title}
                 >
-                  <MessageSquare size={14} aria-hidden="true" />
+                  <Images size={14} aria-hidden="true" />
                   <span>{thread.title}</span>
                   {runningThreadId === thread.id ? (
                     <span
@@ -496,16 +524,14 @@ export const StudioSidebar = memo(function StudioSidebar({
             Show more threads
           </Button>
         ) : null}
-      </section>
+      </section>}
 
-      <section className="sidebar-threads sidebar-text-threads" aria-label="Text threads">
-        <div className="sidebar-threads-heading">Text threads</div>
-        {!textThreads.filter((thread) => !thread.archived || thread.id === activeTextThreadId).length
-          ? <p className="thread-empty">No active text threads.</p> : null}
-        {textThreads.filter((thread) => !thread.archived || thread.id === activeTextThreadId).slice(0, textLimit).map((thread) => (
+      {visibleTextThreads.length > 0 && <section className="sidebar-threads sidebar-text-threads" aria-label="Text threads">
+        <div className="sidebar-threads-heading">Chats</div>
+        {visibleTextThreads.slice(0, textLimit).map((thread) => (
           <div className={`sidebar-thread-row${activeSection === "text" && thread.id === activeTextThreadId ? " is-active" : ""}`} key={thread.id}>
             {renamingId === thread.id ? <Input className="thread-name-input" aria-label="Text thread name" autoFocus maxLength={80} value={threadName} onChange={(event) => setThreadName(event.target.value)} onFocus={(event) => event.target.select()} onBlur={() => { if (!cancelRename.current) onRenameTextThread(thread.id, threadName); setRenamingId(null); }} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); cancelRename.current = true; onRenameTextThread(thread.id, threadName); setRenamingId(null); focusThread(thread.id); } if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); cancelRename.current = true; setRenamingId(null); focusThread(thread.id); } }} /> : <>
-              <button type="button" className="sidebar-thread-button" data-thread-id={thread.id} title={thread.title} aria-label={`Text thread: ${thread.title}${thread.archived ? " (archived)" : ""}`} aria-current={activeSection === "text" && thread.id === activeTextThreadId ? "page" : undefined} aria-description={runningTextThreadId === thread.id ? "Text response running" : undefined} onClick={() => onSelectTextThread(thread.id)}>
+              <button type="button" className="sidebar-thread-button" data-thread-id={thread.id} title={thread.title} aria-label={`Text thread: ${thread.title}${thread.archived ? " (archived)" : ""}`} aria-current={activeSection === "text" && thread.id === activeTextThreadId ? "page" : undefined} aria-description={runningTextThreadId === thread.id ? "Text response running" : undefined} onClick={() => navigate(() => onSelectTextThread(thread.id))}>
                 <MessageSquare size={14} aria-hidden="true" /><span>{thread.title}</span>{runningTextThreadId === thread.id ? <span className="thread-running-dot" aria-label="Text response running" /> : null}
               </button>
               <ThreadActions
@@ -530,16 +556,15 @@ export const StudioSidebar = memo(function StudioSidebar({
             </>}
           </div>
         ))}
-        {textThreads.filter((thread) => !thread.archived || thread.id === activeTextThreadId).length > textLimit ? <Button variant="ghost" className="text-action" onClick={() => setTextLimit((value) => value + 60)}>Show more text threads</Button> : null}
-      </section>
+        {visibleTextThreads.length > textLimit ? <Button variant="ghost" className="text-action" onClick={() => setTextLimit((value) => value + 60)}>Show more text threads</Button> : null}
+      </section>}
 
-      <section className="sidebar-threads sidebar-audio-threads" aria-label="Audio threads">
-        <div className="sidebar-threads-heading">Audio threads</div>
-        {!visibleAudioThreads.length ? <p className="thread-empty">No active audio threads.</p> : null}
+      {visibleAudioThreads.length > 0 && <section className="sidebar-threads sidebar-audio-threads" aria-label="Audio threads">
+        <div className="sidebar-threads-heading">Speech threads</div>
         {visibleAudioThreads.slice(0, audioLimit).map((thread) => (
           <div className={`sidebar-thread-row${activeSection === "tts" && thread.id === activeAudioThreadId ? " is-active" : ""}`} key={thread.id}>
             {renamingId === thread.id ? <Input className="thread-name-input" aria-label="Audio thread name" autoFocus maxLength={80} value={threadName} onChange={(event) => setThreadName(event.target.value)} onFocus={(event) => event.target.select()} onBlur={() => { if (!cancelRename.current) onRenameAudioThread(thread.id, threadName); setRenamingId(null); }} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); cancelRename.current = true; onRenameAudioThread(thread.id, threadName); setRenamingId(null); focusThread(thread.id); } if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); cancelRename.current = true; setRenamingId(null); focusThread(thread.id); } }} /> : <>
-              <button type="button" className="sidebar-thread-button" data-thread-id={thread.id} title={thread.title} aria-label={`Audio thread: ${thread.title}${thread.archived ? " (archived)" : ""}`} aria-description={runningAudioThreadId === thread.id ? "Qwen3-TTS job running" : undefined} aria-current={activeSection === "tts" && thread.id === activeAudioThreadId ? "page" : undefined} onClick={() => onSelectAudioThread(thread.id)}>
+              <button type="button" className="sidebar-thread-button" data-thread-id={thread.id} title={thread.title} aria-label={`Audio thread: ${thread.title}${thread.archived ? " (archived)" : ""}`} aria-description={runningAudioThreadId === thread.id ? "Qwen3-TTS job running" : undefined} aria-current={activeSection === "tts" && thread.id === activeAudioThreadId ? "page" : undefined} onClick={() => navigate(() => onSelectAudioThread(thread.id))}>
                 <AudioLines size={14} aria-hidden="true" /><span>{thread.title}</span>{runningAudioThreadId === thread.id ? <span className="thread-running-dot" aria-label="Qwen3-TTS job running" /> : null}
               </button>
               <ThreadActions
@@ -559,7 +584,7 @@ export const StudioSidebar = memo(function StudioSidebar({
                 }}
               />
               {audioDeletingId === thread.id ? <div className="thread-delete-confirm" role="group" aria-label={`Confirm deletion of audio thread ${thread.title}`} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setAudioDeletingId(null); focusThread(thread.id); } }}>
-                <p>Delete this audio thread?</p><small>{thread.outputs.length ? `Up to ${thread.outputs.length} WAV ${thread.outputs.length === 1 ? "take" : "takes"} will move to the Recycle Bin. ` : "No WAV files are attached. "}The thread and its settings will be removed.{thread.outputs.length ? " Restoring WAV files later will not restore their cards." : ""}</small>
+                <p>Delete this audio thread?</p><small>{thread.outputs.length ? `Up to ${thread.outputs.length} WAV ${thread.outputs.length === 1 ? "take" : "takes"} will move to ${trashName}. ` : "No WAV files are attached. "}The thread and its settings will be removed.{thread.outputs.length ? " Restoring WAV files later will not restore their cards." : ""}</small>
                 {audioDeleteError ? <small role="alert">{audioDeleteError}</small> : null}
                 <div><Button variant="secondary" autoFocus disabled={deletingBusy} onClick={() => { setAudioDeletingId(null); focusThread(thread.id); }}>Cancel</Button><Button variant="danger" disabled={deletingBusy || runningAudioThreadId === thread.id} onClick={async () => { setDeletingBusy(true); setAudioDeleteError(null); try { await onDeleteAudioThread(thread.id); setAudioDeletingId(null); focusThread(); } catch (cause) { setAudioDeleteError(cause instanceof Error ? cause.message : "Could not delete this thread."); } finally { setDeletingBusy(false); } }}>{deletingBusy ? "Deleting…" : "Delete thread"}</Button></div>
               </div> : null}
@@ -567,9 +592,9 @@ export const StudioSidebar = memo(function StudioSidebar({
           </div>
         ))}
         {visibleAudioThreads.length > audioLimit ? <Button variant="ghost" className="text-action" onClick={() => setAudioLimit((value) => value + 60)}>Show more audio threads</Button> : null}
-      </section>
+      </section>}
 
-      </div>
+      </div>}
       <div className="sidebar-spacer" />
 
       <nav
@@ -579,7 +604,7 @@ export const StudioSidebar = memo(function StudioSidebar({
         <NavigationButton
           className="sidebar-nav-button"
           selected={activeSection === "storage"}
-          onClick={onOpenData}
+          onClick={() => navigate(onOpenData)}
           aria-label="Local data"
           title="Manage local data"
         >
@@ -589,7 +614,7 @@ export const StudioSidebar = memo(function StudioSidebar({
         <NavigationButton
           className="sidebar-nav-button"
           selected={activeSection === "preferences"}
-          onClick={onOpenPreferences}
+          onClick={() => navigate(onOpenPreferences)}
           aria-label="Preferences"
           title="Open preferences"
         >

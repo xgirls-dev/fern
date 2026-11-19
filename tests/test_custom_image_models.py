@@ -31,6 +31,28 @@ def write_export(folder: Path) -> None:
 
 
 class CustomImageModelTests(unittest.TestCase):
+    def test_missing_optimum_preserves_custom_model_status(self):
+        item = {
+            "id": "custom-sdxl",
+            "family": "sdxl",
+            "label": "Local SDXL",
+            "path": "/tmp/local-sdxl",
+            "pipelineClass": "StableDiffusionXLPipeline",
+            "installed": True,
+        }
+        def find_spec(name):
+            if name == "optimum.intel":
+                raise ModuleNotFoundError("No module named 'optimum'")
+            return None
+
+        with patch.object(custom_image_pipeline, "model_spec", return_value=item), patch.object(
+            custom_image_pipeline, "_DEVICE_CHECK_RESULT", {"installed": True, "hasGpu": False}
+        ), patch.object(custom_image_pipeline.importlib.util, "find_spec", side_effect=find_spec):
+            status = custom_image_pipeline.model_status("CPU", item["id"])
+        self.assertFalse(status["runtimeReady"])
+        self.assertIn("unavailable", status["runtimeNote"])
+        self.assertEqual((status["minimumDimension"], status["maximumDimension"], status["dimensionMultiple"]), (512, 1536, 8))
+
     def test_diffusers_progress_ignores_terminal_callback(self):
         class FakePipeline:
             def set_progress_bar_config(self, **_kwargs):

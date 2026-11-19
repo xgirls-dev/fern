@@ -12,6 +12,12 @@ const FOCUSABLE_SELECTOR = [
   '[tabindex]:not([tabindex="-1"])',
 ].join(",");
 
+function tabbableElements(dialog: HTMLElement): HTMLElement[] {
+  return Array.from(dialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR))
+    .filter((element) => element.tabIndex >= 0 && !element.matches(":disabled") &&
+      element.getClientRects().length > 0 && getComputedStyle(element).visibility === "visible");
+}
+
 export function useModalFocus(
   open: boolean,
   dialogRef: RefObject<HTMLElement | null>,
@@ -36,9 +42,7 @@ export function useModalFocus(
     const focusInitialElement = () => {
       const firstFocusable =
         dialog.querySelector<HTMLElement>("[data-autofocus]") ??
-        Array.from(
-          dialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
-        ).find((element) => element.getClientRects().length > 0);
+        tabbableElements(dialog)[0];
       (firstFocusable ?? dialog).focus();
     };
 
@@ -55,9 +59,7 @@ export function useModalFocus(
 
       if (event.key !== "Tab") return;
 
-      const focusable = Array.from(
-        dialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
-      ).filter((element) => element.getClientRects().length > 0);
+      const focusable = tabbableElements(dialog);
       if (focusable.length === 0) {
         event.preventDefault();
         dialog.focus();
@@ -87,7 +89,12 @@ export function useModalFocus(
     return () => {
       cancelAnimationFrame(focusFrame);
       document.removeEventListener("keydown", onKeyDown);
-      requestAnimationFrame(() => openerRef.current?.focus());
+      requestAnimationFrame(() => {
+        const focused = document.activeElement;
+        if (!focused || focused === document.body || dialog.contains(focused)) {
+          openerRef.current?.focus();
+        }
+      });
     };
   }, [dialogRef, open]);
 }

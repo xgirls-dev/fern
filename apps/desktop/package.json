@@ -15,7 +15,8 @@
     "build": "electron-vite build",
     "preview": "cross-env ELECTRON_RUN_AS_NODE= electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
-    "package": "npm run build && electron-builder --win nsis --publish never"
+    "package": "npm run build && electron-builder --win nsis --publish never",
+    "package:omarchy": "npm run build && electron-builder --linux dir --x64 --publish never -c.directories.output=release-omarchy"
   },
   "dependencies": {
     "lucide-react": "^1.25.0",
@@ -64,20 +65,8 @@
         ]
       },
       {
-        "from": "resources/runtime-release.json",
-        "to": "runtime-release.json"
-      },
-      {
-        "from": "resources/runtime-release.zip",
-        "to": "runtime-release.zip"
-      },
-      {
         "from": "resources/scripts",
         "to": "scripts"
-      },
-      {
-        "from": "resources/icon.ico",
-        "to": "icon.ico"
       }
     ],
     "win": {
@@ -90,7 +79,21 @@
         }
       ],
       "icon": "resources/icon.ico",
-      "artifactName": "Fern-Setup-${version}.${ext}"
+      "artifactName": "Fern-Setup-${version}.${ext}",
+      "extraResources": [
+        {
+          "from": "resources/runtime-release.json",
+          "to": "runtime-release.json"
+        },
+        {
+          "from": "resources/runtime-release.zip",
+          "to": "runtime-release.zip"
+        },
+        {
+          "from": "resources/icon.ico",
+          "to": "icon.ico"
+        }
+      ]
     },
     "nsis": {
       "oneClick": true,
@@ -102,6 +105,20 @@
       "installerIcon": "resources/icon.ico",
       "uninstallerIcon": "resources/icon.ico",
       "installerHeaderIcon": "resources/icon.ico"
+    },
+    "linux": {
+      "executableName": "fern",
+      "icon": "resources/icon.png",
+      "extraResources": [
+        {
+          "from": "resources/runtime-linux",
+          "to": "runtime"
+        },
+        {
+          "from": "resources/icon.png",
+          "to": "icon.png"
+        }
+      ]
     }
   }
 }

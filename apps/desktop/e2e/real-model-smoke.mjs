@@ -144,7 +144,7 @@ try {
   const newThreadMenu = page.locator(".sidebar-new-menu > button");
   if (await newThreadMenu.count()) {
     await newThreadMenu.click();
-    await page.getByRole("menuitem", { name: "New image thread" }).click();
+    await page.getByRole("menuitem", { name: "Create image" }).click();
   } else {
     await page.getByRole("button", { name: "New image thread", exact: true }).click();
   }
@@ -154,7 +154,7 @@ try {
   if (device === "CPU") {
     await page.getByRole("button", { name: "Preferences", exact: true }).click();
     const cpuPreference = page.getByRole("button", { name: /Allow CPU selection/ });
-    if (await cpuPreference.getAttribute("aria-pressed") !== "true") await cpuPreference.click();
+    if (await cpuPreference.count() && await cpuPreference.getAttribute("aria-pressed") !== "true") await cpuPreference.click();
     await page.getByLabel("Generation device", { exact: true }).selectOption("CPU");
     await page.locator('.sidebar-threads[aria-label="Image threads"] .sidebar-thread-button').first().click();
   }

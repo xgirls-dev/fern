@@ -127,6 +127,65 @@ for line in sys.stdin:
                 resolve_text_device('AUTO')
             self.assertEqual(resolve_text_device('CPU'), 'CPU')
 
+    def test_chat_image_tool_returns_an_artifact_to_the_same_text_worker(self):
+        event = threading.Event()
+        call = {"id": "image-call", "type": "function", "function": {"name": "generate_image", "arguments": '{"prompt":"red teapot"}'}}
+        image = {"name": "teapot.png", "width": 512, "height": 512}
+        metrics = {"device": "GPU", "text": "", "outputTokens": 8, "inputTokens": 12, "generationSeconds": 0.3}
+        with patch.object(api, 'TEXT_MODEL_REGISTRY', self.registry), \
+             patch.object(api.TEXT_GENERATION_WORKER, 'generate', side_effect=[
+                 {**metrics, "toolCalls": [call]}, {**metrics, "text": "The image is ready."},
+             ]) as reply, patch.object(api.TEXT_GENERATION_WORKER, 'close') as close_text, \
+             patch.object(api.GENERATION_WORKER, 'close') as close_image, \
+             patch.object(api, 'generate_chat_image', return_value=image) as generate_image, \
+             patch.dict(api.TEXT_JOB, {'id': 'test-tool', 'status': 'running', 'partialText': ''}, clear=True):
+            api.run_text_generation({
+                "modelId": self.model["id"], "device": "AUTO", "imageModel": "4b-lora",
+                "threadId": "text-thread-test", "messages": [{"role": "user", "content": "Draw a teapot."}],
+                "maxNewTokens": 512, "seed": 1, "temperature": 0, "topP": 0.9,
+            }, "test-tool", event)
+            self.assertEqual(api.TEXT_JOB["status"], "complete")
+            self.assertEqual(api.TEXT_JOB["image"], image)
+            self.assertEqual(api.TEXT_JOB["partialText"], "The image is ready.")
+            generate_image.assert_called_once_with("4b-lora", "red teapot", "text-thread-test", "test-tool", event)
+            first, resumed = (item.kwargs["request"] for item in reply.call_args_list)
+            self.assertEqual(first["tools"][0]["function"]["name"], "generate_image")
+            self.assertEqual(resumed["toolChoice"], "none")
+            self.assertEqual(resumed["maxNewTokens"], 96)
+            self.assertEqual(resumed["messages"][-2]["tool_call_id"], "image-call")
+            self.assertTrue(resumed["messages"][-1]["imagePath"].endswith("teapot.png"))
+            self.assertTrue(api.TEXT_JOB["result"]["visionChecked"])
+            close_text.assert_not_called()
+            close_image.assert_not_called()
+
+    def test_saved_chat_image_survives_restart_and_can_be_inspected_without_rendering(self):
+        (self.root / "poster.png").write_bytes(b"fixture artifact")
+        image = {"name": "poster.png", "width": 512, "height": 512, "modelLabel": "Klein 4B", "prompt": "Red circle"}
+        thread_id = "text-thread-poster"
+        metadata = {**image, "source": "chat", "threadId": thread_id, "chatJobId": "original"}
+        vision_model = {**self.model, "supportsVision": True}
+        with patch.object(api, "OUTPUTS", self.root), \
+             patch.object(self.registry, "snapshot", return_value=[vision_model]), \
+             patch.object(api, "TEXT_MODEL_REGISTRY", self.registry), \
+             patch.object(api.gallery_store, "get_image_metadata", return_value=metadata), \
+             patch.object(api.gallery_store, "metadata_snapshot", return_value={"poster.png": metadata}), \
+             patch.object(api.TEXT_GENERATION_WORKER, "generate", return_value={"text": "A red circle."}) as inspect, \
+             patch.object(api, "generate_chat_image") as render, \
+             patch.dict(api.TEXT_JOB, {"id": "inspection", "status": "running"}, clear=True):
+            self.assertEqual(api.recover_chat_image(thread_id, "original"), image)
+            self.assertIsNone(api.recover_chat_image("text-thread-other", "original"))
+            attempt = {"threadId": thread_id, "image": "poster.png", "modelId": self.model["id"]}
+            with self.assertRaisesRegex(ValueError, "saved image from this conversation"):
+                api.prepare_image_inspection({**attempt, "threadId": "text-thread-other"})
+            generation = api.prepare_image_inspection(attempt)
+            api.run_text_generation(generation, "inspection", threading.Event())
+            self.assertEqual(api.TEXT_JOB["status"], "complete")
+            self.assertTrue(api.TEXT_JOB["result"]["visionChecked"])
+            self.assertEqual(inspect.call_args.kwargs["request"]["messages"][0]["imagePath"], str(self.root.resolve() / "poster.png"))
+            self.assertNotIn("tools", inspect.call_args.kwargs["request"])
+            render.assert_not_called()
+            self.assertEqual(len(list(self.root.glob("*.png"))), 1)
+
     def test_http_admission_and_role_validation(self):
         server = ThreadingHTTPServer(('127.0.0.1', 0), api.Handler)
         serving = threading.Thread(target=server.serve_forever, daemon=True)
@@ -165,6 +224,43 @@ for line in sys.stdin:
                 api.FLUX_JOB['status'] = 'idle'
                 api.TTS_JOB['status'] = 'running'
                 self.assertEqual(post([{'role':'user','content':'hi'}], 'audio-busy'), 400)
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_http_reincludes_only_a_saved_image_owned_by_the_chat(self):
+        path = self.root / "selected.png"
+        path.write_bytes(b"fixture artifact")
+        server = ThreadingHTTPServer(("127.0.0.1", 0), api.Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        thread_id = "text-thread-check"
+        model = {**self.model, "supportsVision": True}
+        library = {"selected.png": {"source": "chat", "threadId": thread_id}}
+
+        def submit(request_id, name, owner=thread_id):
+            payload = {"requestId": request_id, "threadId": owner, "modelId": model["id"],
+                       "messages": [{"role": "user", "content": "Describe the picture.", "includedImage": name}]}
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/text/generate",
+                data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"},
+            )
+            return urllib.request.urlopen(request)
+
+        try:
+            with patch.object(api, "OUTPUTS", self.root), \
+                 patch.object(self.registry, "snapshot", return_value=[model]), \
+                 patch.object(api, "TEXT_MODEL_REGISTRY", self.registry), \
+                 patch.object(api.gallery_store, "metadata_snapshot", return_value=library), \
+                 patch.object(api, "text_runtime_snapshot", return_value={}), \
+                 patch.object(api, "run_text_generation") as generate, \
+                 patch.dict(api.TEXT_JOB, {"status": "idle"}, clear=True):
+                with self.assertRaisesRegex(urllib.error.HTTPError, "400"):
+                    submit("wrong", path.name, "text-thread-another")
+                with self.assertRaisesRegex(urllib.error.HTTPError, "400"):
+                    submit("path", "../selected.png")
+                with submit("valid", path.name) as response:
+                    self.assertEqual(response.status, 202)
+                self.assertEqual(generate.call_args.args[0]["messages"][0]["imagePath"], str(path.resolve()))
         finally:
             server.shutdown()
             server.server_close()

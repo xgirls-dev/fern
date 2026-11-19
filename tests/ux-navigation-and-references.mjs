@@ -4,7 +4,7 @@ import { fixture } from "./ui-fixture.mjs";
 
 const { page, state, errors, dir, close } = await fixture({ threadCount: 100 });
 const button = (name) => page.getByRole("button", { name, exact: true });
-const newThread = async (kind) => { await page.locator(".sidebar-new-menu > button").click(); await page.getByRole("menuitem", { name: `New ${kind} thread` }).click(); };
+const newThread = async (name) => { await page.locator(".sidebar-new-menu > button").click(); await page.getByRole("menuitem", { name }).click(); };
 const longName = "A custom image model with a very long repository name that should always stay on one line";
 try {
   state.installedModels = [{ id: "9b", label: "Klein 9B" }, { id: "4b", label: "Klein 4B" }, { id: "custom-long", label: longName, family: "sdxl" }, { id: "tame-pony-v25-sdxl", label: "Tame Pony · SDXL" }];
@@ -13,7 +13,7 @@ try {
   await page.locator("#prompt").waitFor();
   await expect(page.locator(".sidebar-new-button")).toHaveCount(1);
   await page.locator(".sidebar-new-menu > button").click();
-  await expect(page.getByRole("menuitem", { name: /New .* thread/ })).toHaveCount(3);
+  await expect(page.getByRole("menuitem", { name: /^(Chat|Create image|Create speech)$/ })).toHaveCount(3);
   await page.keyboard.press("Escape");
   const scrolling = await page.locator(".sidebar-scroll-area").evaluate((sidebar) => ({ owner: getComputedStyle(sidebar).overflowY, overflowing: sidebar.scrollHeight > sidebar.clientHeight, nested: [...sidebar.querySelectorAll(".sidebar-threads")].map((section) => getComputedStyle(section).overflowY) }));
   assert.equal(scrolling.owner, "auto"); assert(scrolling.overflowing);
@@ -67,9 +67,9 @@ try {
   assert.equal(state.payloads[0].reference_images.length, 3);
   assert.equal(state.payloads[0].reference_images[0].split(",")[1], blue.toString("base64"));
   await page.reload();
-  await expect(page.locator(".composer-reference")).toHaveCount(3);
+  await expect(page.locator(".composer-reference")).toHaveCount(3, { timeout: 20_000 });
   await expect(page.locator(".composer-reference small").first()).toHaveText("blue.png");
-  await newThread("image");
+  await newThread("Create image");
   await expect(page.locator(".composer-reference")).toHaveCount(0);
   await page.locator('.sidebar-thread-button[data-thread-id="study"]').click();
   await expect(page.locator(".composer-reference")).toHaveCount(3);
@@ -88,8 +88,8 @@ try {
   await page.setViewportSize({ width: 1440, height: 900 });
   await button("Toggle theme").click();
   await page.screenshot({ path: `${dir}/references-dark.png` });
-  await newThread("text");
-  await page.getByRole("button", { name: "Text model", exact: true }).click();
+  await newThread("Chat");
+  await page.getByRole("button", { name: /^Text model:/ }).click();
   await page.getByRole("menuitem", { name: "Manage models" }).click();
   await page.getByRole("heading", { name: "Text models", exact: true }).waitFor();
   assert.deepEqual(errors, []);

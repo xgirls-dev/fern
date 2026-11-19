@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm, truncate, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fixture } from "./ui-fixture.mjs";
 const { page, state, errors, close } = await fixture();
+const uploadDir = await mkdtemp(join(tmpdir(), "fern-oversize-upload-"));
 const button = (name) => page.getByRole("button", { name, exact: true });
 try {
   await page.locator(".workspace-header").getByRole("button", { name: "Image settings", exact: true }).click();
@@ -9,7 +13,7 @@ try {
     .getByRole("combobox", { name: "Prompt recipe" })
     .selectOption("editorial-portrait");
   await page.locator(".sidebar-new-menu > button").click();
-  await page.getByRole("menuitem", { name: "New image thread" }).click();
+  await page.getByRole("menuitem", { name: "Create image" }).click();
   await button("Undo").click();
   assert.equal(await page.locator("#prompt").inputValue(), "");
   await page.waitForTimeout(350);
@@ -31,7 +35,7 @@ try {
   await button("Save recipe").click();
   await button("Remove").click();
   await page.locator(".sidebar-new-menu > button").click();
-  await page.getByRole("menuitem", { name: "New image thread" }).click();
+  await page.getByRole("menuitem", { name: "Create image" }).click();
   await button("Undo").click();
   assert(
     await page.evaluate(() =>
@@ -56,11 +60,10 @@ try {
   const originalReference = await page
     .locator(".composer-reference img")
     .getAttribute("src");
-  await page.locator('input[type="file"]').setInputFiles({
-    name: "too-large.png",
-    mimeType: "image/png",
-    buffer: Buffer.alloc(10 * 1024 * 1024 + 1),
-  });
+  const oversized = join(uploadDir, "too-large.png");
+  await writeFile(oversized, "");
+  await truncate(oversized, 10 * 1024 * 1024 + 1);
+  await page.getByLabel("Reference image file").setInputFiles(oversized);
   assert.match(await page.locator(".composer-error").innerText(), /10 MB/);
   assert.equal(
     await page.locator(".composer-reference img").getAttribute("src"),
@@ -77,8 +80,8 @@ try {
   // Wait for a listing that contains the new fixture provenance, not a lightweight status poll.
   await page.evaluate(async () => (await import("/src/lib/api.ts")).invalidateImages());
   await page.waitForResponse(response => response.url().includes("/api/flux2/status") && response.url().includes("images=1"));
-  await button("Library").click();
-  await button("Review audit-1.png").click();
+  await button("Images").click();
+  await button(/^Review.*audit-1\.png$/).click();
   await page.locator(".image-viewer summary").click();
   await button("Remix in new thread").click();
   await page.locator(".composer-reference img").waitFor();
@@ -86,7 +89,7 @@ try {
     await page.locator(".composer-reference img").getAttribute("src"),
     originalReference,
   );
-  await button("Library").click();
+  await button("Images").click();
   await page.evaluate(() => {
     window.studio.openOutputsFolder = async () => {
       throw new Error("Access denied");
@@ -97,9 +100,19 @@ try {
     await page.locator(".notification.is-error").innerText(),
     /Access denied/,
   );
-  await button("Open command palette").click();
-  const search = page.getByRole("combobox", { name: "Search Fern commands" });
+  const commands = button("Commands Ctrl K");
+  await commands.click();
+  const search = page.getByRole("combobox", { name: "Search commands or threads" });
   await search.focus();
+  const closeCommands = button("Close commands");
+  await page.keyboard.press("Tab");
+  assert(await closeCommands.evaluate((element) => document.activeElement === element));
+  await page.keyboard.press("Tab");
+  assert(await search.evaluate((element) => document.activeElement === element));
+  await page.keyboard.press("Shift+Tab");
+  assert(await closeCommands.evaluate((element) => document.activeElement === element));
+  await page.keyboard.press("Shift+Tab");
+  assert(await search.evaluate((element) => document.activeElement === element));
   const before = await search.getAttribute("aria-activedescendant");
   await page.keyboard.press("ArrowDown");
   const after = await search.getAttribute("aria-activedescendant");
@@ -112,11 +125,12 @@ try {
   const activeId = await search.getAttribute("aria-activedescendant");
   const visibleSelection = await page.locator(`#${activeId}`).evaluate((element) => {
     const row = element.getBoundingClientRect();
-    const list = element.parentElement.getBoundingClientRect();
+    const list = element.closest('[role="listbox"]').getBoundingClientRect();
     return { top: row.top - list.top, bottom: row.bottom - list.bottom };
   });
   assert(visibleSelection.top >= -1 && visibleSelection.bottom <= 1, `Keyboard selection must remain visible: ${JSON.stringify(visibleSelection)}`);
   await page.keyboard.press("Escape");
+  await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Commands Ctrl K");
   await button("Stable title").click();
   state.job = {
     id: "logs",
@@ -126,18 +140,15 @@ try {
     logs: Array.from({ length: 80 }, (_, i) => `Activity ${i}`),
     output: null,
   };
-  await page.waitForTimeout(3300);
   await page.locator(".activity-terminal-header").click();
-  await page.locator(".activity-terminal-body").evaluate((el) => {
-    el.scrollTop = 0;
-    el.dispatchEvent(new Event("scroll", { bubbles: true }));
-  });
+  const logBody = page.locator(".activity-terminal-body");
+  await logBody.locator(".activity-terminal-line").filter({ hasText: "Activity 79" }).waitFor();
+  await logBody.evaluate((el) => { el.scrollTop = 0; });
+  await button("Jump to latest").waitFor();
   state.job.logs = [...state.job.logs, "A later entry"];
-  await page.waitForTimeout(900);
+  await logBody.locator(".activity-terminal-line").filter({ hasText: "A later entry" }).waitFor();
   assert(
-    await page
-      .locator(".activity-terminal-body")
-      .evaluate((el) => el.scrollTop < 10),
+    await logBody.evaluate((el) => el.scrollTop < 10),
   );
   await button("Jump to latest").click();
   assert.deepEqual(errors, []);
@@ -146,4 +157,5 @@ try {
   );
 } finally {
   await close();
+  await rm(uploadDir, { recursive: true, force: true });
 }

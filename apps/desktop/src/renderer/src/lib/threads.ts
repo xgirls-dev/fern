@@ -57,6 +57,7 @@ export interface ImageThread {
   id: string;
   title: string;
   renamed: boolean;
+  configured?: boolean;
   updatedAt: number;
   settings: StudioSettings;
   previewName: string | null;
@@ -80,6 +81,13 @@ export function createImageThread(settings: StudioSettings): ImageThread {
     imageNames: [],
     referenceLabel: "No reference image.",
   };
+}
+
+export function hasImageThreadWork(thread: ImageThread): boolean {
+  return Boolean(thread.renamed || thread.configured || thread.title !== "New thread" ||
+    thread.settings.prompt.trim() || thread.previewName || thread.imageNames.length ||
+    (thread.referenceLabel && !thread.referenceLabel.startsWith("No reference image")) ||
+    thread.settings.model?.startsWith("custom-"));
 }
 
 export function threadTitle(prompt: string): string {

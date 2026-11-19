@@ -41,13 +41,13 @@ try {
   });
   await page.evaluate(path => { window.studio.pickTextModelFolder = async () => path; }, model);
   await page.locator('.sidebar-new-menu > button').click();
-  await page.getByRole('menuitem', {name:'New text thread', exact:true}).click();
-  await page.getByRole('button', {name:'Generation settings', exact:true}).click();
+  await page.getByRole('menuitem', {name:'Chat', exact:true}).click();
+  await page.getByRole('button', {name:'Chat settings', exact:true}).click();
   await page.getByRole('complementary', {name:'Chat settings panel'}).getByRole('button', {name:'Manage models', exact:true}).click();
   await page.getByRole('button', {name:'Add local model', exact:true}).click();
   console.log('Import requested');
   await page.locator('.sidebar-text-threads .sidebar-thread-button').first().click();
-  await page.getByRole('button', {name:'Generation settings', exact:true}).click();
+  await page.getByRole('button', {name:'Chat settings', exact:true}).click();
   await page.getByLabel('Temperature',{exact:true}).focus();
   await page.keyboard.press('Home');
   await page.getByRole('button',{name:'Close chat settings',exact:true}).click();
@@ -74,14 +74,13 @@ try {
   await page.getByRole('button', {name:'Retry response', exact:true}).waitFor({timeout:30000});
   assert.equal((await apiJson('/api/text/status')).job.status, 'stopped');
   await page.getByRole('button', {name:'Preferences', exact:true}).click();
-  await page.getByRole('button', {name:/Allow CPU selection/}).click();
   await page.getByLabel('Generation device', {exact:true}).selectOption('CPU');
   assert.equal(await page.getByLabel('Generation device', {exact:true}).inputValue(), 'CPU');
   // Verify the opt-in control without doing inference on CPU. GPU remains the
   // only device used by this real-model test.
   await page.getByLabel('Generation device', {exact:true}).selectOption('GPU');
   await page.getByRole('button', {name:'Text', exact:true}).click();
-  await page.getByRole('button', {name:'Generation settings', exact:true}).click();
+  await page.getByRole('button', {name:'Chat settings', exact:true}).click();
   await page.getByLabel('Maximum output', {exact:true}).selectOption('128');
   await page.getByRole('button', {name:'Close chat settings', exact:true}).click();
   await page.getByRole('button', {name:'Retry response', exact:true}).click();

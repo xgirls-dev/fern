@@ -1,6 +1,5 @@
-import Square from "lucide-react/dist/esm/icons/square.mjs";
 import FolderOpen from "lucide-react/dist/esm/icons/folder-open.mjs";
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState, useTransition } from "react";
 import Plus from "lucide-react/dist/esm/icons/plus.mjs";
 import SlidersHorizontal from "lucide-react/dist/esm/icons/sliders-horizontal.mjs";
 import type { ImageRecord } from "./lib/types";
@@ -10,6 +9,7 @@ import { resolveAssetUrl } from "./lib/api";
 import { useStudio } from "./hooks/useStudio";
 import { useQwen3Tts } from "./hooks/useQwen3Tts";
 import { useTextChat } from "./hooks/useTextChat";
+import { useSidebarLayout } from "./hooks/useSidebarLayout";
 import { useComputePreference } from "./hooks/useComputePreference";
 import { ActivityTerminal } from "./components/ActivityTerminal";
 import { CommandPalette } from "./components/CommandPalette";
@@ -20,12 +20,15 @@ import { OutputWorkspace } from "./components/OutputWorkspace";
 import { RuntimeLoadingDialog } from "./components/RuntimeLoadingDialog";
 import { StudioSidebar } from "./components/StudioSidebar";
 import { TitleBar } from "./components/TitleBar";
+import { WorkspaceThreadTitle } from "./components/WorkspaceThreadTitle";
 import { Button, IconButton, PageHeader } from "./components/ui/controls";
 
 import { Notifications } from "./components/Notifications";
 import { ThreadBrowser } from "./components/ThreadBrowser";
 import { notify } from "./lib/notifications";
 import { validateReference } from "./lib/reference";
+import { loadModelSetup, saveModelSetup, type SetupSelection, type SetupTask } from "./lib/modelSetup";
+import { loadLastWorkspace, matchesShortcut, saveLastWorkspace, shortcuts } from "./lib/workspaceNavigation";
 import { isKleinLoraModel, kleinLoraLabel, maxReferenceImages } from "./lib/imageModels";
 
 const StorageView = lazy(() => import("./components/StorageView").then((module) => ({ default: module.StorageView })));
@@ -37,9 +40,10 @@ const ModelsView = lazy(() => import("./components/ModelsView").then((module) =>
 export function App() {
   const compute = useComputePreference();
   const studio = useStudio(compute.device);
+  const intelAvailable = studio.status?.model.adapters?.find((adapter) => adapter.id === "INTEL_GPU")?.available;
   const tts = useQwen3Tts(studio.ready, compute.device);
-  const text = useTextChat(studio.ready, compute.device);
-  const [threadBrowserOpen, setThreadBrowserOpen] = useState(false);
+  const text = useTextChat(studio.ready, compute.device, intelAvailable);
+  const [threadSearchQuery, setThreadSearchQuery] = useState<string | null>(null);
   const [inspectorView, setInspectorView] = useState<
     "settings" | "info" | null
   >(null);
@@ -71,10 +75,29 @@ export function App() {
   };
   const lightboxOpen = Boolean(lightboxImage);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [modelSetup, setModelSetup] = useState(loadModelSetup);
   const [activeSection, setActiveSection] = useState<
     "create" | "tts" | "text" | "library" | "models" | "preferences" | "storage"
-  >("create");
-  const [modelCategory, setModelCategory] = useState<"image" | "text" | "audio">("image");
+  >(() => modelSetup && modelSetup.viewing !== false ? "models" : loadLastWorkspace());
+  const [modelCategory, setModelCategory] = useState<"image" | "text" | "audio">(
+    modelSetup && modelSetup.task !== "image" ? "text" : "image",
+  );
+  const [chatFocusRequest, setChatFocusRequest] = useState(0);
+  const [computeFocusRequest, setComputeFocusRequest] = useState(0);
+  useEffect(() => { saveLastWorkspace(activeSection); }, [activeSection]);
+  useEffect(() => {
+    if (modelSetup) saveModelSetup({ ...modelSetup, viewing: activeSection === "models" });
+  }, [activeSection, modelSetup]);
+  const searchableThreads = commandPaletteOpen || threadSearchQuery !== null ? [
+    ...studio.searchThreads(),
+    ...tts.threads.map((thread) => ({ ...thread, excerpt: thread.text })),
+    ...text.threads.map((thread) => ({
+      ...thread,
+      excerpt: thread.messages.find((message) => message.role === "user")?.content || thread.draft,
+    })),
+  ] : [];
+  const imageSetupNeeded = studio.status?.installedModels !== undefined && !studio.modelInstalled &&
+    !studio.status.installedModels.some((model) => model.installed !== false);
   useEffect(() => {
     if (!studio.ready) return;
     const imageActive = activeSection === "create" || activeSection === "library";
@@ -82,31 +105,54 @@ export function App() {
     if (imageActive) void studio.refresh();
   }, [activeSection, studio.ready, studio.refresh, studio.setImagePollingActive]);
   const [promptFocusRequest, setPromptFocusRequest] = useState(0);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
-    try {
-      return localStorage.getItem("fern-sidebar-collapsed") === "true";
-    } catch {
-      return false;
+  const handledPromptFocusRequest = useRef(0);
+  const {
+    compactLayout,
+    sidebarIsCollapsed,
+    wideSidebarCollapsed,
+    sidebarOverlayOpen,
+    sidebarRef,
+    sidebarToggleRef,
+    toggleSidebar,
+    toggleWideSidebar,
+    closeSidebarOverlay,
+  } = useSidebarLayout();
+  const openCommands = useCallback(() => {
+    if (sidebarOverlayOpen) {
+      sidebarToggleRef.current?.focus();
+      closeSidebarOverlay("current");
     }
-  });
+    setCommandPaletteOpen(true);
+  }, [sidebarOverlayOpen, sidebarToggleRef, closeSidebarOverlay]);
+
+  const onSidebarNavigate = useCallback(() => {
+    if (sidebarOverlayOpen) closeSidebarOverlay("workspace");
+  }, [sidebarOverlayOpen, closeSidebarOverlay]);
 
   useEffect(() => {
+    if (activeSection !== "preferences" && computeFocusRequest) setComputeFocusRequest(0);
+    if (activeSection === "preferences" && computeFocusRequest) return;
     if (!["preferences", "storage", "models"].includes(activeSection)) return;
     document
       .querySelector<HTMLElement>(".shell-page:not([hidden]) h2")
       ?.focus();
-  }, [activeSection]);
+  }, [activeSection, computeFocusRequest]);
 
-  const openThreadSearch = useCallback(() => setThreadBrowserOpen(true), []);
+  const openThreadSearch = useCallback(() => setThreadSearchQuery(""), []);
   const openStorage = useCallback(() => setActiveSection("storage"), []);
   const openModels = useCallback(() => { setModelCategory("image"); setActiveSection("models"); }, []);
   const openPreferences = useCallback(
     () => setActiveSection("preferences"),
     [],
   );
+  const openComputePreferences = () => {
+    setComputeFocusRequest((value) => value + 1);
+    setActiveSection("preferences");
+  };
+  const [openingImages, startImagesNavigation] = useTransition();
   const openLibrary = useCallback(() => {
-    setActiveSection("library");
-  }, []);
+    startImagesNavigation(() => setActiveSection("library"));
+  }, [startImagesNavigation]);
 
   const focusPrompt = useCallback(() => {
     setActiveSection("create");
@@ -158,6 +204,42 @@ export function App() {
     },
     [studio.selectThread, tts.selectThread, text.selectThread],
   );
+
+  const openModelSetup = (task: SetupTask) => {
+    const threadId = task === "image" ? studio.activeThread.id : text.activeThread?.id;
+    if (!threadId) return;
+    const setup = { task, threadId };
+    setModelSetup(setup);
+    const hasVisionModel = text.status.models.some((model) => model.installed && model.supportsTools && model.supportsVision);
+    setModelCategory(task === "image" || (task === "chat-image" && hasVisionModel) ? "image" : "text");
+    setActiveSection("models");
+  };
+
+  const returnToDraft = (selection?: SetupSelection) => {
+    if (!modelSetup) return;
+    const { task, threadId } = modelSetup;
+    saveModelSetup(null);
+    setModelSetup(null);
+    if (task === "image") {
+      const thread = studio.threads.find((item) => item.id === threadId);
+      if (thread && !thread.archived) {
+        if (selection?.imageModelId) studio.updateSettings({ model: selection.imageModelId }, threadId);
+        studio.selectThread(threadId);
+      }
+      focusPrompt();
+    } else {
+      const thread = text.threads.find((item) => item.id === threadId);
+      if (thread && !thread.archived) {
+        if (selection?.textModelId) text.updateThread(threadId, {
+          modelId: selection.textModelId,
+          ...(selection.imageModelId ? { imageModel: selection.imageModelId } : {}),
+        });
+        text.selectThread(threadId);
+      }
+      setActiveSection("text");
+      setChatFocusRequest((value) => value + 1);
+    }
+  };
 
   const remixImage = (image: ImageRecord) => {
     const threadId = studio.activeThread.id;
@@ -260,17 +342,14 @@ export function App() {
     }
   }, [studio.notice, studio.dismissNotice]);
 
-  useEffect(() => {
-    if (promptFocusRequest === 0 || activeSection !== "create" || !studio.ready)
-      return;
-    const timeout = window.setTimeout(() => {
-      const prompt = document.getElementById("prompt");
-      if (!prompt) return;
-      prompt.scrollIntoView({ behavior: "smooth", block: "center" });
-      prompt.focus({ preventScroll: true });
-    }, 0);
-    return () => window.clearTimeout(timeout);
-  }, [activeSection, promptFocusRequest, studio.ready]);
+  useLayoutEffect(() => {
+    if (activeSection !== "create" || promptFocusRequest === handledPromptFocusRequest.current) return;
+    const prompt = document.getElementById("prompt");
+    if (!prompt) return;
+    handledPromptFocusRequest.current = promptFocusRequest;
+    prompt.focus({ preventScroll: true });
+    prompt.scrollIntoView({ block: "nearest" });
+  }, [activeSection, promptFocusRequest]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -311,64 +390,81 @@ export function App() {
         document.querySelector('[aria-modal="true"]')
       )
         return;
-      const key = event.key.toLowerCase();
-      if (key === "k") {
-        event.preventDefault();
-        setCommandPaletteOpen(true);
-      } else if (key === "n" && event.shiftKey) {
-        event.preventDefault();
-        newAudioThread();
-      } else if (key === "n" && event.altKey) {
-        event.preventDefault();
-        newTextThread();
-      } else if (key === "n") {
-        event.preventDefault();
-        newThread();
-      } else if (key === "l") {
-        event.preventDefault();
-        openLibrary();
-      } else if (key === "b") {
-        event.preventDefault();
-        setSidebarCollapsed((value) => !value);
-      }
+      const actions = {
+        commands: openCommands,
+        image: newThread, speech: newAudioThread, chat: newTextThread, images: openLibrary,
+        sidebar: toggleSidebar,
+      };
+      const match = (Object.keys(shortcuts) as Array<keyof typeof shortcuts>).find((key) => matchesShortcut(event, shortcuts[key]));
+      if (!match) return;
+      event.preventDefault();
+      if (match !== "commands" && match !== "sidebar") onSidebarNavigate();
+      actions[match]();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [newThread, newAudioThread, newTextThread, openLibrary]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem("fern-sidebar-collapsed", String(sidebarCollapsed));
-    } catch {
-      // Layout preference is optional.
-    }
-  }, [sidebarCollapsed]);
+  }, [newThread, newAudioThread, newTextThread, openLibrary, openCommands, toggleSidebar, onSidebarNavigate]);
 
   const previewUrl = studio.preview
     ? resolveAssetUrl(studio.preview.url, studio.preview.mtime)
     : null;
+  const canReuseRenderSettings = !!studio.preview?.width && !!studio.preview.height &&
+    (!studio.preview.model || studio.preview.model === studio.settings.model ||
+      studio.status?.installedModels?.some((model) => model.id === studio.preview?.model && model.installed !== false));
+  const reuseRenderSettings = () => {
+    const image = studio.preview;
+    if (!image || !canReuseRenderSettings || !image.width || !image.height) return;
+    studio.updateSettings({
+      width: image.width,
+      height: image.height,
+      ...(image.model ? { model: image.model } : {}),
+      ...(image.steps !== undefined ? { steps: image.steps } : {}),
+      ...(image.guidance !== undefined ? { guidance: image.guidance } : {}),
+      ...(image.seed !== undefined ? { seed: image.seed, seedLocked: true } : {}),
+    }, studio.activeThread.id);
+    setInspectorView("settings");
+    notify("Render settings applied to the next image.");
+  };
   const startupDialogOpen = !runtimeDismissed;
+  const connectionPending = studio.connecting || !studio.status;
+  const connectionError = studio.connectionError ??
+    (studio.ready && !studio.status && !studio.connecting ? studio.error : null);
+  const showImageRuntimeStatus = activeSection === "create" &&
+    (connectionPending || studio.runtimeNeedsAttention ||
+      (!imageSetupNeeded && (studio.status?.model.checking || studio.runtimeLoading)));
+  const connectionStatus = studio.connecting
+    ? "Connecting to Fern…"
+    : connectionError
+      ? "Fern’s local service is unavailable."
+      : !studio.status ? "Connecting to Fern…" : null;
   return (
     <div className="app-shell">
       <a className="skip-link" href="#main-content">
         Skip to workspace
       </a>
       <TitleBar
-        sidebarCollapsed={sidebarCollapsed}
-        onToggleSidebar={() => setSidebarCollapsed((value) => !value)}
+        sidebarCollapsed={sidebarIsCollapsed}
+        sidebarToggleRef={sidebarToggleRef}
+        onToggleSidebar={toggleSidebar}
         theme={studio.settings.theme}
         onToggleTheme={() =>
           studio.updateSettings({
             theme: studio.settings.theme === "dark" ? "light" : "dark",
           })
         }
-        onOpenCommands={() => setCommandPaletteOpen(true)}
+        onOpenCommands={openCommands}
       />
 
       <div
-        className={`app-body${sidebarCollapsed ? " is-sidebar-collapsed" : ""}`}
+        className={`app-body${sidebarIsCollapsed ? " is-sidebar-collapsed" : ""}${sidebarOverlayOpen ? " has-sidebar-overlay" : ""}`}
       >
+        {sidebarOverlayOpen ? (
+          <div className="sidebar-overlay-scrim" aria-hidden="true" onClick={() => closeSidebarOverlay("opener")} />
+        ) : null}
         <StudioSidebar
+          sidebarRef={sidebarRef}
+          onNavigate={onSidebarNavigate}
+          onExpandForNew={compactLayout && !sidebarOverlayOpen ? toggleSidebar : undefined}
           threads={studio.threads}
           audioThreads={tts.threads}
           textThreads={text.threads}
@@ -401,9 +497,10 @@ export function App() {
           onRenameThread={studio.renameThread}
           onDeleteThread={studio.deleteThread}
           submitting={studio.submitting}
-          collapsed={sidebarCollapsed}
+          collapsed={sidebarIsCollapsed}
           activeSection={activeSection}
           onOpenLibrary={openLibrary}
+          openingImages={openingImages}
           onOpenModels={openModels}
           onOpenData={openStorage}
           onOpenPreferences={openPreferences}
@@ -411,36 +508,40 @@ export function App() {
 
         <main
           id="main-content"
+          tabIndex={-1}
           className={`dashboard dashboard--${activeSection}`}
         >
-          {activeSection === "models" ? <Suspense fallback={<div className="dashboard-loading" role="status">Opening models…</div>}><ModelsView category={modelCategory} onCategoryChange={setModelCategory} text={text} audio={tts} /></Suspense> : null}
+          <h1 className="sr-only">Fern workspace</h1>
+          {activeSection === "models" ? <Suspense fallback={<div className="dashboard-loading" role="status">Opening models…</div>}><ModelsView category={modelCategory} onCategoryChange={setModelCategory} text={text} audio={tts} setup={modelSetup} onReturnToDraft={returnToDraft} intelAvailable={intelAvailable} /></Suspense> : null}
           {activeSection === "storage" ? <Suspense fallback={<div className="dashboard-loading" role="status">Opening storage…</div>}><StorageView
             active={activeSection === "storage"}
             running={studio.running || tts.status.status === "running" || tts.status.status === "setting_up" || tts.status.status === "stopping" || text.busy}
-            onResetLocalData={async () => { await studio.resetLocalData(); tts.resetWorkspace(); text.resetWorkspace(); }}
+            onOpenModels={openModels}
+            onResetLocalData={async () => { await studio.resetLocalData(); tts.resetWorkspace(); text.resetWorkspace(); saveModelSetup(null); setModelSetup(null); }}
           /></Suspense> : null}
           {activeSection === "preferences" ? <Suspense fallback={<div className="dashboard-loading" role="status">Opening preferences…</div>}><PreferencesView
             active={activeSection === "preferences"}
+            computeFocusRequest={computeFocusRequest}
+            onReturnToChat={computeFocusRequest ? () => { setComputeFocusRequest(0); setActiveSection("text"); setChatFocusRequest((value) => value + 1); } : undefined}
             theme={studio.settings.theme}
-            sidebarCollapsed={sidebarCollapsed}
+            sidebarCollapsed={wideSidebarCollapsed}
+            compactLayout={compactLayout}
             modelStatus={studio.status?.model ?? null}
-            allowCpu={compute.allowCpu}
             computeDevice={compute.device}
-            onAllowCpuChange={(allowCpu) => compute.updatePreference({ allowCpu })}
-            onComputeDeviceChange={(device) => compute.updatePreference({ device })}
+            onComputeDeviceChange={(device) => compute.updatePreference({ device, allowCpu: device === "CPU" })}
             onToggleTheme={() =>
               studio.updateSettings({
                 theme: studio.settings.theme === "dark" ? "light" : "dark",
               })
             }
-            onToggleSidebar={() => setSidebarCollapsed((value) => !value)}
+            onToggleSidebar={toggleWideSidebar}
           /></Suspense> : null}
 
           {activeSection === "models" || activeSection === "preferences" ||
           activeSection === "storage" ? null : activeSection === "text" ? (
-            <Suspense fallback={<div className="dashboard-loading" role="status">Opening text workspace…</div>}><TextWorkspace studio={text} sidebarCollapsed={sidebarCollapsed} /></Suspense>
+            <Suspense fallback={<div className="dashboard-loading" role="status">Opening text workspace…</div>}><TextWorkspace studio={text} sidebarCollapsed={sidebarIsCollapsed} onSetupModels={openModelSetup} focusRequest={chatFocusRequest} intelAvailable={intelAvailable} onOpenImage={openImage} onCreateImage={newThread} onCreateSpeech={newAudioThread} onOpenCompute={openComputePreferences} /></Suspense>
           ) : activeSection === "tts" ? (
-            <Suspense fallback={<div className="dashboard-loading" role="status">Opening audio workspace…</div>}><Qwen3TtsWorkspace studio={tts} /></Suspense>
+            <Suspense fallback={<div className="dashboard-loading" role="status">Opening audio workspace…</div>}><Qwen3TtsWorkspace studio={tts} sidebarCollapsed={sidebarIsCollapsed} /></Suspense>
           ) : activeSection === "create" ? (
             <section
               className={`create-view${inspectorView ? " has-inspector" : ""}`}
@@ -448,27 +549,14 @@ export function App() {
             >
               <header className="workspace-header">
                 <div className="workspace-heading">
-                  <h2 id="create-heading" title={studio.activeThread.title}>
-                    {studio.activeThread.title}
-                  </h2>
-                  <select
-                    className={`thread-switcher${sidebarCollapsed ? " is-visible" : ""}`}
-                    aria-label="Open thread"
-                    value={studio.activeThread.id}
-                    onChange={(event) => openThread(event.target.value)}
-                  >
-                    {studio.threads
-                      .filter(
-                        (thread) =>
-                          !thread.archived ||
-                          thread.id === studio.activeThread.id,
-                      )
-                      .map((thread) => (
-                        <option key={thread.id} value={thread.id}>
-                          {thread.title}
-                        </option>
-                      ))}
-                  </select>
+                  <WorkspaceThreadTitle
+                    id="create-heading"
+                    thread={studio.activeThread}
+                    threads={studio.threads}
+                    switchLabel="Open thread"
+                    sidebarCollapsed={sidebarIsCollapsed}
+                    onSwitch={openThread}
+                  />
                   <span
                     className="workspace-heading-divider"
                     aria-hidden="true"
@@ -476,7 +564,7 @@ export function App() {
                     /
                   </span>
                   <span>
-                    {studio.status?.model.selectedModel === "qwen21-turbo"
+                    {!studio.status ? "Checking models…" : imageSetupNeeded ? "No image model" : studio.status.model.selectedModel === "qwen21-turbo"
                       ? "Qwen Image 2.1 Turbo"
                       : studio.status?.model.selectedModel === "flux3-klein"
                         ? "FLUX.3 Klein · INT4"
@@ -490,31 +578,7 @@ export function App() {
                   </span>
                 </div>
                 <div className="workspace-header-actions">
-                  {studio.activeThreadRunning ? (
-                    <div className="generation-header-status">
-                      <span className="generation-elapsed" role="timer">
-                        {studio.stateLabel}
-                      </span>
-                      <Button
-                        variant="secondary"
-                        className="generation-stop"
-                        onClick={() => void studio.stopGeneration()}
-                        disabled={studio.stopping}
-                        aria-label={
-                          studio.stopping
-                            ? "Stopping generation"
-                            : "Stop generation"
-                        }
-                      >
-                        <Square
-                          size={10}
-                          fill="currentColor"
-                          aria-hidden="true"
-                        />
-                        {studio.stopping ? "Stopping…" : "Stop"}
-                      </Button>
-                    </div>
-                  ) : studio.running && studio.status?.job.threadId ? (
+                  {studio.running && !studio.activeThreadRunning && studio.status?.job.threadId ? (
                     <button
                       type="button"
                       className="workspace-settings-button"
@@ -547,6 +611,7 @@ export function App() {
                     onDelete={deleteImage}
                     onOpenImage={openImage}
                     mode="create"
+                    onSetupModel={imageSetupNeeded ? () => openModelSetup("image") : undefined}
                     preview={studio.preview}
                     images={studio.threadImages}
                     logs={
@@ -555,6 +620,10 @@ export function App() {
                         : []
                     }
                     running={studio.activeThreadRunning}
+                    stopping={studio.stopping}
+                    phase={studio.runtimeLoading ? studio.runtimeStatus?.message : undefined}
+                    elapsed={studio.elapsed}
+                    onStop={() => void studio.stopGeneration()}
                     onSelectPreview={studio.setPreview}
                     onRemix={remixImage}
                     onRemixInNewThread={remixInNewThread}
@@ -567,6 +636,7 @@ export function App() {
                     }
                   />
                   <PromptComposer
+                    onManageModels={() => openModelSetup("image")}
                     installedModels={studio.status?.installedModels}
                     onReferenceBusy={setReferenceBusy}
                     key={`composer-${studio.activeThread.id}`}
@@ -577,7 +647,6 @@ export function App() {
                     referenceImages={studio.referenceImages}
                     running={studio.activeThreadRunning}
                     submitting={studio.submitting}
-                    stopping={studio.stopping}
                     ready={
                       studio.modelInstalled &&
                       !studio.connecting &&
@@ -606,7 +675,7 @@ export function App() {
                   ref={inspectorRef}
                   id="generation-inspector"
                   className="generation-inspector"
-                  aria-label={renderInfoOpen ? "Render info" : "Image settings"}
+                  aria-label={renderInfoOpen ? "Selected image" : "Next image"}
                   hidden={!inspectorView}
                   data-view={inspectorView ?? undefined}
                 >
@@ -621,7 +690,7 @@ export function App() {
                         aria-pressed={inspectorOpen}
                         onClick={() => setInspectorView("settings")}
                       >
-                        Image settings
+                        Next image
                       </Button>
                       <Button
                         variant="ghost"
@@ -629,7 +698,7 @@ export function App() {
                         disabled={!studio.preview}
                         onClick={() => setInspectorView("info")}
                       >
-                        Render info
+                        Selected image
                       </Button>
                     </div>
                     <IconButton
@@ -695,7 +764,10 @@ export function App() {
                     />
                   </div>
                   {renderInfoOpen && studio.preview ? (
-                    <PreviewMetadataHud image={studio.preview} />
+                    <div className="selected-render-details">
+                      <PreviewMetadataHud image={studio.preview} />
+                      {canReuseRenderSettings ? <Button variant="secondary" onClick={reuseRenderSettings}>Use render settings</Button> : null}
+                    </div>
                   ) : null}
                 </aside>
               </div>
@@ -706,9 +778,10 @@ export function App() {
               className="library-view"
               aria-labelledby="library-view-heading"
             >
-              <PageHeader className="library-view-header" id="library-view-heading" title="Library" description="Review, search, and remix every image Fern has created on this device." actions={
+              <PageHeader className="library-view-header" id="library-view-heading" title="Images" actions={
                 <div className="workspace-header-actions">
                   <Button
+                    variant="ghost"
                     onClick={() =>
                       void window.studio
                         .openOutputsFolder()
@@ -721,12 +794,12 @@ export function App() {
                   >
                     <FolderOpen size={14} aria-hidden="true" /> Open folder
                   </Button>
-                  <Button variant="primary"
+                  {studio.status?.images?.length ? <Button variant="primary"
                     onClick={newThread}
                   >
                     <Plus size={14} aria-hidden="true" />
-                    New thread
-                  </Button>
+                    Create image
+                  </Button> : null}
                 </div>
               } />
               <OutputWorkspace
@@ -735,6 +808,7 @@ export function App() {
                 onDelete={deleteImage}
                 onOpenImage={openImage}
                 mode="library"
+                onCreateImage={newThread}
                 preview={studio.preview}
                 images={studio.status?.images ?? []}
                 logs={studio.status?.job.logs ?? []}
@@ -776,6 +850,8 @@ export function App() {
         <RuntimeLoadingDialog
           onDismiss={() => setRuntimeDismissed(true)}
           runtime={studio.runtimeStatus}
+          connecting={studio.connecting || !studio.ready || !studio.status}
+          connectionError={connectionError}
           onRetry={() => void studio.retryRuntime()}
           onOpenPreferences={() => {
             setRuntimeDismissed(true);
@@ -789,39 +865,30 @@ export function App() {
           image={lightboxImage}
           images={viewerImages}
           onSelect={setLightboxImage}
-          onRemix={remixImage}
+          onRemix={activeSection === "text" ? remixInNewThread : remixImage}
           onRemixInNewThread={remixInNewThread}
           onDelete={deleteImage}
           onClose={() => setLightboxImage(null)}
         />
       )}
       <Notifications />
-      {threadBrowserOpen ? (
+      {threadSearchQuery !== null ? (
         <ThreadBrowser
-          threads={[...studio.threads, ...tts.threads, ...text.threads]}
-          onOpen={openThread}
-          onClose={() => setThreadBrowserOpen(false)}
+          threads={searchableThreads}
+          initialQuery={threadSearchQuery}
+          onOpen={(id) => { onSidebarNavigate(); openThread(id); }}
+          onClose={() => setThreadSearchQuery(null)}
         />
       ) : null}
-      {activeSection !== "tts" && activeSection !== "text" && runtimeDismissed &&
-      !studio.running &&
-      (studio.runtimeNeedsAttention ||
-        studio.status?.model.checking ||
-        studio.runtimeLoading ||
-        studio.connecting ||
-        !studio.status ||
-        !studio.ready) ? (
+      {runtimeDismissed && !studio.running && (connectionError || showImageRuntimeStatus) ? (
         <div className="runtime-banner" role="status">
           <span>
-            {!studio.status
-              ? "Connecting to Fern…"
-              : studio.status.model.checking
-                ? studio.status.model.runtimeNote
-                : (studio.runtimeStatus?.message ??
-                  "Generation is unavailable.")}
+            {connectionStatus ?? (studio.status?.model.checking
+              ? studio.status.model.runtimeNote
+              : studio.runtimeStatus?.message ?? "Generation is unavailable.")}
           </span>
           <button type="button" onClick={() => setRuntimeDismissed(false)}>
-            Generation status
+            {connectionError || connectionPending ? "Connection details" : "Generation status"}
           </button>
         </div>
       ) : null}
@@ -850,12 +917,24 @@ export function App() {
           </button>
         </div>
       ) : null}
+      {modelSetup && activeSection !== "models" && !studio.running && !text.busy &&
+        (modelSetup.task === "image"
+          ? activeSection !== "create" || studio.activeThread.id !== modelSetup.threadId
+          : activeSection !== "text" || text.activeThread.id !== modelSetup.threadId) ? (
+        <div className="runtime-banner model-setup-return">
+          <span>Model setup</span>
+          <button type="button" onClick={() => returnToDraft()}>Return to draft</button>
+        </div>
+      ) : null}
       <CommandPalette
         open={commandPaletteOpen}
+        threads={searchableThreads}
+        onOpenThread={openThread}
+        onOpenThreadSearch={setThreadSearchQuery}
         running={studio.running}
         audioRunning={tts.status.status === "running" || tts.status.status === "setting_up" || tts.status.status === "stopping"}
         textRunning={text.status.job.status === "running" || text.threads.some((thread) => !!thread.pendingJobId)}
-        sidebarCollapsed={sidebarCollapsed}
+        sidebarCollapsed={sidebarIsCollapsed}
         onClose={() => setCommandPaletteOpen(false)}
         onNewRender={newThread}
         onNewAudio={newAudioThread}
@@ -870,7 +949,7 @@ export function App() {
             theme: studio.settings.theme === "dark" ? "light" : "dark",
           })
         }
-        onToggleSidebar={() => setSidebarCollapsed((value) => !value)}
+        onToggleSidebar={toggleSidebar}
         onStop={() => void studio.stopGeneration()}
         onStopAudio={() => void tts.stopJob()}
         onStopText={() => void text.stop()}

@@ -1,4 +1,4 @@
-"""Registry for user-added local OpenVINO text-generation models."""
+"""Registry for local OpenVINO and GGUF chat models."""
 from __future__ import annotations
 
 import hashlib
@@ -9,6 +9,7 @@ import threading
 from pathlib import Path
 from typing import Any
 from defusedxml import ElementTree
+from gguf_metadata import is_projector, read_metadata
 
 
 REQUIRED_FILES = (
@@ -23,11 +24,43 @@ REQUIRED_FILES = (
 )
 
 
-def inspect_model(path: str | Path, *, validate_ir: bool = False) -> dict[str, Any]:
+def inspect_gguf(file: Path, projector_path: str | Path | None) -> dict[str, Any]:
+    metadata = read_metadata(file)
+    if is_projector(metadata):
+        raise ValueError("Select the language model GGUF along with the optional vision projector.")
+    template = metadata.get("tokenizer.chat_template", "")
+    if not template.strip():
+        raise ValueError("Choose an instruction-tuned GGUF with a built-in chat template.")
+    projector = None
+    if projector_path:
+        projector = Path(projector_path).expanduser().resolve(strict=True)
+        if not is_projector(read_metadata(projector)):
+            raise ValueError("The second GGUF file must be a vision projector for this model.")
+    architecture = metadata["general.architecture"]
+    name = re.sub(r"[\r\n\t]+", " ", metadata.get("general.name", file.stem)).strip()[:100]
+    return {
+        "id": hashlib.sha256(os.path.normcase(str(file)).encode("utf-8")).hexdigest()[:16],
+        "name": name or file.stem,
+        "path": str(file),
+        "format": "gguf",
+        "architecture": architecture,
+        "modelType": architecture,
+        "projectorPath": str(projector) if projector else None,
+        "supportsVision": projector is not None,
+        "supportsReasoning": "enable_thinking" in template,
+        "supportsTools": bool(re.search(r"\btools\b", template) and "tool_calls" in template),
+    }
+
+
+def inspect_model(path: str | Path, *, projector_path: str | Path | None = None, validate_ir: bool = False) -> dict[str, Any]:
     try:
         folder = Path(path).expanduser().resolve(strict=True)
     except OSError as error:
-        raise ValueError("The model folder is missing or cannot be read. Choose the export folder again.") from error
+        raise ValueError("The model location is missing or cannot be read. Choose it again.") from error
+    if folder.is_file() and folder.suffix.lower() == ".gguf":
+        return inspect_gguf(folder, projector_path)
+    if projector_path:
+        raise ValueError("A vision projector requires a GGUF language model.")
     if not folder.is_dir():
         raise ValueError("Choose a folder containing an OpenVINO text model.")
     missing = [name for name in REQUIRED_FILES if not (folder / name).is_file()]
@@ -103,27 +136,32 @@ class TextModelRegistry:
         for item in self._read():
             current = item
             try:
-                inspected = inspect_model(item["path"])
+                inspected = inspect_model(item["path"], projector_path=item.get("projectorPath"))
                 ready = True
                 reason = None
-                current = {**item, **{key: inspected[key] for key in ("name", "architecture", "modelType")}}
+                current = {**item, **inspected, "id": item["id"], "path": item["path"]}
             except (KeyError, OSError, TypeError, ValueError) as error:
                 ready = False
                 reason = str(error)
             result.append({**current, "installed": ready, "error": reason})
         return result
 
-    def add(self, path: str) -> dict[str, Any]:
+    def add(self, path: str, projector_path: str | None = None) -> dict[str, Any]:
         with self._lock:
-            return self._add(path)
+            return self._add(path, projector_path)
 
-    def _add(self, path: str) -> dict[str, Any]:
-        model = inspect_model(path, validate_ir=True)
+    def _add(self, path: str, projector_path: str | None) -> dict[str, Any]:
+        model = inspect_model(path, projector_path=projector_path, validate_ir=True)
         models = self._read()
-        existing = next((item for item in models if item.get("id") == model["id"]), None)
-        if existing:
-            return next(item for item in self.snapshot() if item["id"] == model["id"])
-        models.append(model)
+        for index, item in enumerate(models):
+            if item["id"] != model["id"]:
+                continue
+            if not projector_path or item.get("projectorPath") == model.get("projectorPath"):
+                return next(item for item in self.snapshot() if item["id"] == model["id"])
+            models[index] = model
+            break
+        else:
+            models.append(model)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temp = self.path.with_suffix(self.path.suffix + ".tmp")
         temp.write_text(json.dumps({"schemaVersion": 1, "models": models}, indent=2), encoding="utf-8")

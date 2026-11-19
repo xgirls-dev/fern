@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { app } from "electron";
 import { getProjectRoot } from "./project-root";
 
@@ -26,13 +26,17 @@ function getSourceRoot(): string {
 }
 
 export function getAppIconPath(): string {
+  const icon = process.platform === "linux" ? "icon.png" : "icon.ico";
   return app.isPackaged
-    ? join(process.resourcesPath, "icon.ico")
-    : join(app.getAppPath(), "resources", "icon.ico");
+    ? join(process.resourcesPath, icon)
+    : join(app.getAppPath(), "resources", icon);
 }
 
 export function getPythonExecutable(): string {
   if (app.isPackaged) {
+    if (process.platform === "linux") {
+      return join(process.resourcesPath, "runtime", "python-home", "bin", "python3.12");
+    }
     return join(app.getPath("userData"), "runtime", "python-home", "python.exe");
   }
   const root = getSourceRoot();
@@ -73,13 +77,14 @@ export function getOutputsDir(): string {
 }
 
 export function getPythonEnvironment(): NodeJS.ProcessEnv {
-  const bundledPythonHome = app.isPackaged
+  const useExtractedRuntime = app.isPackaged && process.platform === "win32";
+  const bundledPythonHome = useExtractedRuntime
     ? join(app.getPath("userData"), "runtime", "python-home")
     : undefined;
-  const bundledSitePackages = app.isPackaged
+  const bundledSitePackages = useExtractedRuntime
     ? join(app.getPath("userData"), "runtime", "site-packages")
     : undefined;
-  return {
+  const env: NodeJS.ProcessEnv = {
     ...process.env,
     PYTHONUNBUFFERED: "1",
     PYTHONDONTWRITEBYTECODE: "1",
@@ -95,9 +100,16 @@ export function getPythonEnvironment(): NodeJS.ProcessEnv {
       ? {
           PYTHONPATH: [bundledSitePackages, process.env.PYTHONPATH]
             .filter(Boolean)
-            .join(";"),
+            .join(delimiter),
         }
       : {}),
   };
+  if (app.isPackaged && process.platform === "linux") {
+    // The system Python configuration must not override the packaged interpreter.
+    delete env.PYTHONHOME;
+    delete env.PYTHONPATH;
+    env.PYTHONNOUSERSITE = "1";
+  }
+  return env;
 }
 

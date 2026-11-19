@@ -6,7 +6,7 @@ import type {
   DeviceId,
 } from "./types";
 import { repairMojibakeDeep } from "./text";
-import type { TextModel, TextRuntimeStatus } from "./textThreads";
+import type { GeneratedChatImage, TextModel, TextRuntimeStatus } from "./textThreads";
 
 let apiBaseUrl = "";
 let cachedImages: FluxStatusResponse["images"] = [];
@@ -140,11 +140,40 @@ export function fetchTextStatus(): Promise<TextRuntimeStatus> {
   return requestJson<TextRuntimeStatus>("/api/text/status", { signal: AbortSignal.timeout(15_000) });
 }
 
-export function addTextModel(path: string): Promise<{ model: TextModel; models: TextModel[] }> {
+export function recoverChatImage(threadId: string, jobId: string): Promise<{ image: GeneratedChatImage | null }> {
+  const query = new URLSearchParams({ threadId, jobId });
+  return requestJson(`/api/text/recover-image?${query}`, { signal: AbortSignal.timeout(15_000) });
+}
+
+export function inspectChatImage(payload: {
+  requestId: string;
+  threadId: string;
+  modelId: string;
+  image: string;
+  device: "AUTO" | "GPU" | "CPU";
+}): Promise<{ job: TextRuntimeStatus }> {
+  return requestJson("/api/text/inspect-image", {
+    method: "POST",
+    signal: AbortSignal.timeout(30_000),
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function addTextModel(source: string | string[]): Promise<{ model: TextModel; models: TextModel[] }> {
   return requestJson("/api/text/models/import", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ path }),
+    body: JSON.stringify(typeof source === "string" ? { path: source } : { ggufPaths: source }),
+  });
+}
+
+export function uploadChatImage(image: string): Promise<{ image: string }> {
+  return requestJson("/api/text/images", {
+    method: "POST",
+    signal: AbortSignal.timeout(30_000),
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ image }),
   });
 }
 
@@ -169,7 +198,10 @@ export function startTextGeneration(payload: {
   threadId: string;
   modelId: string;
   device: "AUTO" | "GPU" | "CPU";
-  messages: Array<{ role: "user" | "assistant"; content: string }>;
+  messages: Array<{ role: "user" | "assistant"; content: string; image?: string; generatedImage?: string; includedImage?: string }>;
+  mode?: "instant" | "reasoning";
+  imageModel?: string;
+  contextSize?: number;
   systemPrompt: string;
   temperature: number;
   topP: number;

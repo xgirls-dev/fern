@@ -79,12 +79,12 @@ export function SegmentedControl<T extends string>({ label, value, options, onCh
 export function PageHeader({ id, title, description, actions, titleRef, className = "" }: {
   id: string;
   title: string;
-  description: ReactNode;
+  description?: ReactNode;
   actions?: ReactNode;
   titleRef?: Ref<HTMLHeadingElement>;
   className?: string;
 }) {
-  return <header className={`ui-page-header ${className}`}><div><h2 id={id} ref={titleRef} tabIndex={-1}>{title}</h2><p>{description}</p></div>{actions}</header>;
+  return <header className={`ui-page-header ${className}`}><div><h2 id={id} ref={titleRef} tabIndex={-1}>{title}</h2>{description && <p>{description}</p>}</div>{actions}</header>;
 }
 
 export function ModelCard({ className = "", ...props }: ComponentProps<"article">) {

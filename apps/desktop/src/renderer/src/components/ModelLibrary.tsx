@@ -6,7 +6,7 @@ import { Button, Checkbox, ErrorMessage, InlineConfirmation, Input, ModelCard, M
 import { getApiBaseUrl } from "../lib/api";
 import { isKleinLoraModel } from "../lib/imageModels";
 import { useReturnFocus } from "../hooks/useReturnFocus";
-interface InstalledModel {
+export interface InstalledModel {
   id: string;
   label: string;
   bytes: number;
@@ -16,6 +16,7 @@ interface InstalledModel {
   phase?: string;
   logs?: string[];
   runtimeReady?: boolean;
+  setupUnavailableReason?: string | null;
   supportsReferenceImage?: boolean;
   error?: string;
   family?: string;
@@ -50,8 +51,12 @@ const CUSTOM_IMAGE_FAMILIES = [
   ["flux2-klein", "FLUX.2 Klein"],
   ["lcm", "Latent Consistency Model"],
 ] as const;
-export function ModelLibrary() {
+export function ModelLibrary({ recommendedId, onCatalogChange }: {
+  recommendedId?: string;
+  onCatalogChange?: (models: InstalledModel[]) => void;
+}) {
   const [models, setModels] = useState<InstalledModel[]>([]);
+  useEffect(() => onCatalogChange?.(models), [models, onCatalogChange]);
   const [error, setError] = useState("");
   const [actionError, setActionError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -276,7 +281,7 @@ export function ModelLibrary() {
       {error ? <ErrorMessage>{error}</ErrorMessage> : null}
       {actionError ? <ErrorMessage>{actionError}</ErrorMessage> : null}
       <div className="model-library-grid">
-        {models.map((model) => (
+        {(recommendedId ? [...models].sort((a, b) => Number(b.id === recommendedId) - Number(a.id === recommendedId)) : models).map((model) => (
           <ModelCard
             className={model.id === "qwen21-turbo" ? "model-library-card-qwen" : model.id === "flux3-klein" ? "model-library-card-flux3" : model.id.startsWith("tame-pony-") || model.id.startsWith("custom-") ? "model-library-card-sdxl" : ""}
             key={model.id}
@@ -457,6 +462,7 @@ export function ModelLibrary() {
                 <ul>{model.logs.slice(-12).map((line, index) => <li key={`${index}-${line}`}>{line}</li>)}</ul>
               </details>
             ) : null}
+            {!model.installed && model.setupUnavailableReason ? <p>{model.setupUnavailableReason}</p> : null}
             <ModelCardActions>
               {model.id.startsWith("custom-") ? (
                 remove === model.id ? (
@@ -495,9 +501,9 @@ export function ModelLibrary() {
                 >
                   Pause
                 </Button>
-              ) : !model.installed && model.state !== "repair-needed" ? (
+              ) : !model.installed && !model.setupUnavailableReason && !["repair-needed", "checking-runtime"].includes(model.state) ? (
                 <Button
-
+                  variant={model.id === recommendedId ? "primary" : "secondary"}
                   disabled={actionsUnavailable || downloading}
                   onClick={() => void action(model.id, "install")}
                 >

@@ -62,6 +62,10 @@ const browserStudio: StudioApi = {
   },
   minimizeWindow: async () => undefined,
   toggleMaximizeWindow: async () => false,
+  onWindowMaximizedChanged: (listener) => {
+    listener(false);
+    return () => undefined;
+  },
   closeWindow: async () => undefined,
   openOutputsFolder: async () => "",
   openPath: async () => "",
@@ -75,6 +79,7 @@ const browserStudio: StudioApi = {
   pickReferenceImage: async () => null,
   pickLoraFiles: async () => [],
   pickTextModelFolder: async () => null,
+  pickGgufFiles: async () => [],
   pickCustomImageModelFolder: async () => selectedCustomImageFolder,
   saveImageAs: async () => null,
   writeImageFile: async () => "",

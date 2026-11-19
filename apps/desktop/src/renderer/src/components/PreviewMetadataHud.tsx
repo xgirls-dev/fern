@@ -81,7 +81,7 @@ export function PreviewMetadataHud({ image }: PreviewMetadataHudProps) {
     rows.push({ label: "LoRAs", value: image.loras.map((lora) => `${lora.name} (${lora.strength})`).join(", ") });
   if (image.device)
     rows.push({ label: "Device", value: formatDevice(image.device) });
-  if (image.model)
+  if (image.model || image.modelLabel)
     rows.push({
       label: "Model used",
       value: image.modelLabel ?? (image.model === "qwen21-turbo"
@@ -90,7 +90,7 @@ export function PreviewMetadataHud({ image }: PreviewMetadataHudProps) {
           ? "FLUX.3 Klein · INT4"
           : image.model === "tame-pony-v25-sdxl" || image.model === "tame-pony-v25-sdxl-int8"
             ? image.model.endsWith("-int8") ? "Tame Pony · SDXL INT8" : "Tame Pony · SDXL"
-          : isKleinLoraModel(image.model) ? `FLUX.2 ${kleinLoraLabel(image.model)}` : `FLUX.2 Klein ${image.model.toUpperCase()}`),
+          : isKleinLoraModel(image.model) ? `FLUX.2 ${kleinLoraLabel(image.model)}` : `FLUX.2 Klein ${image.model?.toUpperCase()}`),
     });
   if (image.modelRevision)
     rows.push({ label: "Model revision", value: image.modelRevision });

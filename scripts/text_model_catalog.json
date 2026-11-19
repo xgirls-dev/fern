@@ -14,5 +14,18 @@
       {"path":"tokenizer_config.json","size":9377,"algorithm":"git-sha1","digest":"51c1be0d9192e7f6e6596de71d0f07d58fbc32ac"},
       {"path":"vocab.json","size":2776833,"algorithm":"git-sha1","digest":"4783fe10ac3adce15ac8f358ef5462739852c569"}
     ]
+  },
+  "gemma-4-e4b-gguf": {
+    "name": "Gemma 4 E4B · GGUF",
+    "repo": "ggml-org/gemma-4-E4B-it-GGUF",
+    "revision": "8903cb408c7df39cde2ed15fac397e6d7be92951",
+    "folder": "gemma-4-e4b-gguf",
+    "format": "gguf",
+    "modelFile": "gemma-4-E4B-it-Q4_0.gguf",
+    "projectorFile": "mmproj-gemma-4-E4B-it-Q8_0.gguf",
+    "files": [
+      {"path":"gemma-4-E4B-it-Q4_0.gguf","size":4590807392,"algorithm":"sha256","digest":"a555b900214b477d8880e7832e0b8925e139b0159640036b09fe472b6f2097f2"},
+      {"path":"mmproj-gemma-4-E4B-it-Q8_0.gguf","size":559874848,"algorithm":"sha256","digest":"9257f21a0f5358204b4a612cff83fad2e56412f4f607f0049331ce60c0cf9d34"}
+    ]
   }
 }

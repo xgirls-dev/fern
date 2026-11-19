@@ -1,38 +1,94 @@
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import AudioLines from "lucide-react/dist/esm/icons/audio-lines.mjs";
 import { Button, ErrorMessage, ModelCard, ModelCardActions, ModelCardHeading, ModelStatus, PageHeader, SegmentedControl } from "./ui/controls";
 import type { useTextChat } from "../hooks/useTextChat";
 import type { useQwen3Tts } from "../hooks/useQwen3Tts";
-import { ModelLibrary } from "./ModelLibrary";
+import { ModelLibrary, type InstalledModel } from "./ModelLibrary";
 import { TextModelLibrary } from "./TextModelLibrary";
+import type { ModelSetup, SetupSelection } from "../lib/modelSetup";
 
 export type ModelCategory = "image" | "text" | "audio";
-export function ModelsView({ category: tab, onCategoryChange, text, audio }: {
+export function ModelsView({ category: tab, onCategoryChange, text, audio, setup, onReturnToDraft, intelAvailable }: {
   category: ModelCategory;
   onCategoryChange: (category: ModelCategory) => void;
   text: ReturnType<typeof useTextChat>; audio: ReturnType<typeof useQwen3Tts>;
+  setup: ModelSetup | null;
+  onReturnToDraft: (selection?: SetupSelection) => void;
+  intelAvailable?: boolean;
 }) {
   const heading = useRef<HTMLHeadingElement>(null);
   const body = useRef<HTMLDivElement>(null);
+  const [imageCatalog, setImageCatalog] = useState<InstalledModel[]>([]);
+  const needsVision = setup?.task === "chat-image";
+  const needsText = setup?.task !== "image";
+  const needsImage = setup?.task !== "chat";
+  const installedText = text.status.models.find((model) => model.installed &&
+    (model.format === "gguf" ? text.status.ggufAvailable === true : text.status.runtimeAvailable) &&
+    (!needsVision || (model.supportsVision && model.supportsTools)));
+  const recommendedText = text.status.recommendedModels?.find((model) =>
+    needsVision ? model.format === "gguf" && text.status.ggufAvailable === true : model.id === text.status.defaultModelId);
+  const installedTool = text.status.imageToolModels?.[0];
+  const installedImage = needsVision ? installedTool : imageCatalog.find((model) => model.installed && ["4b", "9b"].includes(model.id));
+  const recommendedImage = imageCatalog.find((model) => model.id === "4b" && !model.setupUnavailableReason);
+  const visionBlock = needsVision && (text.computeDevice === "CPU"
+    ? "Select GPU in Preferences to generate images in chat."
+    : intelAvailable === false ? "Image generation in chat requires an available Intel GPU." : null);
+  const selection = {
+    textModelId: needsText ? installedText?.id : undefined,
+    imageModelId: needsImage ? installedImage?.id : undefined,
+  };
+  const setupReady = (!needsText || !!selection.textModelId) && (!needsImage || !!selection.imageModelId) && !visionBlock;
   useEffect(() => heading.current?.focus(), []);
   useLayoutEffect(() => { if (body.current) body.current.scrollTop = 0; }, [tab]);
   return <section className="shell-page models-view" aria-labelledby="models-view-title">
-    <PageHeader className="shell-page-header" id="models-view-title" title="Models" description="Install and manage the models that power your threads." titleRef={heading} />
-    <SegmentedControl className="models-category-bar" label="Model categories" value={tab} onChange={onCategoryChange} options={[{ value: "image", label: "Image" }, { value: "text", label: "Text" }, { value: "audio", label: "Audio" }]} />
+    <PageHeader
+      className="shell-page-header"
+      id="models-view-title"
+      title="Models"
+      titleRef={heading}
+      actions={<SegmentedControl label="Model categories" value={tab} onChange={onCategoryChange} options={[{ value: "image", label: "Image" }, { value: "text", label: "Text" }, { value: "audio", label: "Audio" }]} />}
+    />
+    {setup ? <section className="model-setup-summary" aria-label="Draft setup">
+      <div className="model-setup-summary-copy">
+        <strong>{needsVision ? "Images in chat" : needsText ? "Chat model" : "Image generation"}</strong>
+        {needsText && <div className="model-setup-requirement">
+          {needsVision && <span className="model-setup-role">Chat and vision</span>}
+          <span>{installedText ? `${installedText.name} · Installed` :
+            recommendedText ? `${recommendedText.name} · ${(recommendedText.bytes / 1e9).toFixed(2)} GB download` :
+            text.statusLoaded ? "Choose a compatible chat model." : "Checking chat models…"}</span>
+        </div>}
+        {needsImage && <div className="model-setup-requirement">
+          {needsVision && <span className="model-setup-role">Image creation</span>}
+          <span>{installedImage ? `${installedImage.label} · Installed` :
+            recommendedImage ? `${recommendedImage.label} · ${(recommendedImage.bytes / 1e9).toFixed(2)} GB download` :
+            "Choose an image model."}</span>
+        </div>}
+        {visionBlock ? <span>{visionBlock}</span> : null}
+      </div>
+      <div className="model-setup-summary-actions">
+        {needsVision && !installedText && tab !== "text" && <Button variant="ghost" onClick={() => onCategoryChange("text")}>Choose chat model</Button>}
+        {needsVision && installedText && !installedImage && tab !== "image" && <Button variant="ghost" onClick={() => onCategoryChange("image")}>Choose image model</Button>}
+        {setupReady ? <Button variant="primary" onClick={() => onReturnToDraft(selection)}>Use {needsVision ? "models" : "model"} in draft</Button> : null}
+        <Button variant="secondary" onClick={() => onReturnToDraft()}>Return to draft</Button>
+      </div>
+    </section> : null}
     <div className="shell-page-body models-body" ref={body}>
-      <div hidden={tab !== "image"}><ModelLibrary /></div>
-      {tab === "text" ? <TextModelLibrary studio={text} /> : tab === "audio" ? <section aria-label="Audio models">
+      <div hidden={tab !== "image"}><ModelLibrary recommendedId={setup && needsImage ? recommendedImage?.id : undefined} onCatalogChange={setImageCatalog} /></div>
+      {tab === "text" ? <TextModelLibrary studio={text} recommendedId={setup ? recommendedText?.id : undefined} /> : tab === "audio" ? <section aria-label="Audio models">
         <div className="models-section-heading"><div><h3>Audio models</h3><p>Qwen3-TTS voice generation and cloning.</p></div></div>
         {audio.statusError || audio.error ? <ErrorMessage>{audio.statusError || audio.error}</ErrorMessage> : null}
         {!audio.statusLoaded ? <p role="status">Checking audio models…</p> : null}
+        {audio.status.setupUnavailableReason ? <p className="model-library-note">{audio.status.setupUnavailableReason}</p> : null}
         <div className="model-library-grid">{audio.status.models.map((model) => {
           const settingUp = audio.status.operation === "setup" && audio.status.model === model.id && audio.status.status === "setting_up";
+          const ready = model.ready ?? model.installed;
           return <ModelCard key={model.id}>
             <ModelCardHeading icon={<AudioLines size={17} />}><h4>{model.label}</h4></ModelCardHeading>
             <p>{model.kind === "base" ? "Clone a voice from a recording" : model.kind === "voice_design" ? "Describe and create a voice" : "Generate speech with preset voices"}</p>
-            <ModelStatus installed={model.installed}>{model.installed ? "Installed" : settingUp ? audio.status.phase || "Installing…" : "Not installed"}</ModelStatus>
+            {model.bytes ? <p>{(model.bytes / 1e9).toFixed(2)} GB</p> : null}
+            <ModelStatus installed={model.installed}>{ready ? "Ready" : settingUp ? audio.status.phase || "Installing…" : model.installed ? "Installed · speech runtime required" : "Not installed"}</ModelStatus>
             {settingUp ? <progress aria-label={`${model.label} installation`} /> : null}
-            <ModelCardActions><Button disabled={audio.busy || text.busy || model.installed} onClick={() => void audio.setupModel(model.id)}>{model.installed ? "Installed" : settingUp ? "Installing…" : "Install"}</Button>{settingUp ? <Button disabled={audio.status.status === "stopping"} onClick={() => void audio.stopJob()}>Cancel</Button> : null}</ModelCardActions>
+            <ModelCardActions>{!ready && !audio.status.setupUnavailableReason ? <Button disabled={!audio.statusLoaded || Boolean(audio.statusError) || audio.busy || text.busy || settingUp} onClick={() => void audio.setupModel(model.id)}>{settingUp ? "Installing…" : model.installed ? "Set up runtime" : "Install"}</Button> : null}{settingUp ? <Button disabled={audio.status.status === "stopping"} onClick={() => void audio.stopJob()}>Cancel</Button> : null}</ModelCardActions>
           </ModelCard>;
         })}</div>
       </section> : null}

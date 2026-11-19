@@ -25,8 +25,8 @@ try {
   };
   await page.waitForTimeout(3300);
   assert.equal(await page.getByRole("dialog").count(), 0);
-  await button("Library").click();
-  assert(await page.locator(".history-grid").isVisible());
+  await button("Images").click();
+  await page.locator(".history-grid").waitFor();
   await button("Stop generation").click();
   assert.equal(state.job.status, "cancelled");
   state.runtime = { status: "idle", message: "Ready", logs: [] };
@@ -53,7 +53,7 @@ try {
   );
   const card = page
     .locator(".thumb-wrap")
-    .filter({ has: button("Review audit-2.png") });
+    .filter({ has: button(/^Review.*audit-2\.png$/) });
   await card.hover();
   await card.locator('.image-menu summary[aria-label="Image actions for audit-2.png"]').click();
   await card.getByRole("button", { name: "Copy prompt", exact: true }).click();
@@ -75,8 +75,8 @@ try {
   );
   await page.locator(".workspace-header").getByRole("button", { name: "Image settings", exact: true }).click();
   const inspectorViews = page.getByRole('group', { name: 'Inspector view' });
-  const settingsView = inspectorViews.getByRole('button', { name: 'Image settings' });
-  const infoView = inspectorViews.getByRole('button', { name: 'Render info' });
+  const settingsView = inspectorViews.getByRole('button', { name: 'Next image' });
+  const infoView = inspectorViews.getByRole('button', { name: 'Selected image' });
   assert.equal(await settingsView.getAttribute('aria-pressed'), 'true');
   assert.equal(Math.round((await settingsView.boundingBox()).height), 32, 'inspector selectors use the shared control height');
   await infoView.click();
@@ -108,7 +108,8 @@ try {
   assert.equal(workspace.threads.length, 1);
   assert.notEqual(workspace.threads[0].id, "study");
   assert.equal(workspace.threads[0].settings.seed, 42);
-  await button("Library").click();
+  await button("Images").click();
+  await page.locator("#library-view").waitFor();
   assert.equal(await page.locator(".thumb-wrap").count(), 0);
   assert.deepEqual(errors, []);
   console.log(

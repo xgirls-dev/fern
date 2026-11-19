@@ -110,3 +110,77 @@ jobs:
             throw "Expected exactly one Fern installer on release $tag, found $($releaseAssets.Count)."
           }
           Write-Host "Published $($releaseAssets[0]) to release $tag."
+
+  omarchy-package:
+    if: >-
+      github.event_name != 'push' ||
+      startsWith(github.ref_name, 'v') ||
+      contains(github.event.head_commit.message, '[publish-release]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && 'main' || github.ref }}
+          persist-credentials: false
+      - name: Build and verify the Omarchy package on Arch Linux
+        run: |
+          mkdir -p "$RUNNER_TEMP/fern-omarchy"
+          docker run --rm \
+            -v "$PWD:/source:ro" \
+            -v "$RUNNER_TEMP/fern-omarchy:/output" \
+            archlinux:base-devel bash -euo pipefail -c '
+              pacman -Syu --needed --noconfirm git nodejs npm uv dbus xorg-server-xvfb xorg-xauth
+              useradd --create-home --user-group builder
+              mkdir /home/builder/fern
+              tar -C /source --exclude=.git -cf - . | tar -C /home/builder/fern -xf -
+              chown -R builder:builder /home/builder/fern
+              cd /home/builder/fern
+              runuser -u builder -- npm ci
+              runuser -u builder -- npm run package:omarchy
+              package=(apps/desktop/release-omarchy/fern-*.pkg.tar.zst)
+              test "${#package[@]}" -eq 1
+              test -s "${package[0]}"
+              pacman -U --noconfirm "${package[0]}"
+              python=/opt/fern/resources/runtime/python-home/bin/python3.12
+              runuser -u builder -- "$python" -B -m unittest discover -s tests -p "test_*.py"
+              runuser -u builder -- env FERN_E2E_EXECUTABLE=/usr/bin/fern FERN_E2E_VISIBLE=1 \
+                dbus-run-session -- xvfb-run -a node apps/desktop/e2e/smoke.mjs
+              install -m644 "${package[0]}" /output/
+            '
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fern-omarchy
+          path: ${{ runner.temp }}/fern-omarchy/*.pkg.tar.zst
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+
+  publish-omarchy:
+    needs: [windows-installer, omarchy-package]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && 'main' || github.ref }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: fern-omarchy
+          path: release-omarchy
+      - name: Add the Omarchy package to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          if [[ $GITHUB_REF_TYPE == tag ]]; then
+            tag=$GITHUB_REF_NAME
+          else
+            tag=${RELEASE_TAG:-v$(jq -r .version package.json)}
+          fi
+          package=(release-omarchy/fern-*.pkg.tar.zst)
+          test "${#package[@]}" -eq 1
+          test -s "${package[0]}"
+          gh release upload "$tag" "${package[0]}" --clobber

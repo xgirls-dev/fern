@@ -31,6 +31,7 @@ export interface AudioOutput {
 export interface AudioThread {
   id: string;
   title: string;
+  renamed?: boolean;
   archived: boolean;
   updatedAt: number;
   model: QwenTtsModel;

@@ -13,12 +13,16 @@ import X from "lucide-react/dist/esm/icons/x.mjs";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useModalFocus } from "../hooks/useModalFocus";
 import { IconButton, Input } from "./ui/controls";
+import { shortcutLabel, shortcuts } from "../lib/workspaceNavigation";
 
 interface CommandPaletteProps {
   open: boolean;
   running: boolean;
   audioRunning: boolean;
   textRunning: boolean;
+  threads: Array<{ id: string; title: string; updatedAt: number; archived?: boolean; excerpt?: string }>;
+  onOpenThread: (id: string) => void;
+  onOpenThreadSearch: (query: string) => void;
   sidebarCollapsed: boolean;
   onClose: () => void;
   onNewRender: () => void;
@@ -50,6 +54,9 @@ export function CommandPalette({
   running,
   audioRunning,
   textRunning,
+  threads,
+  onOpenThread,
+  onOpenThreadSearch,
   sidebarCollapsed,
   onClose,
   onNewRender,
@@ -83,21 +90,21 @@ export function CommandPalette({
     () => [
       {
         id: "new-render",
-        label: "New image thread",
+        label: shortcuts.image.label,
         description: "Start a new image generation thread",
-        shortcut: "Ctrl N",
+        shortcut: shortcutLabel(shortcuts.image),
         icon: <Sparkles size={16} aria-hidden="true" />,
         onSelect: onNewRender,
       },
-      { id: "new-audio", label: "New audio thread", description: "Start a Qwen3-TTS thread", shortcut: "Ctrl Shift N", icon: <AudioLines size={16} aria-hidden="true" />, onSelect: onNewAudio },
+      { id: "new-audio", label: shortcuts.speech.label, description: "Start a Qwen3-TTS thread", shortcut: shortcutLabel(shortcuts.speech), icon: <AudioLines size={16} aria-hidden="true" />, onSelect: onNewAudio },
       { id: "open-audio", label: "Open audio workspace", description: "Return to the selected audio thread", icon: <AudioLines size={16} aria-hidden="true" />, onSelect: onOpenAudio },
-      { id: "new-text", label: "New text thread", description: "Start a local LLM conversation", shortcut: "Ctrl Alt N", icon: <MessageSquare size={16} aria-hidden="true" />, onSelect: onNewText },
-      { id: "open-text", label: "Open text workspace", description: "Return to the selected text thread", icon: <MessageSquare size={16} aria-hidden="true" />, onSelect: onOpenText },
+      { id: "new-text", label: shortcuts.chat.label, description: "Start a local conversation", shortcut: shortcutLabel(shortcuts.chat), icon: <MessageSquare size={16} aria-hidden="true" />, onSelect: onNewText },
+      { id: "open-text", label: "Open current chat", description: "Return to the selected chat", icon: <MessageSquare size={16} aria-hidden="true" />, onSelect: onOpenText },
       {
         id: "library",
-        label: "Open library",
+        label: shortcuts.images.label,
         description: "Browse recent renders",
-        shortcut: "Ctrl L",
+        shortcut: shortcutLabel(shortcuts.images),
         icon: <Images size={16} aria-hidden="true" />,
         onSelect: onOpenLibrary,
       },
@@ -106,7 +113,7 @@ export function CommandPalette({
         id: "toggle-sidebar",
         label: sidebarCollapsed ? "Show sidebar" : "Hide sidebar",
         description: "Change the workspace layout",
-        shortcut: "Ctrl B",
+        shortcut: shortcutLabel(shortcuts.sidebar),
         icon: <PanelLeft size={16} aria-hidden="true" />,
         onSelect: onToggleSidebar,
       },
@@ -166,15 +173,37 @@ export function CommandPalette({
     ],
   );
 
-  const filteredActions = useMemo(() => {
-    const normalized = query.trim().toLowerCase();
-    if (!normalized) return actions;
-    return actions.filter((action) =>
-      `${action.label} ${action.description}`
-        .toLowerCase()
-        .includes(normalized),
-    );
-  }, [actions, query]);
+  const normalized = query.trim().toLowerCase();
+  const searchAllThreads: PaletteAction = {
+    id: "search-all-threads",
+    label: "Search all threads",
+    description: "Filter by type or find archived work",
+    icon: <Search size={16} aria-hidden="true" />,
+    onSelect: () => onOpenThreadSearch(query.trim()),
+  };
+  const matchingCommands = actions.filter((action) => `${action.label} ${action.description}`.toLowerCase().includes(normalized));
+  const recentThreads: PaletteAction[] = open ? threads
+    .filter((thread) => !thread.archived && `${thread.title} ${thread.excerpt ?? ""}`.toLowerCase().includes(normalized))
+    .sort((a, b) => b.updatedAt - a.updatedAt)
+    .slice(0, normalized ? 20 : 6)
+    .map((thread) => {
+      const kind = thread.id.startsWith("text-thread-") ? "Chat" : thread.id.startsWith("audio-thread-") ? "Speech" : "Image";
+      const Icon = kind === "Chat" ? MessageSquare : kind === "Speech" ? AudioLines : Images;
+      const date = Number.isFinite(thread.updatedAt) ? new Date(thread.updatedAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "";
+      const duplicate = threads.some((other) => other.id !== thread.id && !other.archived && other.title === thread.title);
+      const excerpt = thread.excerpt?.trim().replace(/\s+/g, " ").slice(0, 90);
+      const description = [kind, duplicate && excerpt ? excerpt : date].filter(Boolean).join(" · ");
+      const duplicateDate = duplicate && threads.some((other) => other.id !== thread.id && !other.archived &&
+        other.title === thread.title && other.excerpt?.trim() === thread.excerpt?.trim() &&
+        Math.floor(other.updatedAt / 60_000) === Math.floor(thread.updatedAt / 60_000));
+      return { id: `thread-${thread.id}`, label: thread.title, description: duplicateDate ? `${description} · ${thread.id.slice(-6)}` : description, icon: <Icon size={16} aria-hidden="true" />, onSelect: () => onOpenThread(thread.id) };
+    }) : [];
+  const groups = [
+    { label: "Commands", actions: matchingCommands },
+    { label: "Recent threads", actions: recentThreads },
+    { label: "Thread search", actions: normalized ? [searchAllThreads] : [] },
+  ];
+  const filteredActions = groups.flatMap((group) => group.actions);
 
   const selectedIndex = Math.min(
     activeIndex,
@@ -240,8 +269,8 @@ export function CommandPalette({
               setActiveIndex(0);
             }}
             onKeyDown={onSearchKeyDown}
-            placeholder="Search Fern commands…"
-            aria-label="Search Fern commands"
+            placeholder="Search commands or threads…"
+            aria-label="Search commands or threads"
             role="combobox"
             aria-expanded="true"
             aria-controls="fern-command-options"
@@ -262,31 +291,28 @@ export function CommandPalette({
           </IconButton>
         </div>
 
-        <div className="command-palette-heading">
-          <div>
-            <p className="eyebrow">Command palette</p>
-            <h2 id="command-palette-title">What do you want to do?</h2>
-          </div>
-          <span className="command-palette-hint">
-            <span className="kbd">Esc</span>
-          </span>
-        </div>
+        <h2 id="command-palette-title" className="sr-only">Commands</h2>
 
         <div
           ref={listRef}
           className="command-palette-list"
           id="fern-command-options"
           role="listbox"
-          aria-label="Fern commands"
+          aria-label="Commands and threads"
+          tabIndex={-1}
         >
           {filteredActions.length > 0 ? (
-            filteredActions.map((action, index) => (
+            groups.filter((group) => group.actions.length).map((group) => <div key={group.label} role="group" aria-label={group.label}>
+              <div className="command-palette-group-label" aria-hidden="true">{group.label}</div>
+              {group.actions.map((action) => {
+                const index = filteredActions.indexOf(action);
+                return (
               <button
                 key={action.id}
                 id={`command-${action.id}`}
                 tabIndex={-1}
                 type="button"
-                className={`command-palette-action${index === selectedIndex ? " is-active" : ""}`}
+                className="command-palette-action"
                 role="option"
                 aria-selected={index === selectedIndex}
                 onMouseMove={() => { keyboardNavigation.current = false; setActiveIndex(index); }}
@@ -303,11 +329,13 @@ export function CommandPalette({
                   </span>
                 ) : null}
               </button>
-            ))
+                );
+              })}
+            </div>)
           ) : (
             <div className="command-palette-empty">
               <ArrowDownUp size={17} aria-hidden="true" />
-              <span>No matching commands.</span>
+              <span>No matching commands or threads.</span>
             </div>
           )}
         </div>
@@ -318,7 +346,7 @@ export function CommandPalette({
             <span className="kbd">↓</span> Navigate
           </span>
           <span>
-            <span className="kbd">↵</span> Run command
+            <span className="kbd">↵</span> Open result
           </span>
           <span>
             <span className="kbd">Esc</span> Close
