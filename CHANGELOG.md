@@ -6,12 +6,18 @@ lands directly on `main` instead of through labeled pull requests.
 
 ## [Unreleased]
 
+## [0.1.45] - 2026-11-19
+
 ### Added
 
-- Omarchy x86-64 beta package with bundled Python and OpenVINO, FLUX.2 Klein, and managed GGUF chat and vision.
-- Install Gemma 4 E4B or import local GGUF chat models in the Text model library.
-- Attach images with a matching GGUF projector and select Instant or Reasoning on supported models.
-- Generate images inside chat with tool-capable text models and an installed FLUX.2 Klein model.
+- Install **Kromoss OPD · DMD2** on Windows with a compatible Intel GPU. It uses the OPD 69,800 Q4_K weights and the matching eight-step adapter. Create Image defaults to 512 × 512 and also offers 1024 × 1024. Chat generates at 512 × 512.
+- Install **SANA-Sprint**, **MOSS Image HaDeS**, and **Z-Image Turbo** from Models on Windows with a compatible Intel GPU. Fern downloads the pinned Vulkan runtime when needed.
+- Animate a first frame with **Wan 2.2 Turbo** in the Video workspace on Windows with a compatible Intel GPU. Play clips in Fern or save them as WebM.
+- Install **Gemma 4 E4B** or import local GGUF chat models. Attach images with a matching vision projector and switch between Instant and Reasoning on supported models.
+- Generate images in Chat with a tool-capable vision model and an installed compatible image model. Fern inspects the result before replying and carries recent images into follow-up turns. Choose a 4K, 8K, or 16K chat context.
+- Download the **Omarchy x86-64 beta** package with bundled Python and OpenVINO. The beta supports FLUX.2 Klein, GGUF chat and vision, and image generation in Chat.
+
+Full changelog on [GitHub](https://github.com/xgirls-dev/fern/compare/v0.1.44...v0.1.45).
 
 ## [0.1.44] - 2026-11-17
 
