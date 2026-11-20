@@ -203,6 +203,9 @@ def generate(*, model_dir: Path, selections: list[dict[str, Any]], prompt: str,
     if len(images) > 4:
         raise ValueError("FLUX.2 Klein supports up to 4 reference images in Fern.")
     multiple_references = len(images) > 1
+    # The 9B INT4 graph can produce tiled noise when GenAI updates adapters at run time.
+    # Set the enabled adapters and their strengths when compiling the transformer.
+    static_adapters = str(model_size).lower() == "9b" and any(selection.get("enabled", True) for selection in selections)
     encoder_key = None
     if optional_encoder_dir is not None:
         encoder_files = [optional_encoder_dir / name for name in ("config.json", "openvino_model.xml", "openvino_model.bin")]
@@ -216,8 +219,8 @@ def generate(*, model_dir: Path, selections: list[dict[str, Any]], prompt: str,
         adapter_files.append((str(path), stat.st_mtime_ns, stat.st_size))
     static_strengths = tuple(
         (selection.get("enabled", True), float(selection["strength"])) for selection in selections
-    ) if multiple_references else ()
-    key = (str(model_dir), min(len(images), 2), encoder_key, tuple(adapter_files), static_strengths)
+    ) if multiple_references or static_adapters else ()
+    key = (str(model_dir), min(len(images), 2), encoder_key, tuple(adapter_files), static_strengths, static_adapters)
     if _cache["key"] != key or _cache["pipeline"] is None:
         release()
         temporary = tempfile.TemporaryDirectory(prefix="fern-lora-", dir=model_dir.parent)
@@ -231,6 +234,8 @@ def generate(*, model_dir: Path, selections: list[dict[str, Any]], prompt: str,
             if multiple_references:
                 pipeline = _multi_image_pipeline(pipeline_dir, adapters, selections)
             else:
+                if static_adapters:
+                    config = _active_adapters(genai, adapters, selections, static=True)
                 pipeline_class = genai.Image2ImagePipeline if images else genai.Text2ImagePipeline
                 properties = {}
                 if compile_cache is not None and not images and not selections and optional_encoder_dir is None:
@@ -264,8 +269,9 @@ def generate(*, model_dir: Path, selections: list[dict[str, Any]], prompt: str,
                           callback_on_step_end=on_step_end, **options)
         image = result.images[0]
     else:
-        options.update(rng_seed=int(seed), callback=callback,
-                       adapters=_active_adapters(genai, _cache["adapters"], selections))
+        options.update(rng_seed=int(seed), callback=callback)
+        if not static_adapters:
+            options["adapters"] = _active_adapters(genai, _cache["adapters"], selections)
         if images:
             import numpy as np
             import openvino as ov
