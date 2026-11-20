@@ -217,11 +217,18 @@ class GGUFServer:
                     f"Linux could not load Vulkan. {_LINUX_DRIVER_HELP}" if sys.platform == "linux" else
                     "Windows could not load Vulkan. Install or update your Intel graphics driver, then retry."
                 ) from error
-        result = subprocess.run(
-            [str(executable), "--list-devices"], cwd=executable.parent,
-            env=env, capture_output=True, check=self.backend != "vulkan", timeout=20, creationflags=flags,
-            text=True, encoding="utf-8", errors="replace",
-        )
+        try:
+            result = subprocess.run(
+                [str(executable), "--list-devices"], cwd=executable.parent,
+                env=env, capture_output=True, check=self.backend != "vulkan",
+                timeout=75 if self.backend == "metal" else 20, creationflags=flags,
+                text=True, encoding="utf-8", errors="replace",
+            )
+        except subprocess.TimeoutExpired as error:
+            if self.backend != "metal":
+                raise
+            output = ((error.stdout or b"") + (error.stderr or b"")).decode("utf-8", errors="replace")
+            raise RuntimeError(f"Timed out while detecting the Apple GPU. {output[-1600:]}") from error
         devices = result.stdout + result.stderr
         if self.backend == "openvino":
             match = re.search(rf"\b(OPENVINO\d+):\s+GGML_OPENVINO_DEVICE={self.device}(?:\s|\.)", devices)

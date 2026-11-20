@@ -30,12 +30,14 @@
     {
       "path": "text_encoder/model.safetensors.index.json",
       "size": 51369,
-      "blob": "a6695de5146c5ccb4f3ffcb103693f015220a2e4"
+      "blob": "a6695de5146c5ccb4f3ffcb103693f015220a2e4",
+      "sha256": "f8b6d410ab678a0b867d5fa82fb15bf2566a2ba68e217fe1da73b3ce9a32e8f3"
     },
     {
       "path": "tokenizer/chat_template.jinja",
       "size": 4168,
-      "blob": "01be9b307daa2d425f7c168c9fb145a286e0afb4"
+      "blob": "01be9b307daa2d425f7c168c9fb145a286e0afb4",
+      "sha256": "a55ee1b1660128b7098723e0abcd92caa0788061051c62d51cbe87d9cf1974d8"
     },
     {
       "path": "tokenizer/tokenizer.json",
@@ -46,7 +48,8 @@
     {
       "path": "tokenizer/tokenizer_config.json",
       "size": 703,
-      "blob": "3ee05b3fdc8db76babb37dbc3730682c4b080b87"
+      "blob": "3ee05b3fdc8db76babb37dbc3730682c4b080b87",
+      "sha256": "12d954e6dd43cefa344345292406442871ea7f3237065d2f068f6a0402f92bf6"
     },
     {
       "path": "transformer/0.safetensors",
@@ -63,7 +66,8 @@
     {
       "path": "transformer/model.safetensors.index.json",
       "size": 26945,
-      "blob": "ab03c374ccf768ba3f5950d370a1e2c29e53b13c"
+      "blob": "ab03c374ccf768ba3f5950d370a1e2c29e53b13c",
+      "sha256": "dc46409ae5d1a10ad3c5b87c615efd1d23e4b9f1c5caf46b8d92e459dadc48b9"
     },
     {
       "path": "vae/0.safetensors",
@@ -74,7 +78,8 @@
     {
       "path": "vae/model.safetensors.index.json",
       "size": 17584,
-      "blob": "034182fb9bdf2c7da9c7fe8798d1a99bb4eb3884"
+      "blob": "034182fb9bdf2c7da9c7fe8798d1a99bb4eb3884",
+      "sha256": "99aab8da8867a7c654e91e3e882179c5d38b9edd993e5d3059c45045c079b3ee"
     }
   ]
 }
