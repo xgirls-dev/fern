@@ -4,7 +4,7 @@
 
 Talk to a model, attach a photo, or ask Fern to make an image right in the conversation. Create and remix images in a dedicated workspace, animate a still, or generate a speech take. Fern runs inference on your machine and keeps your threads, references, and outputs there.
 
-[Download Fern](https://github.com/xgirls-dev/fern/releases/latest) · [Get started](#get-started) · [Platform support](#platform-support) · [Changelog](CHANGELOG.md)
+[Download Fern](https://github.com/xgirls-dev/fern/releases/latest) · [macOS preview](#macos-apple-silicon-preview) · [Get started](#get-started) · [Platform support](#platform-support) · [Changelog](CHANGELOG.md)
 
 ![Fern Chat showing a sharp red fox in the snow, an Image checked label, and Gemma's review of the composition](assets/fern-chat.png)
 
@@ -32,11 +32,17 @@ The package includes Python and OpenVINO. Install the Intel OpenCL and Vulkan dr
 sudo pacman -Syu intel-compute-runtime ocl-icd vulkan-intel vulkan-icd-loader
 ```
 
+### macOS Apple Silicon preview
+
+Download the `Fern-*-macOS-arm64-preview.zip` on an M-series Mac running macOS 15 or later. Extract it, move **Fern.app** to **Applications**, and open it. [Apple Silicon preview](https://github.com/xgirls-dev/fern/releases/tag/v0.1.45-macos-preview.1)
+
+The preview is unnotarized. If macOS blocks the first launch, open **System Settings → Privacy & Security** and choose **Open Anyway**. Install **Gemma 4 E4B · GGUF** for chat and vision and **Klein 4B · MLX** for images. [Apple's first-launch instructions](https://support.apple.com/en-us/102445)
+
 ### Start a session
 
 - **Chat.** Go to **Models → Text**, install **Gemma 4 E4B · GGUF**, then choose **New thread → Chat**. The download includes the language model and its matching vision projector.
 - **Create an image.** Go to **Models → Image** and install a model available for your device. **Klein 4B** is the smaller FLUX.2 option. Choose **New thread → Create image**, select the model, and enter a prompt.
-- **Make an image in Chat.** Install Gemma 4 E4B and a compatible image model such as Klein 4B. On a compatible Intel GPU, keep **Preferences → Compute → Generation device** set to **Available GPU**. In a Gemma chat, choose **Auto** or the installed model under **Chat settings → Image generation**. Try “Create a crisp wildlife photograph of a red fox in fresh snow,” then “What works well in this shot?”
+- **Make an image in Chat.** Install Gemma 4 E4B and a compatible image model such as Klein 4B. Keep **Preferences → Compute → Generation device** set to **Available GPU**. In a Gemma chat, choose **Auto** or the installed model under **Chat settings → Image generation**. Try “Create a crisp wildlife photograph of a red fox in fresh snow,” then “What works well in this shot?”
 
 First loads can take longer while Fern downloads an engine or compiles a model for your device. **Models** shows setup and download progress.
 
@@ -73,20 +79,18 @@ Choose **New thread → Create speech** on Windows. Use a **Qwen3-TTS** preset v
 
 ## Platform support
 
-Fern publishes a Windows x64 installer and an Omarchy x86-64 beta package. The selected model and inference engine determine which devices and controls are available.
-
-| Workflow | Windows x64 | Omarchy x86-64 beta |
-| --- | --- | --- |
-| FLUX.2 Klein images and edits | Intel GPU, or CPU on supported variants. LoRA variants require Intel GPU. | Intel GPU, or CPU on supported variants |
-| Other managed image models | Kromoss, MOSS, Z-Image, and SANA-Sprint require Intel GPU. Check **Models** for other families. | The beta targets FLUX.2 Klein |
-| Chat and vision | OpenVINO or GGUF chat. GGUF vision uses Intel GPU via Vulkan or explicitly selected CPU. | OpenVINO or GGUF chat. GGUF vision uses Intel GPU via Vulkan or explicitly selected CPU. |
-| Images in Chat | Compatible Intel GPU, tool-capable chat model with a vision projector, and supported image model | Same requirements, with a compatible FLUX.2 Klein image model |
-| Wan 2.2 Turbo video | Compatible Intel GPU | Unavailable |
-| Qwen3-TTS speech | Available | Unavailable |
+| Workflow | Windows x64 | Omarchy x86-64 beta | macOS Apple Silicon preview |
+| --- | --- | --- | --- |
+| FLUX.2 Klein images and edits | Intel GPU, or CPU on supported variants. LoRA variants require Intel GPU. | Intel GPU, or CPU on supported variants | Klein 4B · MLX on Apple GPU. 512 × 512 text-to-image. |
+| Other managed image models | Kromoss, MOSS, Z-Image, and SANA-Sprint require Intel GPU. Check **Models** for other families. | The beta targets FLUX.2 Klein | Unavailable |
+| Chat and vision | OpenVINO or GGUF chat. GGUF vision uses Intel GPU via Vulkan or explicitly selected CPU. | OpenVINO or GGUF chat. GGUF vision uses Intel GPU via Vulkan or explicitly selected CPU. | Gemma 4 E4B · GGUF on Metal |
+| Images in Chat | Compatible Intel GPU, tool-capable chat model with a vision projector, and supported image model | Same requirements, with a compatible FLUX.2 Klein image model | Gemma 4 E4B and Klein 4B · MLX on Apple GPU |
+| Wan 2.2 Turbo video | Compatible Intel GPU | Unavailable | Unavailable |
+| Qwen3-TTS speech | Available | Unavailable | Unavailable |
 
 **Available GPU** is the default in Preferences. Choose **CPU** explicitly for models that support it. NVIDIA on Windows requires a build with the matching OpenVINO NVIDIA plugin and a model that supports that path.
 
-Text-only GGUF uses llama.cpp with OpenVINO. GGUF vision on Intel uses llama.cpp with Vulkan. Fern downloads the pinned engines as needed. Your operating system supplies the graphics drivers.
+On Windows and Omarchy, text-only GGUF uses llama.cpp with OpenVINO, and GGUF vision on Intel uses llama.cpp with Vulkan. On Apple Silicon, llama.cpp uses Metal for GGUF chat and vision. Fern downloads pinned engines as needed. Your operating system supplies the graphics drivers.
 
 ## Models, storage, and privacy
 

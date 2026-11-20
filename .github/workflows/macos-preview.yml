@@ -69,3 +69,50 @@ jobs:
           name: fern-macos-gpu-proof
           path: ${{ runner.temp }}/fern-preview/proof
           retention-days: 7
+
+  publish:
+    if: github.event_name == 'push' && contains(github.event.head_commit.message, '[publish-macos-preview]')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: write
+    env:
+      GH_REPO: ${{ github.repository }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Publish the verified Apple Silicon package
+        run: |
+          set -euo pipefail
+          tested_sha=$(gh api "repos/$GH_REPO/commits/$GITHUB_SHA" --jq '.parents[0].sha')
+          run_id=$(gh run list --workflow macos-preview.yml --commit "$tested_sha" \
+            --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+          test -n "$run_id"
+          passed=$(gh run view "$run_id" --json jobs --jq \
+            '[.jobs[] | select(.conclusion == "success") | .name] | sort == ["build", "gpu-smoke"]')
+          test "$passed" = true
+
+          cd "$RUNNER_TEMP"
+          gh run download "$run_id" --name fern-macos-arm64-preview
+          packages=(Fern-*-macOS-arm64-preview.zip)
+          test "${#packages[@]}" = 1
+          package="${packages[0]}"
+          test -f "$package"
+          version=${package#Fern-}
+          version=${version%-macOS-arm64-preview.zip}
+          tag="v$version-macos-preview.1"
+          sha256sum "$package" > "$package.sha256"
+
+          cat > macos-preview-notes.md <<EOF
+          Fern's first Apple Silicon preview runs on M-series Macs with macOS 15 or later. It includes Gemma 4 E4B chat and vision on Metal and Klein 4B image generation on MLX.
+
+          1. Download and extract `$package`, then move Fern.app to Applications.
+          2. Open Fern. If macOS blocks the first launch, go to **System Settings → Privacy & Security → Open Anyway**. This preview uses an ad-hoc signature and is unnotarized. [Apple's first-launch instructions](https://support.apple.com/en-us/102445)
+          3. In **Models**, install **Gemma 4 E4B · GGUF** and **Klein 4B · MLX**. Allow about 10 GB for both model downloads and extra space for caches and outputs.
+
+          The [GPU test](https://github.com/$GH_REPO/actions/runs/$run_id) passed chat, vision, 512 × 512 image generation, and a chat turn that generated, inspected, and retained a fox image. Performance on a physical Mac still needs testing. This preview covers chat, vision, and text-to-image.
+          EOF
+
+          gh release create "$tag" "$package" "$package.sha256" \
+            --prerelease --latest=false --target "$tested_sha" \
+            --title "Fern for Mac · Apple Silicon Preview 1" --notes-file macos-preview-notes.md
