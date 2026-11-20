@@ -4,7 +4,7 @@
 
 Talk to a model, attach a photo, or ask Fern to make an image right in the conversation. Create and remix images in a dedicated workspace, animate a still, or generate a speech take. Fern runs inference on your machine and keeps your threads, references, and outputs there.
 
-[Download Fern](https://github.com/xgirls-dev/fern/releases/latest) · [macOS preview](#macos-apple-silicon-preview) · [Get started](#get-started) · [Platform support](#platform-support) · [Changelog](CHANGELOG.md)
+[Download Fern](https://github.com/xgirls-dev/fern/releases/latest) · [macOS preview](#macos-apple-silicon-preview) · [Get started](#get-started) · [Platform support](#platform-support) · [Benchmarks](benchmarks/v0.1.45-intel-iris-xe.md) · [Changelog](CHANGELOG.md)
 
 ![Fern Chat showing a sharp red fox in the snow, an Image checked label, and Gemma's review of the composition](assets/fern-chat.png)
 
@@ -91,6 +91,10 @@ Choose **New thread → Create speech** on Windows. Use a **Qwen3-TTS** preset v
 **Available GPU** is the default in Preferences. Choose **CPU** explicitly for models that support it. NVIDIA on Windows requires a build with the matching OpenVINO NVIDIA plugin and a model that supports that path.
 
 On Windows and Omarchy, text-only GGUF uses llama.cpp with OpenVINO, and GGUF vision on Intel uses llama.cpp with Vulkan. On Apple Silicon, llama.cpp uses Metal for GGUF chat and vision. Fern downloads pinned engines as needed. Your operating system supplies the graphics drivers.
+
+## Benchmarks
+
+On Intel Iris Xe, SANA-Sprint reached visible output in **76.9 seconds on the first run and 7.5 seconds on repeat**. The Windows v0.1.45 benchmark covers ten image, video, and speech workloads plus 24 multi-turn Gemma responses. It includes the settings and runtime cache observations. [Intel Iris Xe benchmark](benchmarks/v0.1.45-intel-iris-xe.md)
 
 ## Models, storage, and privacy
 

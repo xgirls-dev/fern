@@ -1,0 +1,800 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-11-20",
+  "host": {
+    "operatingSystem": "Microsoft Windows 11 Pro",
+    "osBuild": "22621",
+    "architecture": "x86_64",
+    "gpu": "Intel Iris Xe Graphics",
+    "driver": "32.0.101.7084",
+    "ramBytes": 34052562944,
+    "publishedExecutableSha256": "4de614b36f1cd10d76bd97e264971b8c4b5727a6b4d42d4813fc1cda4fac1735"
+  },
+  "conditions": {
+    "firstRun": "new Electron session with existing weights and disk caches",
+    "repeatRun": "immediate repetition in the same session",
+    "samplesPerCondition": 1
+  },
+  "standalone": [
+    {
+      "id": "sana",
+      "device": "INTEL_GPU",
+      "model": "sana-sprint",
+      "build": "published Windows v0.1.45",
+      "modelRevision": "eae070fed7402d391ceae7365f896a2829183bdf",
+      "width": 512,
+      "height": 512,
+      "steps": 2,
+      "guidance": 4.5,
+      "seed": 994286815,
+      "prompt": "A bright red ceramic mug on a cream tabletop, centered, with a blue background.",
+      "textEncoder": "default",
+      "runs": [
+        {
+          "number": 1,
+          "generationSeconds": 8.4,
+          "clickToCompletionSeconds": 76.687,
+          "clickToOutputSeconds": 76.898,
+          "modelLoadObserved": true
+        },
+        {
+          "number": 2,
+          "generationSeconds": 6.4,
+          "clickToCompletionSeconds": 7.486,
+          "clickToOutputSeconds": 7.495,
+          "modelLoadObserved": false
+        }
+      ]
+    },
+    {
+      "id": "moss",
+      "device": "INTEL_GPU",
+      "model": "moss-hades",
+      "build": "published Windows v0.1.45",
+      "modelRevision": "9f90d0af89480cfac37041d56e90dbcb261bd0c5",
+      "width": 384,
+      "height": 384,
+      "steps": 4,
+      "guidance": 1,
+      "seed": 994286815,
+      "prompt": "A bright red ceramic mug on a cream tabletop, centered, with a blue background.",
+      "textEncoder": "default",
+      "runs": [
+        {
+          "number": 1,
+          "generationSeconds": 50.3,
+          "clickToCompletionSeconds": 53.072,
+          "clickToOutputSeconds": 53.559,
+          "modelLoadObserved": true
+        },
+        {
+          "number": 2,
+          "generationSeconds": 38.8,
+          "clickToCompletionSeconds": 39.683,
+          "clickToOutputSeconds": 39.694,
+          "modelLoadObserved": false
+        }
+      ]
+    },
+    {
+      "id": "kromoss",
+      "device": "INTEL_GPU",
+      "model": "kromoss-opd-dmd2",
+      "build": "published Windows v0.1.45",
+      "modelRevision": "a24c012d64029298143bab35e2b1d5057c61d329",
+      "width": 512,
+      "height": 512,
+      "steps": 8,
+      "guidance": 1,
+      "seed": 994286815,
+      "prompt": "A bright red ceramic mug on a cream tabletop, centered, with a blue background.",
+      "textEncoder": "default",
+      "runs": [
+        {
+          "number": 1,
+          "generationSeconds": 151.0,
+          "clickToCompletionSeconds": 154.548,
+          "clickToOutputSeconds": 154.814,
+          "modelLoadObserved": true
+        },
+        {
+          "number": 2,
+          "generationSeconds": 135.6,
+          "clickToCompletionSeconds": 136.028,
+          "clickToOutputSeconds": 136.053,
+          "modelLoadObserved": false
+        }
+      ]
+    },
+    {
+      "id": "z-image",
+      "device": "INTEL_GPU",
+      "model": "z-image-turbo",
+      "build": "published Windows v0.1.45",
+      "modelRevision": "4c3f5026570df4c8a831731a594dd79e32e56efd",
+      "width": 512,
+      "height": 512,
+      "steps": 8,
+      "guidance": 1,
+      "seed": 994286815,
+      "prompt": "A bright red ceramic mug on a cream tabletop, centered, with a blue background.",
+      "textEncoder": "default",
+      "runs": [
+        {
+          "number": 1,
+          "generationSeconds": 187.0,
+          "clickToCompletionSeconds": 188.637,
+          "clickToOutputSeconds": 189.502,
+          "modelLoadObserved": true
+        },
+        {
+          "number": 2,
+          "generationSeconds": 179.1,
+          "clickToCompletionSeconds": 180.18,
+          "clickToOutputSeconds": 180.192,
+          "modelLoadObserved": false
+        }
+      ]
+    },
+    {
+      "id": "klein-4b-civbot",
+      "device": "INTEL_GPU",
+      "model": "4b-lora",
+      "build": "published Windows v0.1.45",
+      "modelRevision": "ce9983685156b50dd947b2992ef7412bab7313bd",
+      "width": 512,
+      "height": 512,
+      "steps": 4,
+      "guidance": 1,
+      "seed": 994286815,
+      "prompt": "civbot, a small blue robot on a grey tabletop.",
+      "textEncoder": "default",
+      "adapter": {
+        "label": "Civbot Flux.2 Klein 4B Epoch 30",
+        "strength": 1,
+        "sha256": "f8462536352cb9a5437971eaf75e849262bc5a1c29fc0fcb52170239982d12e7"
+      },
+      "runs": [
+        {
+          "number": 1,
+          "generationSeconds": 54.9,
+          "clickToCompletionSeconds": 103.539,
+          "clickToOutputSeconds": 103.577,
+          "modelLoadObserved": true
+        },
+        {
+          "number": 2,
+          "generationSeconds": 49.0,
+          "clickToCompletionSeconds": 49.173,
+          "clickToOutputSeconds": 49.994,
+          "modelLoadObserved": false
+        }
+      ]
+    },
+    {
+      "id": "klein-4b-four-refs",
+      "device": "INTEL_GPU",
+      "model": "4b-lora",
+      "build": "published Windows v0.1.45",
+      "modelRevision": "ce9983685156b50dd947b2992ef7412bab7313bd",
+      "width": 384,
+      "height": 384,
+      "steps": 4,
+      "guidance": 1,
+      "seed": 994286815,
+      "prompt": "civbot, a small blue robot standing on a workshop table, inspired by the four reference images.",
+      "textEncoder": "default",
+      "adapter": {
+        "label": "Civbot Flux.2 Klein 4B Epoch 30",
+        "strength": 1,
+        "sha256": "f8462536352cb9a5437971eaf75e849262bc5a1c29fc0fcb52170239982d12e7"
+      },
+      "orderedReferenceSha256": [
+        "0c4a4a1e9cbc019ba433f2ef4329f35125977fbb9680a7e34f1a95acb0db60eb",
+        "b549922d6545e2caa8a84995f36c7be836e520408691a989d076282aae540068",
+        "bd20aac26c7547614e17c3e4dae27bc354358458bf3122cd2e7c051b62b92ec0",
+        "cb54fa061d3ff4abe7c3c035ec1ae3866cac88eccceaaa3c6b29794f0d8a0582"
+      ],
+      "runs": [
+        {
+          "number": 1,
+          "generationSeconds": 216.4,
+          "clickToCompletionSeconds": 270.272,
+          "clickToOutputSeconds": 270.333,
+          "modelLoadObserved": true
+        },
+        {
+          "number": 2,
+          "generationSeconds": 221.3,
+          "clickToCompletionSeconds": 221.741,
+          "clickToOutputSeconds": 221.787,
+          "modelLoadObserved": false
+        }
+      ]
+    },
+    {
+      "id": "klein-9b-two-refs",
+      "device": "INTEL_GPU",
+      "model": "9b-lora",
+      "build": "published Windows v0.1.45",
+      "modelRevision": "d86c12a559e245d8347465a0c43ad6d93ba5514b",
+      "width": 256,
+      "height": 256,
+      "steps": 4,
+      "guidance": 1,
+      "seed": 994286815,
+      "prompt": "arcane_visual_style. Place the blue robot from Image 1 in the golden field from Image 2. Keep the robot blue.",
+      "textEncoder": "default",
+      "adapter": {
+        "label": "DeverStyle Arcane",
+        "strength": 1,
+        "sha256": "18c7c42859ddef8913244823858207c6eb1600c2fb7d9180841e8cd39fcec9fc"
+      },
+      "orderedReferenceSha256": [
+        "0ad6cfaf6208b99bf3674046698fe64fc4aa663ae93cb1f957636d31e2753ff6",
+        "ca772a32b2a050e104851fe51726f002c0a7767f41252bc160deb5c60d9c6ad1"
+      ],
+      "runs": [
+        {
+          "number": 1,
+          "generationSeconds": 126.9,
+          "clickToCompletionSeconds": 215.454,
+          "clickToOutputSeconds": 215.526,
+          "modelLoadObserved": true
+        },
+        {
+          "number": 2,
+          "generationSeconds": 112.8,
+          "clickToCompletionSeconds": 113.432,
+          "clickToOutputSeconds": 113.571,
+          "modelLoadObserved": false
+        }
+      ]
+    },
+    {
+      "id": "speech",
+      "device": "INTEL_GPU",
+      "model": "Qwen3-TTS 0.6B CustomVoice",
+      "build": "published Windows v0.1.45",
+      "sampleRate": 24000,
+      "speaker": "Ryan",
+      "prompt": "Fern can turn a short script into speech on this computer.",
+      "catalogRevision": "56999806c869a759c3923de3f2ffc6021c94d582",
+      "runs": [
+        {
+          "number": 1,
+          "generationSeconds": 84.111,
+          "clickToCompletionSeconds": 84.788,
+          "clickToOutputSeconds": 85.184,
+          "modelLoadObserved": true,
+          "outputDurationSeconds": 4.537,
+          "synthesisSeconds": 26.2
+        },
+        {
+          "number": 2,
+          "generationSeconds": 22.33,
+          "clickToCompletionSeconds": 23.368,
+          "clickToOutputSeconds": 23.372,
+          "modelLoadObserved": false,
+          "outputDurationSeconds": 3.817,
+          "synthesisSeconds": 22.3
+        }
+      ]
+    },
+    {
+      "id": "wan",
+      "device": "INTEL_GPU",
+      "model": "wan22-turbo",
+      "build": "published Windows v0.1.45",
+      "modelRevision": "9806f497503361492c26f9d87d48b515ba0878ec",
+      "width": 544,
+      "height": 704,
+      "seed": 42,
+      "prompt": "The subject slowly turns its head toward the camera. A gentle, steady push in.",
+      "fps": 16,
+      "frames": 21,
+      "steps": 4,
+      "firstFrameSha256": "0ad6cfaf6208b99bf3674046698fe64fc4aa663ae93cb1f957636d31e2753ff6",
+      "runs": [
+        {
+          "number": 1,
+          "generationSeconds": 134.83,
+          "clickToCompletionSeconds": 135.675,
+          "clickToOutputSeconds": 135.71,
+          "modelLoadObserved": true,
+          "outputDurationSeconds": 1.312
+        },
+        {
+          "number": 2,
+          "generationSeconds": 126.58,
+          "clickToCompletionSeconds": 127.494,
+          "clickToOutputSeconds": 127.504,
+          "modelLoadObserved": true,
+          "outputDurationSeconds": 1.312
+        }
+      ]
+    },
+    {
+      "id": "klein-4b-rank8-patched",
+      "device": "INTEL_GPU",
+      "model": "4b-lora",
+      "build": "local rank-8 loader patch",
+      "modelRevision": "ce9983685156b50dd947b2992ef7412bab7313bd",
+      "width": 512,
+      "height": 512,
+      "steps": 4,
+      "guidance": 1,
+      "seed": 994286815,
+      "prompt": "A small blue toy robot wearing rubber boots on a plain grey tabletop.",
+      "textEncoder": "default",
+      "adapter": {
+        "label": "Rank-8 adapter from issue #16",
+        "rank": 8,
+        "strength": 1
+      },
+      "runs": [
+        {
+          "number": 1,
+          "generationSeconds": 36.3,
+          "clickToCompletionSeconds": 85.606,
+          "clickToOutputSeconds": 85.641,
+          "modelLoadObserved": true
+        },
+        {
+          "number": 2,
+          "generationSeconds": 41.0,
+          "clickToCompletionSeconds": 41.768,
+          "clickToOutputSeconds": 41.78,
+          "modelLoadObserved": false
+        }
+      ]
+    }
+  ],
+  "gemma": {
+    "repo": "ggml-org/gemma-4-E4B-it-GGUF",
+    "revision": "8903cb408c7df39cde2ed15fac397e6d7be92951",
+    "modelFile": "gemma-4-E4B-it-Q4_0.gguf",
+    "projectorFile": "mmproj-gemma-4-E4B-it-Q8_0.gguf",
+    "contextTokens": 8192,
+    "temperature": 0,
+    "prompts": {
+      "text": [
+        "Remember this project code: NIMBUS-417. Reply only READY.",
+        "What was the project code? Reply with the exact code only.",
+        "What is the number after the hyphen in the project code? Reply only with the number."
+      ],
+      "vision": [
+        "What color is the circle? Reply with just the color, and remember the image for later.",
+        "Which shape was red in that same image? Reply with the shape only.",
+        "Which shape was lower in that image? Give the color and shape."
+      ]
+    },
+    "visionImage": {
+      "width": 384,
+      "height": 384,
+      "background": "#ffffff",
+      "rectangle": {
+        "x": 32,
+        "y": 64,
+        "width": 120,
+        "height": 120,
+        "color": "#ee2525"
+      },
+      "circle": {
+        "x": 280,
+        "y": 252,
+        "radius": 72,
+        "color": "#2255ee"
+      }
+    },
+    "turns": [
+      {
+        "modality": "text",
+        "mode": "instant",
+        "replay": 1,
+        "turn": 1,
+        "backend": "OpenVINO",
+        "inputTokens": 25,
+        "outputTokens": 2,
+        "reasoningCharacters": 0,
+        "correct": true,
+        "generationSeconds": 1.146,
+        "firstVisibleTextSeconds": 72.169,
+        "completedReplySeconds": 72.602,
+        "promptTokensEvaluated": 25
+      },
+      {
+        "modality": "text",
+        "mode": "instant",
+        "replay": 1,
+        "turn": 2,
+        "backend": "OpenVINO",
+        "inputTokens": 49,
+        "outputTokens": 8,
+        "reasoningCharacters": 0,
+        "correct": true,
+        "generationSeconds": 2.427,
+        "firstVisibleTextSeconds": 1.931,
+        "completedReplySeconds": 3.44,
+        "promptTokensEvaluated": 29
+      },
+      {
+        "modality": "text",
+        "mode": "instant",
+        "replay": 1,
+        "turn": 3,
+        "backend": "OpenVINO",
+        "inputTokens": 84,
+        "outputTokens": 4,
+        "reasoningCharacters": 0,
+        "correct": true,
+        "generationSeconds": 1.937,
+        "firstVisibleTextSeconds": 1.915,
+        "completedReplySeconds": 2.927,
+        "promptTokensEvaluated": 40
+      },
+      {
+        "modality": "text",
+        "mode": "instant",
+        "replay": 2,
+        "turn": 1,
+        "backend": "OpenVINO",
+        "inputTokens": 25,
+        "outputTokens": 2,
+        "reasoningCharacters": 0,
+        "correct": true,
+        "generationSeconds": 1.134,
+        "firstVisibleTextSeconds": 1.449,
+        "completedReplySeconds": 1.914,
+        "promptTokensEvaluated": 6
+      },
+      {
+        "modality": "text",
+        "mode": "instant",
+        "replay": 2,
+        "turn": 2,
+        "backend": "OpenVINO",
+        "inputTokens": 49,
+        "outputTokens": 8,
+        "reasoningCharacters": 0,
+        "correct": true,
+        "generationSeconds": 2.638,
+        "firstVisibleTextSeconds": 1.893,
+        "completedReplySeconds": 3.468,
+        "promptTokensEvaluated": 29
+      },
+      {
+        "modality": "text",
+        "mode": "instant",
+        "replay": 2,
+        "turn": 3,
+        "backend": "OpenVINO",
+        "inputTokens": 84,
+        "outputTokens": 4,
+        "reasoningCharacters": 0,
+        "correct": true,
+        "generationSeconds": 2.26,
+        "firstVisibleTextSeconds": 1.888,
+        "completedReplySeconds": 2.971,
+        "promptTokensEvaluated": 40
+      },
+      {
+        "modality": "text",
+        "mode": "reasoning",
+        "replay": 1,
+        "turn": 1,
+        "backend": "OpenVINO",
+        "inputTokens": 32,
+        "outputTokens": 2,
+        "reasoningCharacters": 0,
+        "correct": true,
+        "generationSeconds": 2.032,
+        "firstVisibleTextSeconds": 1.897,
+        "completedReplySeconds": 2.959,
+        "promptTokensEvaluated": 31
+      },
+      {
+        "modality": "text",
+        "mode": "reasoning",
+        "replay": 1,
+        "turn": 2,
+        "backend": "OpenVINO",
+        "inputTokens": 56,
+        "outputTokens": 8,
+        "reasoningCharacters": 0,
+        "correct": true,
+        "generationSeconds": 2.771,
+        "firstVisibleTextSeconds": 1.889,
+        "completedReplySeconds": 3.441,
+        "promptTokensEvaluated": 29
+      },
+      {
+        "modality": "text",
+        "mode": "reasoning",
+        "replay": 1,
+        "turn": 3,
+        "backend": "OpenVINO",
+        "inputTokens": 91,
+        "outputTokens": 4,
+        "reasoningCharacters": 0,
+        "correct": true,
+        "generationSeconds": 2.242,
+        "firstVisibleTextSeconds": 1.868,
+        "completedReplySeconds": 2.933,
+        "promptTokensEvaluated": 40
+      },
+      {
+        "modality": "text",
+        "mode": "reasoning",
+        "replay": 2,
+        "turn": 1,
+        "backend": "OpenVINO",
+        "inputTokens": 32,
+        "outputTokens": 2,
+        "reasoningCharacters": 0,
+        "correct": true,
+        "generationSeconds": 1.429,
+        "firstVisibleTextSeconds": 1.877,
+        "completedReplySeconds": 1.921,
+        "promptTokensEvaluated": 6
+      },
+      {
+        "modality": "text",
+        "mode": "reasoning",
+        "replay": 2,
+        "turn": 2,
+        "backend": "OpenVINO",
+        "inputTokens": 56,
+        "outputTokens": 8,
+        "reasoningCharacters": 0,
+        "correct": true,
+        "generationSeconds": 2.984,
+        "firstVisibleTextSeconds": 1.874,
+        "completedReplySeconds": 3.942,
+        "promptTokensEvaluated": 29
+      },
+      {
+        "modality": "text",
+        "mode": "reasoning",
+        "replay": 2,
+        "turn": 3,
+        "backend": "OpenVINO",
+        "inputTokens": 91,
+        "outputTokens": 4,
+        "reasoningCharacters": 0,
+        "correct": true,
+        "generationSeconds": 2.505,
+        "firstVisibleTextSeconds": 1.866,
+        "completedReplySeconds": 3.446,
+        "promptTokensEvaluated": 40
+      },
+      {
+        "modality": "vision",
+        "mode": "instant",
+        "replay": 1,
+        "turn": 1,
+        "backend": "Vulkan",
+        "inputTokens": 111,
+        "outputTokens": 2,
+        "reasoningCharacters": 0,
+        "correct": true,
+        "generationSeconds": 3.178,
+        "firstVisibleTextSeconds": 10.522,
+        "completedReplySeconds": 10.81,
+        "promptTokensEvaluated": 111
+      },
+      {
+        "modality": "vision",
+        "mode": "instant",
+        "replay": 1,
+        "turn": 2,
+        "backend": "Vulkan",
+        "inputTokens": 137,
+        "outputTokens": 2,
+        "reasoningCharacters": 0,
+        "correct": true,
+        "generationSeconds": 0.689,
+        "firstVisibleTextSeconds": 0.677,
+        "completedReplySeconds": 1.38,
+        "promptTokensEvaluated": 31
+      },
+      {
+        "modality": "vision",
+        "mode": "instant",
+        "replay": 1,
+        "turn": 3,
+        "backend": "Vulkan",
+        "inputTokens": 162,
+        "outputTokens": 3,
+        "reasoningCharacters": 0,
+        "correct": true,
+        "generationSeconds": 0.784,
+        "firstVisibleTextSeconds": 0.685,
+        "completedReplySeconds": 1.404,
+        "promptTokensEvaluated": 30
+      },
+      {
+        "modality": "vision",
+        "mode": "instant",
+        "replay": 2,
+        "turn": 1,
+        "backend": "Vulkan",
+        "inputTokens": 111,
+        "outputTokens": 2,
+        "reasoningCharacters": 0,
+        "correct": true,
+        "generationSeconds": 0.36,
+        "firstVisibleTextSeconds": 0.694,
+        "completedReplySeconds": 0.911,
+        "promptTokensEvaluated": 6
+      },
+      {
+        "modality": "vision",
+        "mode": "instant",
+        "replay": 2,
+        "turn": 2,
+        "backend": "Vulkan",
+        "inputTokens": 137,
+        "outputTokens": 2,
+        "reasoningCharacters": 0,
+        "correct": true,
+        "generationSeconds": 0.685,
+        "firstVisibleTextSeconds": 0.688,
+        "completedReplySeconds": 1.405,
+        "promptTokensEvaluated": 31
+      },
+      {
+        "modality": "vision",
+        "mode": "instant",
+        "replay": 2,
+        "turn": 3,
+        "backend": "Vulkan",
+        "inputTokens": 162,
+        "outputTokens": 3,
+        "reasoningCharacters": 0,
+        "correct": true,
+        "generationSeconds": 0.752,
+        "firstVisibleTextSeconds": 0.685,
+        "completedReplySeconds": 1.386,
+        "promptTokensEvaluated": 30
+      },
+      {
+        "modality": "vision",
+        "mode": "reasoning",
+        "replay": 1,
+        "turn": 1,
+        "backend": "Vulkan",
+        "inputTokens": 118,
+        "outputTokens": 153,
+        "reasoningCharacters": 567,
+        "correct": true,
+        "generationSeconds": 18.798,
+        "firstVisibleTextSeconds": 19.29,
+        "completedReplySeconds": 19.792,
+        "promptTokensEvaluated": 117
+      },
+      {
+        "modality": "vision",
+        "mode": "reasoning",
+        "replay": 1,
+        "turn": 2,
+        "backend": "Vulkan",
+        "inputTokens": 144,
+        "outputTokens": 2,
+        "reasoningCharacters": 0,
+        "correct": true,
+        "generationSeconds": 0.64,
+        "firstVisibleTextSeconds": 0.703,
+        "completedReplySeconds": 1.404,
+        "promptTokensEvaluated": 31
+      },
+      {
+        "modality": "vision",
+        "mode": "reasoning",
+        "replay": 1,
+        "turn": 3,
+        "backend": "Vulkan",
+        "inputTokens": 169,
+        "outputTokens": 3,
+        "reasoningCharacters": 0,
+        "correct": true,
+        "generationSeconds": 0.759,
+        "firstVisibleTextSeconds": 0.683,
+        "completedReplySeconds": 1.402,
+        "promptTokensEvaluated": 30
+      },
+      {
+        "modality": "vision",
+        "mode": "reasoning",
+        "replay": 2,
+        "turn": 1,
+        "backend": "Vulkan",
+        "inputTokens": 118,
+        "outputTokens": 153,
+        "reasoningCharacters": 567,
+        "correct": true,
+        "generationSeconds": 15.686,
+        "firstVisibleTextSeconds": 15.702,
+        "completedReplySeconds": 16.8,
+        "promptTokensEvaluated": 6
+      },
+      {
+        "modality": "vision",
+        "mode": "reasoning",
+        "replay": 2,
+        "turn": 2,
+        "backend": "Vulkan",
+        "inputTokens": 144,
+        "outputTokens": 2,
+        "reasoningCharacters": 0,
+        "correct": true,
+        "generationSeconds": 0.612,
+        "firstVisibleTextSeconds": 0.686,
+        "completedReplySeconds": 1.391,
+        "promptTokensEvaluated": 31
+      },
+      {
+        "modality": "vision",
+        "mode": "reasoning",
+        "replay": 2,
+        "turn": 3,
+        "backend": "Vulkan",
+        "inputTokens": 169,
+        "outputTokens": 3,
+        "reasoningCharacters": 0,
+        "correct": true,
+        "generationSeconds": 0.762,
+        "firstVisibleTextSeconds": 0.684,
+        "completedReplySeconds": 1.419,
+        "promptTokensEvaluated": 30
+      }
+    ]
+  },
+  "chatImage": {
+    "imageModel": "SANA-Sprint 0.6B",
+    "autoSeed": true,
+    "timings": [
+      {
+        "run": "first image",
+        "acknowledgmentSeconds": 1.497,
+        "visiblePixelsSeconds": 86.868,
+        "completedReplySeconds": 95.564
+      },
+      {
+        "run": "second image",
+        "acknowledgmentSeconds": 1.404,
+        "visiblePixelsSeconds": 16.636,
+        "completedReplySeconds": 27.312
+      },
+      {
+        "run": "first poster request",
+        "acknowledgmentSeconds": 1.152,
+        "visiblePixelsSeconds": 12.318,
+        "completedReplySeconds": 21.972
+      },
+      {
+        "run": "repeated poster request",
+        "acknowledgmentSeconds": 1.504,
+        "visiblePixelsSeconds": 14.701,
+        "completedReplySeconds": 30.458
+      }
+    ],
+    "contextChecks": [
+      {
+        "size": 4096,
+        "compactedMessages": 6,
+        "images": 1
+      },
+      {
+        "size": 8192,
+        "compactedMessages": 0,
+        "images": 1
+      },
+      {
+        "size": 16384,
+        "compactedMessages": 0,
+        "images": 1
+      }
+    ]
+  }
+}
