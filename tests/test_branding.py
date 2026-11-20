@@ -40,6 +40,9 @@ class BrandingTests(unittest.TestCase):
         for path in public_files:
             text = path.read_text(encoding="utf-8").lower()
             self.assertNotIn("praxilume", text, path)
+            # The benchmark can name its Intel GPU and use that name in a link.
+            if path == ROOT / "README.md":
+                text = text.replace("intel iris xe", "").replace("intel-iris-xe", "")
             self.assertNotIn("iris", text, path)
 
     def test_windows_icon_contains_required_sizes(self) -> None:

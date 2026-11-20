@@ -1592,6 +1592,8 @@ def validate_flux_payload(payload: dict[str, Any]) -> dict[str, Any]:
             raise ValueError("Install the official Qwen Turbo OpenVINO INT8 model from Models before generating.")
     intel_spec = INTEL_MEDIA_CATALOG.get(model)
     fixed_spec = APPLE_IMAGE_SPEC if model == APPLE_IMAGE_ID else intel_spec
+    # The Vulkan scheduler accepts a signed step count and adds a final sigma.
+    adjustable_step_limit = fixed_spec.get("maximumSteps") if fixed_spec else None
     if model == APPLE_IMAGE_ID and device not in ("AUTO", APPLE_GPU):
         raise ValueError("Select Available GPU in Preferences to use Klein 4B on this Mac.")
     if intel_spec:
@@ -1602,7 +1604,10 @@ def validate_flux_payload(payload: dict[str, Any]) -> dict[str, Any]:
     backend = flux2
     width = int(payload.get("width", fixed_spec["defaultWidth"] if fixed_spec else backend.DEFAULT_WIDTH))
     height = int(payload.get("height", fixed_spec["defaultHeight"] if fixed_spec else backend.DEFAULT_HEIGHT))
-    steps = int(payload.get("steps", backend.DEFAULT_STEPS))
+    raw_steps = payload.get("steps", fixed_spec["defaultSteps"] if fixed_spec else backend.DEFAULT_STEPS)
+    if adjustable_step_limit and (isinstance(raw_steps, bool) or isinstance(raw_steps, float) and not raw_steps.is_integer()):
+        raise ValueError("Steps must be a positive whole number.")
+    steps = int(raw_steps)
     guidance = float(payload.get("guidance", backend.DEFAULT_GUIDANCE))
     seed = int(payload.get("seed", 42))
     batch_size = int(payload.get("batch_size", 1))
@@ -1626,11 +1631,13 @@ def validate_flux_payload(payload: dict[str, Any]) -> dict[str, Any]:
     reference_image = reference_images[0] if reference_images else None
     if fixed_spec and reference_image is not None:
         raise ValueError("This model generates images from a text prompt.")
-    if fixed_spec and (width != height or width not in fixed_spec["dimensions"]):
-        sizes = " or ".join(f"{size}×{size}" for size in fixed_spec["dimensions"])
+    fixed_dimensions = fixed_spec.get("dimensions") if fixed_spec else None
+    if fixed_dimensions and (width != height or width not in fixed_dimensions):
+        sizes = " or ".join(f"{size}×{size}" for size in fixed_dimensions)
         raise ValueError(f"Choose {sizes} for {fixed_spec['label']}.")
     if fixed_spec:
-        steps = fixed_spec["defaultSteps"]
+        if adjustable_step_limit is None:
+            steps = fixed_spec["defaultSteps"]
         guidance = fixed_spec["defaultGuidance"]
         if batch_size != 1:
             raise ValueError("Generate one image at a time with this model.")
@@ -1665,18 +1672,21 @@ def validate_flux_payload(payload: dict[str, Any]) -> dict[str, Any]:
     if (is_tame_pony or custom_model) and reference_image is not None:
         raise ValueError("This model currently supports text-to-image only.")
 
-    maximum = 1920
     custom_family = custom_image_registry.FAMILIES[custom_spec["family"]] if custom_spec else None
     dimension_multiple = custom_family["multiple"] if custom_family else 8 if is_tame_pony else 32 if model == QWEN_TURBO_MODEL_ID else 16
     minimum = custom_family["minimum"] if custom_family else 512 if is_tame_pony else 256
-    model_maximum = custom_family["maximum"] if custom_family else 1536 if is_tame_pony else maximum
+    model_maximum = custom_family["maximum"] if custom_family else 1536 if is_tame_pony else 1920
+    if fixed_spec:
+        dimension_multiple = fixed_spec.get("dimensionMultiple", dimension_multiple)
+        minimum = fixed_spec.get("minimumDimension", minimum)
+        model_maximum = fixed_spec.get("maximumDimension", model_maximum)
     if width < minimum or width > model_maximum or width % dimension_multiple != 0:
         raise ValueError(f"Width must be {minimum} to {model_maximum} and divisible by {dimension_multiple}.")
     if height < minimum or height > model_maximum or height % dimension_multiple != 0:
         raise ValueError(f"Height must be {minimum} to {model_maximum} and divisible by {dimension_multiple}.")
     if model == flux3.MODEL_KEY and (width != flux3.VALIDATED_WIDTH or height != flux3.VALIDATED_HEIGHT):
         raise ValueError("This FLUX.3 quant is currently validated at 1024×1024 only.")
-    if steps < 1 or steps > 50:
+    if not 1 <= steps <= (adjustable_step_limit or 50):
         raise ValueError("Steps are outside the supported range.")
     if guidance < 0 or guidance > (20 if custom_model else 10):
         raise ValueError("Guidance is outside the supported range.")
@@ -2143,7 +2153,8 @@ def generate_chat_image(
         raise RuntimeError(str(status["runtimeNote"]))
     image_request = validate_flux_payload({
         "model": model, "prompt": prompt, "width": CHAT_IMAGE_SIZE, "height": CHAT_IMAGE_SIZE,
-        "device": device, "steps": 4, "guidance": 1.0, "thread_id": thread_id,
+        "device": device, "steps": INTEL_MEDIA_CATALOG.get(model, {}).get("defaultSteps", 4),
+        "guidance": 1.0, "thread_id": thread_id,
         "seed": uuid.uuid4().int % 2_147_483_647,
     })
     image_request["modelRevision"] = status["modelRevision"]
@@ -3163,6 +3174,10 @@ def run_server(port: int = 8000, *, allow_cors: bool = False) -> None:
     except KeyboardInterrupt:
         pass
     finally:
+        for cancel_event in (FLUX_CANCEL_EVENT, TEXT_CANCEL_EVENT):
+            if cancel_event is not None:
+                cancel_event.set()
+        INTEL_MEDIA.interrupt()
         GENERATION_WORKER.close()
         TAME_PONY_GENERATION_WORKER.close()
         CUSTOM_IMAGE_GENERATION_WORKER.close()

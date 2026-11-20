@@ -290,12 +290,15 @@ export function GenerationControls({
   const isFlux3Klein = settings.model === "flux3-klein";
   const isCustomImage = settings.model?.startsWith("custom-") ?? false;
   const fixedPreset = fixedImagePreset(settings.model);
+  const fixedSizes = fixedPreset?.sizes;
+  const adjustableSteps = Boolean(fixedPreset?.maximumSteps);
   const hasFixedSampling = isQwenTurbo || isFlux3Klein || Boolean(fixedPreset);
+  const hasFixedSteps = hasFixedSampling && !adjustableSteps;
   const { multiple: dimensionMultiple, minimum: minimumDimension, maximum: maximumDimension } = imageDimensionLimits(settings.model, modelStatus);
   const availableSizePresets = useMemo(
     () =>
-      fixedPreset ? fixedPreset.sizes.map((size) => ({ value: `${size}x${size}`, label: `${size} × ${size}` }))
-      : SIZE_PRESETS.filter((preset) => {
+      fixedSizes ? fixedSizes.map((size) => ({ value: `${size}x${size}`, label: `${size} × ${size}` }))
+      : (adjustableSteps ? [{ value: "512x512", label: "512 × 512 (1:1)" }, ...SIZE_PRESETS] : SIZE_PRESETS).filter((preset) => {
         if (isFlux3Klein) return preset.value === "1024x1024";
         if (preset.value === "custom") return true;
         const [width, height] = preset.value.split("x").map(Number);
@@ -303,7 +306,7 @@ export function GenerationControls({
           && width <= maximumDimension && height <= maximumDimension
           && width % dimensionMultiple === 0 && height % dimensionMultiple === 0;
       }),
-    [dimensionMultiple, fixedPreset, isFlux3Klein, maximumDimension, minimumDimension],
+    [adjustableSteps, dimensionMultiple, fixedSizes, isFlux3Klein, maximumDimension, minimumDimension],
   );
   const [referenceBusy, setReferenceBusy] = useState(false);
   const activeChips = new Set(
@@ -394,9 +397,9 @@ export function GenerationControls({
     });
     onSettingsChange({
       prompt: recipe.prompt,
-      width: fixedPreset ? settings.width : isFlux3Klein ? 1024 : recipe.width,
-      height: fixedPreset ? settings.height : isFlux3Klein ? 1024 : recipe.height,
-      steps: fixedPreset?.steps ?? (hasFixedSampling ? (isFlux3Klein ? 16 : 8) : recipe.steps),
+      width: fixedSizes ? settings.width : isFlux3Klein ? 1024 : recipe.width,
+      height: fixedSizes ? settings.height : isFlux3Klein ? 1024 : recipe.height,
+      steps: hasFixedSteps ? fixedPreset?.steps ?? (isFlux3Klein ? 16 : 8) : recipe.steps,
       guidance: fixedPreset?.guidance ?? (hasFixedSampling ? (isFlux3Klein ? 0 : 1) : recipe.guidance),
     });
   };
@@ -547,7 +550,7 @@ export function GenerationControls({
             {isLoraModel ? <p className="model-note field-note">Klein LoRA uses the Intel GPU and guidance 1.0. Attach up to four reference images.</p> : null}
             {hasFixedSampling ? (
               <p className="model-note field-note">
-                {fixedPreset ? (window.studio.platform === "darwin" ? "Text to image at 512 × 512 on Apple GPU." : "Text to image on Intel GPU. Choose a validated canvas size.") : isFlux3Klein
+                {fixedPreset ? (window.studio.platform === "darwin" ? "Text to image at 512 × 512 on Apple GPU." : fixedSizes ? "Text to image on Intel GPU. Choose a validated canvas size." : "Text to image on Intel GPU. Larger canvases take longer and use more memory.") : isFlux3Klein
                   ? "FLUX.3 Klein uses 16 fixed steps and text-to-image only. GPU runs now use FP32 transformer inference; keep the canvas at 1024 × 1024 while output quality is rechecked."
                   : "Official Turbo runs 8 fixed steps and generates 1 image per request. Fern uses an available GPU automatically. This OpenVINO graph does not use the checkpoint’s KV cache, so it can be slower than CUDA Turbo. Larger canvases need more memory and take longer."}
               </p>
@@ -560,7 +563,7 @@ export function GenerationControls({
               <Select
                 id="size-preset"
                 name="size-preset"
-                value={isFlux3Klein ? "1024x1024" : customSize && !fixedPreset ? "custom" : sizePreset}
+                value={isFlux3Klein ? "1024x1024" : customSize && !fixedSizes ? "custom" : sizePreset}
                 onChange={(event) => applySizePreset(event.target.value)}
               >
                 {availableSizePresets.map((preset) => (
@@ -571,7 +574,7 @@ export function GenerationControls({
               </Select>
             </div>
 
-            <div className="dims-row" hidden={Boolean(fixedPreset)}>
+            <div className="dims-row" hidden={Boolean(fixedSizes)}>
               <div className="field">
                 <label htmlFor="width">Width</label>
                 <DraftNumberInput
@@ -846,7 +849,11 @@ export function GenerationControls({
 
           <ControlSection
             title="Advanced"
-            summary={fixedPreset ? `${fixedPreset.steps} steps · guidance ${fixedPreset.guidance} (fixed)` : hasFixedSampling ? (isFlux3Klein ? "16 steps | no guidance (fixed)" : "8 steps | guidance 1.0 (fixed)") : `${settings.steps} steps | guidance ${settings.guidance}`}
+            summary={hasFixedSteps
+              ? fixedPreset
+                ? `${fixedPreset.steps} steps · guidance ${fixedPreset.guidance} (fixed)`
+                : isFlux3Klein ? "16 steps | no guidance (fixed)" : "8 steps | guidance 1.0 (fixed)"
+              : `${settings.steps} steps | guidance ${settings.guidance}`}
           >
             <div className="field">
               <label htmlFor="seed">Seed</label>
@@ -889,10 +896,10 @@ export function GenerationControls({
               </div>
             </div>
 
-            <div className="field" hidden={hasFixedSampling}>
+            <div className="field" hidden={hasFixedSteps}>
               <label htmlFor="steps">Steps</label>
-              <div className="range-pair">
-                <input
+              <div className={adjustableSteps ? undefined : "range-pair"}>
+                {!adjustableSteps ? <input
                   id="steps"
                   aria-invalid={Boolean(errors.steps)}
                   aria-describedby={
@@ -907,21 +914,23 @@ export function GenerationControls({
                   onChange={(event) =>
                     onSettingsChange({ steps: Number(event.target.value) })
                   }
-                />
+                /> : null}
                 <DraftNumberInput
                   error={errors.steps}
-                  className="compact-input"
+                  className={adjustableSteps ? undefined : "compact-input"}
+                  id={adjustableSteps ? "steps" : undefined}
                   aria-label="Step count"
                   name="step-count"
                   type="number"
                   min={1}
-                  max={50}
+                  max={fixedPreset?.maximumSteps ?? 50}
                   value={settings.steps}
                   onChange={(event) =>
                     onSettingsChange({ steps: Number(event.target.value) })
                   }
                 />
               </div>
+              {adjustableSteps ? <small className="field-note">{fixedPreset?.steps} steps recommended for the bundled DMD2 adapter.</small> : null}
             </div>
 
             <div className="field" hidden={hasFixedSampling || isLoraModel}>

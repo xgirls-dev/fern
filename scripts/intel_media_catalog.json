@@ -305,7 +305,7 @@
     "folder": "kromoss-opd-69800-dmd2",
     "repo": "xgirls/Kromoss-OPD-DMD2-Q4_K-Intel-Vulkan",
     "revision": "a24c012d64029298143bab35e2b1d5057c61d329",
-    "description": "Kromoss OPD-priming 69800 with its cfg-static 8-step DMD2 adapter.",
+    "description": "Kromoss OPD-priming 69800 with its cfg-static DMD2 adapter. Start with 8 steps.",
     "category": "image",
     "runtimeBackend": "Vulkan",
     "quantization": "Q4_K \u00b7 Vulkan",
@@ -314,10 +314,10 @@
     "defaultHeight": 512,
     "defaultSteps": 8,
     "defaultGuidance": 1,
-    "dimensions": [
-      512,
-      1024
-    ],
+    "minimumDimension": 64,
+    "maximumDimension": 4096,
+    "dimensionMultiple": 16,
+    "maximumSteps": 2147483646,
     "preset": {
       "flow_shift": 5,
       "scheduler": "simple",

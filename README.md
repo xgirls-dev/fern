@@ -23,7 +23,7 @@ Use Windows 10 or 11 with current graphics drivers. Check the download size in *
 Download the `fern-*-x86_64.pkg.tar.zst` package. Use `pacman -U` with the downloaded filename, then open **Fern** from the app launcher. [Latest release](https://github.com/xgirls-dev/fern/releases/latest)
 
 ```sh
-sudo pacman -U ./fern-0.1.45-1-x86_64.pkg.tar.zst
+sudo pacman -U ./fern-0.1.46-1-x86_64.pkg.tar.zst
 ```
 
 The package includes Python and OpenVINO. Install the Intel OpenCL and Vulkan drivers for Intel GPU inference.
@@ -61,7 +61,7 @@ GGUF chats offer **4K, 8K, and 16K** context, with **8K** as the default. When a
 Generate from a prompt, add reference images on supported models, and use seeds and render settings to make repeatable variations. The composer adjusts the available dimensions, steps, guidance, reference count, and batch size to the selected model.
 
 - **FLUX.2 Klein 4B and 9B** cover generation and reference-guided edits. The Intel GPU **LoRA** variants support up to four reference images and four independently weighted adapters. Add a matching `.safetensors` file from disk or use a Hugging Face or Civitai link in **Image settings → LoRAs**.
-- **Kromoss OPD · DMD2** uses the OPD 69,800 Q4_K weights and the matching eight-step adapter. Its Create Image preset defaults to **512 × 512** and also offers **1024 × 1024**. The complete download, including companion files, is about **9 GB**. [Kromoss model card](https://huggingface.co/xgirls/Kromoss-OPD-DMD2-Q4_K-Intel-Vulkan)
+- **Kromoss OPD · DMD2** uses the OPD 69,800 Q4_K weights and the matching DMD2 adapter. Create Image starts at **512 × 512** and **8 steps**, with rectangular presets, custom dimensions in multiples of 16, and an editable step count. The complete download, including companion files, is about **9 GB**. [Kromoss model card](https://huggingface.co/xgirls/Kromoss-OPD-DMD2-Q4_K-Intel-Vulkan)
 - **MOSS Image · HaDeS**, **Z-Image Turbo**, and **SANA-Sprint 0.6B** offer more text-to-image options on Windows Intel GPUs. **Tame Pony SDXL** and **Qwen Image 2.1 Turbo** use OpenVINO. **FLUX.3 Klein · INT4** is an experimental text-to-image integration.
 - **Custom OpenVINO image models** can be linked from a local export folder or downloaded from a compatible Hugging Face repository through **Models → Image → Add custom model**. Select the model family that matches the export.
 

@@ -41,18 +41,20 @@ class IntelMediaTests(unittest.TestCase):
             worker.server_log = root / "server.log"
             worker.server_log.write_text("", encoding="utf-8")
             image = BytesIO()
-            Image.new("RGB", (512, 512)).save(image, format="PNG")
+            Image.new("RGB", (640, 768)).save(image, format="PNG")
             response = {"images": [base64.b64encode(image.getvalue()).decode("ascii")]}
             def render_with(count):
                 def request(endpoint, settings, timeout):
                     self.assertEqual(endpoint, "/sdapi/v1/txt2img")
+                    self.assertIsNone(timeout, "Production renders must not have a socket deadline")
+                    self.assertEqual((settings["width"], settings["height"], settings["steps"]), (640, 768, 12))
                     self.assertEqual(settings["lora"], [adapter])
                     with worker.server_log.open("a", encoding="utf-8") as log:
                         log.write(f"({count} / 756) LoRA tensors have been applied\n")
                     return response
                 return request
             request = {"model": model, "prompt": "A fox.", "seed": 1,
-                       "width": 512, "height": 512, "guidance": 1.0, "steps": 8}
+                       "width": 640, "height": 768, "guidance": 1.0, "steps": 12}
             event = threading.Event()
             with patch("intel_media.threading.Timer"):
                 worker.request = render_with(756)

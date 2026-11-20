@@ -31,7 +31,7 @@ import type {
 import { notify } from "../lib/notifications";
 import type { ReferenceAttachment } from "../lib/reference";
 import { imageDimensionLimits } from "../lib/imageDimensions";
-import { APPLE_IMAGE_MODEL, isKleinLoraModel, maxReferenceImages, selectedKleinLoras } from "../lib/imageModels";
+import { APPLE_IMAGE_MODEL, fixedImagePreset, isKleinLoraModel, maxReferenceImages, selectedKleinLoras } from "../lib/imageModels";
 
 const SETTINGS_KEY = "fern-studio-settings:v3";
 const LEGACY_SETTINGS_KEYS = [
@@ -846,13 +846,13 @@ export function useStudio(computeDevice: "GPU" | "CPU" = "GPU") {
       )
         invalid[key] = `Use a multiple of ${dimensionMultiple} between ${limits.minimum} and ${limits.maximum}.`;
     }
-    const minimumSteps = 1;
+    const maximumSteps = fixedImagePreset(settings.model)?.maximumSteps ?? 50;
     if (
       !Number.isInteger(settings.steps) ||
-      settings.steps < minimumSteps ||
-      settings.steps > 50
+      settings.steps < 1 ||
+      settings.steps > maximumSteps
     )
-      invalid.steps = "Use 1–50 whole steps.";
+      invalid.steps = `Use 1 to ${maximumSteps.toLocaleString()} whole steps.`;
     if (
       !Number.isFinite(settings.guidance) ||
       settings.guidance < 0 ||

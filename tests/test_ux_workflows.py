@@ -34,6 +34,29 @@ class UxWorkflowTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             api_server.validate_flux_payload({"prompt": "test", "width": 1080})
 
+    def test_kromoss_preserves_custom_canvas_and_steps(self):
+        request = {"prompt": "A fox", "model": "kromoss-opd-dmd2", "device": "INTEL_GPU"}
+        default = api_server.validate_flux_payload(request)
+        self.assertEqual((default["width"], default["height"], default["steps"], default["guidance"]), (512, 512, 8, 1))
+        custom = api_server.validate_flux_payload({**request, "width": 4096, "height": 768, "steps": 60})
+        self.assertEqual((custom["width"], custom["height"], custom["steps"], custom["guidance"]), (4096, 768, 60, 1))
+        for invalid in ({"width": 4112}, {"height": 777}, {"steps": 0}, {"steps": 7.5}, {"steps": True}, {"steps": 2_147_483_647}):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                api_server.validate_flux_payload({**request, **invalid})
+
+    def test_kromoss_chat_tool_keeps_the_recommended_step_count(self):
+        model = "kromoss-opd-dmd2"
+        record = {"name": "fox.png", "width": 512, "height": 512, "modelLabel": "Kromoss", "prompt": "A fox"}
+        with (
+            patch.object(api_server, "model_snapshot", return_value={
+                "runtimeReady": True, "selectedDevice": "INTEL_GPU", "modelRevision": "test",
+            }),
+            patch.object(api_server, "run_flux_generation", return_value=record) as generate,
+        ):
+            api_server.generate_chat_image(model, "A fox", "thread-one", "job-one", threading.Event())
+        payload = generate.call_args.args[1]
+        self.assertEqual((payload["width"], payload["height"], payload["steps"]), (512, 512, 8))
+
     def test_mac_image_preset_requires_apple_gpu_and_enforces_its_canvas(self):
         request = {"prompt": "A fox", "model": api_server.APPLE_IMAGE_ID, "device": "APPLE_GPU"}
         with patch.object(api_server, "apple_silicon", return_value=True):

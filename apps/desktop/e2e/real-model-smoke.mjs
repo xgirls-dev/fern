@@ -175,7 +175,8 @@ try {
   await page.locator("#width").fill(width);
   await page.locator("#height").fill(height);
   await page.getByLabel("Step count").fill(steps);
-  if (!isLoraModel) await page.getByLabel("Guidance value").fill(guidance);
+  const guidanceField = page.getByLabel("Guidance value");
+  if (!isLoraModel && await guidanceField.isVisible()) await guidanceField.fill(guidance);
   await page.getByRole("button", { name: "Seed settings" }).click();
   await page.getByRole("textbox", { name: "Seed", exact: true }).fill(seed);
   await page.locator("#prompt").fill(prompt);

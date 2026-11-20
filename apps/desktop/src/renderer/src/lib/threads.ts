@@ -10,8 +10,13 @@ const REFERENCES_DB = "fern-thread-references";
 export function normalizeImageSettings(settings: StudioSettings): StudioSettings {
   const intel = fixedImagePreset(settings.model);
   if (intel) {
-    const size = settings.width === settings.height && intel.sizes.includes(settings.width) ? settings.width : 512;
-    return { ...settings, width: size, height: size, steps: intel.steps, guidance: intel.guidance, batchSize: 1, device: "AUTO" };
+    const size = settings.width === settings.height && intel.sizes?.includes(settings.width) ? settings.width : 512;
+    return {
+      ...settings,
+      ...(intel.sizes ? { width: size, height: size } : {}),
+      steps: intel.maximumSteps ? settings.steps : intel.steps,
+      guidance: intel.guidance, batchSize: 1, device: "AUTO",
+    };
   }
   if (settings.model === "tame-pony-v25-sdxl" || settings.model === "tame-pony-v25-sdxl-int8") {
     const dimension = (value: number) =>

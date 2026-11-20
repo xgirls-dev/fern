@@ -6,9 +6,18 @@ lands directly on `main` instead of through labeled pull requests.
 
 ## [Unreleased]
 
+## [0.1.46] - 2026-11-20
+
+### Fixed
+
+- Remove the four-minute deadline for Intel Vulkan image generation. Render until completion, a runtime error, or cancellation with Stop.
+- Choose portrait and landscape presets, custom dimensions, and step counts for Kromoss OPD · DMD2. The default remains 512 × 512 at eight steps.
+
 ### Documentation
 
 - Add a [Windows Intel Iris Xe benchmark](https://github.com/xgirls-dev/fern/blob/main/benchmarks/v0.1.45-intel-iris-xe.md) covering first and repeated runs for image, video, and speech generation, plus multi-turn Gemma text and vision.
+
+Full changelog on [GitHub](https://github.com/xgirls-dev/fern/compare/v0.1.45...v0.1.46).
 
 ## [0.1.45] - 2026-11-19
 

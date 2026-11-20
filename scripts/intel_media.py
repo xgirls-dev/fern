@@ -309,9 +309,8 @@ class IntelMedia:
                 [str(executable), *args, "--listen-ip", "127.0.0.1", "--listen-port", str(number)],
                 cwd=self.runtime, stdout=output, stderr=subprocess.STDOUT, creationflags=WINDOW_FLAG,
             )
-        deadline = time.monotonic() + 180
         log(f"Loading {INTEL_MEDIA_CATALOG[model]['label']} on Intel GPU…")
-        while self.server.poll() is None and time.monotonic() < deadline:
+        while self.server.poll() is None:
             check_cancel(event)
             try:
                 self.request("/sdcpp/v1/capabilities", timeout=1)
@@ -373,7 +372,8 @@ class IntelMedia:
                     if adapter:
                         settings["lora"] = [adapter]
                         log_offset = self.server_log.stat().st_size
-                    result = self.request("/sdapi/v1/txt2img", settings, timeout=240)
+                    # Stop terminates the local server and releases the socket read.
+                    result = self.request("/sdapi/v1/txt2img", settings, timeout=None)
                     if adapter:
                         count = INTEL_MEDIA_CATALOG[model]["preset"]["lora"]["tensor_count"]
                         with self.server_log.open("rb") as stream:
