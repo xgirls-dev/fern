@@ -12,11 +12,24 @@ class GenerationCancelled(RuntimeError):
 
 def inference_loop(connection):
     import flux2_klein_pipeline as flux2
+    from model_catalog import APPLE_IMAGE_ID
+
+    def log(message):
+        connection.send(("log", message))
+
     try:
         while True:
             request = connection.recv()
             try:
-                result = flux2.generate_image(**request, log=lambda message: connection.send(("log", message)))
+                if request.get("model") == APPLE_IMAGE_ID:
+                    import apple_image
+
+                    fields = ("prompt", "width", "height", "steps", "seed", "output_dir")
+                    result = apple_image.generate_image(
+                        root=flux2.MODELS_ROOT, log=log, **{field: request[field] for field in fields}
+                    )
+                else:
+                    result = flux2.generate_image(**request, log=log)
                 connection.send(("result", (str(result[0]), result[1])))
             except Exception as error:
                 connection.send(("error", str(error)))

@@ -28,6 +28,8 @@ function deviceLabel(device: string | undefined): string {
   switch (device) {
     case "INTEL_GPU":
       return "Intel GPU";
+    case "APPLE_GPU":
+      return "Apple GPU";
     case "NVIDIA_GPU":
       return "NVIDIA GPU";
     case "CPU":
@@ -152,7 +154,7 @@ export function PreferencesView({
           <div className="preferences-section-heading">
             <div>
               <h3 id="preferences-runtime">Compute</h3>
-              <p>The compute choice applies to image, text, and audio generation. Image generation in chat requires a compatible Intel GPU.</p>
+              <p>The compute choice applies to image, text, and audio generation. Image generation in chat requires a compatible {window.studio.platform === "darwin" ? "Apple" : "Intel"} GPU.</p>
             </div>
             <Cpu size={17} aria-hidden="true" />
           </div>

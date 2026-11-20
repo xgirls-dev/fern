@@ -245,7 +245,7 @@ export function ModelLibrary({ recommendedId, category = "image", onCatalogChang
           </p>
         </div>
       </div>
-      {category === "image" ? <details className="model-library-custom" ref={customDetails}>
+      {category === "image" && window.studio.platform !== "darwin" ? <details className="model-library-custom" ref={customDetails}>
       <summary className="ui-disclosure-trigger model-library-custom-trigger"><Plus size={15} aria-hidden="true" />Add custom model<ChevronDown className="model-library-custom-chevron" size={14} aria-hidden="true" /></summary>
       <div className="model-library-import">
         <p>Choose the family that matches your OpenVINO export, then download it or link a folder on this device.</p>
@@ -375,7 +375,7 @@ export function ModelLibrary({ recommendedId, category = "image", onCatalogChang
             ) : null}
             <ModelStatus installed={model.state === "installed"} aria-live="polite">
               {model.state === "preparing" ? model.phase || "Preparing Intel GPU runtime…"
-                : model.state === "installed" && model.quantization ? "Installed · Intel GPU"
+                : model.state === "installed" && model.quantization ? (window.studio.platform === "darwin" ? "Installed · Apple GPU" : "Installed · Intel GPU")
                 : model.state === "not-installed"
                 ? "Not installed"
                 : model.state === "installed"

@@ -36,7 +36,8 @@ _LINUX_ASSETS = {
     "vulkan": ("ubuntu-vulkan", 36730693, "6c64cac5be423d46a4387495d2cf9659edc6879dae929fbafdad5e9e7eec02eb"),
     "cpu": ("ubuntu", 23784147, "f9506ca78e5a25665f726b0ee429cdc3d5cf3e02a10e4068c8af19dd79337ad7"),
 }
-RUNTIME_PLATFORM_ERROR = "Fern's managed GGUF runtime requires Windows or Linux x86-64."
+_MAC_ARM64_ASSET = (17282660, "88ba080b2b24bb69012633588c763b7ed20ea60b3f9e7fcbd1a5434eded3e325")
+RUNTIME_PLATFORM_ERROR = "Fern's managed GGUF runtime requires Windows or Linux x86-64, or Apple Silicon."
 _LINUX_DRIVER_HELP = "On Omarchy, run sudo pacman -Syu vulkan-intel vulkan-icd-loader, then retry."
 
 
@@ -44,20 +45,28 @@ class VulkanDriverError(RuntimeError):
     code = "intel-vulkan-driver"
 
 
+def apple_silicon() -> bool:
+    return sys.platform == "darwin" and platform.machine().lower() in ("arm64", "aarch64")
+
+
 def runtime_supported() -> bool:
-    return sys.platform in ("win32", "linux") and platform.machine().lower() in ("amd64", "x86_64")
+    return apple_silicon() or (
+        sys.platform in ("win32", "linux") and platform.machine().lower() in ("amd64", "x86_64")
+    )
 
 
 def _runtime_ready(install: Path, backend: str) -> bool:
-    linux = sys.platform == "linux"
-    server = "llama-server" if linux else "llama-server.exe"
-    if not (install / server).is_file() or (linux and not os.access(install / server, os.X_OK)):
+    windows = sys.platform == "win32"
+    server = "llama-server.exe" if windows else "llama-server"
+    if not (install / server).is_file() or (not windows and not os.access(install / server, os.X_OK)):
         return False
-    if not linux and backend != "vulkan":
+    if windows and backend != "vulkan":
         return True
     required = {server}
-    if backend == "vulkan":
-        required.add("libggml-vulkan.so" if linux else "ggml-vulkan.dll")
+    if sys.platform == "darwin":
+        required.update(("libggml-metal.dylib", "libllama-server-impl.dylib", "libmtmd.dylib"))
+    elif backend == "vulkan":
+        required.add("ggml-vulkan.dll" if windows else "libggml-vulkan.so")
     elif backend == "openvino":
         required.add("libggml-openvino.so")
     try:
@@ -74,8 +83,14 @@ def _runtime_ready(install: Path, backend: str) -> bool:
 def ensure_runtime(root: Path, backend: str, progress: Callable[[str], None]) -> Path:
     if not runtime_supported():
         raise RuntimeError(RUNTIME_PLATFORM_ERROR)
-    linux = sys.platform == "linux"
-    if linux:
+    windows = sys.platform == "win32"
+    if sys.platform == "darwin":
+        if backend not in ("metal", "cpu"):
+            raise ValueError("Choose Metal or CPU for GGUF inference on macOS.")
+        size, checksum = _MAC_ARM64_ASSET
+        install = root / f"llama-{_BUILD}-macos-arm64"
+        filename = f"llama-{_BUILD}-bin-macos-arm64.tar.gz"
+    elif sys.platform == "linux":
         variant, size, checksum = _LINUX_ASSETS[backend]
         install = root / f"llama-{_BUILD}-linux-{backend}"
         filename = f"llama-{_BUILD}-bin-{variant}-x64.tar.gz"
@@ -83,11 +98,11 @@ def ensure_runtime(root: Path, backend: str, progress: Callable[[str], None]) ->
         variant, size, checksum = _WINDOWS_ASSETS[backend]
         install = root / f"llama-{_BUILD}-{variant}"
         filename = f"llama-{_BUILD}-bin-win-{variant}-x64.zip"
-    executable = install / ("llama-server" if linux else "llama-server.exe")
+    executable = install / ("llama-server.exe" if windows else "llama-server")
     if _runtime_ready(install, backend):
         return executable
     root.mkdir(parents=True, exist_ok=True)
-    name = "Vulkan" if backend == "vulkan" else backend
+    name = {"vulkan": "Vulkan", "metal": "Metal", "cpu": "CPU", "openvino": "OpenVINO"}[backend]
     progress(f"Downloading the GGUF {name} runtime…")
     with tempfile.TemporaryDirectory(dir=root, prefix="gguf-runtime-") as directory:
         stage = Path(directory)
@@ -97,7 +112,7 @@ def ensure_runtime(root: Path, backend: str, progress: Callable[[str], None]) ->
             archive, {"path": filename, "size": size, "algorithm": "sha256", "digest": checksum}, progress,
         )
         extracted = stage / "files"
-        if linux:
+        if not windows:
             with tarfile.open(archive) as bundled:
                 bundled.extractall(extracted, filter="data")
         else:
@@ -107,7 +122,7 @@ def ensure_runtime(root: Path, backend: str, progress: Callable[[str], None]) ->
         if len(servers) != 1:
             raise RuntimeError("The verified GGUF runtime archive is missing llama-server.")
         runtime = servers[0].parent
-        if linux or backend == "vulkan":
+        if not windows or backend == "vulkan":
             files = {path.name: path.stat().st_size for path in runtime.iterdir() if path.is_file()}
             (runtime / _RUNTIME_MANIFEST).write_text(json.dumps(files), encoding="utf-8")
             if not _runtime_ready(runtime, backend):
@@ -155,7 +170,8 @@ class GGUFServer:
             flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
             selected = self._select_device(executable, env, flags)
             command = [
-                str(executable), "--model", str(model), "--device", selected, "--n-gpu-layers", "999",
+                str(executable), "--model", str(model), "--device", selected, "--n-gpu-layers",
+                "0" if backend == "cpu" else "999",
                 "--host", "127.0.0.1", "--port", str(port), "--api-key", self.key, "--no-webui",
                 "--ctx-size", str(context_size), "--parallel", "1", "--reasoning-format", "deepseek",
                 "--jinja", "--no-context-shift",
@@ -171,15 +187,18 @@ class GGUFServer:
                     stdout=log, stderr=subprocess.STDOUT, creationflags=flags,
                 )
             self._wait_ready()
-            if gpu_projector:
+            if gpu_projector or backend == "metal":
                 placement = self.log_path.read_text(encoding="utf-8", errors="replace")
                 layers = re.search(r"offloaded (\d+)/(\d+) layers to GPU", placement)
-                if not layers or layers[1] != layers[2] or f"mtmd_backends: using {selected} backend" not in placement:
+                vision_offloaded = not gpu_projector or f"mtmd_backends: using {selected} backend" in placement
+                if not layers or layers[1] != layers[2] or not vision_offloaded:
                     projector_lines = [line.strip() for line in placement.splitlines() if "mtmd_backends:" in line]
                     detail = f" Layers: {layers[1]}/{layers[2]}." if layers else ""
                     if projector_lines:
                         detail += f" {projector_lines[-1]}"
-                    raise RuntimeError("The chat model and vision projector could not both load on Intel GPU. Free GPU memory and retry." + detail)
+                    accelerator = "Apple GPU" if backend == "metal" else "Intel GPU"
+                    scope = "The chat model and vision projector" if gpu_projector else "The chat model"
+                    raise RuntimeError(f"{scope} could not load fully on {accelerator}. Free GPU memory and retry." + detail)
         except BaseException:
             self.close()
             raise
@@ -206,6 +225,10 @@ class GGUFServer:
         devices = result.stdout + result.stderr
         if self.backend == "openvino":
             match = re.search(rf"\b(OPENVINO\d+):\s+GGML_OPENVINO_DEVICE={self.device}(?:\s|\.)", devices)
+        elif self.backend == "metal":
+            match = re.search(r"\b(MTL\d*):\s+", devices)
+            if not match:
+                raise RuntimeError("Metal could not find an Apple GPU for local chat.")
         else:
             match = re.search(r"\b(Vulkan\d+):\s+.*Intel", devices, re.IGNORECASE)
             if not match:
@@ -378,7 +401,7 @@ class GGUFServer:
         output_tokens = usage.get("completion_tokens", 0)
         return {
             "type": "result", "device": self.device,
-            "backend": {"openvino": "OpenVINO", "vulkan": "Vulkan", "cpu": "llama.cpp CPU"}[self.backend],
+            "backend": {"openvino": "OpenVINO", "vulkan": "Vulkan", "metal": "Metal", "cpu": "llama.cpp CPU"}[self.backend],
             "mode": request.get("mode", "instant"),
             "text": "".join(text), "reasoning": "".join(thoughts),
             "toolCalls": list(calls.values()),

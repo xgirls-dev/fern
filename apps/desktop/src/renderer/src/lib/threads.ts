@@ -1,6 +1,6 @@
 import type { StudioSettings } from "./types";
 import { normalizeQwenDimension } from "./imageDimensions";
-import { intelImagePreset, isKleinLoraModel } from "./imageModels";
+import { fixedImagePreset, isKleinLoraModel } from "./imageModels";
 import type { ReferenceAttachment } from "./reference";
 
 const THREADS_KEY = "fern-threads:v1";
@@ -8,7 +8,7 @@ const REFERENCES_DB = "fern-thread-references";
 
 // Retired model IDs can remain in old threads and gallery metadata.
 export function normalizeImageSettings(settings: StudioSettings): StudioSettings {
-  const intel = intelImagePreset(settings.model);
+  const intel = fixedImagePreset(settings.model);
   if (intel) {
     const size = settings.width === settings.height && intel.sizes.includes(settings.width) ? settings.width : 512;
     return { ...settings, width: size, height: size, steps: intel.steps, guidance: intel.guidance, batchSize: 1, device: "AUTO" };
@@ -128,7 +128,7 @@ export function loadThreadWorkspace(settings: StudioSettings): ThreadWorkspace {
             referenceLabel: thread.referenceLabel ?? "No reference image.",
           })),
         };
-        if (threads.some((thread) => !["9b", "4b", "4b-lora", "9b-lora", "qwen21-turbo", "flux3-klein", "tame-pony-v25-sdxl", "tame-pony-v25-sdxl-int8"].includes(thread.settings.model ?? "9b") && !thread.settings.model?.startsWith("custom-") && !intelImagePreset(thread.settings.model))) {
+        if (threads.some((thread) => !["9b", "4b", "4b-lora", "9b-lora", "qwen21-turbo", "flux3-klein", "tame-pony-v25-sdxl", "tame-pony-v25-sdxl-int8"].includes(thread.settings.model ?? "9b") && !thread.settings.model?.startsWith("custom-") && !fixedImagePreset(thread.settings.model))) {
           try { saveThreadWorkspace(workspace); } catch {
             // Keep the migrated draft usable even if local storage is full.
           }

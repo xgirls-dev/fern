@@ -6,19 +6,21 @@ import subprocess
 from typing import Literal
 
 
-DeviceId = Literal["AUTO", "INTEL_GPU", "NVIDIA_GPU", "CPU"]
+DeviceId = Literal["AUTO", "INTEL_GPU", "NVIDIA_GPU", "APPLE_GPU", "CPU"]
 
 AUTO = "AUTO"
 INTEL_GPU = "INTEL_GPU"
 NVIDIA_GPU = "NVIDIA_GPU"
+APPLE_GPU = "APPLE_GPU"
 CPU = "CPU"
 
-DEVICE_IDS: tuple[DeviceId, ...] = (AUTO, INTEL_GPU, NVIDIA_GPU, CPU)
+DEVICE_IDS: tuple[DeviceId, ...] = (AUTO, INTEL_GPU, NVIDIA_GPU, APPLE_GPU, CPU)
 
 DEVICE_LABELS: dict[DeviceId, str] = {
     AUTO: "Auto-select",
     INTEL_GPU: "Intel GPU",
     NVIDIA_GPU: "NVIDIA GPU",
+    APPLE_GPU: "Apple GPU",
     CPU: "CPU",
 }
 
@@ -77,6 +79,7 @@ LEGACY_DEVICE_ALIASES = {
     "NVIDIA": NVIDIA_GPU,
     "CUDA": NVIDIA_GPU,
     "NVIDIA_GPU": NVIDIA_GPU,
+    "APPLE_GPU": APPLE_GPU,
     "CPU": CPU,
 }
 

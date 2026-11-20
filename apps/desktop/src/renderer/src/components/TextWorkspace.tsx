@@ -69,12 +69,12 @@ function ChatImage({ image, ordinal, checked, checking, onOpen, onRetryCheck, ca
   </figure>;
 }
 
-export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels, focusRequest = 0, intelAvailable, onOpenImage, onCreateImage, onCreateSpeech, onOpenCompute }: {
+export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels, focusRequest = 0, imageGpuAvailable, onOpenImage, onCreateImage, onCreateSpeech, onOpenCompute }: {
   studio: TextStudio;
   sidebarCollapsed?: boolean;
   onSetupModels: (task: SetupTask) => void;
   focusRequest?: number;
-  intelAvailable?: boolean;
+  imageGpuAvailable?: boolean;
   onOpenImage: (image: ImageRecord, images: ImageRecord[]) => void;
   onCreateImage: () => void;
   onCreateSpeech: () => void;
@@ -115,7 +115,7 @@ export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels,
   const needsRetry = !!lastMessage && (lastMessage.role === "user" || (!lastMessage.content.trim() && !lastMessage.generatedImage));
   const imageModels = status.imageToolModels ?? [];
   const imageModelAvailable = imageModels.some((model) => activeThread?.imageModel === "auto" || activeThread?.imageModel === model.id);
-  const canUseImageSetup = studio.computeDevice === "GPU" && intelAvailable !== false;
+  const canUseImageSetup = studio.computeDevice === "GPU" && imageGpuAvailable !== false;
   const canCreateImage = canUseImageSetup && !runtimeIssue && selected?.supportsVision && selected.supportsTools && imageModelAvailable;
   const generatingImage = runningHere && !!status.job.phase?.startsWith("Generating");
   const checkingImage = runningHere && !!status.job.phase?.startsWith("Checking the generated image");

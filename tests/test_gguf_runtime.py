@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from gguf_runtime import GGUFServer, VulkanDriverError, ensure_runtime
+from gguf_runtime import GGUFServer, VulkanDriverError, ensure_runtime, runtime_supported
 
 
 class VulkanRuntimeTests(unittest.TestCase):
@@ -71,6 +71,47 @@ class VulkanRuntimeTests(unittest.TestCase):
                 ensure_runtime(root, "vulkan", Mock())
                 self.assertEqual(fetch.call_count, 2)
                 self.assertEqual((executable.parent / "libggml-vulkan.so").read_bytes(), b"backend")
+
+    @unittest.skipIf(os.name == "nt", "requires Unix executable permissions")
+    def test_mac_uses_one_verified_arm64_archive_for_metal_and_cpu(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            assets = root / "assets"
+            assets.mkdir()
+            for name in ("llama-server", "libggml-metal.dylib", "libllama-server-impl.dylib", "libmtmd.dylib"):
+                (assets / name).write_bytes(b"fixture")
+            (assets / "llama-server").chmod(0o755)
+
+            def download(url, target, spec, progress):
+                self.assertTrue(url.endswith("-bin-macos-arm64.tar.gz"))
+                self.assertEqual(spec["algorithm"], "sha256")
+                with tarfile.open(target, "w:gz") as archive:
+                    archive.add(assets, arcname="llama-b12498")
+
+            with (
+                patch("gguf_runtime.sys.platform", "darwin"),
+                patch("gguf_runtime.platform.machine", return_value="arm64") as machine,
+                patch("gguf_runtime.download_file", side_effect=download) as fetch,
+            ):
+                executable = ensure_runtime(root, "metal", Mock())
+                self.assertEqual(ensure_runtime(root, "cpu", Mock()), executable)
+                self.assertEqual(fetch.call_count, 1)
+                (executable.parent / "libmtmd.dylib").unlink()
+                ensure_runtime(root, "metal", Mock())
+                self.assertEqual(fetch.call_count, 2)
+                machine.return_value = "x86_64"
+                self.assertFalse(runtime_supported())
+
+    def test_metal_does_not_pick_a_cpu_device(self) -> None:
+        server = object.__new__(GGUFServer)
+        server.backend = "metal"
+        server.device = "GPU"
+        result = subprocess.CompletedProcess([], 0, stdout="Available devices:\n  MTL0: Apple M1\n", stderr="")
+        with patch("gguf_runtime.subprocess.run", return_value=result):
+            self.assertEqual(server._select_device(Path("llama-server"), {}, 0), "MTL0")
+            result.stdout = "Available devices:\n"
+            with self.assertRaisesRegex(RuntimeError, "could not find an Apple GPU"):
+                server._select_device(Path("llama-server"), {}, 0)
 
     def test_missing_windows_vulkan_loader_requests_driver(self) -> None:
         server = object.__new__(GGUFServer)

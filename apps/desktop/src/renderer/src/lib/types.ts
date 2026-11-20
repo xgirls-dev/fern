@@ -50,7 +50,7 @@ export interface ModelStatus {
   adapters?: DeviceAdapter[];
 }
 
-export type DeviceId = "AUTO" | "INTEL_GPU" | "NVIDIA_GPU" | "CPU";
+export type DeviceId = "AUTO" | "INTEL_GPU" | "NVIDIA_GPU" | "APPLE_GPU" | "CPU";
 
 export interface DeviceAdapter {
   id: Exclude<DeviceId, "AUTO">;

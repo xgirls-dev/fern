@@ -33,7 +33,7 @@ export class PythonBackend {
         env: getPythonEnvironment(),
         stdio: ["ignore", "pipe", "pipe"],
         windowsHide: true,
-        detached: process.platform === "linux",
+        detached: process.platform !== "win32",
       },
     );
 
@@ -75,7 +75,7 @@ export class PythonBackend {
     await new Promise<void>((resolve) => {
       const finish = () => resolve();
       const signalBackend = (signal: NodeJS.Signals) => {
-        if (process.platform !== "linux" || !proc.pid) {
+        if (process.platform === "win32" || !proc.pid) {
           proc.kill(signal);
           return;
         }
@@ -102,7 +102,7 @@ export class PythonBackend {
 
       proc.once("close", () => {
         clearTimeout(timeout);
-        if (process.platform === "linux") signalBackend("SIGKILL");
+        if (process.platform !== "win32") signalBackend("SIGKILL");
         finish();
       });
 

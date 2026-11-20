@@ -16,7 +16,8 @@
     "preview": "cross-env ELECTRON_RUN_AS_NODE= electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
     "package": "npm run build && electron-builder --win nsis --publish never",
-    "package:omarchy": "npm run build && electron-builder --linux dir --x64 --publish never -c.directories.output=release-omarchy"
+    "package:omarchy": "npm run build && electron-builder --linux dir --x64 --publish never -c.directories.output=release-omarchy",
+    "package:macos": "npm run build && electron-builder --mac zip --arm64 --publish never -c.directories.output=release-macos"
   },
   "dependencies": {
     "lucide-react": "^1.25.0",
@@ -105,6 +106,25 @@
       "installerIcon": "resources/icon.ico",
       "uninstallerIcon": "resources/icon.ico",
       "installerHeaderIcon": "resources/icon.ico"
+    },
+    "mac": {
+      "icon": "resources/icon.png",
+      "category": "public.app-category.graphics-design",
+      "minimumSystemVersion": "15.0",
+      "artifactName": "Fern-${version}-macOS-${arch}-preview.${ext}",
+      "identity": "-",
+      "hardenedRuntime": false,
+      "notarize": false,
+      "extraResources": [
+        {
+          "from": "resources/runtime-macos",
+          "to": "runtime"
+        },
+        {
+          "from": "resources/icon.png",
+          "to": "icon.png"
+        }
+      ]
     },
     "linux": {
       "executableName": "fern",

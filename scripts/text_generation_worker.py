@@ -1,4 +1,4 @@
-"""Persistent OpenVINO GenAI worker with a line-oriented JSON protocol."""
+"""Persistent local chat worker with a line-oriented JSON protocol."""
 from __future__ import annotations
 
 import json
@@ -50,16 +50,18 @@ def run_gguf(file: Path, device: str, projector: Path | None) -> int:
                 context_size = request.get("contextSize", DEFAULT_CONTEXT_SIZE)
                 if vision and not projector:
                     raise ValueError("Add the model's vision projector before sending an image.")
-                # b12498's OpenVINO backend fails in Gemma 4's image-prefill graph.
-                # Use the same GGUF files in the appropriate llama.cpp backend.
-                if vision:
+                if sys.platform == "darwin":
+                    target = "CPU" if device == "CPU" else "GPU"
+                    backend = "cpu" if target == "CPU" else "metal"
+                elif vision:
+                    # The pinned OpenVINO build cannot prefill Gemma 4 vision.
                     target = "CPU" if device == "CPU" else "GPU"
                     backend = "cpu" if target == "CPU" else "vulkan"
                 else:
                     target, backend = resolve_text_device(device), "openvino"
-                gpu_projector = vision and bool(request.get("requireGpuVision"))
-                if gpu_projector and backend != "vulkan":
-                    raise ValueError("This image conversation requires Intel GPU for vision. Select GPU in Preferences.")
+                gpu_projector = vision and (backend == "metal" or bool(request.get("requireGpuVision")))
+                if gpu_projector and backend not in ("vulkan", "metal"):
+                    raise ValueError("This image conversation requires GPU vision. Select Available GPU in Preferences.")
                 if (
                     server is None or server.backend != backend or server.context_size != context_size
                     or server.gpu_projector != gpu_projector

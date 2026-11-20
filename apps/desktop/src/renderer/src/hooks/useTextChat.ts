@@ -29,7 +29,7 @@ const idleStatus: TextRuntimeStatus = {
   job: { id: null, threadId: null, modelId: null, status: "idle", phase: null, partialText: "", startedAt: null, finishedAt: null, result: null, error: null },
 };
 
-export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU", intelAvailable?: boolean) {
+export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU", imageGpuAvailable?: boolean) {
   const [workspace, setWorkspace] = useState(loadTextThreads);
   const workspaceRef = useRef(workspace);
   const persistPendingRef = useRef(false);
@@ -323,7 +323,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
       : activeThread.title;
     const requestId = crypto.randomUUID();
     const imageOptions = status.imageToolModels ?? [];
-    const imageModel = model.supportsTools && model.supportsVision && computeDevice === "GPU" && intelAvailable !== false
+    const imageModel = model.supportsTools && model.supportsVision && computeDevice === "GPU" && imageGpuAvailable !== false
       ? (activeThread.imageModel === "auto" ? imageOptions[0] : imageOptions.find((item) => item.id === activeThread.imageModel))
       : undefined;
     sending.current = true;
@@ -375,7 +375,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
       sending.current = false;
       setSubmitting(false);
     }
-  }, [activeThread, busy, computeDevice, intelAvailable, status, updateThread]);
+  }, [activeThread, busy, computeDevice, imageGpuAvailable, status, updateThread]);
 
   const retry = useCallback(() => send("", true), [send]);
 

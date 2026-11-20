@@ -26,7 +26,7 @@ function getSourceRoot(): string {
 }
 
 export function getAppIconPath(): string {
-  const icon = process.platform === "linux" ? "icon.png" : "icon.ico";
+  const icon = process.platform === "win32" ? "icon.ico" : "icon.png";
   return app.isPackaged
     ? join(process.resourcesPath, icon)
     : join(app.getAppPath(), "resources", icon);
@@ -34,7 +34,7 @@ export function getAppIconPath(): string {
 
 export function getPythonExecutable(): string {
   if (app.isPackaged) {
-    if (process.platform === "linux") {
+    if (process.platform !== "win32") {
       return join(process.resourcesPath, "runtime", "python-home", "bin", "python3.12");
     }
     return join(app.getPath("userData"), "runtime", "python-home", "python.exe");
@@ -104,11 +104,17 @@ export function getPythonEnvironment(): NodeJS.ProcessEnv {
         }
       : {}),
   };
-  if (app.isPackaged && process.platform === "linux") {
+  if (app.isPackaged && process.platform !== "win32") {
     // The system Python configuration must not override the packaged interpreter.
     delete env.PYTHONHOME;
     delete env.PYTHONPATH;
     env.PYTHONNOUSERSITE = "1";
+    if (process.platform === "darwin") {
+      env.SSL_CERT_FILE = join(
+        process.resourcesPath, "runtime", "python-home", "lib", "python3.12",
+        "site-packages", "certifi", "cacert.pem",
+      );
+    }
   }
   return env;
 }

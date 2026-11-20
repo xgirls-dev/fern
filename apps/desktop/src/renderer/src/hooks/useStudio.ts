@@ -31,7 +31,7 @@ import type {
 import { notify } from "../lib/notifications";
 import type { ReferenceAttachment } from "../lib/reference";
 import { imageDimensionLimits } from "../lib/imageDimensions";
-import { isKleinLoraModel, maxReferenceImages, selectedKleinLoras } from "../lib/imageModels";
+import { APPLE_IMAGE_MODEL, isKleinLoraModel, maxReferenceImages, selectedKleinLoras } from "../lib/imageModels";
 
 const SETTINGS_KEY = "fern-studio-settings:v3";
 const LEGACY_SETTINGS_KEYS = [
@@ -41,7 +41,7 @@ const LEGACY_SETTINGS_KEYS = [
 
 const DEFAULT_SETTINGS: StudioSettings = {
   prompt: "",
-  model: "9b",
+  model: window.studio?.platform === "darwin" ? APPLE_IMAGE_MODEL : "9b",
   device: "AUTO",
   width: 1024,
   height: 1024,
@@ -68,6 +68,8 @@ function normalizeDevice(value: unknown): DeviceId {
     case "CUDA":
     case "NVIDIA_GPU":
       return "NVIDIA_GPU";
+    case "APPLE_GPU":
+      return "APPLE_GPU";
     case "CPU":
       return "CPU";
     case "AUTO":

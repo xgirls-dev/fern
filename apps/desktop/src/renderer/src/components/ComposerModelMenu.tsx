@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import ChevronDown from "lucide-react/dist/esm/icons/chevron-down.mjs";
 import Check from "lucide-react/dist/esm/icons/check.mjs";
 import type { StudioSettings } from "../lib/types";
-import { kleinLoraLabel } from "../lib/imageModels";
+import { APPLE_IMAGE_MODEL, kleinLoraLabel } from "../lib/imageModels";
 import { Button, MenuItem } from "./ui/controls";
 
 export interface ComposerModel {
@@ -18,6 +18,7 @@ export interface ComposerModel {
 }
 
 const MODEL_LABELS: Record<string, string> = {
+  [APPLE_IMAGE_MODEL]: "Klein 4B · MLX",
   "9b": "Klein 9B",
   "4b": "Klein 4B",
   "4b-lora": kleinLoraLabel("4b-lora"),
@@ -31,7 +32,9 @@ const MODEL_LABELS: Record<string, string> = {
   "z-image-turbo": "Z-Image Turbo",
   "kromoss-opd-dmd2": "Kromoss OPD · DMD2",
 };
-const MODEL_CHOICES = Object.keys(MODEL_LABELS);
+const MODEL_CHOICES = window.studio?.platform === "darwin"
+  ? [APPLE_IMAGE_MODEL]
+  : Object.keys(MODEL_LABELS).filter((id) => id !== APPLE_IMAGE_MODEL);
 
 export function ComposerModelMenu({
   models,
@@ -55,7 +58,7 @@ export function ComposerModelMenu({
   const trigger = useRef<HTMLButtonElement>(null);
   const menu = useRef<HTMLDivElement>(null);
   const id = useId();
-  const selectedId = value && (MODEL_CHOICES.includes(value) || value.startsWith("custom-")) ? value : "9b";
+  const selectedId = value && (MODEL_CHOICES.includes(value) || value.startsWith("custom-")) ? value : MODEL_CHOICES[0];
   const current = models.find((model) => model.id === selectedId);
   const choices = [...MODEL_CHOICES, ...models.map((model) => model.id).filter((modelId) => modelId.startsWith("custom-"))];
   if (selectedId.startsWith("custom-") && !choices.includes(selectedId)) choices.push(selectedId);

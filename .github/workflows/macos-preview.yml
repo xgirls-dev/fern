@@ -1,0 +1,42 @@
+name: macOS preview
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/macos-preview.yml
+      - scripts/build-macos.sh
+      - scripts/requirements-macos.txt
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: command -v uv || brew install uv
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run package:macos
+      - name: Check signature and Finder app startup
+        run: |
+          app_path=apps/desktop/release-macos/mac-arm64/Fern.app
+          codesign --verify --deep --strict "$app_path"
+          FERN_E2E_EXECUTABLE="$PWD/$app_path/Contents/MacOS/Fern" node apps/desktop/e2e/macos-preview.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fern-macos-arm64-preview
+          path: apps/desktop/release-macos/Fern-*-macOS-arm64-preview.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1

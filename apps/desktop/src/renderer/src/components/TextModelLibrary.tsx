@@ -13,7 +13,7 @@ export function TextModelLibrary({ studio, recommendedId }: { studio: ReturnType
   const error = studio.actionError ?? studio.statusError ?? status.registryError;
   return <section aria-label="Text models">
     <div className="models-section-heading"><div><h3>Text models</h3><p>Run private conversations on your device.</p></div><div className="text-model-import-actions">
-      <Button type="button" disabled={busy} onClick={() => void studio.importModel()}>Add local model</Button>
+      {window.studio.platform !== "darwin" && <Button type="button" disabled={busy} onClick={() => void studio.importModel()}>Add local model</Button>}
       {status.ggufAvailable && <Button type="button" disabled={busy} onClick={() => void studio.importModel("gguf")}>Import GGUF</Button>}
     </div></div>
     {error ? <ErrorMessage>{error}</ErrorMessage> : null}

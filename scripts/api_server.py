@@ -62,7 +62,7 @@ from text_model_registry import TextModelRegistry
 from text_model_download import DEFAULT_MODEL_ID as DEFAULT_TEXT_MODEL_ID
 from text_model_download import catalog as text_model_catalog, install_model as install_text_model, model_files as text_model_files
 from gguf_metadata import is_projector, read_metadata as read_gguf_metadata
-from gguf_runtime import RUNTIME_PLATFORM_ERROR, runtime_supported as gguf_runtime_supported
+from gguf_runtime import RUNTIME_PLATFORM_ERROR, apple_silicon, runtime_supported as gguf_runtime_supported
 from chat_image_tools import CHAT_IMAGE_SIZE, IMAGE_MODEL_PRIORITY, IMAGE_TOOL, image_tool_prompt
 from chat_context import CONTEXT_SIZES, DEFAULT_CONTEXT_SIZE
 from tts_model_download import catalog_spec as tts_catalog_spec, model_ready as tts_export_ready
@@ -73,14 +73,15 @@ CUSTOM_IMAGE_GENERATION_WORKER = GenerationWorker(target=custom_image_inference_
 TTS_GENERATION_WORKER = TtsGenerationWorker()
 TEXT_GENERATION_WORKER = TextGenerationProcess()
 from model_manager import ModelManager, remove_tree
-from model_catalog import INTEL_MEDIA_CATALOG, model_spec
+from model_catalog import APPLE_IMAGE_ID, APPLE_IMAGE_SPEC, INTEL_MEDIA_CATALOG, model_spec
+import apple_image
 from intel_media import IntelMedia, PLATFORM_NOTE as INTEL_MEDIA_PLATFORM_NOTE, VIDEO_ID, supported as intel_media_supported
 from video_jobs import VideoJobs
 from PIL import ImageOps
 import gallery_store
 from media_http import byte_range
 import storage_manager
-from device_adapters import device_label, normalize_device
+from device_adapters import APPLE_GPU, device_label, normalize_device
 from qwen21_turbo_download import download_model as download_qwen_turbo_model
 
 
@@ -421,7 +422,15 @@ def qwen_turbo_snapshot() -> dict[str, Any]:
 
 def model_library_snapshot() -> list[dict[str, Any]]:
     """Merge the regular catalog with Flux.3's separate runtime setup state."""
-    models = MODEL_MANAGER.snapshot()
+    if apple_silicon():
+        item = next(model for model in MODEL_MANAGER.snapshot() if model["id"] == APPLE_IMAGE_ID)
+        status = apple_image.status(MODELS_DIR, APPLE_IMAGE_ID, "AUTO")
+        item.update(
+            runtimeReady=status["runtimeReady"], supportsReferenceImage=False,
+            setupUnavailableReason=None if status["selectedDevice"] else status["runtimeNote"],
+        )
+        return [item]
+    models = [item for item in MODEL_MANAGER.snapshot() if item["id"] != APPLE_IMAGE_ID]
     klein_installed = any(item["id"] in ("4b", "4b-lora") and item["installed"] for item in models)
     for item in models:
         if item["id"] in ("4b", "4b-lora"):
@@ -573,6 +582,8 @@ def tts_environment_ready() -> bool:
 
 
 def tts_setup_unavailable() -> str | None:
+    if apple_silicon():
+        return "Speech generation is unavailable in the Mac beta."
     if sys.platform == "linux":
         return "Qwen3-TTS setup is unavailable in the Linux beta."
     return None
@@ -629,6 +640,8 @@ def text_runtime_snapshot() -> dict[str, Any]:
         model_install = dict(TEXT_MODEL_INSTALL)
     recommended = []
     for model_id, spec in text_model_catalog().items():
+        if apple_silicon() and spec["format"] != "gguf":
+            continue
         folder = TEXT_MODEL_ROOT / spec["folder"]
         model_path, _ = text_model_files(folder, spec)
         entry = next((model for model in models if Path(model.get("path", "")).resolve() == model_path), None)
@@ -644,6 +657,8 @@ def text_runtime_snapshot() -> dict[str, Any]:
         item["id"]: item["label"] for item in MODEL_MANAGER.snapshot()
         if item["id"] in IMAGE_MODEL_PRIORITY and item.get("installed")
         and (item["id"] not in INTEL_MEDIA_CATALOG or intel_media_supported())
+        and ((item["id"] == APPLE_IMAGE_ID and apple_image.device_available())
+             if apple_silicon() else item["id"] != APPLE_IMAGE_ID)
     }
     gguf_available = gguf_runtime_supported()
     return {
@@ -654,7 +669,7 @@ def text_runtime_snapshot() -> dict[str, Any]:
             {"id": key, "label": installed_image_models[key]}
             for key in IMAGE_MODEL_PRIORITY if key in installed_image_models
         ],
-        "defaultModelId": DEFAULT_TEXT_MODEL_ID,
+        "defaultModelId": "gemma-4-e4b-gguf" if apple_silicon() else DEFAULT_TEXT_MODEL_ID,
         "modelInstall": model_install,
         "registryError": registry_error,
         "runtimeAvailable": runtime_available,
@@ -1276,6 +1291,10 @@ def model_snapshot(device: str, model="9b") -> dict[str, Any]:
     """Hardware imports must never hold gallery/status requests hostage."""
     global MODEL_CHECK_STARTED
     device = normalize_device(device)
+    if apple_silicon():
+        return apple_image.status(MODELS_DIR, APPLE_IMAGE_ID if model == "auto" else model, device)
+    if model == APPLE_IMAGE_ID:
+        return apple_image.status(MODELS_DIR, model, device)
     if model in INTEL_MEDIA_CATALOG:
         return INTEL_MEDIA.status(model, device)
     if custom_image.is_model(model):
@@ -1533,6 +1552,13 @@ def validate_flux_payload(payload: dict[str, Any]) -> dict[str, Any]:
     model = payload.get("model", "9b")
     if not isinstance(model, str):
         raise ValueError("Choose an installed Fern image model.")
+    if apple_silicon():
+        if model == "auto":
+            model = APPLE_IMAGE_ID
+        if model != APPLE_IMAGE_ID:
+            raise ValueError("Choose Klein 4B · MLX to create images on this Mac.")
+    elif model == APPLE_IMAGE_ID:
+        raise ValueError("Klein 4B · MLX requires Apple Silicon.")
     custom_model = custom_image.is_model(model)
     if model not in ("auto", QWEN_TURBO_MODEL_ID, flux3.MODEL_KEY) and not custom_model: model_spec(model)
     prompt = str(payload.get("prompt", "")).strip()
@@ -1549,10 +1575,13 @@ def validate_flux_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "NVIDIA",
         "CUDA",
         "NVIDIA_GPU",
+        APPLE_GPU,
         "CPU",
     }:
         raise ValueError("Device must be Auto-select, Intel GPU, NVIDIA GPU, or CPU.")
     device = normalize_device(raw_device)
+    if device == APPLE_GPU and model != APPLE_IMAGE_ID:
+        raise ValueError("Choose an image model that supports Apple GPU.")
     if custom_model and device in ("NVIDIA_GPU",):
         raise ValueError("Custom OpenVINO GenAI image models support Intel GPU or CPU. Select Auto, Intel GPU, or CPU.")
     custom_spec = custom_image.model_spec(model) if custom_model else None
@@ -1562,14 +1591,17 @@ def validate_flux_payload(payload: dict[str, Any]) -> dict[str, Any]:
         if not (qwen_turbo_runtime_ready() and qwen_turbo_model_ready()):
             raise ValueError("Install the official Qwen Turbo OpenVINO INT8 model from Models before generating.")
     intel_spec = INTEL_MEDIA_CATALOG.get(model)
+    fixed_spec = APPLE_IMAGE_SPEC if model == APPLE_IMAGE_ID else intel_spec
+    if model == APPLE_IMAGE_ID and device not in ("AUTO", APPLE_GPU):
+        raise ValueError("Select Available GPU in Preferences to use Klein 4B on this Mac.")
     if intel_spec:
         if intel_spec["category"] != "image":
             raise ValueError("Open Video to generate with Wan.")
         if device not in ("AUTO", "INTEL_GPU"):
             raise ValueError("Choose Intel GPU or Auto to generate with this model.")
     backend = flux2
-    width = int(payload.get("width", intel_spec["defaultWidth"] if intel_spec else backend.DEFAULT_WIDTH))
-    height = int(payload.get("height", intel_spec["defaultHeight"] if intel_spec else backend.DEFAULT_HEIGHT))
+    width = int(payload.get("width", fixed_spec["defaultWidth"] if fixed_spec else backend.DEFAULT_WIDTH))
+    height = int(payload.get("height", fixed_spec["defaultHeight"] if fixed_spec else backend.DEFAULT_HEIGHT))
     steps = int(payload.get("steps", backend.DEFAULT_STEPS))
     guidance = float(payload.get("guidance", backend.DEFAULT_GUIDANCE))
     seed = int(payload.get("seed", 42))
@@ -1592,14 +1624,14 @@ def validate_flux_payload(payload: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("Multiple reference images are supported by FLUX.2 Klein 4B and 9B.")
     reference_images = [decode_flux_reference_image(source) for source in reference_sources]
     reference_image = reference_images[0] if reference_images else None
-    if intel_spec and reference_image is not None:
+    if fixed_spec and reference_image is not None:
         raise ValueError("This model generates images from a text prompt.")
-    if intel_spec and (width != height or width not in intel_spec["dimensions"]):
-        sizes = " or ".join(f"{size}×{size}" for size in intel_spec["dimensions"])
-        raise ValueError(f"Choose {sizes} for {intel_spec['label']}.")
-    if intel_spec:
-        steps = intel_spec["defaultSteps"]
-        guidance = intel_spec["defaultGuidance"]
+    if fixed_spec and (width != height or width not in fixed_spec["dimensions"]):
+        sizes = " or ".join(f"{size}×{size}" for size in fixed_spec["dimensions"])
+        raise ValueError(f"Choose {sizes} for {fixed_spec['label']}.")
+    if fixed_spec:
+        steps = fixed_spec["defaultSteps"]
+        guidance = fixed_spec["defaultGuidance"]
         if batch_size != 1:
             raise ValueError("Generate one image at a time with this model.")
         if not 0 <= seed <= 2_147_483_647:
@@ -1725,6 +1757,7 @@ def run_flux_generation(
 
     stage = CACHE_DIR / ("generation-" + job_id)
     intel_model = payload["model"] in INTEL_MEDIA_CATALOG
+    apple_model = payload["model"] == APPLE_IMAGE_ID
     try:
         if not intel_model:
             INTEL_MEDIA.close()
@@ -1737,7 +1770,7 @@ def run_flux_generation(
             TAME_PONY_GENERATION_WORKER.close()
         if not custom_image.is_model(payload.get("model", "")):
             CUSTOM_IMAGE_GENERATION_WORKER.close()
-        if on_chat_progress is None and payload.get("model") not in flux2.LORA_MODEL_KEYS:
+        if on_chat_progress is None and not apple_model and payload.get("model") not in flux2.LORA_MODEL_KEYS:
             GENERATION_WORKER.close()
         if payload.get("model") != flux3.MODEL_KEY:
             FLUX3_GENERATION_WORKER.close()
@@ -1792,6 +1825,8 @@ def run_flux_generation(
                 "modelPath": str(
                     INTEL_MEDIA.folder(payload["model"])
                     if intel_model
+                    else MODEL_MANAGER.folder(APPLE_IMAGE_ID)
+                    if apple_model
                     else QWEN_TURBO_MODEL_ROOT
                     if payload["model"] == QWEN_TURBO_MODEL_ID
                     else flux3.MODEL_DIR
@@ -1969,6 +2004,13 @@ def run_flux_generation(
                     output_dir=stage,
                     log=log_generation,
                 )
+                if apple_model:
+                    if output_path.resolve().parent != stage.resolve():
+                        raise RuntimeError("Klein MLX returned an image outside its generation workspace.")
+                    with Image.open(output_path) as output_image:
+                        if output_image.format != "PNG" or output_image.size != (payload["width"], payload["height"]):
+                            raise RuntimeError("Klein MLX output does not match the requested PNG dimensions.")
+                        output_image.verify()
             if cancel_event.is_set():
                 raise FluxGenerationCancelled("Generation stopped by user.")
             destination = OUTPUTS / output_path.name
@@ -2081,7 +2123,7 @@ def prepare_image_inspection(payload: dict[str, Any]) -> dict[str, Any]:
         prompt += f" The image was requested as follows: {artifact['prompt']}. Mention any obvious mismatch."
     return {
         "modelId": model_id, "threadId": thread_id, "device": device, "inspectionImage": artifact,
-        "requireGpuVision": metadata.get("model") in INTEL_MEDIA_CATALOG,
+        "requireGpuVision": metadata.get("model") in INTEL_MEDIA_CATALOG or metadata.get("model") == APPLE_IMAGE_ID,
         "messages": [{"role": "user", "content": prompt, "imagePath": str(path)}],
         "mode": "instant", "toolChoice": "none", "contextSize": DEFAULT_CONTEXT_SIZE,
         "systemPrompt": "", "temperature": 0.2, "topP": 0.9, "maxNewTokens": 96, "seed": 0,
@@ -2092,12 +2134,16 @@ def generate_chat_image(
     model: str, prompt: str, thread_id: str,
     job_id: str, cancel_event: threading.Event,
 ) -> dict[str, Any]:
-    status = model_snapshot("INTEL_GPU", model) if model in INTEL_MEDIA_CATALOG else flux2.model_status("INTEL_GPU", model)
-    if not status["runtimeReady"] or status["selectedDevice"] != "INTEL_GPU":
+    device = APPLE_GPU if model == APPLE_IMAGE_ID else "INTEL_GPU"
+    status = (
+        model_snapshot(device, model)
+        if model in INTEL_MEDIA_CATALOG or model == APPLE_IMAGE_ID else flux2.model_status(device, model)
+    )
+    if not status["runtimeReady"] or status["selectedDevice"] != device:
         raise RuntimeError(str(status["runtimeNote"]))
     image_request = validate_flux_payload({
         "model": model, "prompt": prompt, "width": CHAT_IMAGE_SIZE, "height": CHAT_IMAGE_SIZE,
-        "device": "INTEL_GPU", "steps": 4, "guidance": 1.0, "thread_id": thread_id,
+        "device": device, "steps": 4, "guidance": 1.0, "thread_id": thread_id,
         "seed": uuid.uuid4().int % 2_147_483_647,
     })
     image_request["modelRevision"] = status["modelRevision"]
@@ -2406,6 +2452,8 @@ class Handler(BaseHTTPRequestHandler):
                 catalog = text_model_catalog()
                 if not isinstance(model_id, str) or model_id not in catalog:
                     raise ValueError("Choose a recommended text model.")
+                if apple_silicon() and catalog[model_id]["format"] != "gguf":
+                    raise ValueError("Choose a GGUF model on this Mac.")
                 if catalog[model_id]["format"] == "gguf" and not gguf_runtime_supported():
                     raise ValueError(RUNTIME_PLATFORM_ERROR)
                 with TTS_JOB_LOCK:
@@ -2439,6 +2487,8 @@ class Handler(BaseHTTPRequestHandler):
                 if parsed.path.endswith("/import"):
                     paths = payload.get("ggufPaths")
                     if paths is None:
+                        if apple_silicon():
+                            raise ValueError("Choose a GGUF model on this Mac.")
                         folder = payload.get("path")
                         if not isinstance(folder, str) or not folder.strip() or len(folder) > 4096:
                             raise ValueError("Choose a local model folder or GGUF model.")
@@ -2501,6 +2551,8 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError("The text conversation is invalid. Start a new text thread and retry.")
                 messages = payload.get("messages")
                 gguf = model.get("format") == "gguf"
+                if apple_silicon() and not gguf:
+                    raise ValueError("Choose a GGUF model on this Mac.")
                 message_limit = 300 if gguf else 100
                 if not isinstance(messages, list) or not 1 <= len(messages) <= message_limit:
                     raise ValueError(f"A conversation must contain 1 to {message_limit} messages.")
@@ -2529,7 +2581,7 @@ class Handler(BaseHTTPRequestHandler):
                             path = (OUTPUTS / filename).resolve()
                             if model.get("supportsVision") and path.parent == OUTPUTS.resolve() and path.is_file():
                                 turn["imagePath"] = str(path)
-                                require_gpu_vision |= saved.get("model") in INTEL_MEDIA_CATALOG
+                                require_gpu_vision |= saved.get("model") in INTEL_MEDIA_CATALOG or saved.get("model") == APPLE_IMAGE_ID
                     if message.get("image") is not None:
                         if message["role"] != "user" or not model.get("supportsVision"):
                             raise ValueError("Choose a vision-capable GGUF model to use chat images.")
@@ -2568,9 +2620,12 @@ class Handler(BaseHTTPRequestHandler):
                         raise ValueError("Select a vision-capable chat model with tool calling and its vision projector.")
                     if device == "CPU":
                         raise ValueError("Select GPU in Preferences to use the image tool in chat.")
-                    if not isinstance(image_model, str) or image_model not in IMAGE_MODEL_PRIORITY or not any(
+                    if (not isinstance(image_model, str) or image_model not in IMAGE_MODEL_PRIORITY
+                        or apple_silicon() != (image_model == APPLE_IMAGE_ID)
+                        or (image_model == APPLE_IMAGE_ID and not apple_image.device_available())
+                        or not any(
                         item["id"] == image_model and item.get("installed") for item in MODEL_MANAGER.snapshot()
-                    ):
+                    )):
                         raise ValueError("Select an installed image model in Chat settings.")
                 context_size = payload.get("contextSize", DEFAULT_CONTEXT_SIZE)
                 if type(context_size) is not int or context_size not in CONTEXT_SIZES:
@@ -2595,7 +2650,7 @@ class Handler(BaseHTTPRequestHandler):
                     "seed": seed,
                     "mode": mode,
                     "threadId": thread_id, "imageModel": image_model, "contextSize": context_size,
-                    "requireGpuVision": require_gpu_vision or image_model in INTEL_MEDIA_CATALOG,
+                    "requireGpuVision": require_gpu_vision or image_model in INTEL_MEDIA_CATALOG or image_model == APPLE_IMAGE_ID,
                 }
                 start_text_job(generation, payload.get("requestId"))
                 self.send_json(202, {"job": text_runtime_snapshot()})
@@ -2894,6 +2949,10 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path in ("/api/models/install", "/api/models/pause", "/api/models/remove"):
             try:
                 model = self.read_json_body().get("model")
+                if apple_silicon() != (model == APPLE_IMAGE_ID):
+                    raise ValueError("This image model is unavailable on this platform.")
+                if model == APPLE_IMAGE_ID and parsed.path.endswith("install") and not apple_image.device_available():
+                    raise ValueError("Klein 4B · MLX requires an available Apple GPU.")
                 if custom_image.is_model(model):
                     if not parsed.path.endswith("remove"):
                         raise ValueError("Custom local models are added from their export folder.")
@@ -2979,7 +3038,7 @@ class Handler(BaseHTTPRequestHandler):
                 if parsed.path.endswith("install"): MODEL_MANAGER.start(model)
                 elif parsed.path.endswith("pause"): MODEL_MANAGER.cancel(model)
                 else:
-                    if model in flux2.KLEIN_MODEL_KEYS and text_job_running():
+                    if (model in flux2.KLEIN_MODEL_KEYS or model == APPLE_IMAGE_ID) and text_job_running():
                         raise ValueError("Wait for the active chat response before removing a Klein image model.")
                     with FLUX_JOB_LOCK:
                         if FLUX_JOB["status"] == "running": raise ValueError("Stop generation before removing a model.")
@@ -3017,7 +3076,7 @@ class Handler(BaseHTTPRequestHandler):
         with operation_lock:
             status = (
                 model_snapshot(payload["device"], payload["model"])
-                if payload["model"] in (QWEN_TURBO_MODEL_ID, *INTEL_MEDIA_CATALOG)
+                if payload["model"] in (QWEN_TURBO_MODEL_ID, APPLE_IMAGE_ID, *INTEL_MEDIA_CATALOG)
                 else flux3.model_status(payload["device"])
                 if payload["model"] == flux3.MODEL_KEY
                 else custom_image.model_status(payload["device"], payload["model"])

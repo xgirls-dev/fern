@@ -32,7 +32,7 @@ import { notify } from "./lib/notifications";
 import { validateReference } from "./lib/reference";
 import { loadModelSetup, saveModelSetup, type SetupSelection, type SetupTask } from "./lib/modelSetup";
 import { loadLastWorkspace, matchesShortcut, saveLastWorkspace, shortcuts } from "./lib/workspaceNavigation";
-import { intelImagePreset, isKleinLoraModel, kleinLoraLabel, maxReferenceImages } from "./lib/imageModels";
+import { fixedImagePreset, isKleinLoraModel, kleinLoraLabel, maxReferenceImages } from "./lib/imageModels";
 
 const StorageView = lazy(() => import("./components/StorageView").then((module) => ({ default: module.StorageView })));
 const PreferencesView = lazy(() => import("./components/PreferencesView").then((module) => ({ default: module.PreferencesView })));
@@ -44,9 +44,10 @@ const ModelsView = lazy(() => import("./components/ModelsView").then((module) =>
 export function App() {
   const compute = useComputePreference();
   const studio = useStudio(compute.device);
-  const intelAvailable = studio.status?.model.adapters?.find((adapter) => adapter.id === "INTEL_GPU")?.available;
+  const imageGpu = window.studio.platform === "darwin" ? "APPLE_GPU" : "INTEL_GPU";
+  const imageGpuAvailable = studio.status?.model.adapters?.find((adapter) => adapter.id === imageGpu)?.available;
   const tts = useQwen3Tts(studio.ready, compute.device);
-  const text = useTextChat(studio.ready, compute.device, intelAvailable);
+  const text = useTextChat(studio.ready, compute.device, imageGpuAvailable);
   const [threadSearchQuery, setThreadSearchQuery] = useState<string | null>(null);
   const [inspectorView, setInspectorView] = useState<
     "settings" | "info" | null
@@ -243,7 +244,7 @@ export function App() {
       const thread = studio.threads.find((item) => item.id === threadId);
       if (thread && !thread.archived) {
         if (selection?.imageModelId) {
-          const preset = intelImagePreset(selection.imageModelId);
+          const preset = fixedImagePreset(selection.imageModelId);
           studio.updateSettings({
             model: selection.imageModelId,
             ...(preset ? { width: 512, height: 512, steps: preset.steps, guidance: preset.guidance, batchSize: 1, device: "AUTO" as const } : {}),
@@ -538,7 +539,7 @@ export function App() {
           className={`dashboard dashboard--${activeSection}`}
         >
           <h1 className="sr-only">Fern workspace</h1>
-          {activeSection === "models" ? <Suspense fallback={<div className="dashboard-loading" role="status">Opening models…</div>}><ModelsView category={modelCategory} onCategoryChange={setModelCategory} text={text} audio={tts} setup={modelSetup} onReturnToDraft={returnToDraft} intelAvailable={intelAvailable} /></Suspense> : null}
+          {activeSection === "models" ? <Suspense fallback={<div className="dashboard-loading" role="status">Opening models…</div>}><ModelsView category={modelCategory} onCategoryChange={setModelCategory} text={text} audio={tts} setup={modelSetup} onReturnToDraft={returnToDraft} imageGpuAvailable={imageGpuAvailable} /></Suspense> : null}
           {activeSection === "storage" ? <Suspense fallback={<div className="dashboard-loading" role="status">Opening storage…</div>}><StorageView
             active={activeSection === "storage"}
             running={studio.running || audioBusy || text.busy || video.running}
@@ -565,7 +566,7 @@ export function App() {
 
           {activeSection === "models" || activeSection === "preferences" ||
           activeSection === "storage" ? null : activeSection === "text" ? (
-            <Suspense fallback={<div className="dashboard-loading" role="status">Opening text workspace…</div>}><TextWorkspace studio={text} sidebarCollapsed={sidebarIsCollapsed} onSetupModels={openModelSetup} focusRequest={chatFocusRequest} intelAvailable={intelAvailable} onOpenImage={openImage} onCreateImage={newThread} onCreateSpeech={newAudioThread} onOpenCompute={openComputePreferences} /></Suspense>
+            <Suspense fallback={<div className="dashboard-loading" role="status">Opening text workspace…</div>}><TextWorkspace studio={text} sidebarCollapsed={sidebarIsCollapsed} onSetupModels={openModelSetup} focusRequest={chatFocusRequest} imageGpuAvailable={imageGpuAvailable} onOpenImage={openImage} onCreateImage={newThread} onCreateSpeech={newAudioThread} onOpenCompute={openComputePreferences} /></Suspense>
           ) : activeSection === "video" ? (
             <Suspense fallback={<div className="dashboard-loading" role="status">Opening video workspace…</div>}>
               <VideoWorkspace video={video} device={compute.device} busyElsewhere={studio.running || studio.submitting || audioBusy || text.busy}
@@ -601,7 +602,7 @@ export function App() {
                         ? "FLUX.3 Klein · INT4"
                         : studio.status?.model.selectedModel === "tame-pony-v25-sdxl" || studio.status?.model.selectedModel === "tame-pony-v25-sdxl-int8"
                           ? studio.status?.model.selectedModel.endsWith("-int8") ? "Tame Pony · SDXL INT8" : "Tame Pony · SDXL"
-                        : studio.status?.model.selectedModel?.startsWith("custom-") || intelImagePreset(studio.status?.model.selectedModel)
+                        : studio.status?.model.selectedModel?.startsWith("custom-") || fixedImagePreset(studio.status?.model.selectedModel)
                           ? studio.status?.installedModels?.find((model) => model.id === studio.status?.model.selectedModel)?.label ?? "Custom image model"
                         : studio.status?.model.selectedModel
                         ? `FLUX.2 ${isKleinLoraModel(studio.status.model.selectedModel) ? kleinLoraLabel(studio.status.model.selectedModel) : `Klein ${studio.status.model.selectedModel.toUpperCase()}`}`

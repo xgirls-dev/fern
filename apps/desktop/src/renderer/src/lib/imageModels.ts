@@ -1,5 +1,7 @@
 import type { KleinLoraModel, StudioSettings } from "./types";
 
+export const APPLE_IMAGE_MODEL = "klein-4b-mlx";
+
 export function isKleinLoraModel(model?: string): model is KleinLoraModel {
   return model === "4b-lora" || model === "9b-lora";
 }
@@ -19,13 +21,14 @@ export function maxReferenceImages(model = "9b"): number {
   return model === "qwen21-turbo" ? 1 : 0;
 }
 
-const intelImagePresets: Record<string, { sizes: number[]; steps: number; guidance: number }> = {
+const fixedImagePresets: Record<string, { sizes: number[]; steps: number; guidance: number }> = {
+  [APPLE_IMAGE_MODEL]: { sizes: [512], steps: 4, guidance: 1 },
   "sana-sprint": { sizes: [512, 1024], steps: 2, guidance: 4.5 },
   "moss-hades": { sizes: [384, 512], steps: 4, guidance: 1 },
   "kromoss-opd-dmd2": { sizes: [512, 1024], steps: 8, guidance: 1 },
   "z-image-turbo": { sizes: [512], steps: 8, guidance: 1 },
 };
 
-export function intelImagePreset(model?: string) {
-  return model && Object.hasOwn(intelImagePresets, model) ? intelImagePresets[model] : undefined;
+export function fixedImagePreset(model?: string) {
+  return model && Object.hasOwn(fixedImagePresets, model) ? fixedImagePresets[model] : undefined;
 }

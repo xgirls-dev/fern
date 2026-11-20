@@ -8,13 +8,13 @@ import { TextModelLibrary } from "./TextModelLibrary";
 import type { ModelSetup, SetupSelection } from "../lib/modelSetup";
 
 export type ModelCategory = "image" | "text" | "audio" | "video";
-export function ModelsView({ category: tab, onCategoryChange, text, audio, setup, onReturnToDraft, intelAvailable }: {
+export function ModelsView({ category: tab, onCategoryChange, text, audio, setup, onReturnToDraft, imageGpuAvailable }: {
   category: ModelCategory;
   onCategoryChange: (category: ModelCategory) => void;
   text: ReturnType<typeof useTextChat>; audio: ReturnType<typeof useQwen3Tts>;
   setup: ModelSetup | null;
   onReturnToDraft: (selection?: SetupSelection) => void;
-  intelAvailable?: boolean;
+  imageGpuAvailable?: boolean;
 }) {
   const heading = useRef<HTMLHeadingElement>(null);
   const body = useRef<HTMLDivElement>(null);
@@ -29,10 +29,12 @@ export function ModelsView({ category: tab, onCategoryChange, text, audio, setup
     needsVision ? model.format === "gguf" && text.status.ggufAvailable === true : model.id === text.status.defaultModelId);
   const installedTool = text.status.imageToolModels?.[0];
   const installedImage = needsVision ? installedTool : imageCatalog.find((model) => model.installed && (["4b", "9b"].includes(model.id) || (model.category === "image" && !model.setupUnavailableReason)));
-  const recommendedImage = imageCatalog.find((model) => model.id === "4b" && !model.setupUnavailableReason);
+  const recommendedImage = imageCatalog.find((model) =>
+    model.id === (window.studio.platform === "darwin" ? "klein-4b-mlx" : "4b") && !model.setupUnavailableReason
+  );
   const visionBlock = needsVision && (text.computeDevice === "CPU"
     ? "Select GPU in Preferences to generate images in chat."
-    : intelAvailable === false ? "Image generation in chat requires an available Intel GPU." : null);
+    : imageGpuAvailable === false ? `Image generation in chat requires an available ${window.studio.platform === "darwin" ? "Apple" : "Intel"} GPU.` : null);
   const selection = {
     textModelId: needsText ? installedText?.id : undefined,
     imageModelId: needsImage ? installedImage?.id : undefined,

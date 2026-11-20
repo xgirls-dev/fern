@@ -13,7 +13,11 @@ TAME_PONY_CATALOG = json.loads(
 INTEL_MEDIA_CATALOG = json.loads(
     Path(__file__).with_name("intel_media_catalog.json").read_text(encoding="utf-8")
 )
-MODEL_CATALOG = {**CATALOG, **FLUX3_CATALOG, **TAME_PONY_CATALOG, **INTEL_MEDIA_CATALOG}
+APPLE_IMAGE_SPEC = json.loads(
+    Path(__file__).with_name("apple_image_catalog.json").read_text(encoding="utf-8")
+)
+APPLE_IMAGE_ID = APPLE_IMAGE_SPEC["id"]
+MODEL_CATALOG = {**CATALOG, **FLUX3_CATALOG, **TAME_PONY_CATALOG, **INTEL_MEDIA_CATALOG, APPLE_IMAGE_ID: APPLE_IMAGE_SPEC}
 
 
 def model_spec(model="9b"):
@@ -25,7 +29,7 @@ def model_spec(model="9b"):
 def installed(root, model):
     spec = model_spec(model)
     folder = Path(root) / spec["folder"]
-    if model in INTEL_MEDIA_CATALOG:
+    if model in INTEL_MEDIA_CATALOG or model == APPLE_IMAGE_ID:
         try:
             files = (item for item in spec["files"] if not item["path"].startswith("source/"))
             return (

@@ -34,6 +34,19 @@ class UxWorkflowTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             api_server.validate_flux_payload({"prompt": "test", "width": 1080})
 
+    def test_mac_image_preset_requires_apple_gpu_and_enforces_its_canvas(self):
+        request = {"prompt": "A fox", "model": api_server.APPLE_IMAGE_ID, "device": "APPLE_GPU"}
+        with patch.object(api_server, "apple_silicon", return_value=True):
+            resolved = api_server.validate_flux_payload({**request, "steps": 30, "guidance": 7})
+            self.assertEqual((resolved["width"], resolved["height"], resolved["steps"], resolved["guidance"]), (512, 512, 4, 1))
+            with self.assertRaisesRegex(ValueError, "Select Available GPU"):
+                api_server.validate_flux_payload({**request, "device": "CPU"})
+            with self.assertRaisesRegex(ValueError, "Choose 512"):
+                api_server.validate_flux_payload({**request, "width": 1024})
+        with patch.object(api_server, "apple_silicon", return_value=False):
+            with self.assertRaisesRegex(ValueError, "requires Apple Silicon"):
+                api_server.validate_flux_payload(request)
+
     def test_qwen_requires_dimensions_on_its_32_pixel_grid(self):
         with (
             patch.object(api_server, "qwen_turbo_runtime_ready", return_value=True),

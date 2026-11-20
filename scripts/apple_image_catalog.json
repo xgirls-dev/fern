@@ -1,0 +1,80 @@
+{
+  "id": "klein-4b-mlx",
+  "label": "Klein 4B · MLX",
+  "repo": "mlx-community/flux2-klein-4b-4bit",
+  "revision": "860e87183ceb29e39627c0612ebd66d8ea66e68c",
+  "folder": "flux2-klein-4b-mlx-int4",
+  "category": "image",
+  "dimensions": [
+    512
+  ],
+  "defaultWidth": 512,
+  "defaultHeight": 512,
+  "defaultSteps": 4,
+  "defaultGuidance": 1.0,
+  "quantization": "INT4 · MLX",
+  "description": "Text-to-image on Apple Silicon. One 512 × 512 image at a time.",
+  "files": [
+    {
+      "path": "text_encoder/0.safetensors",
+      "size": 2135435122,
+      "blob": "edb5b4767121eb1a297220343238e2f9fd3e134f",
+      "sha256": "c2d90b9bcb81b6f4205033e592af5117b13bda0e2ef1e4c5d910920d20102234"
+    },
+    {
+      "path": "text_encoder/1.safetensors",
+      "size": 127582140,
+      "blob": "09e27c971548d7a36ac422356698c112e64c2d14",
+      "sha256": "6f9fd41251913a84119daf7ddb3620f37f7ab65d1bcfdffcd33e858cb36774f7"
+    },
+    {
+      "path": "text_encoder/model.safetensors.index.json",
+      "size": 51369,
+      "blob": "a6695de5146c5ccb4f3ffcb103693f015220a2e4"
+    },
+    {
+      "path": "tokenizer/chat_template.jinja",
+      "size": 4168,
+      "blob": "01be9b307daa2d425f7c168c9fb145a286e0afb4"
+    },
+    {
+      "path": "tokenizer/tokenizer.json",
+      "size": 11422650,
+      "blob": "c7afbed2efcdf019f88ab0572ec29d3bf595dfe2",
+      "sha256": "be75606093db2094d7cd20f3c2f385c212750648bd6ea4fb2bf507a6a4c55506"
+    },
+    {
+      "path": "tokenizer/tokenizer_config.json",
+      "size": 703,
+      "blob": "3ee05b3fdc8db76babb37dbc3730682c4b080b87"
+    },
+    {
+      "path": "transformer/0.safetensors",
+      "size": 2145323732,
+      "blob": "73b535e7ecd0407334ba75657e096b15cddf3fca",
+      "sha256": "3a75fc123a9ceb583b0d0202cc37166da3e1fc0ac8cd4a430987ceaf8e845b27"
+    },
+    {
+      "path": "transformer/1.safetensors",
+      "size": 34727761,
+      "blob": "ec1b147b6dfd2b13c24387fe875508aeec31642b",
+      "sha256": "06998c075c1d9543f17f1cc7ae7170c365cdb3c09a1f78056804a252bb168fd5"
+    },
+    {
+      "path": "transformer/model.safetensors.index.json",
+      "size": 26945,
+      "blob": "ab03c374ccf768ba3f5950d370a1e2c29e53b13c"
+    },
+    {
+      "path": "vae/0.safetensors",
+      "size": 165107943,
+      "blob": "4c03deb80666ff451a3ebbd77a5794fc4b86b0f7",
+      "sha256": "efd1802b013d6b17f30946574b1d23c89b8c8e8181876220c00089efac6a0a2c"
+    },
+    {
+      "path": "vae/model.safetensors.index.json",
+      "size": 17584,
+      "blob": "034182fb9bdf2c7da9c7fe8798d1a99bb4eb3884"
+    }
+  ]
+}
