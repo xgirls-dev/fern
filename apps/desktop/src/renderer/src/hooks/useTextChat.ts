@@ -15,10 +15,12 @@ import { chatImageErrors, chatImageSettings } from "../lib/chatImageSettings";
 import {
   chatTokenLimits,
   createTextThread,
+  ggufLoadOptions,
   isChatImage,
   loadTextThreads,
   modelDefaultsFromThread,
   saveTextThreads,
+  snapshotTextVersion,
   textRuntimeIssue,
   textSamplingOverrides,
   type TextDevice,
@@ -176,7 +178,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
       ?? status.models.find((item) => item.installed);
     const untouched = workspaceRef.current.threads.find((thread) => !thread.archived && !thread.renamed &&
       !thread.messages.length && !thread.draft && !thread.draftImage && !thread.draftContextImage && !thread.pendingJobId && !thread.systemPrompt &&
-      !thread.modelId && !thread.sampling && !thread.imageRenderSettings && thread.title === "New text thread"
+      !thread.modelId && !thread.sampling && !thread.loadOptions && !thread.imageRenderSettings && thread.title === "New text thread"
       && thread.contextSize === 8192 && thread.temperature === 0.7 && thread.topP === 0.9 && thread.maxNewTokens === 512);
     const defaults = model ? workspaceRef.current.modelDefaults?.[model.id] : undefined;
     if (untouched) {
@@ -306,7 +308,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     }
   }, []);
 
-  const send = useCallback(async (input: string, retry = false) => {
+  const send = useCallback(async (input: string, retry = false, editId?: string) => {
     const text = input.trim();
     if ((!text && !retry) || !activeThread || busy || sending.current) return;
     setActionError(null);
@@ -321,12 +323,18 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
       setActionError(runtimeIssue);
       return;
     }
+    const editIndex = editId ? activeThread.messages.findIndex((message) => message.id === editId && message.role === "user") : -1;
+    if (editId && editIndex < 0) return;
+    const original = activeThread.messages[editIndex];
     const user: TextMessage = {
       id: `message-${crypto.randomUUID()}`, role: "user", content: text,
-      image: activeThread.draftImage, includedImage: activeThread.draftContextImage, createdAt: Date.now(),
+      image: original ? original.image : activeThread.draftImage,
+      includedImage: original ? original.includedImage : activeThread.draftContextImage,
+      createdAt: Date.now(),
     };
     const lastUser = activeThread.messages.map((message) => message.role).lastIndexOf("user");
-    const messages = retry ? activeThread.messages.slice(0, lastUser + 1) : [...activeThread.messages, user];
+    const messages = editId ? [...activeThread.messages.slice(0, editIndex), user]
+      : retry ? activeThread.messages.slice(0, lastUser + 1) : [...activeThread.messages, user];
     if (!messages.length) return;
     if (!model.supportsVision && messages.some((message) => message.image || message.includedImage)) {
       setActionError("Choose a vision model for this conversation's images.");
@@ -346,12 +354,14 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
       return;
     }
     const { contextSize, maxNewTokens } = chatTokenLimits(activeThread, model);
+    const preserveVersion = Boolean(editId || (retry && activeThread.messages.at(-1)?.status === "complete"));
     sending.current = true;
     setSubmitting(true);
     ++pollVersion.current;
     updateThread(activeThread.id, {
       messages, title, modelId, pendingJobId: requestId,
-      ...(retry ? {} : { draft: "", draftImage: undefined, draftContextImage: undefined }),
+      ...(preserveVersion ? { versions: [snapshotTextVersion(activeThread.messages), ...(activeThread.versions ?? [])] } : {}),
+      ...(retry || editId ? {} : { draft: "", draftImage: undefined, draftContextImage: undefined }),
     });
     try {
       const accepted = await startTextGeneration({
@@ -371,7 +381,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
           ...(imageSettings.references?.length ? { referenceImages: imageSettings.references.map((image) => image.name) } : {}),
           ...(imageSettings.useMessageImage ? { useMessageImage: true } : {}),
         } } : {}),
-        ...(model.format === "gguf" ? { contextSize } : {}),
+        ...(model.format === "gguf" ? { contextSize, loadOptions: ggufLoadOptions(activeThread.loadOptions, contextSize) } : {}),
         systemPrompt: activeThread.systemPrompt,
         temperature: activeThread.temperature,
         topP: activeThread.topP,
@@ -403,9 +413,20 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
       sending.current = false;
       setSubmitting(false);
     }
+    return true;
   }, [activeThread, busy, computeDevice, imageGpuAvailable, status, updateThread]);
 
   const retry = useCallback(() => send("", true), [send]);
+  const restoreVersion = useCallback((id: string) => {
+    if (busy || !activeThread?.versions) return;
+    const previous = activeThread.versions.find((version) => version.id === id);
+    if (!previous) return;
+    updateThread(activeThread.id, {
+      messages: previous.messages,
+      versions: [snapshotTextVersion(activeThread.messages), ...activeThread.versions.filter((version) => version.id !== id)],
+    });
+    setActionError(null);
+  }, [activeThread, busy, updateThread]);
 
   const retryInspection = async (messageId: string) => {
     if (busy || sending.current) return;
@@ -484,6 +505,6 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     threads, activeThread, status, statusLoaded, modelAction, submitting, attachingImage, statusError, actionError, busy, computeDevice,
     newThread, selectThread, resetWorkspace, renameThread, archiveThread, deleteThread,
     modelDefaults: workspace.modelDefaults, saveModelDefaults, clearModelDefaults,
-    updateThread, importModel, deleteModel, installRecommendedModel, attachImage, send, retry, retryInspection, stop, refresh, selectModel, setDevice,
+    updateThread, importModel, deleteModel, installRecommendedModel, attachImage, send, retry, restoreVersion, retryInspection, stop, refresh, selectModel, setDevice,
   };
 }

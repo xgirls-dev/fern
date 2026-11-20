@@ -48,6 +48,7 @@ def run_gguf(file: Path, device: str, projector: Path | None) -> int:
                     raise ValueError("Unsupported text worker request.")
                 vision = bool(request.get("tools")) or any(message.get("imagePath") for message in request["messages"])
                 context_size = request.get("contextSize", DEFAULT_CONTEXT_SIZE)
+                load_options = request.get("loadOptions") or {}
                 if vision and not projector:
                     raise ValueError("Add the model's vision projector before sending an image.")
                 if sys.platform == "darwin":
@@ -64,7 +65,7 @@ def run_gguf(file: Path, device: str, projector: Path | None) -> int:
                     raise ValueError("This image conversation requires GPU vision. Select Available GPU in Preferences.")
                 if (
                     server is None or server.backend != backend or server.context_size != context_size
-                    or server.gpu_projector != gpu_projector
+                    or server.gpu_projector != gpu_projector or server.load_options != load_options
                 ):
                     if server is not None:
                         server.close()
@@ -74,7 +75,7 @@ def run_gguf(file: Path, device: str, projector: Path | None) -> int:
                     phase(f"Loading the GGUF model with {backend}…")
                     server = GGUFServer(
                         executable, file, projector if vision else None, target, backend, context_size,
-                        gpu_projector=gpu_projector,
+                        gpu_projector=gpu_projector, load_options=load_options,
                     )
                 emit(server.generate(request, emit))
             except Exception as error:

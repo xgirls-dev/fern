@@ -145,12 +145,13 @@ def ensure_runtime(root: Path, backend: str, progress: Callable[[str], None]) ->
 class GGUFServer:
     def __init__(
         self, executable: Path, model: Path, projector: Path | None, device: str, backend: str,
-        context_size: int = DEFAULT_CONTEXT_SIZE, *, gpu_projector: bool = False,
+        context_size: int = DEFAULT_CONTEXT_SIZE, *, gpu_projector: bool = False, load_options: dict[str, Any] | None = None,
     ):
         self.backend = backend
         self.device = device
         self.context_size = context_size
         self.gpu_projector = gpu_projector
+        self.load_options = load_options or {}
         self.history: dict[str, CompactedHistory] = {}
         self.process: subprocess.Popen[bytes] | None = None
         self.diagnostics = tempfile.TemporaryDirectory(prefix="fern-llama-")
@@ -176,6 +177,12 @@ class GGUFServer:
                 "--ctx-size", str(context_size), "--parallel", "1", "--reasoning-format", "deepseek",
                 "--jinja", "--no-context-shift",
             ]
+            for option, flag in (
+                ("flashAttention", "--flash-attn"), ("promptBatch", "--batch-size"), ("microBatch", "--ubatch-size"),
+                ("keyCacheType", "--cache-type-k"), ("valueCacheType", "--cache-type-v"),
+            ):
+                if option in self.load_options:
+                    command.extend((flag, str(self.load_options[option])))
             if projector:
                 command += ["--mmproj", str(projector), "--image-max-tokens", str(MAX_IMAGE_TOKENS)]
                 command.append("--mmproj-offload" if gpu_projector else "--no-mmproj-offload")
@@ -418,6 +425,7 @@ class GGUFServer:
             "text": "".join(text), "reasoning": "".join(thoughts),
             "toolCalls": list(calls.values()),
             "maxNewTokens": max_tokens,
+            "loadOptions": self.load_options,
             "context": {
                 "size": self.context_size, "compactedMessages": memory.dropped if memory else 0,
                 "images": sum(bool(turn.get("imagePath")) for turn in history),

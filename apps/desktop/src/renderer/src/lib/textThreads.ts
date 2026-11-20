@@ -4,6 +4,15 @@ const KEY = "fern-text-threads:v1";
 const DEFAULT_CONTEXT_SIZE = 8192;
 export const MIN_CHAT_CONTEXT = 1024;
 export const MAX_CHAT_CONTEXT = 2_147_483_647;
+export const KV_CACHE_TYPES = ["f32", "f16", "bf16", "f8_e4m3", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"] as const;
+type CacheType = typeof KV_CACHE_TYPES[number];
+export interface GgufLoadOptions {
+  flashAttention?: "auto" | "on" | "off";
+  promptBatch?: number;
+  microBatch?: number;
+  keyCacheType?: CacheType;
+  valueCacheType?: CacheType;
+}
 
 export type TextDevice = "AUTO" | "GPU" | "CPU";
 export type TextMode = "instant" | "reasoning";
@@ -67,6 +76,7 @@ export interface TextMessage {
     temperature?: number;
     topP?: number;
     sampling?: TextSamplingOverrides;
+    loadOptions?: GgufLoadOptions;
     maxNewTokens?: number;
     visionChecked?: boolean;
     context?: { size: number; compactedMessages: number; images: number; imageNames?: string[] };
@@ -85,6 +95,7 @@ export interface TextThread {
   topP: number;
   maxNewTokens: number;
   sampling?: TextSamplingSettings;
+  loadOptions?: GgufLoadOptions;
   draft: string;
   draftImage?: string;
   draftContextImage?: string;
@@ -93,7 +104,23 @@ export interface TextThread {
   imageRenderSettings?: Record<string, ChatImageSettings>;
   contextSize: number;
   messages: TextMessage[];
+  versions?: TextVersion[];
   pendingJobId?: string | null;
+}
+
+export interface TextVersion {
+  id: string;
+  label: string;
+  messages: TextMessage[];
+}
+
+export function snapshotTextVersion(messages: TextMessage[]): TextVersion {
+  const prompt = messages.filter((message) => message.role === "user").at(-1)?.content;
+  return {
+    id: crypto.randomUUID(),
+    label: prompt?.replace(/\s+/g, " ").trim().slice(0, 64) || "Previous conversation",
+    messages,
+  };
 }
 export interface TextModel {
   id: string;
@@ -146,13 +173,13 @@ export interface TextThreadWorkspace {
   modelDefaults?: Record<string, TextModelDefaults>;
 }
 
-export type TextModelDefaults = Pick<TextThread, "contextSize" | "temperature" | "topP" | "maxNewTokens" | "sampling">;
+export type TextModelDefaults = Pick<TextThread, "contextSize" | "temperature" | "topP" | "maxNewTokens" | "sampling" | "loadOptions">;
 
 const hasNumber = (value: unknown, min: number, max: number, integer = false): value is number =>
   typeof value === "number" && Number.isFinite(value) && value >= min && value <= max && (!integer || Number.isInteger(value));
 
 export function modelDefaultsFromThread(settings: Partial<TextModelDefaults>): TextModelDefaults {
-  const { contextSize, temperature, topP, maxNewTokens, sampling } = settings;
+  const { contextSize, temperature, topP, maxNewTokens, sampling, loadOptions } = settings;
   return {
     contextSize: hasNumber(contextSize, MIN_CHAT_CONTEXT, MAX_CHAT_CONTEXT, true) ? contextSize : DEFAULT_CONTEXT_SIZE,
     temperature: hasNumber(temperature, 0, 2) ? temperature : 0.7,
@@ -165,6 +192,7 @@ export function modelDefaultsFromThread(settings: Partial<TextModelDefaults>): T
       fixedSeed: hasNumber(sampling.fixedSeed, 0, MAX_CHAT_CONTEXT, true) ? sampling.fixedSeed : undefined,
       stopText: typeof sampling.stopText === "string" ? sampling.stopText.slice(0, 8192) : undefined,
     } : undefined,
+    loadOptions: loadOptions && typeof loadOptions === "object" ? ggufLoadOptions(loadOptions, MAX_CHAT_CONTEXT) : undefined,
   };
 }
 
@@ -194,6 +222,20 @@ export function textSamplingOverrides(settings?: TextSamplingSettings): TextSamp
   return { topK, minP, repeatPenalty, ...(stopSequences?.length ? { stopSequences } : {}) };
 }
 
+export function ggufLoadOptions(options: GgufLoadOptions | undefined, contextSize: number): GgufLoadOptions {
+  if (!options) return {};
+  const { flashAttention, promptBatch, microBatch, keyCacheType, valueCacheType } = options;
+  const batch = hasNumber(promptBatch, 1, MAX_CHAT_CONTEXT, true) ? Math.min(promptBatch, contextSize) : undefined;
+  return {
+    flashAttention: flashAttention === "on" || flashAttention === "off" || flashAttention === "auto" ? flashAttention : undefined,
+    promptBatch: batch,
+    microBatch: hasNumber(microBatch, 1, MAX_CHAT_CONTEXT, true)
+      ? Math.min(microBatch, batch ?? Math.min(2048, contextSize)) : undefined,
+    keyCacheType: keyCacheType && KV_CACHE_TYPES.includes(keyCacheType) ? keyCacheType : undefined,
+    valueCacheType: valueCacheType && KV_CACHE_TYPES.includes(valueCacheType) ? valueCacheType : undefined,
+  };
+}
+
 export function createTextThread(): TextThread {
   return {
     id: `text-thread-${crypto.randomUUID()}`,
@@ -221,6 +263,25 @@ function validThread(value: unknown): value is TextThread {
     && typeof thread.title === "string" && Array.isArray(thread.messages);
 }
 
+function normalizeTextMessages(messages: TextMessage[]): TextMessage[] {
+  return messages.filter((message) => message && ["user", "assistant"].includes(message.role) && typeof message.content === "string").map((message) => ({
+    ...message,
+    id: typeof message.id === "string" ? message.id : `message-${crypto.randomUUID()}`,
+    createdAt: Number.isFinite(message.createdAt) ? message.createdAt : Date.now(),
+    error: typeof message.error === "string" ? message.error : null,
+    errorCode: typeof message.errorCode === "string" ? message.errorCode : null,
+    modelName: typeof message.modelName === "string" ? message.modelName : undefined,
+    image: message.role === "user" && isChatImage(message.image) ? message.image : undefined,
+    includedImage: message.role === "user" && isOutputImage(message.includedImage) ? message.includedImage : undefined,
+    generatedImage: message.role === "assistant" && isGeneratedChatImage(message.generatedImage) ? message.generatedImage : undefined,
+    generatedImages: message.role === "assistant" && Array.isArray(message.generatedImages)
+      ? message.generatedImages.filter(isGeneratedChatImage).slice(0, 4) : undefined,
+    inspectionJobId: typeof message.inspectionJobId === "string" ? message.inspectionJobId : undefined,
+    reasoning: message.role === "assistant" && typeof message.reasoning === "string" ? message.reasoning : undefined,
+    metrics: message.metrics && [message.metrics.inputTokens, message.metrics.outputTokens, message.metrics.generationSeconds, message.metrics.tokensPerSecond].every((value) => typeof value === "number" && Number.isFinite(value) && value >= 0) ? message.metrics : undefined,
+  }));
+}
+
 export function loadTextThreads(): TextThreadWorkspace {
   try {
     const saved = JSON.parse(localStorage.getItem(KEY) ?? "null") as Partial<TextThreadWorkspace> | null;
@@ -239,22 +300,11 @@ export function loadTextThreads(): TextThreadWorkspace {
       pendingJobId: typeof thread.pendingJobId === "string" ? thread.pendingJobId : null,
       device: (["AUTO", "GPU", "CPU"].includes(thread.device) ? thread.device : "AUTO") as TextDevice,
       ...modelDefaultsFromThread(thread),
-      messages: thread.messages.filter((message) => message && ["user", "assistant"].includes(message.role) && typeof message.content === "string").map((message) => ({
-        ...message,
-        id: typeof message.id === "string" ? message.id : `message-${crypto.randomUUID()}`,
-        createdAt: Number.isFinite(message.createdAt) ? message.createdAt : Date.now(),
-        error: typeof message.error === "string" ? message.error : null,
-        errorCode: typeof message.errorCode === "string" ? message.errorCode : null,
-        modelName: typeof message.modelName === "string" ? message.modelName : undefined,
-        image: message.role === "user" && isChatImage(message.image) ? message.image : undefined,
-        includedImage: message.role === "user" && isOutputImage(message.includedImage) ? message.includedImage : undefined,
-        generatedImage: message.role === "assistant" && isGeneratedChatImage(message.generatedImage) ? message.generatedImage : undefined,
-        generatedImages: message.role === "assistant" && Array.isArray(message.generatedImages)
-          ? message.generatedImages.filter(isGeneratedChatImage).slice(0, 4) : undefined,
-        inspectionJobId: typeof message.inspectionJobId === "string" ? message.inspectionJobId : undefined,
-        reasoning: message.role === "assistant" && typeof message.reasoning === "string" ? message.reasoning : undefined,
-        metrics: message.metrics && [message.metrics.inputTokens, message.metrics.outputTokens, message.metrics.generationSeconds, message.metrics.tokensPerSecond].every((value) => typeof value === "number" && Number.isFinite(value) && value >= 0) ? message.metrics : undefined,
-      })),
+      messages: normalizeTextMessages(thread.messages),
+      versions: Array.isArray(thread.versions) ? thread.versions.filter((version) => version && typeof version.id === "string"
+        && typeof version.label === "string" && Array.isArray(version.messages)).map((version) => ({
+          id: version.id, label: version.label, messages: normalizeTextMessages(version.messages),
+        })).filter((version) => version.messages.length > 0) : undefined,
     }));
     if (threads.length) return {
       activeId: threads.some((thread) => thread.id === saved?.activeId) ? saved!.activeId! : threads[0].id,

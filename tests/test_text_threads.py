@@ -203,6 +203,19 @@ for line in sys.stdin:
                 return error.code
         try:
             with patch.object(api, 'TEXT_MODEL_REGISTRY', self.registry), patch.object(api, 'run_text_generation'), patch.object(api, 'text_runtime_snapshot', return_value={}), patch.object(api, 'start_qwen_turbo_setup') as start_qwen_setup, patch.dict(api.TEXT_JOB, {'status': 'idle'}, clear=True), patch.dict(api.TTS_JOB, {'status': 'idle'}), patch.dict(api.FLUX_JOB, {'status': 'idle', 'output': None}), patch.dict(api.QWEN_JOB, {'status': 'idle'}):
+                gguf_model = {**self.model, "format": "gguf", "maxContextSize": 65_536, "installed": True}
+                long_turn = {"role": "user", "content": "long input " * 2_000}
+                history = [{"role": role, "content": "History"} for role in ("user", "assistant")]
+                with (
+                    patch.object(self.registry, "snapshot", return_value=[gguf_model]),
+                    patch.object(api, "gguf_runtime_supported", return_value=True),
+                    patch.object(api, "start_text_job") as start,
+                ):
+                    self.assertEqual(post(history * 160 + [long_turn], "long-gguf", contextSize=24_789), 202)
+                    payload = start.call_args.args[0]
+                    self.assertEqual(payload["contextSize"], 24_789)
+                    self.assertEqual(payload["messages"][-1], long_turn)
+                    self.assertEqual(len(payload["messages"]), 321)
                 self.assertEqual(post([{'role': role, 'content': 'hi'} for role in ['user', 'user', 'assistant']], 'invalid'), 400)
                 self.assertEqual(post([{'role':'user','content':'hi'}], 'bad-seed', seed=-1), 400)
                 self.assertEqual(api.TEXT_JOB['status'], 'idle')

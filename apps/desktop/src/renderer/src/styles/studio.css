@@ -2593,7 +2593,8 @@ code {
 .text-inspector .inspector-heading { position: sticky; top: 0; z-index: 1; background: var(--background); }
 .text-inspector-body { padding: 18px; }
 .text-panel-description { margin: 0 0 20px; color: var(--muted); font-size: 12px; line-height: 1.6; }
-.text-inspector .text-settings-grid { gap: 22px; }
+.text-inspector .text-settings-grid { gap: 16px; }
+.text-inspector .text-settings-grid > .field { margin-bottom: 0; }
 .text-inspector .text-settings-grid label { gap: 8px; font-size: 12px; }
 .text-setting-help { color: var(--muted); font-size: 11px; line-height: 1.5; font-weight: 400; }
 .text-inspector .text-settings-grid .ui-field { height: var(--ui-control-height); padding-inline: var(--ui-space-2); }
@@ -2602,6 +2603,11 @@ code {
 .chat-advanced-settings > summary { padding-block: 12px; cursor: pointer; font-size: 12px; font-weight: 600; }
 .chat-advanced-settings[open] > .text-settings-grid { gap: 16px; padding-block: 4px 8px; }
 .chat-model-defaults { display: flex; flex-wrap: wrap; gap: 6px; }
+.text-header-actions { display: flex; align-items: center; gap: 8px; }
+.chat-version-select { width: 100px; }
+.chat-edit-message { display: grid; min-width: min(340px, 100%); gap: 8px; }
+.chat-edit-actions { display: flex; justify-content: flex-end; gap: 4px; }
+.text-message--user .text-message-tools { justify-content: flex-end; }
 .image-lora-fields { border: 0; padding: 0; margin: 0; min-width: 0; }
 .text-inspector .image-lora-fields { border-top: 1px solid var(--border); padding-top: 12px; }
 .text-inspector .image-lora-fields .lora-control-name { display: flex; }

@@ -20,6 +20,11 @@ try {
   assert.equal(await context.getAttribute("aria-invalid"), "true");
   await context.fill("24789");
   await output.fill("9100");
+  await page.getByText("Advanced model loading", { exact: true }).click();
+  await page.getByLabel("Flash Attention", { exact: true }).selectOption("on");
+  await page.getByLabel("Prompt batch size", { exact: true }).fill("1024");
+  await page.getByLabel("Microbatch size", { exact: true }).fill("256");
+  await page.getByLabel("KV key precision", { exact: true }).selectOption("q8_0");
   await page.getByText("Advanced sampling", { exact: true }).click();
   await page.getByLabel("Top K", { exact: true }).fill("32");
   await page.getByLabel("Min P", { exact: true }).fill("0.07");
@@ -42,6 +47,7 @@ try {
   await button("Send message").click();
   assert.equal(state.textRequests[0].contextSize, 24789);
   assert.equal(state.textRequests[0].maxNewTokens, 9100);
+  assert.deepEqual(state.textRequests[0].loadOptions, { flashAttention: "on", promptBatch: 1024, microBatch: 256, keyCacheType: "q8_0" });
   assert.equal(state.textRequests[0].seed, 37);
   assert.deepEqual(state.textRequests[0].sampling, { topK: 32, minP: 0.07, repeatPenalty: 1.15, stopSequences: ["END", "User:"] });
   assert.deepEqual(state.textRequests[0].imageSettings, { width: 2064, height: 768, steps: 60, guidance: 1, seed: 123 });
@@ -50,6 +56,8 @@ try {
   await button("Chat settings").click();
   assert.equal(await context.inputValue(), "24789");
   assert.equal(await output.inputValue(), "9100");
+  await page.getByText("Advanced model loading", { exact: true }).click();
+  assert.equal(await page.getByLabel("KV key precision", { exact: true }).inputValue(), "q8_0");
   await page.getByText("Advanced sampling", { exact: true }).click();
   assert.equal(await page.getByLabel("Top K", { exact: true }).inputValue(), "32");
   await button("Image").click();

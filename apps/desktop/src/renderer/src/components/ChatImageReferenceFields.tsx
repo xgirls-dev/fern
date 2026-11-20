@@ -1,11 +1,11 @@
-import { useId, useState } from "react";
+import { useRef, useState } from "react";
 import ArrowUp from "lucide-react/dist/esm/icons/arrow-up.mjs";
 import ArrowDown from "lucide-react/dist/esm/icons/arrow-down.mjs";
 import X from "lucide-react/dist/esm/icons/x.mjs";
 import { resolveAssetUrl, uploadChatImage } from "../lib/api";
 import type { ChatImageSettings } from "../lib/chatImageSettings";
 import { readReference } from "../lib/reference";
-import { Checkbox, IconButton, Input } from "./ui/controls";
+import { Button, Checkbox, IconButton } from "./ui/controls";
 
 export function ChatImageReferenceFields({ settings, limit, disabled, onChange }: {
   settings: ChatImageSettings;
@@ -13,7 +13,7 @@ export function ChatImageReferenceFields({ settings, limit, disabled, onChange }
   disabled: boolean;
   onChange: (settings: Partial<ChatImageSettings>) => void;
 }) {
-  const id = useId();
+  const picker = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
   const references = settings.references ?? [];
@@ -61,8 +61,8 @@ export function ChatImageReferenceFields({ settings, limit, disabled, onChange }
       </li>)}
     </ol>}
     {references.length < available && <div className="field">
-      <label htmlFor={id}>Add image references</label>
-      <Input id={id} type="file" accept="image/png,image/jpeg,image/webp" multiple={available - references.length > 1}
+      <Button className="text-compute-link" onClick={() => picker.current?.click()}>Add image references</Button>
+      <input ref={picker} hidden aria-label="Add image references" type="file" accept="image/png,image/jpeg,image/webp" multiple={available - references.length > 1}
         onChange={(event) => {
           const files = Array.from(event.currentTarget.files ?? []);
           event.currentTarget.value = "";

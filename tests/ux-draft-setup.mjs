@@ -76,6 +76,7 @@ try {
   await device.selectOption("CPU");
   await page.getByRole("button", { name: /Text thread: New text thread/ }).click();
   await button("Chat settings").click();
+  await button("Image").click();
   await button("Open compute settings").click();
   await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Generation device");
   await device.selectOption("GPU");

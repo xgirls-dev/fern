@@ -9,6 +9,7 @@ import Check from "lucide-react/dist/esm/icons/check.mjs";
 import ImageOff from "lucide-react/dist/esm/icons/image-off.mjs";
 import AudioLines from "lucide-react/dist/esm/icons/audio-lines.mjs";
 import ImagePlus from "lucide-react/dist/esm/icons/image-plus.mjs";
+import Pencil from "lucide-react/dist/esm/icons/pencil.mjs";
 import { TextMarkdown } from "./TextMarkdown";
 import { Button, IconButton, Input, MenuItem, Select, Textarea } from "./ui/controls";
 import { WorkspaceThreadTitle } from "./WorkspaceThreadTitle";
@@ -22,11 +23,15 @@ import Settings2 from "lucide-react/dist/esm/icons/settings-2.mjs";
 import Square from "lucide-react/dist/esm/icons/square.mjs";
 import LoaderCircle from "lucide-react/dist/esm/icons/loader-circle.mjs";
 import type { useTextChat } from "../hooks/useTextChat";
+import { useReturnFocus } from "../hooks/useReturnFocus";
 import { notify } from "../lib/notifications";
 import { resolveAssetUrl } from "../lib/api";
 import { chatImageErrors, chatImageSettings, type ChatImageSettings } from "../lib/chatImageSettings";
 import { isKleinLoraModel, maxReferenceImages } from "../lib/imageModels";
-import { chatTokenLimits, textRuntimeIssue, type GeneratedChatImage, type TextMessage, type TextSamplingSettings } from "../lib/textThreads";
+import {
+  chatTokenLimits, ggufLoadOptions, KV_CACHE_TYPES, textRuntimeIssue,
+  type GeneratedChatImage, type GgufLoadOptions, type TextMessage, type TextSamplingSettings,
+} from "../lib/textThreads";
 import type { SetupTask } from "../lib/modelSetup";
 import type { ImageRecord } from "../lib/types";
 
@@ -66,7 +71,7 @@ const samplerNumberFields = [
 ] as const;
 
 function SamplingNumberField({ field, value, disabled, onChange }: {
-  field: typeof samplerNumberFields[number];
+  field: { label: string; min: number; max: number; step: number; placeholder: string };
   value?: number;
   disabled: boolean;
   onChange: (number?: number) => void;
@@ -156,6 +161,8 @@ export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels,
   const panelTrigger = useRef<HTMLButtonElement>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [infoId, setInfoId] = useState<string | null>(null);
+  const [editing, setEditing] = useState<{ threadId: string; messageId: string; content: string } | null>(null);
+  const editFocus = useReturnFocus();
   const [showScrollButton, setShowScrollButton] = useState(false);
   const feedRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -175,6 +182,7 @@ export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels,
   const selectedModel = activeThread?.modelId ?? preferredModel?.id ?? "";
   const selected = models.find((model) => model.id === selectedModel && model.installed);
   const modelAvailable = !!selected;
+  const promptLimit = selected?.format === "gguf" ? undefined : 20_000;
   const runtimeIssue = selected ? textRuntimeIssue(status, selected) : null;
   const visibleError = actionError ?? statusError ?? status.registryError ?? runtimeIssue;
   const incompatibleImages = !selected?.supportsVision && !!(activeThread?.draftImage || activeThread?.draftContextImage ||
@@ -210,7 +218,7 @@ export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels,
       const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
       element.scrollTo({ top: element.scrollHeight, behavior: busy || reduce ? "instant" : "smooth" });
     }
-  }, [activeThread?.messages.length, status.job.partialText, status.job.partialReasoning, status.job.image?.name, status.job.images?.length, status.job.status, busy]);
+  }, [activeThread?.messages.at(-1)?.id, status.job.partialText, status.job.partialReasoning, status.job.image?.name, status.job.images?.length, status.job.status, busy]);
   useEffect(() => {
     pinnedToBottom.current = true;
     setShowScrollButton(false);
@@ -228,9 +236,15 @@ export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels,
     panelTrigger.current?.focus();
   };
 
+  const inspectorOpen = panel !== null;
+  const showPanel = (view: "settings" | "image") => {
+    if (view === panel) return;
+    if (panelRef.current) panelRef.current.scrollTop = 0;
+    setPanel(view);
+  };
   useEffect(() => {
-    if (panel) panelRef.current?.focus();
-  }, [panel]);
+    if (inspectorOpen) panelRef.current?.focus({ preventScroll: true });
+  }, [inspectorOpen]);
 
   const copyMessage = async (id: string, content: string) => {
     try {
@@ -262,6 +276,7 @@ export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels,
   const draftContextImage = imageCollection.find((image) => image.name === activeThread.draftContextImage);
   const latestContext = [...activeThread.messages].reverse().find((message) => message.status === "complete")?.metrics?.context;
   const tokenLimits = chatTokenLimits(activeThread, selected);
+  const loadOptions = ggufLoadOptions(activeThread.loadOptions, tokenLimits.contextSize);
   const imageModel = activeThread.imageModel === "auto" ? imageModels[0] : imageModels.find((item) => item.id === activeThread.imageModel);
   const imageSettings = imageModel ? chatImageSettings(imageModel.id, activeThread.imageRenderSettings?.[imageModel.id]) : undefined;
   const imageErrors = imageModel && imageSettings ? chatImageErrors(imageModel.id, imageSettings) : undefined;
@@ -273,6 +288,8 @@ export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels,
   };
   const updateSampling = (update: Partial<TextSamplingSettings>) =>
     studio.updateThread(activeThread.id, { sampling: { ...activeThread.sampling, ...update } });
+  const updateLoadOptions = (update: Partial<GgufLoadOptions>) =>
+    studio.updateThread(activeThread.id, { loadOptions: { ...activeThread.loadOptions, ...update } });
   let previousCompacted = 0;
   const renderChatImage = (image: GeneratedChatImage, message?: TextMessage) => {
     const index = imageCollection.findIndex((item) => item.name === image.name);
@@ -304,7 +321,18 @@ export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels,
             onSwitch={studio.selectThread}
           />
         </div>
-        <Button ref={panelTrigger} variant="secondary" className="workspace-settings-button" aria-label="Chat settings" aria-expanded={panel !== null} aria-controls={panel ? "text-inspector" : undefined} onClick={() => panel ? closePanel() : setPanel("settings")}><Settings2 size={15} aria-hidden="true" /><span>Chat settings</span></Button>
+        <div className="text-header-actions">
+          {!!activeThread.versions?.length && <Select className="chat-version-select" aria-label="Conversation versions"
+            value="" disabled={busy} onChange={(event) => {
+              setEditing(null);
+              pinnedToBottom.current = true;
+              studio.restoreVersion(event.currentTarget.value);
+            }}>
+            <option value="">Versions</option>
+            {activeThread.versions.map((version) => <option key={version.id} value={version.id}>{version.label}</option>)}
+          </Select>}
+          <Button ref={panelTrigger} variant="secondary" className="workspace-settings-button" aria-label="Chat settings" aria-expanded={panel !== null} aria-controls={panel ? "text-inspector" : undefined} onClick={() => panel ? closePanel() : setPanel("settings")}><Settings2 size={15} aria-hidden="true" /><span>Chat settings</span></Button>
+        </div>
       </header>
 
       <div className={`text-layout${panel ? " text-layout--inspecting" : ""}`}>
@@ -324,6 +352,11 @@ export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels,
         ) : null}
 
         {activeThread.messages.map((message) => {
+          const editingHere = editing?.threadId === activeThread.id && editing.messageId === message.id ? editing : null;
+          const cancelEdit = () => {
+            setEditing(null);
+            editFocus.restore(message.id);
+          };
           const compacted = message.metrics?.context?.compactedMessages ?? 0;
           const newlyCompacted = compacted > previousCompacted;
           if (compacted > previousCompacted) previousCompacted = compacted;
@@ -334,7 +367,26 @@ export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels,
             {message.includedImage ? <p className="text-context-note">Selected image: {imageCollection.find((image) => image.name === message.includedImage)?.prompt || message.includedImage}</p> : null}
             {messageImages(message).map((image) => renderChatImage(image, message))}
             {message.reasoning && <details className="text-reasoning"><summary>Reasoning</summary><TextMarkdown content={message.reasoning} /></details>}
-            <div className="text-message-content">{message.role === "user" ? message.content : <TextMarkdown content={message.content} />}</div>
+            {editingHere ? <form className="chat-edit-message" onSubmit={(event) => {
+              event.preventDefault();
+              if (busy || !editingHere.content.trim() || editingHere.content.trim() === message.content.trim()) return;
+              void studio.send(editingHere.content, false, message.id).then((submitted) => {
+                if (submitted) setEditing((current) => current?.messageId === message.id ? null : current);
+              });
+            }}>
+              <Textarea aria-label="Edited message" rows={3} value={editingHere.content} maxLength={promptLimit} autoFocus
+                onChange={(event) => setEditing({ ...editingHere, content: event.currentTarget.value })}
+                onKeyDown={(event) => { if (event.key === "Escape") cancelEdit(); }} />
+              <div className="chat-edit-actions">
+                <Button variant="ghost" onClick={cancelEdit}>Cancel</Button>
+                <Button variant="primary" type="submit" disabled={busy || !editingHere.content.trim() || editingHere.content.trim() === message.content.trim()}>Resend</Button>
+              </div>
+            </form> : <div className="text-message-content">{message.role === "user" ? message.content : <TextMarkdown content={message.content} />}</div>}
+            {message.role === "user" && !editingHere && <div className="text-message-tools">
+              <IconButton ref={editFocus.register(message.id)} className="text-icon-button" aria-label="Edit message" title="Edit message"
+                disabled={busy || !modelAvailable || !!runtimeIssue}
+                onClick={() => setEditing({ threadId: activeThread.id, messageId: message.id, content: message.content })}><Pencil size={14} aria-hidden="true" /></IconButton>
+            </div>}
             {message.status === "failed" ? <div className="text-error" role="alert">
               {message.error ?? "Generation failed. Retry the response."}
               {message.errorCode === "intel-vulkan-driver" && window.studio.platform === "win32" && <> <a href="https://www.intel.com/content/www/us/en/support/detect.html" target="_blank" rel="noreferrer">Get Intel graphics drivers</a></>}
@@ -350,6 +402,15 @@ export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels,
             {infoId === message.id && message.metrics?.context && <div className="text-response-details">
               {message.metrics.context.size.toLocaleString()} token context · {message.metrics.context.images} {message.metrics.context.images === 1 ? "image" : "images"}
               {message.metrics.context.compactedMessages > 0 && ` · ${message.metrics.context.compactedMessages} earlier messages compacted`}
+            </div>}
+            {infoId === message.id && message.metrics?.loadOptions && Object.keys(message.metrics.loadOptions).length > 0 && <div className="text-response-details">
+              {[
+                message.metrics.loadOptions.flashAttention && `Flash Attention ${message.metrics.loadOptions.flashAttention}`,
+                message.metrics.loadOptions.promptBatch && `Prompt batch ${message.metrics.loadOptions.promptBatch}`,
+                message.metrics.loadOptions.microBatch && `Microbatch ${message.metrics.loadOptions.microBatch}`,
+                message.metrics.loadOptions.keyCacheType && `KV keys ${message.metrics.loadOptions.keyCacheType}`,
+                message.metrics.loadOptions.valueCacheType && `KV values ${message.metrics.loadOptions.valueCacheType}`,
+              ].filter(Boolean).join(" · ")}
             </div>}
 
           </article>
@@ -387,7 +448,7 @@ export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels,
             autoComplete="off"
             placeholder={checking ? "Ask anything…" : installedModels.length ? "Ask anything…" : "Download a model to get started"}
             rows={1}
-            maxLength={20_000}
+            maxLength={promptLimit}
             value={activeThread.draft}
             onChange={(event) => studio.updateThread(activeThread.id, { draft: event.target.value })}
             onKeyDown={(event) => {
@@ -420,7 +481,7 @@ export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels,
             </div>
           </div>
         </form>
-        <div className="text-composer-hint"><span role="status">{activity || unavailableReason || "Your conversations stay on this device"}</span><span className="text-keyboard-hint">{activeThread.draft.length > 18000 ? `${activeThread.draft.length.toLocaleString()} / 20,000` : "Enter to send · Shift + Enter for newline"}</span></div>
+        <div className="text-composer-hint"><span role="status">{activity || unavailableReason || "Your conversations stay on this device"}</span><span className="text-keyboard-hint">{promptLimit && activeThread.draft.length > promptLimit * 0.9 ? `${activeThread.draft.length.toLocaleString()} / ${promptLimit.toLocaleString()}` : "Enter to send · Shift + Enter for newline"}</span></div>
         {empty && <div className="text-empty-actions" role="group" aria-label="Creation workspaces">
           <Button variant="ghost" onClick={onCreateImage}><ImagePlus size={15} aria-hidden="true" /> Create image</Button>
           <Button variant="ghost" onClick={onCreateSpeech}><AudioLines size={15} aria-hidden="true" /> Create speech</Button>
@@ -430,8 +491,8 @@ export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels,
       {panel && <aside id="text-inspector" className="generation-inspector text-inspector" ref={panelRef} tabIndex={-1} aria-label="Chat settings panel" onKeyDown={(event) => { if (event.key === "Escape" && !event.defaultPrevented) { event.preventDefault(); closePanel(); } }}>
         <div className="inspector-heading">
           <div className="inspector-tabs" role="group" aria-label="Chat inspector views">
-            <Button variant="ghost" aria-pressed={panel === "settings"} onClick={() => setPanel("settings")}>Model</Button>
-            <Button variant="ghost" aria-pressed={panel === "image"} onClick={() => setPanel("image")}>Image</Button>
+            <Button variant="ghost" aria-pressed={panel === "settings"} onClick={() => showPanel("settings")}>Model</Button>
+            <Button variant="ghost" aria-pressed={panel === "image"} onClick={() => showPanel("image")}>Image</Button>
           </div>
           <IconButton aria-label="Close chat settings" onClick={closePanel}><X size={16} aria-hidden="true" /></IconButton>
         </div>
@@ -447,6 +508,33 @@ export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels,
               help={selected.maxContextSize ? `Model limit ${tokenLimits.contextMaximum.toLocaleString()} tokens.` : "Larger contexts use more memory."}
               onChange={(contextSize) => studio.updateThread(activeThread.id, { contextSize })}
             />}
+            {selected?.format === "gguf" && <details className="chat-advanced-settings">
+              <summary>Advanced model loading</summary>
+              <div className="text-settings-grid">
+                <label>Flash Attention
+                  <Select aria-label="Flash Attention" value={loadOptions.flashAttention ?? "auto"} disabled={busy}
+                    onChange={(event) => updateLoadOptions({ flashAttention: event.currentTarget.value as GgufLoadOptions["flashAttention"] })}>
+                    <option value="auto">Auto</option><option value="on">On</option><option value="off">Off</option>
+                  </Select>
+                </label>
+                <SamplingNumberField key={`prompt-batch-${activeThread.id}`}
+                  field={{ label: "Prompt batch size", min: 1, max: tokenLimits.contextSize, step: 1, placeholder: "Runtime default" }}
+                  value={loadOptions.promptBatch} disabled={busy} onChange={(promptBatch) => updateLoadOptions({ promptBatch })} />
+                <SamplingNumberField key={`micro-batch-${activeThread.id}`}
+                  field={{ label: "Microbatch size", min: 1, max: loadOptions.promptBatch ?? Math.min(2048, tokenLimits.contextSize), step: 1, placeholder: "Runtime default" }}
+                  value={loadOptions.microBatch} disabled={busy} onChange={(microBatch) => updateLoadOptions({ microBatch })} />
+                {([{ key: "keyCacheType", label: "KV key precision" }, { key: "valueCacheType", label: "KV value precision" }] as const)
+                  .map(({ key, label }) => <label key={key}>{label}
+                    <Select aria-label={label} value={loadOptions[key] ?? ""} disabled={busy}
+                      onChange={(event) => updateLoadOptions({ [key]: event.currentTarget.value || undefined })}>
+                      <option value="">Runtime default</option>
+                      {KV_CACHE_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}
+                    </Select>
+                  </label>)}
+                <Button variant="ghost" className="text-compute-link" disabled={busy}
+                  onClick={() => studio.updateThread(activeThread.id, { loadOptions: undefined })}>Reset model loading</Button>
+              </div>
+            </details>}
             <label>System prompt<Textarea rows={3} maxLength={10_000} placeholder="Optional instructions for the model" value={activeThread.systemPrompt} disabled={busy} onChange={(event) => studio.updateThread(activeThread.id, { systemPrompt: event.target.value })} /></label>
             <TokenField key={`output-${activeThread.id}-${selectedModel}`}
               label="Maximum output (tokens)" value={tokenLimits.maxNewTokens} min={1} max={tokenLimits.outputMaximum}

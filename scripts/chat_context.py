@@ -11,6 +11,7 @@ DEFAULT_CONTEXT_SIZE = 8192
 MIN_CONTEXT_SIZE = 1024
 # llama-server parses --ctx-size as a signed integer.
 MAX_CONTEXT_SIZE = 2_147_483_647
+KV_CACHE_TYPES = ("f32", "f16", "bf16", "f8_e4m3", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1")
 MAX_IMAGE_TOKENS = 280
 RECENT_IMAGE_LIMIT = 2
 SUMMARY_RESERVE = 384
@@ -26,6 +27,28 @@ def validate_context_size(requested: object, maximum: int | None = None) -> int:
     if type(requested) is not int or not lower <= requested <= upper:
         raise ValueError(f"Context length must be a whole number between {lower:,} and {upper:,} tokens.")
     return requested
+
+
+def validate_gguf_load_options(options: object, context_size: int) -> dict[str, Any]:
+    if options is None:
+        return {}
+    if not isinstance(options, dict) or set(options) - {"flashAttention", "promptBatch", "microBatch", "keyCacheType", "valueCacheType"}:
+        raise ValueError("Choose valid GGUF load settings.")
+    if options.get("flashAttention", "auto") not in ("auto", "on", "off"):
+        raise ValueError("Choose Auto, On, or Off for Flash Attention.")
+    for key, label, maximum in (
+        ("promptBatch", "Prompt batch size", context_size),
+        ("microBatch", "Microbatch size", options.get("promptBatch", min(context_size, 2048))),
+    ):
+        if key not in options:
+            continue
+        value = options[key]
+        if type(value) is not int or not 1 <= value <= maximum:
+            raise ValueError(f"{label} must be a whole number between 1 and {maximum:,}.")
+    for key in ("keyCacheType", "valueCacheType"):
+        if key in options and options[key] not in KV_CACHE_TYPES:
+            raise ValueError("Choose a supported KV cache type.")
+    return options
 
 
 @dataclass(frozen=True)

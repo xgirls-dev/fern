@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from chat_context import fit_context, recent_images, validate_context_size
+from chat_context import fit_context, recent_images, validate_context_size, validate_gguf_load_options
 
 
 def message(role, text, image=None):
@@ -15,6 +15,14 @@ def measure(turns):
 
 
 class ChatContextTests(unittest.TestCase):
+    def test_gguf_load_options_are_validated_against_context_and_prompt_batch(self):
+        requested = {"flashAttention": "on", "promptBatch": 1024, "microBatch": 256, "keyCacheType": "q8_0"}
+        self.assertEqual(validate_gguf_load_options(requested, 12_345), requested)
+        for invalid in ({"promptBatch": 12_346}, {"microBatch": 2049}, {"promptBatch": 1024, "microBatch": 1025},
+                        {"flashAttention": True}, {"valueCacheType": "int8"}):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                validate_gguf_load_options(invalid, 12_345)
+
     def test_custom_context_uses_the_model_limit(self):
         self.assertEqual(validate_context_size(24576, 65536), 24576)
         self.assertEqual(validate_context_size(None, 6144), 6144)

@@ -6,7 +6,7 @@ import type {
   DeviceId,
 } from "./types";
 import { repairMojibakeDeep } from "./text";
-import type { GeneratedChatImage, TextModel, TextRuntimeStatus, TextSamplingOverrides } from "./textThreads";
+import type { GeneratedChatImage, GgufLoadOptions, TextModel, TextRuntimeStatus, TextSamplingOverrides } from "./textThreads";
 import type { ChatImageOverrides } from "./chatImageSettings";
 
 let apiBaseUrl = "";
@@ -204,6 +204,7 @@ export function startTextGeneration(payload: {
   imageModel?: string;
   imageSettings?: ChatImageOverrides;
   contextSize?: number;
+  loadOptions?: GgufLoadOptions;
   systemPrompt: string;
   temperature: number;
   topP: number;

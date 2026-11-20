@@ -64,7 +64,7 @@ from text_model_download import catalog as text_model_catalog, install_model as 
 from gguf_metadata import is_projector, read_metadata as read_gguf_metadata
 from gguf_runtime import RUNTIME_PLATFORM_ERROR, apple_silicon, runtime_supported as gguf_runtime_supported
 from chat_image_tools import CHAT_IMAGE_SIZE, IMAGE_MODEL_PRIORITY, IMAGE_TOOL, chat_image_overrides, image_tool_prompt
-from chat_context import DEFAULT_CONTEXT_SIZE, validate_context_size
+from chat_context import DEFAULT_CONTEXT_SIZE, validate_context_size, validate_gguf_load_options
 from tts_model_download import catalog_spec as tts_catalog_spec, model_ready as tts_export_ready
 
 GENERATION_WORKER = GenerationWorker()
@@ -2292,10 +2292,10 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def read_json_body(self) -> dict[str, Any]:
+    def read_json_body(self, *, too_large: str = "Request is too large. Attach up to 4 images smaller than 10 MB each.") -> dict[str, Any]:
         length = int(self.headers.get("Content-Length", "0"))
         if length > 60 * 1024 * 1024:
-            raise ValueError("Request is too large. Attach up to 4 images smaller than 10 MB each.")
+            raise ValueError(too_large)
         if length <= 0:
             return {}
         payload = json.loads(self.rfile.read(length).decode("utf-8"))
@@ -2608,7 +2608,7 @@ class Handler(BaseHTTPRequestHandler):
 
         if parsed.path == "/api/text/generate":
             try:
-                payload = self.read_json_body()
+                payload = self.read_json_body(too_large="The conversation exceeds Fern's 60 MB request limit.")
                 model_id = payload.get("modelId")
                 if not isinstance(model_id, str) or len(model_id) > 64:
                     raise ValueError("Select a text model first.")
@@ -2629,20 +2629,22 @@ class Handler(BaseHTTPRequestHandler):
                 gguf = model.get("format") == "gguf"
                 if apple_silicon() and not gguf:
                     raise ValueError("Choose a GGUF model on this Mac.")
-                message_limit = 300 if gguf else 100
-                if not isinstance(messages, list) or not 1 <= len(messages) <= message_limit:
-                    raise ValueError(f"A conversation must contain 1 to {message_limit} messages.")
+                if not isinstance(messages, list) or not messages:
+                    raise ValueError("The conversation must contain at least one message.")
+                if not gguf and len(messages) > 100:
+                    raise ValueError("This OpenVINO chat supports up to 100 messages per conversation.")
                 safe_messages = []
                 total_chars = 0
-                image_count = 0
                 generated_images = None
                 require_gpu_vision = False
                 for message in messages:
                     if not isinstance(message, dict) or message.get("role") not in ("user", "assistant"):
                         raise ValueError("The conversation contains an unsupported message.")
                     content = message.get("content")
-                    if not isinstance(content, str) or not content.strip() or len(content) > 20_000:
-                        raise ValueError("Each message must contain between 1 and 20,000 characters.")
+                    if not isinstance(content, str) or not content.strip():
+                        raise ValueError("Each message must contain text.")
+                    if not gguf and len(content) > 20_000:
+                        raise ValueError("OpenVINO messages must contain 20,000 characters or fewer.")
                     total_chars += len(content)
                     turn = {"role": message["role"], "content": content}
                     if message["role"] == "assistant" and isinstance(message.get("generatedImage"), str):
@@ -2661,10 +2663,11 @@ class Handler(BaseHTTPRequestHandler):
                     if message.get("image") is not None:
                         if message["role"] != "user" or not model.get("supportsVision"):
                             raise ValueError("Choose a vision-capable GGUF model to use chat images.")
-                        image_count += 1
-                        if image_count > 8:
-                            raise ValueError("Start a new conversation to attach more than eight images.")
-                        turn["imagePath"] = chat_image_path(message["image"])
+                        try:
+                            turn["imagePath"] = chat_image_path(message["image"])
+                        except ValueError:
+                            if message is messages[-1]:
+                                raise
                     included_name = message.get("includedImage")
                     if included_name is not None:
                         if message["role"] != "user" or not model.get("supportsVision") or "imagePath" in turn:
@@ -2682,7 +2685,7 @@ class Handler(BaseHTTPRequestHandler):
                     safe_messages.append(turn)
                 if safe_messages[-1]["role"] != "user" or any(item["role"] != ("user" if index % 2 == 0 else "assistant") for index, item in enumerate(safe_messages)):
                     raise ValueError("The last conversation message must be from you.")
-                if total_chars > (200_000 if gguf else 80_000):
+                if not gguf and total_chars > 80_000:
                     raise ValueError("This conversation is too long. Start a new text thread to continue.")
                 system_prompt = payload.get("systemPrompt", "")
                 if not isinstance(system_prompt, str) or len(system_prompt) > 10_000:
@@ -2707,6 +2710,9 @@ class Handler(BaseHTTPRequestHandler):
                     )):
                         raise ValueError("Select an installed image model in Chat settings.")
                 context_size = validate_context_size(payload.get("contextSize"), model.get("maxContextSize"))
+                load_options = validate_gguf_load_options(payload.get("loadOptions"), context_size)
+                if load_options and not gguf:
+                    raise ValueError("These load settings require a GGUF model.")
                 maximum_output = max(8192, context_size // 2) if model.get("format") == "gguf" else 8192
                 max_new_tokens = payload.get("maxNewTokens", 512)
                 if type(max_new_tokens) is not int or not 1 <= max_new_tokens <= maximum_output:
@@ -2731,6 +2737,7 @@ class Handler(BaseHTTPRequestHandler):
                     "mode": mode,
                     "threadId": thread_id, "imageModel": image_model, "contextSize": context_size,
                     "imageSettings": image_settings,
+                    "loadOptions": load_options,
                     "requireGpuVision": require_gpu_vision or image_model in INTEL_MEDIA_CATALOG or image_model == APPLE_IMAGE_ID,
                 }
                 start_text_job(generation, payload.get("requestId"))
