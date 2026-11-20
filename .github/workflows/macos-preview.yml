@@ -71,7 +71,7 @@ jobs:
           retention-days: 7
 
   publish:
-    if: github.event_name == 'push' && contains(github.event.head_commit.message, '[publish-macos-preview]')
+    if: github.event_name == 'push' && contains(github.event.head_commit.message, '[publish-macos-preview:')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -80,17 +80,27 @@ jobs:
     env:
       GH_REPO: ${{ github.repository }}
       GH_TOKEN: ${{ github.token }}
+      PUBLISH_MESSAGE: ${{ github.event.head_commit.message }}
     steps:
       - name: Publish the verified Apple Silicon package
         run: |
           set -euo pipefail
-          tested_sha=$(gh api "repos/$GH_REPO/commits/$GITHUB_SHA" --jq '.parents[0].sha')
-          run_id=$(gh run list --workflow macos-preview.yml --commit "$tested_sha" \
-            --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
-          test -n "$run_id"
-          passed=$(gh run view "$run_id" --json jobs --jq \
-            '[.jobs[] | select(.conclusion == "success") | .name] | sort == ["build", "gpu-smoke"]')
+          [[ "$PUBLISH_MESSAGE" =~ \[publish-macos-preview:([0-9]+)\] ]]
+          run_id="${BASH_REMATCH[1]}"
+          run=$(gh run view "$run_id" --json headSha,headBranch,workflowName,conclusion,jobs)
+          passed=$(jq -r '
+            .headBranch == "main" and .workflowName == "macOS preview" and .conclusion == "success"
+            and ([.jobs[] | select(.conclusion == "success") | .name] | sort == ["build", "gpu-smoke"])
+          ' <<< "$run")
           test "$passed" = true
+          tested_sha=$(jq -r '.headSha' <<< "$run")
+          # The Actions token can tag the current commit. Only publish if the
+          # app sources still match the verified build.
+          unchanged=$(gh api "repos/$GH_REPO/compare/$tested_sha...$GITHUB_SHA" --jq '
+            .status == "ahead" and all(.files[];
+              .filename == "README.md" or .filename == ".github/workflows/macos-preview.yml")
+          ')
+          test "$unchanged" = true
 
           cd "$RUNNER_TEMP"
           gh run download "$run_id" --name fern-macos-arm64-preview
@@ -106,7 +116,7 @@ jobs:
           cat > macos-preview-notes.md <<EOF
           Fern's first Apple Silicon preview runs on M-series Macs with macOS 15 or later. It includes Gemma 4 E4B chat and vision on Metal and Klein 4B image generation on MLX.
 
-          1. Download and extract `$package`, then move Fern.app to Applications.
+          1. Download and extract **$package**, then move Fern.app to Applications.
           2. Open Fern. If macOS blocks the first launch, go to **System Settings → Privacy & Security → Open Anyway**. This preview uses an ad-hoc signature and is unnotarized. [Apple's first-launch instructions](https://support.apple.com/en-us/102445)
           3. In **Models**, install **Gemma 4 E4B · GGUF** and **Klein 4B · MLX**. Allow about 10 GB for both model downloads and extra space for caches and outputs.
 
@@ -114,5 +124,5 @@ jobs:
           EOF
 
           gh release create "$tag" "$package" "$package.sha256" \
-            --prerelease --latest=false --target "$tested_sha" \
+            --prerelease --latest=false --target "$GITHUB_SHA" \
             --title "Fern for Mac · Apple Silicon Preview 1" --notes-file macos-preview-notes.md
