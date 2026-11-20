@@ -2,6 +2,11 @@ name: macOS preview
 
 on:
   workflow_dispatch:
+    inputs:
+      gpu_smoke:
+        description: Run real Metal and MLX inference with downloaded models
+        type: boolean
+        default: false
   push:
     branches: [main]
 
@@ -37,3 +42,30 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 1
+
+  gpu-smoke:
+    if: inputs.gpu_smoke || contains(github.event.head_commit.message, '[test-macos-gpu]')
+    needs: build
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: fern-macos-arm64-preview
+          path: ${{ runner.temp }}/fern-preview
+      - name: Run GPU inference with the packaged runtime
+        run: |
+          preview="$RUNNER_TEMP/fern-preview"
+          ditto -x -k "$preview"/Fern-*-macOS-arm64-preview.zip "$preview"
+          app="$preview/Fern.app"
+          "$app/Contents/Resources/runtime/python-home/bin/python3.12" -B \
+            apps/desktop/e2e/macos-gpu-smoke.py "$app" "$preview/proof"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fern-macos-gpu-proof
+          path: ${{ runner.temp }}/fern-preview/proof
+          retention-days: 7
