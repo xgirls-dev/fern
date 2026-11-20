@@ -23,7 +23,7 @@ Use Windows 10 or 11 with current graphics drivers. Check the download size in *
 Download the `fern-*-x86_64.pkg.tar.zst` package. Use `pacman -U` with the downloaded filename, then open **Fern** from the app launcher. [Latest release](https://github.com/xgirls-dev/fern/releases/latest)
 
 ```sh
-sudo pacman -U ./fern-0.1.46-1-x86_64.pkg.tar.zst
+sudo pacman -U ./fern-0.1.47-1-x86_64.pkg.tar.zst
 ```
 
 The package includes Python and OpenVINO. Install the Intel OpenCL and Vulkan drivers for Intel GPU inference.

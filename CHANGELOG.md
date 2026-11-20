@@ -6,6 +6,15 @@ lands directly on `main` instead of through labeled pull requests.
 
 ## [Unreleased]
 
+## [0.1.47] - 2026-11-20
+
+### Fixed
+
+- Fix tiled-noise output with the Consistency V2 adapter on FLUX.2 Klein 9B. Fern applies enabled 9B adapters when compiling the Intel GPU model.
+- Fix slow inference with rank-8 Klein LoRAs on Intel GPUs. Fern aligns adapter tensors for the optimized GPU operation while preserving the original weights.
+
+Full changelog on [GitHub](https://github.com/xgirls-dev/fern/compare/v0.1.46...v0.1.47).
+
 ## [0.1.46] - 2026-11-20
 
 ### Fixed
