@@ -1,16 +1,20 @@
 import sys
 import base64
 import io
+import subprocess
 import tempfile
 import unittest
+from textwrap import dedent
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 from pathlib import Path
+
 from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import api_server
 import gallery_store
-from flux2_klein_lora import _normalize_adapter_keys
+from flux2_klein_lora import _align_gpu_adapter_rank, _normalize_adapter_keys
 
 
 class KleinLoraAdapterTests(unittest.TestCase):
@@ -26,6 +30,42 @@ class KleinLoraAdapterTests(unittest.TestCase):
     def test_rejects_two_weights_for_one_target(self):
         with self.assertRaisesRegex(ValueError, "more than one tensor"):
             _normalize_adapter_keys({"layer.lora_A.weight": "native", "layer.lora.down.weight": "alias"}, "duplicate.safetensors")
+
+    def test_pads_small_gpu_rank_without_changing_the_weight_update(self):
+        # Other tests replace Torch modules in-process. Use a fresh interpreter
+        # to exercise real BF16 tensors, as the generation worker does.
+        result = subprocess.run(
+            [sys.executable, "-c", dedent("""\
+                import torch
+                from flux2_klein_lora import _align_gpu_adapter_rank
+
+                a = torch.arange(24, dtype=torch.bfloat16).reshape(8, 3)
+                b = torch.arange(16, dtype=torch.bfloat16).reshape(2, 8)
+                padded_a, padded_b = _align_gpu_adapter_rank(a, b)
+
+                assert padded_a.shape == (16, 3)
+                assert padded_b.shape == (2, 16)
+                assert padded_a.dtype == a.dtype
+                assert padded_b.dtype == b.dtype
+                torch.testing.assert_close(
+                    padded_b.float() @ padded_a.float(), b.float() @ a.float(), rtol=0, atol=0
+                )
+                """)],
+            cwd=Path(__file__).resolve().parents[1] / "scripts",
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_leaves_aligned_and_unsupported_ranks_unchanged(self):
+        for rank in (16, 256, 257):
+            with self.subTest(rank=rank):
+                a = SimpleNamespace(shape=(rank, 3))
+                b = SimpleNamespace(shape=(2, rank))
+                padded_a, padded_b = _align_gpu_adapter_rank(a, b)
+                self.assertIs(padded_a, a)
+                self.assertIs(padded_b, b)
 
 
 class KleinLoraPayloadTests(unittest.TestCase):

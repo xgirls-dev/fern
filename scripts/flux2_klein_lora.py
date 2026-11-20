@@ -73,6 +73,19 @@ def _normalize_adapter_keys(state: dict[str, Any], name: str) -> dict[str, Any]:
     return normalized
 
 
+def _align_gpu_adapter_rank(a: Any, b: Any) -> tuple[Any, Any]:
+    rank = a.shape[0]
+    padding = (-rank) % 16
+    if rank > 256 or not padding:
+        return a, b
+
+    from torch.nn.functional import pad
+
+    # The Intel GPU LoRA kernel supports ranks in multiples of 16 up to 256.
+    # Adding zero rows to A and matching zero columns to B preserves B @ A.
+    return pad(a, (0, 0, 0, padding)), pad(b, (0, padding))
+
+
 def _prepare_adapters(model_dir: Path, selections: list[dict[str, Any]], output_dir: Path):
     import openvino as ov
     import openvino_genai as genai
@@ -116,6 +129,9 @@ def _prepare_adapters(model_dir: Path, selections: list[dict[str, Any]], output_
             out_features, in_features = modules[name]
             if a.ndim != 2 or b.ndim != 2 or a.shape[1] != in_features or b.shape != (out_features, a.shape[0]):
                 raise ValueError(f"{path.name} has incompatible dimensions for {name}.")
+            a_key = f"transformer.{name}.lora_A.weight"
+            b_key = f"transformer.{name}.lora_B.weight"
+            state[a_key], state[b_key] = _align_gpu_adapter_rank(a, b)
         converted = output_dir / f"adapter-{index}.safetensors"
         save_file(state, str(converted))
         adapter = genai.Adapter(str(converted))
