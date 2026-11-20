@@ -179,8 +179,9 @@ class GGUFServer:
             if projector:
                 command += ["--mmproj", str(projector), "--image-max-tokens", str(MAX_IMAGE_TOKENS)]
                 command.append("--mmproj-offload" if gpu_projector else "--no-mmproj-offload")
-                if gpu_projector:
-                    command.extend(("-lv", "4"))
+            if gpu_projector or backend == "metal":
+                # llama.cpp emits GPU layer placement at trace verbosity.
+                command.extend(("-lv", "4"))
             with self.log_path.open("wb") as log:
                 self.process = subprocess.Popen(
                     command, cwd=executable.parent, env=env, stdin=subprocess.DEVNULL,
