@@ -4,7 +4,7 @@ import Lock from "lucide-react/dist/esm/icons/lock.mjs";
 import LockOpen from "lucide-react/dist/esm/icons/lock-open.mjs";
 import Shuffle from "lucide-react/dist/esm/icons/shuffle.mjs";
 import { imageDimensionLimits } from "../lib/imageDimensions";
-import { fixedImagePreset, isKleinLoraModel } from "../lib/imageModels";
+import { fixedImagePreset, isKleinLoraModel, maxImageBatch } from "../lib/imageModels";
 import type { ModelStatus, StudioSettings } from "../lib/types";
 import { IconButton, Select } from "./ui/controls";
 
@@ -134,6 +134,26 @@ export function ImageSamplingFields({ model, settings, errors, disabled, idPrefi
       </div>
     </div>
   </>;
+}
+
+export function ImageBatchField({ model, value, disabled, id = "batch-size", onChange }: {
+  model?: string;
+  value: number;
+  disabled?: boolean;
+  id?: string;
+  onChange: (value: number) => void;
+}) {
+  const maximum = maxImageBatch(model);
+  return <div className="field">
+    <label htmlFor={id}>Images per render</label>
+    <Select id={id} name={id} value={maximum === 1 ? 1 : value} disabled={disabled || maximum === 1}
+      onChange={(event) => onChange(Number(event.currentTarget.value))}>
+      {Array.from({ length: maximum }, (_, index) => index + 1).map((count) =>
+        <option key={count} value={count}>{count} {count === 1 ? "image" : "images"}</option>
+      )}
+    </Select>
+    {maximum === 1 && <small className="field-note">This model generates one image per request.</small>}
+  </div>;
 }
 
 function DraftNumberInput({ error, ...props }: ComponentProps<"input"> & { error?: string }) {

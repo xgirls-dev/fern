@@ -12,7 +12,9 @@ import ImagePlus from "lucide-react/dist/esm/icons/image-plus.mjs";
 import { TextMarkdown } from "./TextMarkdown";
 import { Button, IconButton, Input, MenuItem, Select, Textarea } from "./ui/controls";
 import { WorkspaceThreadTitle } from "./WorkspaceThreadTitle";
-import { ImageCanvasFields, ImageSamplingFields } from "./ImageGenerationFields";
+import { ImageBatchField, ImageCanvasFields, ImageSamplingFields } from "./ImageGenerationFields";
+import { ImageLoraFields } from "./ImageLoraFields";
+import { ChatImageReferenceFields } from "./ChatImageReferenceFields";
 
 import { TextMenu } from "./TextMenu";
 import X from "lucide-react/dist/esm/icons/x.mjs";
@@ -23,6 +25,7 @@ import type { useTextChat } from "../hooks/useTextChat";
 import { notify } from "../lib/notifications";
 import { resolveAssetUrl } from "../lib/api";
 import { chatImageErrors, chatImageSettings, type ChatImageSettings } from "../lib/chatImageSettings";
+import { isKleinLoraModel, maxReferenceImages } from "../lib/imageModels";
 import { chatTokenLimits, textRuntimeIssue, type GeneratedChatImage, type TextMessage, type TextSamplingSettings } from "../lib/textThreads";
 import type { SetupTask } from "../lib/modelSetup";
 import type { ImageRecord } from "../lib/types";
@@ -90,6 +93,10 @@ function SamplingNumberField({ field, value, disabled, onChange }: {
 
 function chatImageRecord(image: GeneratedChatImage, mtime: number): ImageRecord {
   return { ...image, url: `/outputs/${encodeURIComponent(image.name)}`, mtime };
+}
+
+function messageImages(message: TextMessage): GeneratedChatImage[] {
+  return message.generatedImages?.length ? message.generatedImages : message.generatedImage ? [message.generatedImage] : [];
 }
 
 function ChatImage({ image, ordinal, checked, checking, onOpen, onRetryCheck, canRetryCheck, contextLabel, onInclude }: {
@@ -203,7 +210,7 @@ export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels,
       const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
       element.scrollTo({ top: element.scrollHeight, behavior: busy || reduce ? "instant" : "smooth" });
     }
-  }, [activeThread?.messages.length, status.job.partialText, status.job.partialReasoning, status.job.image?.name, status.job.status, busy]);
+  }, [activeThread?.messages.length, status.job.partialText, status.job.partialReasoning, status.job.image?.name, status.job.images?.length, status.job.status, busy]);
   useEffect(() => {
     pinnedToBottom.current = true;
     setShowScrollButton(false);
@@ -245,9 +252,12 @@ export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels,
 
   if (!activeThread) return null;
 
-  const imageCollection = activeThread.messages.flatMap((message) => message.generatedImage ? [chatImageRecord(message.generatedImage, message.createdAt)] : []);
-  if (runningHere && status.job.image && !imageCollection.some((image) => image.name === status.job.image?.name)) {
-    imageCollection.push(chatImageRecord(status.job.image, (status.job.startedAt ?? 0) * 1000));
+  const liveImages = runningHere
+    ? (status.job.images?.length ? status.job.images : status.job.image ? [status.job.image] : [])
+    : [];
+  const imageCollection = activeThread.messages.flatMap((message) => messageImages(message).map((image) => chatImageRecord(image, message.createdAt)));
+  for (const image of liveImages) {
+    if (!imageCollection.some((item) => item.name === image.name)) imageCollection.push(chatImageRecord(image, (status.job.startedAt ?? 0) * 1000));
   }
   const draftContextImage = imageCollection.find((image) => image.name === activeThread.draftContextImage);
   const latestContext = [...activeThread.messages].reverse().find((message) => message.status === "complete")?.metrics?.context;
@@ -266,9 +276,10 @@ export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels,
   let previousCompacted = 0;
   const renderChatImage = (image: GeneratedChatImage, message?: TextMessage) => {
     const index = imageCollection.findIndex((item) => item.name === image.name);
-    const canRecover = message && (message.status === "failed" || message.status === "stopped") && !message.metrics?.visionChecked;
+    const primary = message ? message.generatedImage?.name === image.name : liveImages[0]?.name === image.name;
+    const canRecover = primary && message && (message.status === "failed" || message.status === "stopped") && !message.metrics?.visionChecked;
     return <ChatImage key={image.name} image={image} ordinal={index + 1}
-      checked={message?.metrics?.visionChecked} checking={message ? !!message.inspectionJobId : runningHere}
+      checked={primary && message?.metrics?.visionChecked} checking={primary && (message ? !!message.inspectionJobId : checkingImage)}
       onRetryCheck={canRecover ? () => void studio.retryInspection(message.id) : undefined}
       canRetryCheck={!busy && !!selected?.supportsVision && !runtimeIssue}
       contextLabel={activeThread.draftContextImage === image.name
@@ -321,7 +332,7 @@ export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels,
             {newlyCompacted ? <p className="text-context-note">Earlier messages were summarized to fit this response. Include a previous image again if you want the model to see it.</p> : null}
             {message.image && <img className="text-message-image" src={resolveAssetUrl(`/references/${message.image}`)} alt="Attached chat image" />}
             {message.includedImage ? <p className="text-context-note">Selected image: {imageCollection.find((image) => image.name === message.includedImage)?.prompt || message.includedImage}</p> : null}
-            {message.generatedImage && renderChatImage(message.generatedImage, message)}
+            {messageImages(message).map((image) => renderChatImage(image, message))}
             {message.reasoning && <details className="text-reasoning"><summary>Reasoning</summary><TextMarkdown content={message.reasoning} /></details>}
             <div className="text-message-content">{message.role === "user" ? message.content : <TextMarkdown content={message.content} />}</div>
             {message.status === "failed" ? <div className="text-error" role="alert">
@@ -345,7 +356,7 @@ export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels,
           );
         })}
         {runningHere && !status.job.inspection ? <article className="text-message text-message--assistant text-message--streaming" aria-live="off">
-          {status.job.image && renderChatImage(status.job.image)}
+          {liveImages.map((image) => renderChatImage(image))}
           {status.job.partialReasoning && <details className="text-reasoning"><summary>Reasoning</summary><TextMarkdown content={status.job.partialReasoning} /></details>}
           <div className="text-message-content">{status.job.partialText ? <TextMarkdown content={status.job.partialText} /> : <span className="text-thinking">{!status.job.image && (status.job.phase || (generatingImage ? "Creating an image…" : checkingImage ? "Checking the image…" : "Thinking…"))}</span>}<span className="text-stream-cursor" aria-hidden="true" /></div>
         </article> : null}
@@ -483,8 +494,14 @@ export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels,
               : imageModel && imageSettings ? <>
                 <ImageCanvasFields key={imageModel.id} model={imageModel.id} settings={imageSettings} errors={imageErrors}
                   disabled={busy} idPrefix="chat-image-" onChange={updateImageSettings} />
+                <ImageBatchField model={imageModel.id} value={imageSettings.batchSize} disabled={busy} id="chat-image-batch-size"
+                  onChange={(batchSize) => updateImageSettings({ batchSize })} />
                 <ImageSamplingFields model={imageModel.id} settings={imageSettings} errors={imageErrors}
                   disabled={busy} idPrefix="chat-image-" onChange={updateImageSettings} />
+                {isKleinLoraModel(imageModel.id) && <ImageLoraFields key={`loras-${imageModel.id}`} loras={imageSettings.loras ?? []}
+                  error={imageErrors?.loras} disabled={busy} onChange={(loras) => updateImageSettings({ loras })} />}
+                {maxReferenceImages(imageModel.id) > 0 && <ChatImageReferenceFields key={`refs-${imageModel.id}`} settings={imageSettings}
+                  limit={maxReferenceImages(imageModel.id)} disabled={busy} onChange={updateImageSettings} />}
               </> : null}
           </div>}
         </div>}

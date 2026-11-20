@@ -106,6 +106,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
       status: job.status as "complete" | "failed" | "stopped", error: job.error, errorCode: job.errorCode,
       reasoning: job.partialReasoning || undefined,
       generatedImage: job.image ?? undefined,
+      generatedImages: job.images?.length ? job.images : undefined,
       modelName: job.result?.modelName ?? status.models.find((model) => model.id === job.modelId)?.name ?? "Unavailable model",
       createdAt: job.finishedAt ? job.finishedAt * 1000 : Date.now(),
       metrics: job.result ?? undefined,
@@ -135,10 +136,10 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     for (const { id, pendingJobId: jobId } of workspaceRef.current.threads) {
       if (!jobId || jobId === status.job.id || recovering.current.has(jobId)) continue;
       recovering.current.add(jobId);
-      void recoverChatImage(id, jobId).then(({ image }) => {
+      void recoverChatImage(id, jobId).then(({ image, images }) => {
         const response: TextMessage = {
           id: `response-${jobId}`, jobId, role: "assistant", content: "",
-          createdAt: Date.now(), status: "failed", generatedImage: image ?? undefined,
+          createdAt: Date.now(), status: "failed", generatedImage: image ?? undefined, generatedImages: images?.length ? images : undefined,
           error: image ? "The image was saved before the backend restarted." : "The backend restarted before this response was saved. Retry the response.",
         };
         setWorkspace((current) => ({
@@ -365,6 +366,10 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
         ...(imageModel && imageSettings ? { imageModel: imageModel.id, imageSettings: {
           width: imageSettings.width, height: imageSettings.height, steps: imageSettings.steps, guidance: imageSettings.guidance,
           ...(imageSettings.seedLocked ? { seed: imageSettings.seed } : {}),
+          ...(imageSettings.batchSize > 1 ? { batchSize: imageSettings.batchSize } : {}),
+          ...(imageSettings.loras?.length ? { loras: imageSettings.loras } : {}),
+          ...(imageSettings.references?.length ? { referenceImages: imageSettings.references.map((image) => image.name) } : {}),
+          ...(imageSettings.useMessageImage ? { useMessageImage: true } : {}),
         } } : {}),
         ...(model.format === "gguf" ? { contextSize } : {}),
         systemPrompt: activeThread.systemPrompt,

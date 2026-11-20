@@ -727,6 +727,7 @@ def start_text_job(payload: dict[str, Any], request_id: Any) -> None:
             id=job_id, threadId=payload["threadId"], modelId=payload["modelId"],
             status="running", phase="Queued…", partialText="", partialReasoning="",
             startedAt=time.time(), finishedAt=None, result=None, image=payload.get("inspectionImage"),
+            images=[],
             inspection=payload.get("inspectionImage") is not None,
             error=None, errorCode=None,
         )
@@ -814,10 +815,18 @@ def run_text_generation(payload: dict[str, Any], job_id: str, cancel_event: thre
                 raise RuntimeError("Select GPU in Preferences to use the image tool in chat.")
             prompt = image_tool_prompt(calls)
             append_text_event(job_id, phase="Generating an image…")
-            image = generate_chat_image(image_model, prompt, payload["threadId"], job_id, cancel_event, payload.get("imageSettings"))
-            with TEXT_JOB_LOCK:
-                if TEXT_JOB.get("id") == job_id:
-                    TEXT_JOB["image"] = image
+
+            def show_image(artifact: dict[str, Any]) -> None:
+                with TEXT_JOB_LOCK:
+                    if TEXT_JOB.get("id") == job_id:
+                        saved = TEXT_JOB.setdefault("images", [])
+                        if not any(item["name"] == artifact["name"] for item in saved):
+                            saved.append(artifact)
+                        TEXT_JOB["image"] = saved[0]
+
+            image = generate_chat_image(image_model, prompt, payload["threadId"], job_id, cancel_event, payload.get("imageSettings"),
+                                        message_image=payload["messages"][-1].get("imagePath"), on_image=show_image)
+            show_image(image)
             append_text_event(job_id, phase="Checking the generated image…")
             prior = result.get("text", "").strip()
             tool_reply = json.dumps({
@@ -1744,6 +1753,7 @@ def run_flux_generation(
     cancel_event: threading.Event,
     *,
     on_chat_progress: Callable[[str], None] | None = None,
+    on_chat_artifact: Callable[[dict[str, Any]], None] | None = None,
     chat_job_id: str | None = None,
 ) -> dict[str, Any] | None:
     log_event = on_chat_progress or append_flux_log
@@ -2058,6 +2068,8 @@ def run_flux_generation(
                 metadata["referenceUrls"] = reference_urls
             metadata["generationTime"] = round(generation_time, 1)
             last_record = image_record(output_path, metadata)
+            if on_chat_artifact is not None:
+                on_chat_artifact(last_record)
         if on_chat_progress is not None:
             return last_record
         append_flux_log(f"Batch complete | {payload['batch_size']} image(s).")
@@ -2165,6 +2177,7 @@ def prepare_image_inspection(payload: dict[str, Any]) -> dict[str, Any]:
 def generate_chat_image(
     model: str, prompt: str, thread_id: str,
     job_id: str, cancel_event: threading.Event, settings: dict[str, Any] | None = None,
+    *, message_image: str | None = None, on_image: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     device = APPLE_GPU if model == APPLE_IMAGE_ID else "INTEL_GPU"
     status = (
@@ -2173,26 +2186,51 @@ def generate_chat_image(
     )
     if not status["runtimeReady"] or status["selectedDevice"] != device:
         raise RuntimeError(str(status["runtimeNote"]))
+    overrides = dict(settings or {})
+    references = [chat_image_path(item) for item in overrides.pop("referenceImages", [])]
+    if overrides.pop("useMessageImage", False) and message_image:
+        references.insert(0, message_image)
     image_request = validate_flux_payload({
         "model": model, "prompt": prompt, "width": CHAT_IMAGE_SIZE, "height": CHAT_IMAGE_SIZE,
         "device": device, "steps": INTEL_MEDIA_CATALOG.get(model, {}).get("defaultSteps", 4),
         "guidance": 1.0, "thread_id": thread_id,
         "seed": uuid.uuid4().int % 2_147_483_647,
-        **(settings or {}),
+        "batch_size": overrides.pop("batchSize", 1),
+        "reference_images": [
+            "data:image/png;base64," + base64.b64encode(Path(source).read_bytes()).decode("ascii")
+            for source in dict.fromkeys(references)
+        ],
+        **overrides,
     })
     image_request["modelRevision"] = status["modelRevision"]
+    first_image = None
+
+    def publish_artifact(record: dict[str, Any]) -> None:
+        nonlocal first_image
+        artifact = chat_image_artifact(record)
+        if first_image is None:
+            first_image = artifact
+        if on_image is not None:
+            on_image(artifact)
+
     record = run_flux_generation(
         uuid.uuid4().hex, image_request, cancel_event,
         on_chat_progress=lambda message: append_text_event(job_id, phase=f"Generating image · {message}"),
+        on_chat_artifact=publish_artifact,
         chat_job_id=job_id,
     )
     if record is None:
         raise RuntimeError("The image tool did not return a saved image.")
+    return first_image if first_image is not None else chat_image_artifact(record)
+
+
+def chat_image_artifact(record: dict[str, Any]) -> dict[str, Any]:
     return {key: record[key] for key in ("name", "width", "height", "modelLabel", "prompt")}
 
 
-def recover_chat_image(thread_id: str, job_id: str) -> dict[str, Any] | None:
-    """Match a saved render to a pending chat request after a backend restart."""
+def recover_chat_images(thread_id: str, job_id: str) -> list[dict[str, Any]]:
+    """Match saved renders to a pending chat request after a backend restart."""
+    images = []
     for filename, metadata in gallery_store.metadata_snapshot().items():
         if (
             metadata.get("source") != "chat"
@@ -2202,8 +2240,11 @@ def recover_chat_image(thread_id: str, job_id: str) -> dict[str, Any] | None:
             continue
         path = (OUTPUTS / filename).resolve()
         if path.parent == OUTPUTS.resolve() and path.suffix.lower() == ".png" and path.is_file():
-            return {key: metadata[key] for key in ("name", "width", "height", "modelLabel", "prompt")}
-    return None
+            try:
+                images.append((path.stat().st_mtime_ns, chat_image_artifact(metadata)))
+            except FileNotFoundError:
+                continue
+    return [image for _, image in sorted(images, key=lambda item: item[0])]
 
 
 def delete_thread_assets(thread_id: str, legacy_names: list[str]) -> list[str]:
@@ -2281,7 +2322,8 @@ class Handler(BaseHTTPRequestHandler):
             if not thread_id.startswith("text-thread-") or len(thread_id) > 100 or not job_id or len(job_id) > 100:
                 self.send_json(400, {"error": "The pending chat request could not be identified."})
             else:
-                self.send_json(200, {"image": recover_chat_image(thread_id, job_id)})
+                images = recover_chat_images(thread_id, job_id)
+                self.send_json(200, {"image": images[0] if images else None, "images": images})
             return
 
         if parsed.path == "/api/video/status":

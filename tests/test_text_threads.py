@@ -9,7 +9,7 @@ import urllib.error
 import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 from http.server import ThreadingHTTPServer
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
@@ -148,7 +148,8 @@ for line in sys.stdin:
             self.assertEqual(api.TEXT_JOB["status"], "complete")
             self.assertEqual(api.TEXT_JOB["image"], image)
             self.assertEqual(api.TEXT_JOB["partialText"], "The image is ready.")
-            generate_image.assert_called_once_with("4b-lora", "red teapot", "text-thread-test", "test-tool", event, image_settings)
+            generate_image.assert_called_once_with("4b-lora", "red teapot", "text-thread-test", "test-tool", event, image_settings,
+                                                   message_image=None, on_image=ANY)
             first, resumed = (item.kwargs["request"] for item in reply.call_args_list)
             self.assertEqual(first["tools"][0]["function"]["name"], "generate_image")
             self.assertEqual(resumed["toolChoice"], "none")
@@ -173,8 +174,8 @@ for line in sys.stdin:
              patch.object(api.TEXT_GENERATION_WORKER, "generate", return_value={"text": "A red circle."}) as inspect, \
              patch.object(api, "generate_chat_image") as render, \
              patch.dict(api.TEXT_JOB, {"id": "inspection", "status": "running"}, clear=True):
-            self.assertEqual(api.recover_chat_image(thread_id, "original"), image)
-            self.assertIsNone(api.recover_chat_image("text-thread-other", "original"))
+            self.assertEqual(api.recover_chat_images(thread_id, "original"), [image])
+            self.assertEqual(api.recover_chat_images("text-thread-other", "original"), [])
             attempt = {"threadId": thread_id, "image": "poster.png", "modelId": self.model["id"]}
             with self.assertRaisesRegex(ValueError, "saved image from this conversation"):
                 api.prepare_image_inspection({**attempt, "threadId": "text-thread-other"})

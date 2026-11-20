@@ -45,6 +45,7 @@ export interface TextMessage {
   image?: string;
   includedImage?: string;
   generatedImage?: GeneratedChatImage;
+  generatedImages?: GeneratedChatImage[];
   inspectionJobId?: string;
   reasoning?: string;
   createdAt: number;
@@ -117,6 +118,7 @@ export interface TextJob {
   partialText: string;
   partialReasoning?: string;
   image?: GeneratedChatImage | null;
+  images?: GeneratedChatImage[];
   inspection?: boolean;
   startedAt: number | null;
   finishedAt: number | null;
@@ -247,6 +249,8 @@ export function loadTextThreads(): TextThreadWorkspace {
         image: message.role === "user" && isChatImage(message.image) ? message.image : undefined,
         includedImage: message.role === "user" && isOutputImage(message.includedImage) ? message.includedImage : undefined,
         generatedImage: message.role === "assistant" && isGeneratedChatImage(message.generatedImage) ? message.generatedImage : undefined,
+        generatedImages: message.role === "assistant" && Array.isArray(message.generatedImages)
+          ? message.generatedImages.filter(isGeneratedChatImage).slice(0, 4) : undefined,
         inspectionJobId: typeof message.inspectionJobId === "string" ? message.inspectionJobId : undefined,
         reasoning: message.role === "assistant" && typeof message.reasoning === "string" ? message.reasoning : undefined,
         metrics: message.metrics && [message.metrics.inputTokens, message.metrics.outputTokens, message.metrics.generationSeconds, message.metrics.tokensPerSecond].every((value) => typeof value === "number" && Number.isFinite(value) && value >= 0) ? message.metrics : undefined,

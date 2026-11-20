@@ -2602,6 +2602,16 @@ code {
 .chat-advanced-settings > summary { padding-block: 12px; cursor: pointer; font-size: 12px; font-weight: 600; }
 .chat-advanced-settings[open] > .text-settings-grid { gap: 16px; padding-block: 4px 8px; }
 .chat-model-defaults { display: flex; flex-wrap: wrap; gap: 6px; }
+.image-lora-fields { border: 0; padding: 0; margin: 0; min-width: 0; }
+.text-inspector .image-lora-fields { border-top: 1px solid var(--border); padding-top: 12px; }
+.text-inspector .image-lora-fields .lora-control-name { display: flex; }
+.chat-image-references { margin: 0; padding: 6px 0 0; border: 0; min-width: 0; }
+.chat-image-references legend { padding: 0; font-size: 12px; font-weight: 600; }
+.text-inspector .text-settings-grid .chat-image-reference-toggle { display: flex; align-items: center; padding-block: 6px; }
+.chat-image-reference-list { padding: 0; margin-block: 6px 12px; list-style: none; display: grid; gap: 6px; }
+.chat-image-reference-list li { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.chat-image-reference-list img { width: 28px; height: 28px; border-radius: 4px; object-fit: cover; }
+.chat-image-reference-list span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; font-size: 12px; }
 .text-inspector .dims-row { margin-bottom: 0; }
 .text-inspector .dims-row > *, .text-inspector .seed-row > * { min-width: 0; }
 .text-inspector .text-recommended-model { flex-wrap: wrap; padding-top: 0; padding-bottom: 16px; }

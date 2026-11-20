@@ -141,7 +141,7 @@ export function fetchTextStatus(): Promise<TextRuntimeStatus> {
   return requestJson<TextRuntimeStatus>("/api/text/status", { signal: AbortSignal.timeout(15_000) });
 }
 
-export function recoverChatImage(threadId: string, jobId: string): Promise<{ image: GeneratedChatImage | null }> {
+export function recoverChatImage(threadId: string, jobId: string): Promise<{ image: GeneratedChatImage | null; images?: GeneratedChatImage[] }> {
   const query = new URLSearchParams({ threadId, jobId });
   return requestJson(`/api/text/recover-image?${query}`, { signal: AbortSignal.timeout(15_000) });
 }

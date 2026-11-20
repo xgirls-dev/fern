@@ -83,6 +83,30 @@ class UxWorkflowTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "requires Apple Silicon"):
                 api_server.validate_flux_payload(request)
 
+    def test_chat_reference_order_and_loras_reach_the_image_worker(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            attachment, explicit, adapter = root / "attachment.png", root / "explicit.png", root / "adapter.safetensors"
+            Image.new("RGB", (16, 16), "red").save(attachment)
+            Image.new("RGB", (16, 16), "blue").save(explicit)
+            adapter.touch()
+            saved = {"name": "result.png", "width": 512, "height": 512, "modelLabel": "Klein", "prompt": "test"}
+            with (
+                patch.object(api_server.flux2, "model_status", return_value={
+                    "runtimeReady": True, "selectedDevice": "INTEL_GPU", "modelRevision": "test",
+                }),
+                patch.object(api_server, "chat_image_path", return_value=str(explicit)),
+                patch.object(api_server, "run_flux_generation", return_value=saved) as render,
+            ):
+                api_server.generate_chat_image("4b-lora", "test", "thread", "job", threading.Event(), {
+                    "referenceImages": ["chat-image-" + "a" * 32 + ".png"],
+                    "useMessageImage": True,
+                    "loras": [{"path": str(adapter), "strength": 0.65, "enabled": True}],
+                }, message_image=str(attachment))
+            payload = render.call_args.args[1]
+            self.assertEqual([image.getpixel((0, 0)) for image in payload["reference_images"]], [(255, 0, 0), (0, 0, 255)])
+            self.assertEqual(payload["loras"], [{"path": str(adapter), "strength": 0.65, "enabled": True}])
+
     def test_qwen_requires_dimensions_on_its_32_pixel_grid(self):
         with (
             patch.object(api_server, "qwen_turbo_runtime_ready", return_value=True),

@@ -1,8 +1,6 @@
 import ChevronDown from "lucide-react/dist/esm/icons/chevron-down.mjs";
 import ImageIcon from "lucide-react/dist/esm/icons/image.mjs";
-import Plus from "lucide-react/dist/esm/icons/plus.mjs";
-import X from "lucide-react/dist/esm/icons/x.mjs";
-import { Button, Checkbox, IconButton, Input, Select, ToggleChip } from "./ui/controls";
+import { Button, Input, Select, ToggleChip } from "./ui/controls";
 import {
   useEffect,
   useState,
@@ -11,30 +9,9 @@ import type { ModelStatus, StudioSettings } from "../lib/types";
 
 import { notify } from "../lib/notifications";
 import { readReference, validateReference } from "../lib/reference";
-import { ImageCanvasFields, ImageSamplingFields } from "./ImageGenerationFields";
+import { ImageBatchField, ImageCanvasFields, ImageSamplingFields } from "./ImageGenerationFields";
 import { fixedImagePreset, isKleinLoraModel, maxReferenceImages, selectedKleinLoras } from "../lib/imageModels";
-import { getApiBaseUrl } from "../lib/api";
-
-function loraDisplayName(path: string): string {
-  const parts = path.split(/[\\/]/).filter(Boolean);
-  const filename = parts.at(-1)?.replace(/\.safetensors$/i, "").replace(/^[a-f0-9]{12}-/, "") ?? path;
-  return /^(pytorch_lora_weights|adapter_model)$/i.test(filename) && parts.length > 1 && parts[parts.length - 2].toLowerCase() !== "loras"
-    ? parts[parts.length - 2]
-    : filename;
-}
-
-function downloadedLoraLabel(url: string, path: string): string {
-  const fallback = loraDisplayName(path);
-  if (!/^(pytorch_lora_weights|adapter_model)$/i.test(fallback)) return fallback;
-  try {
-    const source = new URL(url);
-    const parts = source.pathname.split("/").filter(Boolean);
-    if (source.hostname.endsWith("huggingface.co") && parts.length >= 5) {
-      return decodeURIComponent(parts.length > 5 ? parts[parts.length - 2] : parts[1]);
-    }
-  } catch { /* Use the filename when the source link is unavailable. */ }
-  return fallback;
-}
+import { ImageLoraFields } from "./ImageLoraFields";
 
 const STYLE_CHIPS = [
   {
@@ -211,55 +188,8 @@ export function GenerationControls({
   onUseOutputAsReference,
   canUseOutput,
 }: GenerationControlsProps) {
-  const [loraError, setLoraError] = useState("");
-  const [loraUrl, setLoraUrl] = useState("");
-  const [loraDownload, setLoraDownload] = useState<{ status: string; name?: string; path?: string; downloaded?: number; bytes?: number; error?: string }>({ status: "idle" });
-  const [startingLoraDownload, setStartingLoraDownload] = useState(false);
-  const [loraDownloadOpen, setLoraDownloadOpen] = useState(false);
   const isLoraModel = isKleinLoraModel(settings.model);
   const loras = selectedKleinLoras(settings);
-  useEffect(() => {
-    if (!isLoraModel || !loraDownloadOpen) return;
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout>;
-    const poll = async () => {
-      try {
-        const response = await fetch(`${getApiBaseUrl()}/api/loras/download`, { signal: AbortSignal.timeout(5000) });
-        if (!response.ok) throw new Error("Could not check the LoRA download.");
-        const state = await response.json();
-        if (!cancelled) { setLoraDownload(state); if (["checking", "downloading"].includes(state.status)) timer = setTimeout(poll, 1200); }
-      } catch (error) { if (!cancelled) setLoraError(error instanceof Error ? error.message : "Could not check the LoRA download."); }
-    };
-    void poll();
-    return () => { cancelled = true; clearTimeout(timer); };
-  }, [isLoraModel, loraDownloadOpen, startingLoraDownload]);
-  const downloadLora = async (cancel = false) => {
-    setStartingLoraDownload(true); setLoraError("");
-    try {
-      const response = await fetch(`${getApiBaseUrl()}/api/loras/download${cancel ? "/cancel" : ""}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(cancel ? {} : { url: loraUrl }) });
-      const state = await response.json();
-      if (!response.ok) throw new Error(state.error || "Could not download the LoRA.");
-      setLoraDownload(state);
-    } catch (error) { setLoraError(error instanceof Error ? error.message : "Could not download the LoRA."); }
-    finally { setStartingLoraDownload(false); }
-  };
-  const addLoras = async () => {
-    try {
-      const paths = await window.studio.pickLoraFiles();
-      const existing = new Set(loras.map((item) => item.path.toLowerCase()));
-      const next = [...loras];
-      for (const path of paths) {
-        if (existing.has(path.toLowerCase())) continue;
-        if (next.length >= 4) { setLoraError("Choose up to four LoRAs."); break; }
-        existing.add(path.toLowerCase());
-        next.push({ path, strength: 1, enabled: true });
-      }
-      if (next.length <= 4 && paths.length <= 4 - loras.length) setLoraError("");
-      onSettingsChange({ loras: next });
-    } catch (error) {
-      setLoraError(error instanceof Error ? error.message : "Could not open the file picker.");
-    }
-  };
   const isQwenTurbo = settings.model === "qwen21-turbo";
   const isFlux3Klein = settings.model === "flux3-klein";
   const isCustomImage = settings.model?.startsWith("custom-") ?? false;
@@ -454,31 +384,7 @@ export function GenerationControls({
         <div className="control-sections">
           {isLoraModel ? (
             <ControlSection title="LoRAs" summary={loras.length ? `${loras.filter((item) => item.enabled).length} of ${loras.length} active` : "Optional · up to 4"} defaultOpen>
-              <p className="lora-intro">Add local LoRAs to guide your image. Include their trigger words in your prompt.</p>
-              {loras.length ? <div className="lora-list-heading" aria-hidden="true"><span>LoRA</span><span>Strength</span><span /></div> : null}
-              {loras.map((lora, index) => (
-                <div className={`lora-control${lora.enabled ? "" : " is-disabled"}`} key={lora.path}>
-                  <div className="lora-control-heading">
-                    <label className="lora-control-name" title={lora.path}>
-                      <Checkbox checked={lora.enabled} aria-label={lora.path.split(/[\\/]/).pop()} onChange={(event) => onSettingsChange({ loras: loras.map((item, i) => i === index ? { ...item, enabled: event.target.checked } : item) })} />
-                      <span>{lora.label || loraDisplayName(lora.path)}</span>
-                    </label>
-                    <label className="lora-control-strength"><span className="sr-only">Strength</span>
-                      <Input type="number" min={-4} max={4} step={0.1} value={lora.strength} title="LoRA strength" aria-label={`Strength for ${lora.path.split(/[\\/]/).pop()}`} onChange={(event) => onSettingsChange({ loras: loras.map((item, i) => i === index ? { ...item, strength: Number(event.target.value) } : item) })} />
-                    </label>
-                    <IconButton onClick={() => onSettingsChange({ loras: loras.filter((_, i) => i !== index) })} aria-label={`Remove ${lora.path.split(/[\\/]/).pop()}`} title="Remove LoRA"><X size={15} aria-hidden="true" /></IconButton>
-                  </div>
-                </div>
-              ))}
-              <Button variant="ghost" className="lora-add" disabled={loras.length >= 4} onClick={() => void addLoras()}><Plus size={15} aria-hidden="true" /> Add LoRA files</Button>
-              <details className="lora-download" onToggle={(event) => setLoraDownloadOpen(event.currentTarget.open)}><summary>Download from a link</summary><div className="lora-download-content">
-                <label htmlFor="lora-download-url">Hugging Face or Civitai link</label>
-                <Input id="lora-download-url" type="url" placeholder="https://…" value={loraUrl} onChange={(event) => setLoraUrl(event.target.value)} disabled={startingLoraDownload || ["checking", "downloading"].includes(loraDownload.status)} />
-                {["checking", "downloading"].includes(loraDownload.status) ? <><p role="status">{loraDownload.status === "checking" ? "Checking link…" : `Downloading ${loraDownload.name ?? "LoRA"}…`}</p><progress aria-label="LoRA download" {...(loraDownload.bytes ? { value: loraDownload.downloaded ?? 0, max: loraDownload.bytes } : {})} /><Button onClick={() => void downloadLora(true)} disabled={startingLoraDownload}>Cancel download</Button></> : <Button disabled={!loraUrl.trim() || startingLoraDownload || loras.length >= 4} onClick={() => void downloadLora()}>Download LoRA</Button>}
-                {loraDownload.status === "complete" && loraDownload.path ? <div className="lora-downloaded"><span title={loraDownload.name}>{loraDownload.name} downloaded</span><Button disabled={loras.length >= 4 || loras.some((item) => item.path.toLowerCase() === loraDownload.path!.toLowerCase())} onClick={() => onSettingsChange({ loras: [...loras, { path: loraDownload.path!, strength: 1, enabled: true, label: downloadedLoraLabel(loraUrl, loraDownload.path!) }] })}>Add to thread</Button></div> : null}
-                {loraDownload.status === "failed" ? <p role="alert" className="field-error">{loraDownload.error || "Download failed."}</p> : null}
-              </div></details>
-              {loraError || errors.loras ? <p role="alert" className="field-error">{loraError || errors.loras}</p> : null}
+              <ImageLoraFields loras={loras} error={errors.loras} onChange={(next) => onSettingsChange({ loras: next })} />
             </ControlSection>
           ) : null}
           <ControlSection
@@ -499,24 +405,7 @@ export function GenerationControls({
               errors={errors} onChange={onSettingsChange} />
 
             <div className="row-2">
-              <div className="field">
-                <label htmlFor="batch-size">Images per render</label>
-                <Select
-                  id="batch-size"
-                  name="batch-size"
-                  value={hasFixedSampling ? 1 : settings.batchSize}
-                  disabled={hasFixedSampling}
-                  onChange={(event) =>
-                    onSettingsChange({ batchSize: Number(event.target.value) })
-                  }
-                >
-                  <option value={1}>1 image</option>
-                  <option value={2}>2 images</option>
-                  <option value={3}>3 images</option>
-                  <option value={4}>4 images</option>
-                </Select>
-                {hasFixedSampling ? <small className="field-note">{"This model generates one image per request."}</small> : null}
-              </div>
+              <ImageBatchField model={settings.model} value={settings.batchSize} onChange={(batchSize) => onSettingsChange({ batchSize })} />
             </div>
             <p
               className={`device-status-note ${deviceStatusClass}`}

@@ -56,7 +56,7 @@ With a compatible tool-capable vision model, Chat can call Fern's image generato
 
 Set the context length in tokens for GGUF chats. Fern starts at **8,192 tokens** or the model's declared maximum, whichever is lower. When a conversation outgrows the available context, Fern summarizes earlier turns for the model and keeps the original transcript in the thread. Response details show the backend, device, and context usage. Image generation in Chat needs GPU memory for both the language and image models.
 
-In **Chat settings → Model**, set the response length, system prompt, and sampling controls, or save the inference settings as defaults for that model. In **Chat settings → Image**, choose an image model and set its canvas, steps, guidance, and seed. Each conversation remembers settings for each image model.
+In **Chat settings → Model**, set the response length, system prompt, and sampling controls, or save the inference settings as defaults for that model. In **Chat settings → Image**, choose an image model and set its canvas, steps, guidance, seed, and batch size. Compatible Klein models also accept ordered references and LoRA adapters. Each conversation remembers settings for each image model. For a batch, the chat model inspects the first image, and every result is saved in the conversation and Library.
 
 ### Image creation and editing
 
