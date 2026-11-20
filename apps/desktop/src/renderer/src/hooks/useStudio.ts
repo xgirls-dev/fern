@@ -39,12 +39,13 @@ const LEGACY_SETTINGS_KEYS = [
   "iris-studio-settings",
 ];
 
+const appleDesktop = window.studio?.platform === "darwin";
 const DEFAULT_SETTINGS: StudioSettings = {
   prompt: "",
-  model: window.studio?.platform === "darwin" ? APPLE_IMAGE_MODEL : "9b",
+  model: appleDesktop ? APPLE_IMAGE_MODEL : "9b",
   device: "AUTO",
-  width: 1024,
-  height: 1024,
+  width: appleDesktop ? 512 : 1024,
+  height: appleDesktop ? 512 : 1024,
   steps: 4,
   guidance: 1,
   seed: 42,

@@ -4,16 +4,13 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths:
-      - .github/workflows/macos-preview.yml
-      - scripts/build-macos.sh
-      - scripts/requirements-macos.txt
 
 permissions:
   contents: read
 
 jobs:
   build:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[build-macos-preview]')
     runs-on: macos-15
     timeout-minutes: 35
     steps:
