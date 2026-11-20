@@ -1,7 +1,22 @@
+import type { ChatImageSettings } from "./chatImageSettings";
+
 const KEY = "fern-text-threads:v1";
+const DEFAULT_CONTEXT_SIZE = 8192;
+export const MIN_CHAT_CONTEXT = 1024;
+export const MAX_CHAT_CONTEXT = 2_147_483_647;
 
 export type TextDevice = "AUTO" | "GPU" | "CPU";
 export type TextMode = "instant" | "reasoning";
+export interface TextSamplingOverrides {
+  topK?: number;
+  minP?: number;
+  repeatPenalty?: number;
+  stopSequences?: string[];
+}
+export interface TextSamplingSettings extends Omit<TextSamplingOverrides, "stopSequences"> {
+  fixedSeed?: number;
+  stopText?: string;
+}
 export const isChatImage = (value: unknown): value is string =>
   typeof value === "string" && /^chat-image-[a-f0-9]{32}\.png$/.test(value);
 const isOutputImage = (value: unknown): value is string =>
@@ -50,6 +65,7 @@ export interface TextMessage {
     seed?: number;
     temperature?: number;
     topP?: number;
+    sampling?: TextSamplingOverrides;
     maxNewTokens?: number;
     visionChecked?: boolean;
     context?: { size: number; compactedMessages: number; images: number; imageNames?: string[] };
@@ -67,11 +83,13 @@ export interface TextThread {
   temperature: number;
   topP: number;
   maxNewTokens: number;
+  sampling?: TextSamplingSettings;
   draft: string;
   draftImage?: string;
   draftContextImage?: string;
   mode: TextMode;
   imageModel: string;
+  imageRenderSettings?: Record<string, ChatImageSettings>;
   contextSize: number;
   messages: TextMessage[];
   pendingJobId?: string | null;
@@ -86,6 +104,7 @@ export interface TextModel {
   supportsVision?: boolean;
   supportsReasoning?: boolean;
   supportsTools?: boolean;
+  maxContextSize?: number | null;
   installed: boolean;
   error?: string | null;
 }
@@ -122,6 +141,29 @@ export interface TextRuntimeStatus {
 export interface TextThreadWorkspace {
   activeId: string;
   threads: TextThread[];
+  modelDefaults?: Record<string, TextModelDefaults>;
+}
+
+export type TextModelDefaults = Pick<TextThread, "contextSize" | "temperature" | "topP" | "maxNewTokens" | "sampling">;
+
+const hasNumber = (value: unknown, min: number, max: number, integer = false): value is number =>
+  typeof value === "number" && Number.isFinite(value) && value >= min && value <= max && (!integer || Number.isInteger(value));
+
+export function modelDefaultsFromThread(settings: Partial<TextModelDefaults>): TextModelDefaults {
+  const { contextSize, temperature, topP, maxNewTokens, sampling } = settings;
+  return {
+    contextSize: hasNumber(contextSize, MIN_CHAT_CONTEXT, MAX_CHAT_CONTEXT, true) ? contextSize : DEFAULT_CONTEXT_SIZE,
+    temperature: hasNumber(temperature, 0, 2) ? temperature : 0.7,
+    topP: hasNumber(topP, 0.01, 1) ? topP : 0.9,
+    maxNewTokens: hasNumber(maxNewTokens, 1, Math.floor(MAX_CHAT_CONTEXT / 2), true) ? maxNewTokens : 512,
+    sampling: sampling && typeof sampling === "object" ? {
+      topK: hasNumber(sampling.topK, 0, MAX_CHAT_CONTEXT, true) ? sampling.topK : undefined,
+      minP: hasNumber(sampling.minP, 0, 0.999999) ? sampling.minP : undefined,
+      repeatPenalty: hasNumber(sampling.repeatPenalty, 0.001, 3.402823466e38) ? sampling.repeatPenalty : undefined,
+      fixedSeed: hasNumber(sampling.fixedSeed, 0, MAX_CHAT_CONTEXT, true) ? sampling.fixedSeed : undefined,
+      stopText: typeof sampling.stopText === "string" ? sampling.stopText.slice(0, 8192) : undefined,
+    } : undefined,
+  };
 }
 
 export function textRuntimeIssue(status: TextRuntimeStatus, model: TextModel | undefined): string | null {
@@ -131,6 +173,23 @@ export function textRuntimeIssue(status: TextRuntimeStatus, model: TextModel | u
       : null;
   }
   return status.runtimeAvailable ? null : status.runtimeError ?? "The OpenVINO text runtime is unavailable.";
+}
+
+export function chatTokenLimits(thread: TextThread, model?: TextModel) {
+  const contextMaximum = Math.min(model?.maxContextSize || MAX_CHAT_CONTEXT, MAX_CHAT_CONTEXT);
+  const contextSize = Math.min(thread.contextSize, contextMaximum);
+  const outputMaximum = model?.format === "gguf" ? Math.max(1, Math.floor(contextSize / 2)) : 8192;
+  return {
+    contextSize, contextMaximum, contextMinimum: Math.min(MIN_CHAT_CONTEXT, contextMaximum),
+    maxNewTokens: Math.min(thread.maxNewTokens, outputMaximum), outputMaximum,
+  };
+}
+
+export function textSamplingOverrides(settings?: TextSamplingSettings): TextSamplingOverrides {
+  if (!settings) return {};
+  const { topK, minP, repeatPenalty, stopText } = settings;
+  const stopSequences = stopText?.split(/\r?\n/).filter((line) => line.trim().length);
+  return { topK, minP, repeatPenalty, ...(stopSequences?.length ? { stopSequences } : {}) };
 }
 
 export function createTextThread(): TextThread {
@@ -148,7 +207,7 @@ export function createTextThread(): TextThread {
     draft: "",
     mode: "instant",
     imageModel: "auto",
-    contextSize: 8192,
+    contextSize: DEFAULT_CONTEXT_SIZE,
     messages: [],
   };
 }
@@ -173,14 +232,11 @@ export function loadTextThreads(): TextThreadWorkspace {
       draftContextImage: isOutputImage(thread.draftContextImage) ? thread.draftContextImage : undefined,
       mode: thread.mode === "reasoning" ? "reasoning" : "instant",
       imageModel: typeof thread.imageModel === "string" ? thread.imageModel : "auto",
-      contextSize: [4096, 8192, 16384].includes(thread.contextSize) ? thread.contextSize : 8192,
       systemPrompt: typeof thread.systemPrompt === "string" ? thread.systemPrompt : "",
       modelId: typeof thread.modelId === "string" ? thread.modelId : null,
       pendingJobId: typeof thread.pendingJobId === "string" ? thread.pendingJobId : null,
       device: (["AUTO", "GPU", "CPU"].includes(thread.device) ? thread.device : "AUTO") as TextDevice,
-      temperature: typeof thread.temperature === "number" && thread.temperature >= 0 && thread.temperature <= 2 ? thread.temperature : 0.7,
-      topP: typeof thread.topP === "number" && thread.topP > 0 && thread.topP <= 1 ? thread.topP : 0.9,
-      maxNewTokens: Number.isInteger(thread.maxNewTokens) && thread.maxNewTokens! >= 1 && thread.maxNewTokens! <= 8192 ? thread.maxNewTokens : 512,
+      ...modelDefaultsFromThread(thread),
       messages: thread.messages.filter((message) => message && ["user", "assistant"].includes(message.role) && typeof message.content === "string").map((message) => ({
         ...message,
         id: typeof message.id === "string" ? message.id : `message-${crypto.randomUUID()}`,
@@ -196,7 +252,14 @@ export function loadTextThreads(): TextThreadWorkspace {
         metrics: message.metrics && [message.metrics.inputTokens, message.metrics.outputTokens, message.metrics.generationSeconds, message.metrics.tokensPerSecond].every((value) => typeof value === "number" && Number.isFinite(value) && value >= 0) ? message.metrics : undefined,
       })),
     }));
-    if (threads.length) return { activeId: threads.some((thread) => thread.id === saved?.activeId) ? saved!.activeId! : threads[0].id, threads };
+    if (threads.length) return {
+      activeId: threads.some((thread) => thread.id === saved?.activeId) ? saved!.activeId! : threads[0].id,
+      threads,
+      modelDefaults: saved?.modelDefaults && typeof saved.modelDefaults === "object" && !Array.isArray(saved.modelDefaults)
+        ? Object.fromEntries(Object.entries(saved.modelDefaults).filter(([, settings]) => settings && typeof settings === "object")
+          .map(([id, settings]) => [id, modelDefaultsFromThread(settings)]))
+        : undefined,
+    };
   } catch {
     // Ignore unreadable browser storage and open a clean conversation.
   }

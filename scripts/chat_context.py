@@ -7,13 +7,25 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 
-CONTEXT_SIZES = (4096, 8192, 16384)
 DEFAULT_CONTEXT_SIZE = 8192
+MIN_CONTEXT_SIZE = 1024
+# llama-server parses --ctx-size as a signed integer.
+MAX_CONTEXT_SIZE = 2_147_483_647
 MAX_IMAGE_TOKENS = 280
 RECENT_IMAGE_LIMIT = 2
 SUMMARY_RESERVE = 384
 
 Message = dict[str, Any]
+
+
+def validate_context_size(requested: object, maximum: int | None = None) -> int:
+    upper = min(maximum or MAX_CONTEXT_SIZE, MAX_CONTEXT_SIZE)
+    lower = min(MIN_CONTEXT_SIZE, upper)
+    if requested is None:
+        return min(DEFAULT_CONTEXT_SIZE, upper)
+    if type(requested) is not int or not lower <= requested <= upper:
+        raise ValueError(f"Context length must be a whole number between {lower:,} and {upper:,} tokens.")
+    return requested
 
 
 @dataclass(frozen=True)

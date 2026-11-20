@@ -134,6 +134,12 @@ def run(model_path: str, device: str, projector_path: str = "") -> int:
             config.top_p = float(request["topP"])
             config.do_sample = float(request["temperature"]) > 0
             config.rng_seed = int(request.get("seed", 0))
+            sampling = request.get("sampling") or {}
+            for option, attribute in (("topK", "top_k"), ("minP", "min_p"), ("repeatPenalty", "repetition_penalty")):
+                if option in sampling:
+                    setattr(config, attribute, sampling[option])
+            if "stopSequences" in sampling:
+                config.stop_strings = set(sampling["stopSequences"])
 
             parts: list[str] = []
             started = time.perf_counter()

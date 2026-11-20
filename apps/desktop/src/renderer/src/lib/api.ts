@@ -6,7 +6,8 @@ import type {
   DeviceId,
 } from "./types";
 import { repairMojibakeDeep } from "./text";
-import type { GeneratedChatImage, TextModel, TextRuntimeStatus } from "./textThreads";
+import type { GeneratedChatImage, TextModel, TextRuntimeStatus, TextSamplingOverrides } from "./textThreads";
+import type { ChatImageOverrides } from "./chatImageSettings";
 
 let apiBaseUrl = "";
 let cachedImages: FluxStatusResponse["images"] = [];
@@ -201,10 +202,12 @@ export function startTextGeneration(payload: {
   messages: Array<{ role: "user" | "assistant"; content: string; image?: string; generatedImage?: string; includedImage?: string }>;
   mode?: "instant" | "reasoning";
   imageModel?: string;
+  imageSettings?: ChatImageOverrides;
   contextSize?: number;
   systemPrompt: string;
   temperature: number;
   topP: number;
+  sampling?: TextSamplingOverrides;
   maxNewTokens: number;
   seed: number;
 }): Promise<{ job: TextRuntimeStatus }> {

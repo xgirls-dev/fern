@@ -11,13 +11,13 @@ _FIXED_SIZE = {0: 1, 1: 1, 2: 2, 3: 2, 4: 4, 5: 4, 6: 4, 7: 1, 10: 8, 11: 8, 12:
 _KEYS = {"general.architecture", "general.name", "general.type", "tokenizer.chat_template"}
 
 
-def read_metadata(path: Path) -> dict[str, str]:
+def read_metadata(path: Path) -> dict[str, str | int]:
     info = path.stat()
     return _read_metadata(path, info.st_size, info.st_mtime_ns)
 
 
 @lru_cache(maxsize=64)
-def _read_metadata(path: Path, size: int, modified: int) -> dict[str, str]:
+def _read_metadata(path: Path, size: int, modified: int) -> dict[str, str | int]:
     if not path.is_file() or path.suffix.lower() != ".gguf" or size < 24:
         raise ValueError("Choose a valid .gguf file.")
     with path.open("rb") as stream, mmap.mmap(stream.fileno(), 0, access=mmap.ACCESS_READ) as data:
@@ -67,6 +67,8 @@ def _read_metadata(path: Path, size: int, modified: int) -> dict[str, str]:
             kind = integer("<I")
             if kind == 8 and key in _KEYS:
                 values[key] = string(True)
+            elif kind == 4 and key.endswith(".context_length"):
+                values[key] = integer("<I")
             else:
                 skip(kind)
         if not values.get("general.architecture"):
@@ -74,5 +76,5 @@ def _read_metadata(path: Path, size: int, modified: int) -> dict[str, str]:
         return values
 
 
-def is_projector(metadata: dict[str, str]) -> bool:
+def is_projector(metadata: dict[str, str | int]) -> bool:
     return metadata["general.architecture"] == "clip" or metadata.get("general.type") == "mmproj"

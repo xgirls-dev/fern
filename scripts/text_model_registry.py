@@ -37,6 +37,7 @@ def inspect_gguf(file: Path, projector_path: str | Path | None) -> dict[str, Any
         if not is_projector(read_metadata(projector)):
             raise ValueError("The second GGUF file must be a vision projector for this model.")
     architecture = metadata["general.architecture"]
+    context = metadata.get(f"{architecture}.context_length")
     name = re.sub(r"[\r\n\t]+", " ", metadata.get("general.name", file.stem)).strip()[:100]
     return {
         "id": hashlib.sha256(os.path.normcase(str(file)).encode("utf-8")).hexdigest()[:16],
@@ -49,6 +50,7 @@ def inspect_gguf(file: Path, projector_path: str | Path | None) -> dict[str, Any
         "supportsVision": projector is not None,
         "supportsReasoning": "enable_thinking" in template,
         "supportsTools": bool(re.search(r"\btools\b", template) and "tool_calls" in template),
+        "maxContextSize": context if isinstance(context, int) and context > 0 else None,
     }
 
 

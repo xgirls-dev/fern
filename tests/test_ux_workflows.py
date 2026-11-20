@@ -17,6 +17,14 @@ import gallery_store
 
 
 class UxWorkflowTests(unittest.TestCase):
+    def test_text_sampling_keeps_model_defaults_and_validates_overrides(self):
+        self.assertEqual(api_server.validate_text_sampling(None), {})
+        options = {"topK": 32, "minP": 0.07, "repeatPenalty": 1.15, "stopSequences": ["END", "User:"]}
+        self.assertEqual(api_server.validate_text_sampling(options), options)
+        for invalid in ({"topK": True}, {"minP": 1}, {"repeatPenalty": float("inf")}, {"stopSequences": ["  "]}):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                api_server.validate_text_sampling(invalid)
+
     def test_deleted_last_output_is_not_reintroduced_by_status(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -54,8 +62,13 @@ class UxWorkflowTests(unittest.TestCase):
             patch.object(api_server, "run_flux_generation", return_value=record) as generate,
         ):
             api_server.generate_chat_image(model, "A fox", "thread-one", "job-one", threading.Event())
+            default_payload = generate.call_args.args[1]
+            api_server.generate_chat_image(model, "A fox", "thread-one", "job-one", threading.Event(), {
+                "width": 2064, "height": 768, "steps": 60, "seed": 123,
+            })
         payload = generate.call_args.args[1]
-        self.assertEqual((payload["width"], payload["height"], payload["steps"]), (512, 512, 8))
+        self.assertEqual((default_payload["width"], default_payload["height"], default_payload["steps"]), (512, 512, 8))
+        self.assertEqual((payload["width"], payload["height"], payload["steps"], payload["seed"]), (2064, 768, 60, 123))
 
     def test_mac_image_preset_requires_apple_gpu_and_enforces_its_canvas(self):
         request = {"prompt": "A fox", "model": api_server.APPLE_IMAGE_ID, "device": "APPLE_GPU"}

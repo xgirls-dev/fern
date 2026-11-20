@@ -54,7 +54,9 @@ Use a local OpenVINO text model or a compatible instruction-tuned GGUF. Attach a
 
 With a compatible tool-capable vision model, Chat can call Fern's image generator. It creates one **512 × 512** image per response with a fast model preset. Fern adds the image to the thread and **Images**, then sends the pixels back to the chat model for inspection. **Image checked** appears once the inspection succeeds. Recent images can be used on follow-up turns. Choose **Include this image again** to bring an older image back into context.
 
-GGUF chats offer **4K, 8K, and 16K** context, with **8K** as the default. When a conversation outgrows the available context, Fern summarizes earlier turns for the model and keeps the original transcript in the thread. Response details show the backend, device, and context usage. Image generation in Chat needs GPU memory for both the language and image models.
+Set the context length in tokens for GGUF chats. Fern starts at **8,192 tokens** or the model's declared maximum, whichever is lower. When a conversation outgrows the available context, Fern summarizes earlier turns for the model and keeps the original transcript in the thread. Response details show the backend, device, and context usage. Image generation in Chat needs GPU memory for both the language and image models.
+
+In **Chat settings → Model**, set the response length, system prompt, and sampling controls, or save the inference settings as defaults for that model. In **Chat settings → Image**, choose an image model and set its canvas, steps, guidance, and seed. Each conversation remembers settings for each image model.
 
 ### Image creation and editing
 

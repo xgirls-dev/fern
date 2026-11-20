@@ -131,6 +131,7 @@ for line in sys.stdin:
         event = threading.Event()
         call = {"id": "image-call", "type": "function", "function": {"name": "generate_image", "arguments": '{"prompt":"red teapot"}'}}
         image = {"name": "teapot.png", "width": 512, "height": 512}
+        image_settings = {"width": 768, "height": 512, "steps": 6, "guidance": 1, "seed": 19}
         metrics = {"device": "GPU", "text": "", "outputTokens": 8, "inputTokens": 12, "generationSeconds": 0.3}
         with patch.object(api, 'TEXT_MODEL_REGISTRY', self.registry), \
              patch.object(api.TEXT_GENERATION_WORKER, 'generate', side_effect=[
@@ -140,14 +141,14 @@ for line in sys.stdin:
              patch.object(api, 'generate_chat_image', return_value=image) as generate_image, \
              patch.dict(api.TEXT_JOB, {'id': 'test-tool', 'status': 'running', 'partialText': ''}, clear=True):
             api.run_text_generation({
-                "modelId": self.model["id"], "device": "AUTO", "imageModel": "4b-lora",
+                "modelId": self.model["id"], "device": "AUTO", "imageModel": "4b-lora", "imageSettings": image_settings,
                 "threadId": "text-thread-test", "messages": [{"role": "user", "content": "Draw a teapot."}],
                 "maxNewTokens": 512, "seed": 1, "temperature": 0, "topP": 0.9,
             }, "test-tool", event)
             self.assertEqual(api.TEXT_JOB["status"], "complete")
             self.assertEqual(api.TEXT_JOB["image"], image)
             self.assertEqual(api.TEXT_JOB["partialText"], "The image is ready.")
-            generate_image.assert_called_once_with("4b-lora", "red teapot", "text-thread-test", "test-tool", event)
+            generate_image.assert_called_once_with("4b-lora", "red teapot", "text-thread-test", "test-tool", event, image_settings)
             first, resumed = (item.kwargs["request"] for item in reply.call_args_list)
             self.assertEqual(first["tools"][0]["function"]["name"], "generate_image")
             self.assertEqual(resumed["toolChoice"], "none")

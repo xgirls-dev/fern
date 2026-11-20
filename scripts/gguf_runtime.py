@@ -359,6 +359,10 @@ class GGUFServer:
             "temperature": request["temperature"], "top_p": request["topP"], "seed": request["seed"],
             "stream": True, "stream_options": {"include_usage": True},
         }
+        sampling = request.get("sampling") or {}
+        for option, parameter in (("topK", "top_k"), ("minP", "min_p"), ("repeatPenalty", "repeat_penalty"), ("stopSequences", "stop")):
+            if option in sampling:
+                body[parameter] = sampling[option]
         text, thoughts = [], []
         calls = {}
         usage = {}

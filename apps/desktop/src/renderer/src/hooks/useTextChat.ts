@@ -11,12 +11,16 @@ import {
   uploadChatImage,
 } from "../lib/api";
 import { readReference } from "../lib/reference";
+import { chatImageErrors, chatImageSettings } from "../lib/chatImageSettings";
 import {
+  chatTokenLimits,
   createTextThread,
   isChatImage,
   loadTextThreads,
+  modelDefaultsFromThread,
   saveTextThreads,
   textRuntimeIssue,
+  textSamplingOverrides,
   type TextDevice,
   type TextMessage,
   type TextRuntimeStatus,
@@ -167,19 +171,28 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
   }, []);
 
   const newThread = useCallback(() => {
+    const model = status.models.find((item) => item.installed && item.id === status.defaultModelId)
+      ?? status.models.find((item) => item.installed);
     const untouched = workspaceRef.current.threads.find((thread) => !thread.archived && !thread.renamed &&
       !thread.messages.length && !thread.draft && !thread.draftImage && !thread.draftContextImage && !thread.pendingJobId && !thread.systemPrompt &&
-      thread.title === "New text thread");
+      !thread.modelId && !thread.sampling && !thread.imageRenderSettings && thread.title === "New text thread"
+      && thread.contextSize === 8192 && thread.temperature === 0.7 && thread.topP === 0.9 && thread.maxNewTokens === 512);
+    const defaults = model ? workspaceRef.current.modelDefaults?.[model.id] : undefined;
     if (untouched) {
-      setWorkspace((current) => current.activeId === untouched.id ? current : { ...current, activeId: untouched.id });
+      setWorkspace((current) => ({
+        ...current, activeId: untouched.id,
+        threads: defaults && model
+          ? current.threads.map((item) => item.id === untouched.id ? { ...item, ...defaults, modelId: model.id } : item)
+          : current.threads,
+      }));
       setActionError(null);
       return untouched.id;
     }
-    const thread = createTextThread();
-    setWorkspace((current) => ({ activeId: thread.id, threads: [thread, ...current.threads] }));
+    const thread = { ...createTextThread(), ...defaults, ...(defaults && model ? { modelId: model.id } : {}) };
+    setWorkspace((current) => ({ ...current, activeId: thread.id, threads: [thread, ...current.threads] }));
     setActionError(null);
     return thread.id;
-  }, []);
+  }, [status.defaultModelId, status.models]);
 
   const selectThread = useCallback((id: string) => {
     setWorkspace((current) => current.threads.some((thread) => thread.id === id) ? { ...current, activeId: id } : current);
@@ -212,9 +225,9 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
       const remaining = current.threads.filter((thread) => thread.id !== id);
       if (!remaining.length) {
         const fresh = createTextThread();
-        return { activeId: fresh.id, threads: [fresh] };
+        return { ...current, activeId: fresh.id, threads: [fresh] };
       }
-      return { activeId: current.activeId === id ? remaining[0].id : current.activeId, threads: remaining };
+      return { ...current, activeId: current.activeId === id ? remaining[0].id : current.activeId, threads: remaining };
     });
   }, [busy, status.job.threadId, workspace.threads]);
 
@@ -326,6 +339,12 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     const imageModel = model.supportsTools && model.supportsVision && computeDevice === "GPU" && imageGpuAvailable !== false
       ? (activeThread.imageModel === "auto" ? imageOptions[0] : imageOptions.find((item) => item.id === activeThread.imageModel))
       : undefined;
+    const imageSettings = imageModel ? chatImageSettings(imageModel.id, activeThread.imageRenderSettings?.[imageModel.id]) : undefined;
+    if (imageModel && imageSettings && Object.keys(chatImageErrors(imageModel.id, imageSettings)).length) {
+      setActionError("Correct the image settings or turn image generation off before sending.");
+      return;
+    }
+    const { contextSize, maxNewTokens } = chatTokenLimits(activeThread, model);
     sending.current = true;
     setSubmitting(true);
     ++pollVersion.current;
@@ -343,13 +362,17 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
           role, content: content || (generatedImage ? "I generated an image." : ""), image, generatedImage: generatedImage?.name, includedImage,
         })),
         ...(model.supportsReasoning ? { mode: activeThread.mode } : {}),
-        ...(imageModel ? { imageModel: imageModel.id } : {}),
-        ...(model.format === "gguf" ? { contextSize: activeThread.contextSize } : {}),
+        ...(imageModel && imageSettings ? { imageModel: imageModel.id, imageSettings: {
+          width: imageSettings.width, height: imageSettings.height, steps: imageSettings.steps, guidance: imageSettings.guidance,
+          ...(imageSettings.seedLocked ? { seed: imageSettings.seed } : {}),
+        } } : {}),
+        ...(model.format === "gguf" ? { contextSize } : {}),
         systemPrompt: activeThread.systemPrompt,
         temperature: activeThread.temperature,
         topP: activeThread.topP,
-        maxNewTokens: activeThread.maxNewTokens,
-        seed: Math.floor(Math.random() * 2_147_483_647),
+        ...(activeThread.sampling ? { sampling: textSamplingOverrides(activeThread.sampling) } : {}),
+        maxNewTokens,
+        seed: activeThread.sampling?.fixedSeed ?? Math.floor(Math.random() * 2_147_483_647),
       });
       ++pollVersion.current;
       setStatus(accepted.job);
@@ -428,8 +451,25 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
   }, [refresh]);
 
   const selectModel = useCallback((modelId: string) => {
-    if (activeThread) updateThread(activeThread.id, { modelId: modelId || null });
+    if (activeThread && activeThread.modelId !== modelId) {
+      const defaults = workspaceRef.current.modelDefaults?.[modelId];
+      updateThread(activeThread.id, { ...defaults, modelId: modelId || null });
+    }
   }, [activeThread, updateThread]);
+
+  const saveModelDefaults = useCallback((modelId: string) => {
+    if (!activeThread) return;
+    const defaults = modelDefaultsFromThread(activeThread);
+    setWorkspace((current) => ({ ...current, modelDefaults: { ...current.modelDefaults, [modelId]: defaults } }));
+  }, [activeThread]);
+
+  const clearModelDefaults = useCallback((modelId: string) => {
+    setWorkspace((current) => {
+      const remaining = { ...current.modelDefaults };
+      delete remaining[modelId];
+      return { ...current, modelDefaults: remaining };
+    });
+  }, []);
 
   const setDevice = useCallback((device: TextDevice) => {
     if (activeThread) updateThread(activeThread.id, { device });
@@ -438,6 +478,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
   return {
     threads, activeThread, status, statusLoaded, modelAction, submitting, attachingImage, statusError, actionError, busy, computeDevice,
     newThread, selectThread, resetWorkspace, renameThread, archiveThread, deleteThread,
+    modelDefaults: workspace.modelDefaults, saveModelDefaults, clearModelDefaults,
     updateThread, importModel, deleteModel, installRecommendedModel, attachImage, send, retry, retryInspection, stop, refresh, selectModel, setDevice,
   };
 }

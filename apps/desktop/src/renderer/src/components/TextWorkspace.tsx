@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import Copy from "lucide-react/dist/esm/icons/copy.mjs";
 import Plus from "lucide-react/dist/esm/icons/plus.mjs";
 import Send from "lucide-react/dist/esm/icons/arrow-up.mjs";
@@ -10,8 +10,9 @@ import ImageOff from "lucide-react/dist/esm/icons/image-off.mjs";
 import AudioLines from "lucide-react/dist/esm/icons/audio-lines.mjs";
 import ImagePlus from "lucide-react/dist/esm/icons/image-plus.mjs";
 import { TextMarkdown } from "./TextMarkdown";
-import { Button, IconButton, MenuItem, Select, Textarea } from "./ui/controls";
+import { Button, IconButton, Input, MenuItem, Select, Textarea } from "./ui/controls";
 import { WorkspaceThreadTitle } from "./WorkspaceThreadTitle";
+import { ImageCanvasFields, ImageSamplingFields } from "./ImageGenerationFields";
 
 import { TextMenu } from "./TextMenu";
 import X from "lucide-react/dist/esm/icons/x.mjs";
@@ -21,11 +22,71 @@ import LoaderCircle from "lucide-react/dist/esm/icons/loader-circle.mjs";
 import type { useTextChat } from "../hooks/useTextChat";
 import { notify } from "../lib/notifications";
 import { resolveAssetUrl } from "../lib/api";
-import { textRuntimeIssue, type GeneratedChatImage, type TextMessage } from "../lib/textThreads";
+import { chatImageErrors, chatImageSettings, type ChatImageSettings } from "../lib/chatImageSettings";
+import { chatTokenLimits, textRuntimeIssue, type GeneratedChatImage, type TextMessage, type TextSamplingSettings } from "../lib/textThreads";
 import type { SetupTask } from "../lib/modelSetup";
 import type { ImageRecord } from "../lib/types";
 
 type TextStudio = ReturnType<typeof useTextChat>;
+
+function TokenField({ label, value, min, max, disabled, help, onChange }: {
+  label: string; value: number; min: number; max: number; disabled: boolean; help?: string;
+  onChange: (number: number) => void;
+}) {
+  const id = useId();
+  const [draft, setDraft] = useState(String(value));
+  useEffect(() => setDraft(String(value)), [value]);
+  const number = Number(draft);
+  const valid = draft !== "" && Number.isInteger(number) && number >= min && number <= max;
+  const hint = valid ? help : `Use a whole number from ${min.toLocaleString()} to ${max.toLocaleString()}.`;
+  return (
+    <label htmlFor={id}>{label}
+      <Input id={id} type="number" inputMode="numeric" min={min} max={max} step={1}
+        value={draft} disabled={disabled} aria-invalid={!valid} aria-describedby={hint ? `${id}-help` : undefined}
+        onBlur={() => { if (!valid) setDraft(String(value)); }}
+        onChange={(event) => {
+          const next = event.currentTarget.valueAsNumber;
+          setDraft(event.currentTarget.value);
+          if (Number.isInteger(next) && next >= min && next <= max) onChange(next);
+        }}
+      />
+      {hint && <small className={valid ? "text-setting-help" : "field-error"} id={`${id}-help`}>{hint}</small>}
+    </label>
+  );
+}
+
+const samplerNumberFields = [
+  { key: "topK", label: "Top K", min: 0, max: 2_147_483_647, step: 1, placeholder: "Model default" },
+  { key: "minP", label: "Min P", min: 0, max: 0.999999, step: 0.001, placeholder: "Model default" },
+  { key: "repeatPenalty", label: "Repetition penalty", min: 0.001, max: 3.402823466e38, step: 0.01, placeholder: "Model default" },
+  { key: "fixedSeed", label: "Text seed", min: 0, max: 2_147_483_647, step: 1, placeholder: "Random each response" },
+] as const;
+
+function SamplingNumberField({ field, value, disabled, onChange }: {
+  field: typeof samplerNumberFields[number];
+  value?: number;
+  disabled: boolean;
+  onChange: (number?: number) => void;
+}) {
+  const id = useId();
+  const [draft, setDraft] = useState(value?.toString() ?? "");
+  useEffect(() => setDraft(value?.toString() ?? ""), [value]);
+  const number = Number(draft);
+  const valid = draft === "" || Number.isFinite(number) && number >= field.min && number <= field.max
+    && (field.step !== 1 || Number.isInteger(number));
+  return <label htmlFor={id}>{field.label}
+    <Input id={id} type="number" min={field.min} max={field.max} step={field.step === 1 ? 1 : "any"} value={draft}
+      placeholder={field.placeholder} disabled={disabled} aria-invalid={!valid}
+      onBlur={() => { if (!valid) setDraft(value?.toString() ?? ""); }}
+      onChange={(event) => {
+        const next = event.currentTarget.value;
+        const parsed = event.currentTarget.valueAsNumber;
+        setDraft(next);
+        if (!next) onChange(undefined);
+        else if (Number.isFinite(parsed) && parsed >= field.min && parsed <= field.max && (field.step !== 1 || Number.isInteger(parsed))) onChange(parsed);
+      }} />
+  </label>;
+}
 
 function chatImageRecord(image: GeneratedChatImage, mtime: number): ImageRecord {
   return { ...image, url: `/outputs/${encodeURIComponent(image.name)}`, mtime };
@@ -81,7 +142,7 @@ export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels,
   onOpenCompute: () => void;
 }) {
   const { activeThread, status, statusError, actionError, busy } = studio;
-  const [panel, setPanel] = useState<"settings" | null>(null);
+  const [panel, setPanel] = useState<"settings" | "image" | null>(null);
   const openModels = () => { setPanel(null); onSetupModels("chat"); };
   const openImageSetup = () => { setPanel(null); onSetupModels("chat-image"); };
   const panelRef = useRef<HTMLElement>(null);
@@ -190,6 +251,18 @@ export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels,
   }
   const draftContextImage = imageCollection.find((image) => image.name === activeThread.draftContextImage);
   const latestContext = [...activeThread.messages].reverse().find((message) => message.status === "complete")?.metrics?.context;
+  const tokenLimits = chatTokenLimits(activeThread, selected);
+  const imageModel = activeThread.imageModel === "auto" ? imageModels[0] : imageModels.find((item) => item.id === activeThread.imageModel);
+  const imageSettings = imageModel ? chatImageSettings(imageModel.id, activeThread.imageRenderSettings?.[imageModel.id]) : undefined;
+  const imageErrors = imageModel && imageSettings ? chatImageErrors(imageModel.id, imageSettings) : undefined;
+  const updateImageSettings = (update: Partial<ChatImageSettings>) => {
+    if (!imageModel || !imageSettings) return;
+    studio.updateThread(activeThread.id, { imageRenderSettings: {
+      ...activeThread.imageRenderSettings, [imageModel.id]: { ...imageSettings, ...update },
+    } });
+  };
+  const updateSampling = (update: Partial<TextSamplingSettings>) =>
+    studio.updateThread(activeThread.id, { sampling: { ...activeThread.sampling, ...update } });
   let previousCompacted = 0;
   const renderChatImage = (image: GeneratedChatImage, message?: TextMessage) => {
     const index = imageCollection.findIndex((item) => item.name === image.name);
@@ -346,8 +419,8 @@ export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels,
       {panel && <aside id="text-inspector" className="generation-inspector text-inspector" ref={panelRef} tabIndex={-1} aria-label="Chat settings panel" onKeyDown={(event) => { if (event.key === "Escape" && !event.defaultPrevented) { event.preventDefault(); closePanel(); } }}>
         <div className="inspector-heading">
           <div className="inspector-tabs" role="group" aria-label="Chat inspector views">
-            <Button variant="ghost" aria-pressed={panel === "settings"} onClick={() => setPanel("settings")}>Settings</Button>
-            <Button variant="ghost" onClick={openModels}>Manage models</Button>
+            <Button variant="ghost" aria-pressed={panel === "settings"} onClick={() => setPanel("settings")}>Model</Button>
+            <Button variant="ghost" aria-pressed={panel === "image"} onClick={() => setPanel("image")}>Image</Button>
           </div>
           <IconButton aria-label="Close chat settings" onClick={closePanel}><X size={16} aria-hidden="true" /></IconButton>
         </div>
@@ -356,31 +429,64 @@ export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels,
           {busy && <p className="text-panel-description" role="status">{activity || "Settings are locked while a response is generating."}</p>}
           <div className="text-settings-grid">
             <label>Model<Select aria-label="Settings model" value={selectedModel} disabled={busy} onChange={event => studio.selectModel(event.target.value)}>{!selectedModel && <option value="">Choose a model</option>}{models.map(model => <option key={model.id} value={model.id} disabled={!model.installed}>{model.name}{model.installed ? "" : " - Unavailable"}</option>)}</Select></label>
-            {selected?.supportsTools && selected.supportsVision && <label>Image generation
-              <Select aria-label="Image generation model" value={activeThread.imageModel} disabled={busy || studio.computeDevice === "CPU"} onChange={(event) => studio.updateThread(activeThread.id, { imageModel: event.target.value })}>
-                <option value="auto">{imageModels.length ? `Auto · ${imageModels[0].label}` : "Auto"}</option>
-                {imageModels.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}
-                {activeThread.imageModel !== "auto" && activeThread.imageModel !== "off" && !imageModels.some((model) => model.id === activeThread.imageModel) && <option value={activeThread.imageModel} disabled>Model unavailable</option>}
-                <option value="off">Off</option>
-              </Select>
-              {studio.computeDevice === "CPU" && <small className="text-setting-help">Select GPU in Preferences to generate images in chat.</small>}
-            </label>}
-            {selected?.supportsTools && selected.supportsVision && (studio.computeDevice === "CPU" ?
-              <Button variant="ghost" className="text-compute-link" onClick={onOpenCompute}>Open compute settings</Button> :
-              !imageModels.length && <Button variant="ghost" className="text-compute-link" onClick={openImageSetup}>Browse image models</Button>)}
-            {selected?.format === "gguf" && <label>Context size
-              <Select aria-label="Context size" value={activeThread.contextSize} disabled={busy} onChange={(event) => studio.updateThread(activeThread.id, { contextSize: Number(event.target.value) })}>
-                <option value={4096}>4K tokens</option>
-                <option value={8192}>8K tokens</option>
-                <option value={16384}>16K tokens</option>
-              </Select>
-              <small>8K by default. Smaller contexts summarize earlier turns sooner. Include an older image again to send its pixels.</small>
-            </label>}
+            <Button variant="ghost" className="text-compute-link" onClick={openModels}>Manage models</Button>
+            {selected?.format === "gguf" && <TokenField key={`context-${activeThread.id}-${selected.id}`}
+              label="Context length (tokens)" value={tokenLimits.contextSize} min={tokenLimits.contextMinimum}
+              max={tokenLimits.contextMaximum} disabled={busy}
+              help={selected.maxContextSize ? `Model limit ${tokenLimits.contextMaximum.toLocaleString()} tokens.` : "Larger contexts use more memory."}
+              onChange={(contextSize) => studio.updateThread(activeThread.id, { contextSize })}
+            />}
             <label>System prompt<Textarea rows={3} maxLength={10_000} placeholder="Optional instructions for the model" value={activeThread.systemPrompt} disabled={busy} onChange={(event) => studio.updateThread(activeThread.id, { systemPrompt: event.target.value })} /></label>
-            <label>Maximum output<Select aria-label="Maximum output" value={activeThread.maxNewTokens} disabled={busy} onChange={(event) => studio.updateThread(activeThread.id, { maxNewTokens: Number(event.target.value) })}>{[128, 256, 512, 1024, 2048, 4096, 8192].map((value) => <option key={value} value={value}>{value.toLocaleString()} tokens</option>)}</Select></label>
+            <TokenField key={`output-${activeThread.id}-${selectedModel}`}
+              label="Maximum output (tokens)" value={tokenLimits.maxNewTokens} min={1} max={tokenLimits.outputMaximum}
+              disabled={busy} onChange={(maxNewTokens) => studio.updateThread(activeThread.id, { maxNewTokens })}
+            />
             <label>Temperature<small className="text-setting-help">Lower for focused answers, higher for variety.</small><div className="text-range-control"><input aria-label="Temperature" type="range" min="0" max="2" step="0.05" value={activeThread.temperature} disabled={busy} onChange={(event) => studio.updateThread(activeThread.id, { temperature: Number(event.target.value) })} /><output>{activeThread.temperature.toFixed(2)}</output></div></label>
             <label>Top P<small className="text-setting-help">Limits the range of words the model considers.</small><div className="text-range-control"><input aria-label="Top P" type="range" min="0.1" max="1" step="0.05" value={activeThread.topP} disabled={busy} onChange={(event) => studio.updateThread(activeThread.id, { topP: Number(event.target.value) })} /><output>{activeThread.topP.toFixed(2)}</output></div></label>
+            <details className="chat-advanced-settings">
+              <summary>Advanced sampling</summary>
+              <div className="text-settings-grid">
+                {samplerNumberFields.map((field) => <SamplingNumberField key={`${activeThread.id}-${field.key}`}
+                  field={field} value={activeThread.sampling?.[field.key]} disabled={busy}
+                  onChange={(value) => updateSampling({ [field.key]: value })} />)}
+                <label>Stop sequences
+                  <Textarea rows={2} maxLength={8192} placeholder="One sequence per line" value={activeThread.sampling?.stopText ?? ""}
+                    disabled={busy} onChange={(event) => updateSampling({ stopText: event.target.value })} />
+                </label>
+                <Button variant="ghost" className="text-compute-link" disabled={busy} onClick={() => studio.updateThread(activeThread.id, {
+                  temperature: 0.7, topP: 0.9, maxNewTokens: 512, sampling: undefined,
+                })}>Reset sampling</Button>
+              </div>
+            </details>
+            {selected && <div className="chat-model-defaults">
+              <Button variant="secondary" disabled={busy} onClick={() => {
+                studio.saveModelDefaults(selected.id);
+                notify(`Saved defaults for ${selected.name}.`);
+              }}>Save model defaults</Button>
+              {studio.modelDefaults?.[selected.id] && <Button variant="ghost" className="text-compute-link" disabled={busy}
+                onClick={() => studio.clearModelDefaults(selected.id)}>Clear defaults</Button>}
+            </div>}
           </div>
+        </div>}
+        {panel === "image" && <div className="text-inspector-body">
+          {!selected?.supportsTools || !selected.supportsVision ? <p className="text-panel-description">Choose a chat model with vision and tool calling to create images here.</p> : <div className="text-settings-grid">
+            <label>Image generation model
+              <Select aria-label="Image generation model" value={activeThread.imageModel} disabled={busy || !canUseImageSetup} onChange={(event) => studio.updateThread(activeThread.id, { imageModel: event.target.value })}>
+                <option value="auto">{imageModels.length ? `Auto · ${imageModels[0].label}` : "Auto"}</option>
+                {imageModels.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}
+                {activeThread.imageModel !== "auto" && activeThread.imageModel !== "off" && !imageModel && <option value={activeThread.imageModel} disabled>Model unavailable</option>}
+                <option value="off">Off</option>
+              </Select>
+            </label>
+            {!canUseImageSetup ? <Button variant="ghost" className="text-compute-link" onClick={onOpenCompute}>Open compute settings</Button>
+              : !imageModels.length ? <Button variant="ghost" className="text-compute-link" onClick={openImageSetup}>Browse image models</Button>
+              : imageModel && imageSettings ? <>
+                <ImageCanvasFields key={imageModel.id} model={imageModel.id} settings={imageSettings} errors={imageErrors}
+                  disabled={busy} idPrefix="chat-image-" onChange={updateImageSettings} />
+                <ImageSamplingFields model={imageModel.id} settings={imageSettings} errors={imageErrors}
+                  disabled={busy} idPrefix="chat-image-" onChange={updateImageSettings} />
+              </> : null}
+          </div>}
         </div>}
       </aside>}
       </div>

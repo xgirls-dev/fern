@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 from typing import Any
 
 
@@ -26,6 +27,20 @@ IMAGE_TOOL = {
         },
     },
 }
+
+
+def chat_image_overrides(settings: Any) -> dict[str, Any]:
+    if settings is None:
+        return {}
+    if not isinstance(settings, dict) or set(settings) - {"width", "height", "steps", "guidance", "seed"}:
+        raise ValueError("Choose valid image settings for this chat.")
+    for key, value in settings.items():
+        if key == "guidance":
+            if type(value) not in (int, float) or not 0 <= value <= 20 or not math.isfinite(value):
+                raise ValueError("Image guidance must be a valid number.")
+        elif type(value) is not int or not (0 if key == "seed" else 1) <= value <= 2_147_483_647:
+            raise ValueError(f"Image {key} must be a valid whole number.")
+    return settings
 
 
 def image_tool_prompt(calls: list[dict[str, Any]]) -> str:

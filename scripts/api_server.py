@@ -63,8 +63,8 @@ from text_model_download import DEFAULT_MODEL_ID as DEFAULT_TEXT_MODEL_ID
 from text_model_download import catalog as text_model_catalog, install_model as install_text_model, model_files as text_model_files
 from gguf_metadata import is_projector, read_metadata as read_gguf_metadata
 from gguf_runtime import RUNTIME_PLATFORM_ERROR, apple_silicon, runtime_supported as gguf_runtime_supported
-from chat_image_tools import CHAT_IMAGE_SIZE, IMAGE_MODEL_PRIORITY, IMAGE_TOOL, image_tool_prompt
-from chat_context import CONTEXT_SIZES, DEFAULT_CONTEXT_SIZE
+from chat_image_tools import CHAT_IMAGE_SIZE, IMAGE_MODEL_PRIORITY, IMAGE_TOOL, chat_image_overrides, image_tool_prompt
+from chat_context import DEFAULT_CONTEXT_SIZE, validate_context_size
 from tts_model_download import catalog_spec as tts_catalog_spec, model_ready as tts_export_ready
 
 GENERATION_WORKER = GenerationWorker()
@@ -733,6 +733,27 @@ def start_text_job(payload: dict[str, Any], request_id: Any) -> None:
     threading.Thread(target=run_text_generation, args=(payload, job_id, cancel_event), daemon=True).start()
 
 
+def validate_text_sampling(options: Any) -> dict[str, Any]:
+    if options is None:
+        return {}
+    if not isinstance(options, dict) or set(options) - {"topK", "minP", "repeatPenalty", "stopSequences"}:
+        raise ValueError("Choose valid text sampling options.")
+    if "topK" in options and (type(options["topK"]) is not int or not 0 <= options["topK"] <= 2_147_483_647):
+        raise ValueError("Top K must be a non-negative whole number.")
+    if "minP" in options and (type(options["minP"]) not in (int, float) or not 0 <= options["minP"] < 1):
+        raise ValueError("Min P must be at least zero and less than one.")
+    if "repeatPenalty" in options and (
+        type(options["repeatPenalty"]) not in (int, float) or not 0 < options["repeatPenalty"] <= 3.402823466e38
+    ):
+        raise ValueError("Repetition penalty must be a positive number.")
+    if "stopSequences" in options:
+        values = options["stopSequences"]
+        if (not isinstance(values, list) or len(values) > 32
+            or any(not isinstance(value, str) or not value.strip() or len(value) > 256 for value in values)):
+            raise ValueError("Use up to 32 stop sequences of 256 characters each.")
+    return options
+
+
 def run_text_generation(payload: dict[str, Any], job_id: str, cancel_event: threading.Event) -> None:
     try:
         image_model = payload.get("imageModel")
@@ -793,7 +814,7 @@ def run_text_generation(payload: dict[str, Any], job_id: str, cancel_event: thre
                 raise RuntimeError("Select GPU in Preferences to use the image tool in chat.")
             prompt = image_tool_prompt(calls)
             append_text_event(job_id, phase="Generating an image…")
-            image = generate_chat_image(image_model, prompt, payload["threadId"], job_id, cancel_event)
+            image = generate_chat_image(image_model, prompt, payload["threadId"], job_id, cancel_event, payload.get("imageSettings"))
             with TEXT_JOB_LOCK:
                 if TEXT_JOB.get("id") == job_id:
                     TEXT_JOB["image"] = image
@@ -838,7 +859,8 @@ def run_text_generation(payload: dict[str, Any], job_id: str, cancel_event: thre
             if TEXT_JOB.get("id") == job_id:
                 result.update(modelId=model["id"], modelName=model["name"], device=result.get("device", device),
                               seed=payload["seed"], temperature=payload["temperature"],
-                              topP=payload["topP"], maxNewTokens=result.get("maxNewTokens", payload["maxNewTokens"]))
+                              topP=payload["topP"], maxNewTokens=result.get("maxNewTokens", payload["maxNewTokens"]),
+                              sampling=payload.get("sampling"))
                 TEXT_JOB.update(
                     status="complete", finishedAt=time.time(), phase="Response complete.",
                     partialText=result.get("text", ""), partialReasoning=result.get("reasoning", ""),
@@ -2142,7 +2164,7 @@ def prepare_image_inspection(payload: dict[str, Any]) -> dict[str, Any]:
 
 def generate_chat_image(
     model: str, prompt: str, thread_id: str,
-    job_id: str, cancel_event: threading.Event,
+    job_id: str, cancel_event: threading.Event, settings: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     device = APPLE_GPU if model == APPLE_IMAGE_ID else "INTEL_GPU"
     status = (
@@ -2156,6 +2178,7 @@ def generate_chat_image(
         "device": device, "steps": INTEL_MEDIA_CATALOG.get(model, {}).get("defaultSteps", 4),
         "guidance": 1.0, "thread_id": thread_id,
         "seed": uuid.uuid4().int % 2_147_483_647,
+        **(settings or {}),
     })
     image_request["modelRevision"] = status["modelRevision"]
     record = run_flux_generation(
@@ -2626,6 +2649,9 @@ class Handler(BaseHTTPRequestHandler):
                 if device not in ("AUTO", "GPU", "CPU"):
                     raise ValueError("Choose Auto, Intel GPU, or CPU.")
                 image_model = payload.get("imageModel")
+                image_settings = chat_image_overrides(payload.get("imageSettings"))
+                if image_model is None and image_settings:
+                    raise ValueError("Select an image generation model before setting image options.")
                 if image_model is not None:
                     if not (model.get("supportsTools") and model.get("supportsVision")):
                         raise ValueError("Select a vision-capable chat model with tool calling and its vision projector.")
@@ -2638,14 +2664,14 @@ class Handler(BaseHTTPRequestHandler):
                         item["id"] == image_model and item.get("installed") for item in MODEL_MANAGER.snapshot()
                     )):
                         raise ValueError("Select an installed image model in Chat settings.")
-                context_size = payload.get("contextSize", DEFAULT_CONTEXT_SIZE)
-                if type(context_size) is not int or context_size not in CONTEXT_SIZES:
-                    raise ValueError("Choose a context size of 4K, 8K, or 16K tokens.")
+                context_size = validate_context_size(payload.get("contextSize"), model.get("maxContextSize"))
+                maximum_output = max(8192, context_size // 2) if model.get("format") == "gguf" else 8192
                 max_new_tokens = payload.get("maxNewTokens", 512)
-                if isinstance(max_new_tokens, bool) or not isinstance(max_new_tokens, int) or not 1 <= max_new_tokens <= 8192:
-                    raise ValueError("Maximum output length must be between 1 and 8,192 tokens.")
+                if type(max_new_tokens) is not int or not 1 <= max_new_tokens <= maximum_output:
+                    raise ValueError(f"Maximum output length must be between 1 and {maximum_output:,} tokens.")
                 temperature = payload.get("temperature", 0.7)
                 top_p = payload.get("topP", 0.9)
+                sampling = validate_text_sampling(payload.get("sampling"))
                 if isinstance(temperature, bool) or not isinstance(temperature, (int, float)) or not 0 <= temperature <= 2:
                     raise ValueError("Temperature must be between 0 and 2.")
                 if isinstance(top_p, bool) or not isinstance(top_p, (int, float)) or not 0.01 <= top_p <= 1:
@@ -2657,10 +2683,12 @@ class Handler(BaseHTTPRequestHandler):
                     "modelId": model_id, "device": device,
                     "messages": safe_messages, "systemPrompt": system_prompt.strip(),
                     "temperature": float(temperature), "topP": float(top_p),
+                    "sampling": sampling,
                     "maxNewTokens": max_new_tokens,
                     "seed": seed,
                     "mode": mode,
                     "threadId": thread_id, "imageModel": image_model, "contextSize": context_size,
+                    "imageSettings": image_settings,
                     "requireGpuVision": require_gpu_vision or image_model in INTEL_MEDIA_CATALOG or image_model == APPLE_IMAGE_ID,
                 }
                 start_text_job(generation, payload.get("requestId"))

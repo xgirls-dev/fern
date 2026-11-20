@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from chat_context import fit_context, recent_images
+from chat_context import fit_context, recent_images, validate_context_size
 
 
 def message(role, text, image=None):
@@ -15,6 +15,14 @@ def measure(turns):
 
 
 class ChatContextTests(unittest.TestCase):
+    def test_custom_context_uses_the_model_limit(self):
+        self.assertEqual(validate_context_size(24576, 65536), 24576)
+        self.assertEqual(validate_context_size(None, 6144), 6144)
+        self.assertEqual(validate_context_size(None), 8192)
+        for invalid in (True, 0, 2000.5, 65537):
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(ValueError, "Context length"):
+                validate_context_size(invalid, 65536)
+
     def test_compaction_keeps_system_and_recent_generated_image_and_reuses_memory(self):
         history = [
             message("system", "system instructions"),

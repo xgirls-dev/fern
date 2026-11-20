@@ -2598,6 +2598,12 @@ code {
 .text-setting-help { color: var(--muted); font-size: 11px; line-height: 1.5; font-weight: 400; }
 .text-inspector .text-settings-grid .ui-field { height: var(--ui-control-height); padding-inline: var(--ui-space-2); }
 .text-inspector .text-settings-grid .ui-textarea { min-height: 110px; font-size: 12px; }
+.chat-advanced-settings { border-top: 1px solid var(--border); }
+.chat-advanced-settings > summary { padding-block: 12px; cursor: pointer; font-size: 12px; font-weight: 600; }
+.chat-advanced-settings[open] > .text-settings-grid { gap: 16px; padding-block: 4px 8px; }
+.chat-model-defaults { display: flex; flex-wrap: wrap; gap: 6px; }
+.text-inspector .dims-row { margin-bottom: 0; }
+.text-inspector .dims-row > *, .text-inspector .seed-row > * { min-width: 0; }
 .text-inspector .text-recommended-model { flex-wrap: wrap; padding-top: 0; padding-bottom: 16px; }
 .text-inspector .text-recommended-model-copy { flex-basis: 100%; }
 .text-inspector .text-secondary-button { min-height: 32px; padding: 6px 10px; font-size: 12px; }

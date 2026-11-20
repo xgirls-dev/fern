@@ -1,24 +1,17 @@
 import ChevronDown from "lucide-react/dist/esm/icons/chevron-down.mjs";
-import Dices from "lucide-react/dist/esm/icons/dices.mjs";
 import ImageIcon from "lucide-react/dist/esm/icons/image.mjs";
-import Lock from "lucide-react/dist/esm/icons/lock.mjs";
-import LockOpen from "lucide-react/dist/esm/icons/lock-open.mjs";
 import Plus from "lucide-react/dist/esm/icons/plus.mjs";
-import Shuffle from "lucide-react/dist/esm/icons/shuffle.mjs";
 import X from "lucide-react/dist/esm/icons/x.mjs";
 import { Button, Checkbox, IconButton, Input, Select, ToggleChip } from "./ui/controls";
 import {
   useEffect,
-  useMemo,
-  useRef,
   useState,
-  type ComponentProps,
 } from "react";
 import type { ModelStatus, StudioSettings } from "../lib/types";
 
 import { notify } from "../lib/notifications";
 import { readReference, validateReference } from "../lib/reference";
-import { imageDimensionLimits } from "../lib/imageDimensions";
+import { ImageCanvasFields, ImageSamplingFields } from "./ImageGenerationFields";
 import { fixedImagePreset, isKleinLoraModel, maxReferenceImages, selectedKleinLoras } from "../lib/imageModels";
 import { getApiBaseUrl } from "../lib/api";
 
@@ -62,24 +55,6 @@ const STYLE_CHIPS = [
     suffix: "studio portrait, soft light, shallow depth of field",
   },
   { id: "minimal", suffix: "minimalist, clean composition, negative space" },
-];
-
-const SIZE_PRESETS = [
-  { value: "720x1280", label: "720 × 1280 · Portrait 9:16" },
-  { value: "1280x720", label: "1280 × 720 · Landscape 16:9" },
-  { value: "1920x1088", label: "1920 × 1088 · Wide" },
-  { value: "1088x1920", label: "1088 × 1920 · Tall" },
-  { value: "1024x1024", label: "1024 x 1024 (1:1)" },
-  { value: "832x1216", label: "832 x 1216 (Portrait)" },
-  { value: "896x1152", label: "896 x 1152 (Portrait)" },
-  { value: "1216x832", label: "1216 x 832 (Landscape)" },
-  { value: "1152x896", label: "1152 x 896 (Landscape)" },
-  { value: "1024x768", label: "1024 x 768 (4:3)" },
-  { value: "768x1024", label: "768 x 1024 (3:4)" },
-  { value: "1024x576", label: "1024 x 576 (16:9)" },
-  { value: "576x1024", label: "576 x 1024 (9:16)" },
-  { value: "768x768", label: "768 x 768 (1:1)" },
-  { value: "custom", label: "Custom" },
 ];
 
 interface PromptRecipe {
@@ -236,7 +211,6 @@ export function GenerationControls({
   onUseOutputAsReference,
   canUseOutput,
 }: GenerationControlsProps) {
-  const [customSize, setCustomSize] = useState(false);
   const [loraError, setLoraError] = useState("");
   const [loraUrl, setLoraUrl] = useState("");
   const [loraDownload, setLoraDownload] = useState<{ status: string; name?: string; path?: string; downloaded?: number; bytes?: number; error?: string }>({ status: "idle" });
@@ -294,20 +268,6 @@ export function GenerationControls({
   const adjustableSteps = Boolean(fixedPreset?.maximumSteps);
   const hasFixedSampling = isQwenTurbo || isFlux3Klein || Boolean(fixedPreset);
   const hasFixedSteps = hasFixedSampling && !adjustableSteps;
-  const { multiple: dimensionMultiple, minimum: minimumDimension, maximum: maximumDimension } = imageDimensionLimits(settings.model, modelStatus);
-  const availableSizePresets = useMemo(
-    () =>
-      fixedSizes ? fixedSizes.map((size) => ({ value: `${size}x${size}`, label: `${size} × ${size}` }))
-      : (adjustableSteps ? [{ value: "512x512", label: "512 × 512 (1:1)" }, ...SIZE_PRESETS] : SIZE_PRESETS).filter((preset) => {
-        if (isFlux3Klein) return preset.value === "1024x1024";
-        if (preset.value === "custom") return true;
-        const [width, height] = preset.value.split("x").map(Number);
-        return width >= minimumDimension && height >= minimumDimension
-          && width <= maximumDimension && height <= maximumDimension
-          && width % dimensionMultiple === 0 && height % dimensionMultiple === 0;
-      }),
-    [adjustableSteps, dimensionMultiple, fixedSizes, isFlux3Klein, maximumDimension, minimumDimension],
-  );
   const [referenceBusy, setReferenceBusy] = useState(false);
   const activeChips = new Set(
     STYLE_CHIPS.filter((chip) => settings.prompt.includes(chip.suffix)).map(
@@ -338,27 +298,6 @@ export function GenerationControls({
     window.addEventListener("fern-recipes-updated", reload);
     return () => window.removeEventListener("fern-recipes-updated", reload);
   }, []);
-
-  const sizePreset = useMemo(() => {
-    const value = `${settings.width}x${settings.height}`;
-    return availableSizePresets.some((preset) => preset.value === value)
-      ? value
-      : "custom";
-  }, [availableSizePresets, settings.height, settings.width]);
-
-  const applySizePreset = (value: string) => {
-    setCustomSize(value === "custom");
-    if (value === "custom") {
-      document.getElementById("width")?.focus();
-      return;
-    }
-    const [width, height] = value.split("x").map(Number);
-    if (width && height) onSettingsChange({ width, height });
-  };
-
-  const swapDimensions = () => {
-    onSettingsChange({ width: settings.height, height: settings.width });
-  };
 
   const toggleChip = (id: string, suffix: string) => {
     const next = new Set(activeChips);
@@ -556,68 +495,8 @@ export function GenerationControls({
               </p>
             ) : null}
             {isCustomImage ? <p className="model-note field-note">{modelStatus?.familyLabel ?? "Custom OpenVINO GenAI model"} · text-to-image only. Fern uses the selected family to apply safe canvas limits and recommended defaults.</p> : null}
-            <div className="field">
-              <div className="field-header">
-                <label htmlFor="size-preset">Resolution</label>
-              </div>
-              <Select
-                id="size-preset"
-                name="size-preset"
-                value={isFlux3Klein ? "1024x1024" : customSize && !fixedSizes ? "custom" : sizePreset}
-                onChange={(event) => applySizePreset(event.target.value)}
-              >
-                {availableSizePresets.map((preset) => (
-                  <option key={preset.value} value={preset.value}>
-                    {preset.label}
-                  </option>
-                ))}
-              </Select>
-            </div>
-
-            <div className="dims-row" hidden={Boolean(fixedSizes)}>
-              <div className="field">
-                <label htmlFor="width">Width</label>
-                <DraftNumberInput
-                  error={errors.width}
-                  id="width"
-                  name="width"
-                  type="number"
-                  disabled={isFlux3Klein}
-                  min={minimumDimension}
-                  max={maximumDimension}
-                  step={dimensionMultiple}
-                  value={settings.width}
-                  onChange={(event) =>
-                    onSettingsChange({ width: Number(event.target.value) })
-                  }
-                />
-              </div>
-              <IconButton
-                disabled={isFlux3Klein}
-                onClick={swapDimensions}
-                title="Swap dimensions"
-                aria-label="Swap width and height"
-              >
-                <Shuffle size={15} aria-hidden="true" />
-              </IconButton>
-              <div className="field">
-                <label htmlFor="height">Height</label>
-                <DraftNumberInput
-                  error={errors.height}
-                  id="height"
-                  name="height"
-                  type="number"
-                  disabled={isFlux3Klein}
-                  min={minimumDimension}
-                  max={maximumDimension}
-                  step={dimensionMultiple}
-                  value={settings.height}
-                  onChange={(event) =>
-                    onSettingsChange({ height: Number(event.target.value) })
-                  }
-                />
-              </div>
-            </div>
+            <ImageCanvasFields model={settings.model} settings={settings} modelStatus={modelStatus}
+              errors={errors} onChange={onSettingsChange} />
 
             <div className="row-2">
               <div className="field">
@@ -855,164 +734,10 @@ export function GenerationControls({
                 : isFlux3Klein ? "16 steps | no guidance (fixed)" : "8 steps | guidance 1.0 (fixed)"
               : `${settings.steps} steps | guidance ${settings.guidance}`}
           >
-            <div className="field">
-              <label htmlFor="seed">Seed</label>
-              <div className="seed-row">
-                <DraftNumberInput
-                  error={errors.seed}
-                  id="seed"
-                  name="seed"
-                  type="number"
-                  value={settings.seed}
-                  onChange={(event) =>
-                    onSettingsChange({ seed: Number(event.target.value) })
-                  }
-                />
-                <IconButton
-                  title="Randomize seed"
-                  aria-label="Randomize seed"
-                  onClick={() =>
-                    onSettingsChange({
-                      seed: Math.floor(Math.random() * 1_000_000_000),
-                    })
-                  }
-                >
-                  <Dices size={15} aria-hidden="true" />
-                </IconButton>
-                <IconButton
-                  title={settings.seedLocked ? "Unlock seed" : "Lock seed"}
-                  aria-label={settings.seedLocked ? "Unlock seed" : "Lock seed"}
-                  aria-pressed={settings.seedLocked}
-                  onClick={() =>
-                    onSettingsChange({ seedLocked: !settings.seedLocked })
-                  }
-                >
-                  {settings.seedLocked ? (
-                    <Lock size={15} aria-hidden="true" />
-                  ) : (
-                    <LockOpen size={15} aria-hidden="true" />
-                  )}
-                </IconButton>
-              </div>
-            </div>
-
-            <div className="field" hidden={hasFixedSteps}>
-              <label htmlFor="steps">Steps</label>
-              <div className={adjustableSteps ? undefined : "range-pair"}>
-                {!adjustableSteps ? <input
-                  id="steps"
-                  aria-invalid={Boolean(errors.steps)}
-                  aria-describedby={
-                    errors.steps ? "step-count-error" : undefined
-                  }
-                  name="steps"
-                  type="range"
-                  min={1}
-                  max={50}
-                  step={1}
-                  value={settings.steps}
-                  onChange={(event) =>
-                    onSettingsChange({ steps: Number(event.target.value) })
-                  }
-                /> : null}
-                <DraftNumberInput
-                  error={errors.steps}
-                  className={adjustableSteps ? undefined : "compact-input"}
-                  id={adjustableSteps ? "steps" : undefined}
-                  aria-label="Step count"
-                  name="step-count"
-                  type="number"
-                  min={1}
-                  max={fixedPreset?.maximumSteps ?? 50}
-                  value={settings.steps}
-                  onChange={(event) =>
-                    onSettingsChange({ steps: Number(event.target.value) })
-                  }
-                />
-              </div>
-              {adjustableSteps ? <small className="field-note">{fixedPreset?.steps} steps recommended for the bundled DMD2 adapter.</small> : null}
-            </div>
-
-            <div className="field" hidden={hasFixedSampling || isLoraModel}>
-              <label htmlFor="guidance">Guidance</label>
-              <div className="range-pair">
-                <input
-                  id="guidance"
-                  aria-invalid={Boolean(errors.guidance)}
-                  aria-describedby={
-                    errors.guidance ? "guidance-value-error" : undefined
-                  }
-                  name="guidance"
-                  type="range"
-                  min={0}
-                  max={isCustomImage ? 20 : 10}
-                  step={0.1}
-                  value={settings.guidance}
-                  onChange={(event) =>
-                    onSettingsChange({ guidance: Number(event.target.value) })
-                  }
-                />
-                <DraftNumberInput
-                  error={errors.guidance}
-                  className="compact-input"
-                  aria-label="Guidance value"
-                  name="guidance-value"
-                  type="number"
-                  min={0}
-                  max={isCustomImage ? 20 : 10}
-                  step={0.1}
-                  value={settings.guidance}
-                  onChange={(event) =>
-                    onSettingsChange({ guidance: Number(event.target.value) })
-                  }
-                />
-              </div>
-            </div>
+            <ImageSamplingFields model={settings.model} settings={settings} errors={errors} onChange={onSettingsChange} />
           </ControlSection>
         </div>
       </div>
     </section>
-  );
-}
-
-function DraftNumberInput({
-  error,
-  ...props
-}: ComponentProps<"input"> & { error?: string }) {
-  const [draft, setDraft] = useState(String(props.value ?? ""));
-  const focused = useRef(false);
-  const lastEdit = useRef(props.value);
-  useEffect(() => {
-    if (!focused.current || props.value !== lastEdit.current)
-      setDraft(String(props.value ?? ""));
-  }, [props.value]);
-  const errorId = `${props.id ?? props.name}-error`;
-  return (
-    <>
-      <input
-        {...props}
-        value={draft}
-        aria-invalid={Boolean(error)}
-        aria-describedby={error ? errorId : undefined}
-        onFocus={(event) => {
-          focused.current = true;
-          props.onFocus?.(event);
-        }}
-        onBlur={(event) => {
-          focused.current = false;
-          props.onBlur?.(event);
-        }}
-        onChange={(event) => {
-          lastEdit.current = Number(event.target.value);
-          setDraft(event.target.value);
-          props.onChange?.(event);
-        }}
-      />
-      {error ? (
-        <span className="field-error" id={errorId} role="alert">
-          {error}
-        </span>
-      ) : null}
-    </>
   );
 }
