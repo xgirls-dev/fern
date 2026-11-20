@@ -6,6 +6,10 @@ lands directly on `main` instead of through labeled pull requests.
 
 ## [Unreleased]
 
+### Documentation
+
+- Add a [Windows Intel Iris Xe benchmark](https://github.com/xgirls-dev/fern/blob/main/benchmarks/v0.1.45-intel-iris-xe.md) covering first and repeated runs for image, video, and speech generation, plus multi-turn Gemma text and vision.
+
 ## [0.1.45] - 2026-11-19
 
 ### Added
