@@ -8,6 +8,13 @@ fi
 
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
 root=$PWD
+# The signing tool scans the bundled Python wheels concurrently.
+file_limit=$(ulimit -Hn)
+if [[ "$file_limit" == unlimited ]] || (( file_limit > 32768 )); then
+  file_limit=32768
+fi
+ulimit -Sn "$file_limit"
+
 mkdir -p "$root/.runtime"
 stage=$(mktemp -d "$root/.runtime/macos-build.XXXXXX")
 cleanup() {
