@@ -1,5 +1,5 @@
 import FolderOpen from "lucide-react/dist/esm/icons/folder-open.mjs";
-import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState, useTransition } from "react";
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useTransition } from "react";
 import Plus from "lucide-react/dist/esm/icons/plus.mjs";
 import SlidersHorizontal from "lucide-react/dist/esm/icons/sliders-horizontal.mjs";
 import type { ImageRecord } from "./lib/types";
@@ -33,6 +33,7 @@ import { validateReference } from "./lib/reference";
 import { loadModelSetup, saveModelSetup, type SetupSelection, type SetupTask } from "./lib/modelSetup";
 import { loadLastWorkspace, matchesShortcut, saveLastWorkspace, shortcuts } from "./lib/workspaceNavigation";
 import { fixedImagePreset, isKleinLoraModel, kleinLoraLabel, maxReferenceImages } from "./lib/imageModels";
+import { chatFolderPath } from "./lib/chatFolders";
 
 const StorageView = lazy(() => import("./components/StorageView").then((module) => ({ default: module.StorageView })));
 const PreferencesView = lazy(() => import("./components/PreferencesView").then((module) => ({ default: module.PreferencesView })));
@@ -95,12 +96,14 @@ export function App() {
   useEffect(() => {
     if (modelSetup) saveModelSetup({ ...modelSetup, viewing: activeSection === "models" });
   }, [activeSection, modelSetup]);
+  const chatFolderIndex = useMemo(() => new Map(text.folders.map((folder) => [folder.id, folder])), [text.folders]);
   const searchableThreads = commandPaletteOpen || threadSearchQuery !== null ? [
     ...studio.searchThreads(),
     ...tts.threads.map((thread) => ({ ...thread, excerpt: thread.text })),
     ...text.threads.map((thread) => ({
       ...thread,
       excerpt: thread.messages.find((message) => message.role === "user")?.content || thread.draft,
+      folderPath: chatFolderPath(chatFolderIndex, thread.folderId),
     })),
   ] : [];
   const imageSetupNeeded = studio.status?.installedModels !== undefined && !studio.modelInstalled &&
@@ -189,8 +192,8 @@ export function App() {
     setActiveSection("tts");
   }, [tts.newThread]);
 
-  const newTextThread = useCallback(() => {
-    text.newThread();
+  const newTextThread = useCallback((folderId?: string) => {
+    text.newThread(folderId);
     setActiveSection("text");
   }, [text.newThread]);
 
@@ -494,6 +497,8 @@ export function App() {
           threads={studio.threads}
           audioThreads={tts.threads}
           textThreads={text.threads}
+          chatFolders={text.folders}
+          onOrganizeChats={text.organize}
           onArchiveThread={studio.archiveThread}
           onOpenSearch={openThreadSearch}
           activeThreadId={studio.activeThread.id}

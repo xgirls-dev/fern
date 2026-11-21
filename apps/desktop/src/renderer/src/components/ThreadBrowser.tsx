@@ -9,7 +9,7 @@ export function ThreadBrowser({
   onOpen,
   onClose,
 }: {
-  threads: Array<Pick<ImageThread, "id" | "title" | "archived"> & { excerpt?: string }>;
+  threads: Array<Pick<ImageThread, "id" | "title" | "archived"> & { excerpt?: string; folderPath?: string }>;
   initialQuery: string;
   onOpen: (id: string) => void;
   onClose: () => void;
@@ -24,7 +24,7 @@ export function ThreadBrowser({
   const threadKind = (id: string) => id.startsWith("audio-thread-") ? "Speech" : id.startsWith("text-thread-") ? "Chat" : "Image";
   const filtered = threads.filter(
     (thread) =>
-      `${thread.title} ${thread.excerpt ?? ""}`.toLowerCase().includes(query.trim().toLowerCase()) &&
+      `${thread.title} ${thread.folderPath ?? ""} ${thread.excerpt ?? ""}`.toLowerCase().includes(query.trim().toLowerCase()) &&
       (kind === "All" || threadKind(thread.id) === kind) && (!archivedOnly || thread.archived),
   );
   const hasFilters = Boolean(query.trim()) || kind !== "All" || archivedOnly;
@@ -61,6 +61,7 @@ export function ThreadBrowser({
             <article key={thread.id}>
               <button type="button" className="thread-browser-open" title={thread.title} onClick={() => { onOpen(thread.id); onClose(); }}>
                 <span className="thread-browser-result"><strong>{thread.title}</strong>
+                  {thread.folderPath && <span title={thread.folderPath}>{thread.folderPath}</span>}
                   {thread.excerpt?.trim() && thread.excerpt.trim() !== thread.title && <span>{thread.excerpt.trim()}</span>}
                 </span>
                 <small>{threadKind(thread.id)}{thread.archived ? " · Archived" : ""}</small>

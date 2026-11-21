@@ -1,4 +1,5 @@
 import type { ChatImageModel, ChatImageSettings } from "./chatImageSettings";
+import { normalizeChatFolders, type ChatFolder } from "./chatFolders";
 
 const KEY = "fern-text-threads:v1";
 const DEFAULT_CONTEXT_SIZE = 8192;
@@ -86,6 +87,7 @@ export interface TextMessage {
 export interface TextThread {
   id: string;
   title: string;
+  folderId?: string;
   renamed?: boolean;
   archived: boolean;
   updatedAt: number;
@@ -173,6 +175,7 @@ export interface TextThreadWorkspace {
   threads: TextThread[];
   modelDefaults?: Record<string, TextModelDefaults>;
   presets?: ChatPreset[];
+  folders?: readonly ChatFolder[];
 }
 
 export type TextModelDefaults = Pick<TextThread, "contextSize" | "temperature" | "topP" | "maxNewTokens" | "sampling" | "loadOptions">;
@@ -303,9 +306,12 @@ function normalizeTextMessages(messages: TextMessage[]): TextMessage[] {
 export function loadTextThreads(): TextThreadWorkspace {
   try {
     const saved = JSON.parse(localStorage.getItem(KEY) ?? "null") as Partial<TextThreadWorkspace> | null;
+    const folders = normalizeChatFolders(saved?.folders);
+    const folderIds = new Set(folders.map(({ id }) => id));
     const threads = (Array.isArray(saved?.threads) ? saved.threads : []).filter(validThread).map((thread): TextThread => ({
       ...createTextThread(),
       ...thread,
+      folderId: thread.folderId && folderIds.has(thread.folderId) ? thread.folderId : undefined,
       archived: thread.archived === true,
       updatedAt: Number.isFinite(thread.updatedAt) ? thread.updatedAt : Date.now(),
       draft: typeof thread.draft === "string" ? thread.draft : "",
@@ -327,6 +333,7 @@ export function loadTextThreads(): TextThreadWorkspace {
     if (threads.length) return {
       activeId: threads.some((thread) => thread.id === saved?.activeId) ? saved!.activeId! : threads[0].id,
       threads,
+      folders,
       presets: Array.isArray(saved?.presets) ? saved.presets.filter((entry) =>
         entry && typeof entry.id === "string" && typeof entry.name === "string" && entry.name.trim()
         && entry.settings && typeof entry.settings === "object"

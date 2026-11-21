@@ -12,6 +12,7 @@ import {
 } from "../lib/api";
 import { readReference } from "../lib/reference";
 import { chatImageErrors, chatImageSettings } from "../lib/chatImageSettings";
+import { EMPTY_CHAT_FOLDERS, organizeChats, revealChatFolder, type ChatOrganizationAction } from "../lib/chatFolders";
 import {
   chatTokenLimits,
   createTextThread,
@@ -174,17 +175,23 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     }));
   }, []);
 
-  const newThread = useCallback(() => {
+  const organize = useCallback((action: ChatOrganizationAction) => {
+    setWorkspace((current) => organizeChats(current, action));
+  }, []);
+
+  const newThread = useCallback((requestedFolder?: string) => {
+    const folders = workspaceRef.current.folders ?? EMPTY_CHAT_FOLDERS;
+    const folderId = folders.some((folder) => folder.id === requestedFolder) ? requestedFolder : undefined;
     const model = status.models.find((item) => item.installed && item.id === status.defaultModelId)
       ?? status.models.find((item) => item.installed);
-    const untouched = workspaceRef.current.threads.find((thread) => !thread.archived && !thread.renamed &&
+    const untouched = workspaceRef.current.threads.find((thread) => thread.folderId === folderId && !thread.archived && !thread.renamed &&
       !thread.messages.length && !thread.draft && !thread.draftImage && !thread.draftContextImage && !thread.pendingJobId && !thread.systemPrompt &&
       !thread.modelId && !thread.sampling && !thread.loadOptions && !thread.imageRenderSettings && thread.title === "New text thread"
       && thread.contextSize === 8192 && thread.temperature === 0.7 && thread.topP === 0.9 && thread.maxNewTokens === 512);
     const defaults = model ? workspaceRef.current.modelDefaults?.[model.id] : undefined;
     if (untouched) {
       setWorkspace((current) => ({
-        ...current, activeId: untouched.id,
+        ...current, activeId: untouched.id, folders: revealChatFolder(folders, folderId),
         threads: defaults && model
           ? current.threads.map((item) => item.id === untouched.id ? { ...item, ...defaults, modelId: model.id } : item)
           : current.threads,
@@ -192,14 +199,21 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
       setActionError(null);
       return untouched.id;
     }
-    const thread = { ...createTextThread(), ...defaults, ...(defaults && model ? { modelId: model.id } : {}) };
-    setWorkspace((current) => ({ ...current, activeId: thread.id, threads: [thread, ...current.threads] }));
+    const thread = { ...createTextThread(), ...defaults, folderId, ...(defaults && model ? { modelId: model.id } : {}) };
+    setWorkspace((current) => ({
+      ...current, activeId: thread.id, threads: [thread, ...current.threads],
+      folders: revealChatFolder(current.folders ?? EMPTY_CHAT_FOLDERS, folderId),
+    }));
     setActionError(null);
     return thread.id;
   }, [status.defaultModelId, status.models]);
 
   const selectThread = useCallback((id: string) => {
-    setWorkspace((current) => current.threads.some((thread) => thread.id === id) ? { ...current, activeId: id } : current);
+    setWorkspace((current) => {
+      const thread = current.threads.find((item) => item.id === id);
+      return thread ? { ...current, activeId: id,
+        folders: revealChatFolder(current.folders ?? EMPTY_CHAT_FOLDERS, thread.folderId) } : current;
+    });
     setActionError(null);
   }, []);
 
@@ -218,7 +232,10 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
       title: activeThread.title.slice(0, 72) + (messageId ? " (fork)" : " (copy)"),
       messages, draft: "", draftImage: undefined, draftContextImage: undefined, pendingJobId: null, versions: undefined,
     };
-    setWorkspace((current) => ({ ...current, activeId: thread.id, threads: [thread, ...current.threads] }));
+    setWorkspace((current) => ({
+      ...current, activeId: thread.id, threads: [thread, ...current.threads],
+      folders: revealChatFolder(current.folders ?? EMPTY_CHAT_FOLDERS, thread.folderId),
+    }));
     setActionError(null);
     return thread.id;
   };
@@ -553,6 +570,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     newThread, selectThread, forkThread, resetWorkspace, renameThread, archiveThread, deleteThread,
     modelDefaults: workspace.modelDefaults, saveModelDefaults, clearModelDefaults,
     chatPresets: workspace.presets, saveChatPreset, applyChatPreset, deleteChatPreset,
+    folders: workspace.folders ?? EMPTY_CHAT_FOLDERS, organize,
     updateThread, importModel, deleteModel, installRecommendedModel, attachImage, send, retry, restoreVersion, retryInspection, stop, refresh, selectModel, setDevice,
   };
 }

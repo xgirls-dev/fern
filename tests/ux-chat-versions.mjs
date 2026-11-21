@@ -20,7 +20,7 @@ const send = async (content, response) => {
 
 try {
   await page.locator(".sidebar-new-button").click();
-  await page.getByRole("menuitem", { name: /New text thread|Chat/ }).click();
+  await page.getByRole("menuitem", { name: "Chat", exact: true }).click();
   await send("First prompt", "First response.");
   await send("Original follow-up", "Original answer.");
   await message.fill("Keep this draft");

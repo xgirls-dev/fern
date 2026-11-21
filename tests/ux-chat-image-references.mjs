@@ -17,7 +17,7 @@ try {
   await page.evaluate((path) => { window.studio.pickLoraFiles = async () => [path]; }, adapter);
   const button = (name) => page.getByRole("button", { name, exact: true });
   await page.locator(".sidebar-new-button").click();
-  await page.getByRole("menuitem", { name: /New text thread|Chat/ }).click();
+  await page.getByRole("menuitem", { name: "Chat", exact: true }).click();
   await button("Chat settings").click();
   await button("Image").click();
   await button("Add LoRA files").click();

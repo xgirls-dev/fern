@@ -64,6 +64,8 @@ Use **Chat presets** to reuse a system prompt and sampling settings in another c
 
 Duplicate a chat from its header or use **Fork chat here** on a message to continue from that point in a new thread. Both keep the conversation's settings and references to saved images.
 
+Choose **New thread → Chat folder** to organize chats in the sidebar. Create subfolders from a folder's menu. Drag chats and folders to move them, or use **Move to folder…** from the item menu. Thread search matches the folder path. Deleting a folder moves its chats and subfolders up one level.
+
 ### Image creation and editing
 
 Generate from a prompt, add reference images on supported models, and use seeds and render settings to make repeatable variations. The composer adjusts the available dimensions, steps, guidance, reference count, and batch size to the selected model.

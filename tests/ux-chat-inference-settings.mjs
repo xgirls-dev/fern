@@ -15,7 +15,7 @@ const button = (name) => page.getByRole("button", { name, exact: true });
 
 try {
   await page.locator(".sidebar-new-button").click();
-  await page.getByRole("menuitem", { name: /New text thread|Chat/ }).click();
+  await page.getByRole("menuitem", { name: "Chat", exact: true }).click();
   await button("Chat settings").click();
   assert.equal(await context.inputValue(), "8192");
   assert.equal(await context.getAttribute("max"), "65536");
@@ -91,7 +91,7 @@ try {
   };
   await page.getByText("Done.", { exact: true }).waitFor();
   await page.locator(".sidebar-new-button").click();
-  await page.getByRole("menuitem", { name: /New text thread|Chat/ }).click();
+  await page.getByRole("menuitem", { name: "Chat", exact: true }).click();
   if (!(await context.isVisible())) {
     const inspector = page.getByRole("complementary", { name: "Chat settings panel" });
     if (await inspector.isVisible()) await button("Model").click();

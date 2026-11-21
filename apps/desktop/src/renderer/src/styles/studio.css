@@ -2644,6 +2644,17 @@ code {
 .sidebar-scroll-area { flex: 1 1 0; min-height: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; scrollbar-width: thin; padding-inline: 2px; margin-inline: -2px; }
 .studio-sidebar .sidebar-threads { flex: 0 0 auto; min-height: auto; max-height: none; overflow: visible; margin-top: 18px; }
 .studio-sidebar .sidebar-threads-heading { position: static; padding-block: 2px 4px; background: transparent; }
+.sidebar-chat-heading { display: flex; align-items: center; justify-content: space-between; min-height: 30px; }
+.sidebar-chat-add-folder { --ui-icon-size: 26px; }
+.sidebar-chat-folder > .sidebar-thread-button { gap: 6px; }
+.sidebar-chat-folder > .sidebar-thread-button > svg:first-child { color: var(--muted); }
+.sidebar-chat-nested > .sidebar-thread-button { gap: 6px; padding-inline-start: 28px; }
+.studio-sidebar [data-chat-drop="active"] { outline: 1px solid var(--muted-2); outline-offset: -1px; background: var(--sidebar-active); }
+.chat-folder-dialog.command-palette { width: min(420px, calc(100vw - 32px)); padding: 20px; }
+.chat-folder-dialog h2 { margin: 0 0 16px; font-size: 16px; }
+.chat-folder-dialog p { margin: 0 0 18px; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.chat-folder-dialog .field .ui-field { width: 100%; }
+.chat-folder-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 .studio-sidebar .sidebar-spacer { flex: 0 0 12px; }
 .studio-sidebar.is-collapsed .sidebar-spacer { flex: 1 0 12px; }
 .sidebar-new-menu { position: relative; }
