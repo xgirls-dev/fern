@@ -56,11 +56,11 @@ try {
 
   await divider.press("ArrowRight");
   assert.equal(await divider.getAttribute("aria-valuenow"), "55");
+  await divider.hover();
   const bar = await divider.boundingBox();
-  const dragY = bar.y + Math.min(bar.height / 2, 35);
-  await page.mouse.move(bar.x + bar.width / 2, dragY);
   await page.mouse.down();
-  await page.mouse.move(bar.x - 65, dragY, { steps: 7 });
+  await page.mouse.move(bar.x - 65, bar.y + bar.height / 2, { steps: 7 });
+  await page.waitForFunction(() => Number(document.querySelector(".chat-split-divider")?.getAttribute("aria-valuenow")) < 55);
   await page.mouse.up();
   await page.waitForFunction(() => Number(document.querySelector(".chat-split-divider")?.getAttribute("aria-valuenow")) < 55);
   const savedSplit = Number(await divider.getAttribute("aria-valuenow"));
