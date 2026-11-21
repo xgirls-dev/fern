@@ -6,6 +6,21 @@ lands directly on `main` instead of through labeled pull requests.
 
 ## [Unreleased]
 
+## [0.1.48] - 2026-11-20
+
+### Added
+
+- Open two chats side by side with independent drafts, attachments, and settings. Resize the panes, switch between them in narrow windows, and restore both after reopening Fern.
+- Organize conversations into searchable nested folders. Edit earlier prompts, restore a previous conversation version, duplicate a chat, or fork from a specific message.
+- Ask questions about local PDF, DOCX, TXT, and Markdown attachments. Fern keeps documents with the chat for follow-ups and shows the passages supplied to the model.
+
+### Improved
+
+- Configure image generation directly in Chat with model-specific dimensions, steps, guidance, seed, batch size, style, LoRAs, and references.
+- Enter exact GGUF context length, maximum output length, Temperature, and Top P. Save per-model defaults and reusable Chat presets, and configure advanced sampling, Flash Attention, batching, and KV cache precision.
+
+Full changelog on [GitHub](https://github.com/xgirls-dev/fern/compare/v0.1.47...v0.1.48).
+
 ## [0.1.47] - 2026-11-20
 
 ### Fixed

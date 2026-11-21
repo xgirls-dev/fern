@@ -12,6 +12,14 @@ on:
         description: Release tag to build and publish
         required: false
         default: ""
+      stage_only:
+        description: Build and upload packages to a draft for installer testing
+        type: boolean
+        default: false
+      tested_windows_sha256:
+        description: Publish the staged release with this tested Windows installer SHA-256
+        type: string
+        default: ""
 
 permissions:
   contents: write
@@ -19,15 +27,16 @@ permissions:
 jobs:
   windows-installer:
     if: >-
-      github.event_name != 'push' ||
+      !inputs.tested_windows_sha256 &&
+      (github.event_name != 'push' ||
       startsWith(github.ref_name, 'v') ||
-      contains(github.event.head_commit.message, '[publish-release]')
+      contains(github.event.head_commit.message, '[publish-release]'))
     runs-on: windows-latest
     timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && 'main' || github.ref }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.sha || github.ref }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -59,10 +68,11 @@ jobs:
           $env:FERN_E2E_EXECUTABLE = Join-Path $PWD 'apps\desktop\release\win-unpacked\Fern.exe'
           node apps/desktop/e2e/smoke.mjs
           if ($LASTEXITCODE -ne 0) { throw "Packaged Fern smoke test failed." }
-      - name: Publish installer
+      - name: Upload installer
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.tag }}
+          STAGE_ONLY: ${{ inputs.stage_only }}
         shell: pwsh
         run: |
           $installers = @(Get-ChildItem -Path "apps/desktop/release" -Recurse -Filter "Fern-Setup-*.exe" -File)
@@ -95,9 +105,16 @@ jobs:
 
           gh release view $tag *> $null
           if ($LASTEXITCODE -eq 0) {
+            if ($env:STAGE_ONLY -eq 'true') {
+              $draft = gh release view $tag --json isDraft,targetCommitish | ConvertFrom-Json
+              if (-not $draft.isDraft -or $draft.targetCommitish -ne $env:GITHUB_SHA) {
+                throw "Expected a draft for $tag targeting $env:GITHUB_SHA."
+              }
+            }
             gh release upload $tag $installer.FullName --clobber
           } else {
-            gh release create $tag $installer.FullName --notes-file $notesPath --target $env:GITHUB_SHA
+            $draftFlag = if ($env:STAGE_ONLY -eq 'true') { @('--draft') } else { @() }
+            gh release create $tag $installer.FullName --notes-file $notesPath --target $env:GITHUB_SHA @draftFlag
           }
           if ($LASTEXITCODE -ne 0) { throw "GitHub release upload/create failed for $tag." }
 
@@ -109,13 +126,14 @@ jobs:
           if ($releaseAssets.Count -ne 1) {
             throw "Expected exactly one Fern installer on release $tag, found $($releaseAssets.Count)."
           }
-          Write-Host "Published $($releaseAssets[0]) to release $tag."
+          Write-Host "Uploaded $($releaseAssets[0]) to release $tag."
 
   omarchy-package:
     if: >-
-      github.event_name != 'push' ||
+      !inputs.tested_windows_sha256 &&
+      (github.event_name != 'push' ||
       startsWith(github.ref_name, 'v') ||
-      contains(github.event.head_commit.message, '[publish-release]')
+      contains(github.event.head_commit.message, '[publish-release]'))
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
@@ -123,7 +141,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && 'main' || github.ref }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.sha || github.ref }}
           persist-credentials: false
       - name: Build and verify the Omarchy package on Arch Linux
         run: |
@@ -164,7 +182,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && 'main' || github.ref }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.sha || github.ref }}
           persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
@@ -184,3 +202,34 @@ jobs:
           test "${#package[@]}" -eq 1
           test -s "${package[0]}"
           gh release upload "$tag" "${package[0]}" --clobber
+
+  publish-tested-release:
+    if: github.event_name == 'workflow_dispatch' && !inputs.stage_only && inputs.tested_windows_sha256
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Publish the tested draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          TESTED_SHA256: ${{ inputs.tested_windows_sha256 }}
+        run: |
+          set -euo pipefail
+          version=$(jq -r .version package.json)
+          tag="v$version"
+          [[ -z "$RELEASE_TAG" || "$RELEASE_TAG" == "$tag" ]]
+          [[ "$TESTED_SHA256" =~ ^[a-fA-F0-9]{64}$ ]]
+          release=$(gh release view "$tag" --json isDraft,targetCommitish,assets)
+          jq -e --arg commit "$GITHUB_SHA" \
+            --arg windows "Fern-Setup-$version.exe" \
+            --arg linux "fern-$version-1-x86_64.pkg.tar.zst" \
+            --arg digest "sha256:${TESTED_SHA256,,}" '
+            .isDraft and .targetCommitish == $commit and
+            (.assets | length == 2) and
+            any(.assets[]; .name == $windows and .digest == $digest and .size > 0) and
+            any(.assets[]; .name == $linux and .size > 0 and (.digest | startswith("sha256:")))
+          ' <<< "$release" > /dev/null
+          gh release edit "$tag" --draft=false --latest
