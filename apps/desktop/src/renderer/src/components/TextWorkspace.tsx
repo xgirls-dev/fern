@@ -11,6 +11,7 @@ import ImageOff from "lucide-react/dist/esm/icons/image-off.mjs";
 import AudioLines from "lucide-react/dist/esm/icons/audio-lines.mjs";
 import ImagePlus from "lucide-react/dist/esm/icons/image-plus.mjs";
 import Pencil from "lucide-react/dist/esm/icons/pencil.mjs";
+import Paperclip from "lucide-react/dist/esm/icons/paperclip.mjs";
 import { TextMarkdown } from "./TextMarkdown";
 import { Button, IconButton, Input, MenuItem, Select, Textarea } from "./ui/controls";
 import { WorkspaceThreadTitle } from "./WorkspaceThreadTitle";
@@ -19,6 +20,7 @@ import { ImageStyleFields } from "./ImageStyleFields";
 import { ChatPresets } from "./ChatPresets";
 import { ImageLoraFields } from "./ImageLoraFields";
 import { ChatImageReferenceFields } from "./ChatImageReferenceFields";
+import { ChatDocumentAttachments, ChatDocumentSources } from "./ChatDocuments";
 
 import { TextMenu } from "./TextMenu";
 import X from "lucide-react/dist/esm/icons/x.mjs";
@@ -31,6 +33,7 @@ import { notify } from "../lib/notifications";
 import { resolveAssetUrl } from "../lib/api";
 import { chatImageErrors, chatImageSettings, MAX_IMAGE_PROMPT_SUFFIX, type ChatImageSettings } from "../lib/chatImageSettings";
 import { isKleinLoraModel, maxReferenceImages } from "../lib/imageModels";
+import { CHAT_DOCUMENT_ACCEPT, MAX_CHAT_DOCUMENTS } from "../lib/chatDocuments";
 import {
   chatTokenLimits, ggufLoadOptions, KV_CACHE_TYPES, textRuntimeIssue,
   type GeneratedChatImage, type GgufLoadOptions, type TextMessage, type TextSamplingSettings,
@@ -170,6 +173,8 @@ export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels,
   const feedRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const attachmentInput = useRef<HTMLInputElement>(null);
+  const documentInput = useRef<HTMLInputElement>(null);
+  const [draggingAttachment, setDraggingAttachment] = useState(false);
   useEffect(() => {
     if (focusRequest) inputRef.current?.focus();
   }, [focusRequest]);
@@ -206,7 +211,7 @@ export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels,
   const checking = !studio.statusLoaded && !statusError;
   const pendingHere = !!activeThread?.pendingJobId && !runningHere;
   const unavailableReason = checking ? "Checking local models…" : !modelAvailable ? "Choose an installed model to send" : runtimeIssue ? "Text runtime unavailable" : incompatibleImages ? "Choose a vision model for the attached images" : needsRetry && !busy ? "Retry the response to continue" : "";
-  const activity = studio.modelAction ?? (studio.attachingImage ? "Attaching image…" : ["downloading", "preparing"].includes(status.modelInstall?.status ?? "") ? status.modelInstall?.phase ?? "Installing model…" : pendingHere ? "Preparing your response…" : busy && !runningHere ? "Another response is running" : "");
+  const activity = studio.modelAction ?? (studio.attachingDocument ? "Reading documents…" : studio.attachingImage ? "Attaching image…" : ["downloading", "preparing"].includes(status.modelInstall?.status ?? "") ? status.modelInstall?.phase ?? "Installing model…" : pendingHere ? "Preparing your response…" : busy && !runningHere ? "Another response is running" : "");
   const { selectModel } = studio;
 
   useEffect(() => {
@@ -268,6 +273,7 @@ export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels,
   };
 
   if (!activeThread) return null;
+  const documents = activeThread.documents ?? [];
 
   const forkChat = (messageId?: string) => {
     if (!studio.forkThread(messageId)) return;
@@ -394,6 +400,7 @@ export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels,
                 <Button variant="primary" type="submit" disabled={busy || !editingHere.content.trim() || editingHere.content.trim() === message.content.trim()}>Resend</Button>
               </div>
             </form> : <div className="text-message-content">{message.role === "user" ? message.content : <TextMarkdown content={message.content} />}</div>}
+            {!!message.metrics?.documentSources?.length && <ChatDocumentSources sources={message.metrics.documentSources} />}
             {message.role === "user" && !editingHere && <div className="text-message-tools">
               <IconButton className="text-icon-button" aria-label="Fork chat here" title="Fork chat here" disabled={busy}
                 onClick={() => forkChat(message.id)}><GitBranch size={15} aria-hidden="true" /></IconButton>
@@ -447,7 +454,26 @@ export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels,
         {showScrollButton && <IconButton shape="circle" className="text-scroll-latest" aria-label="Jump to latest message" title="Jump to latest message" onClick={() => { pinnedToBottom.current = true; setShowScrollButton(false); const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches; feedRef.current?.scrollTo({ top: feedRef.current.scrollHeight, behavior: reduce ? "instant" : "smooth" }); }}><ArrowDown size={16} aria-hidden="true" /></IconButton>}
         {visibleError ? <div className="text-error" role="alert">{visibleError}<Button variant="secondary" onClick={() => { void studio.refresh(); }}>Refresh status</Button></div> : null}
         {selectedModel && !modelAvailable ? <div className="text-error" role="alert">{models.find((model) => model.id === selectedModel)?.error ?? "This thread’s model was removed. Add its folder again or select another model."}</div> : null}
-        <form className="text-composer" onSubmit={(event) => { event.preventDefault(); submit(); }}>
+        <form className="text-composer" data-attachment-drop={draggingAttachment || undefined}
+          onDragOver={(event) => {
+            if (!event.dataTransfer.types.includes("Files")) return;
+            event.preventDefault();
+            event.dataTransfer.dropEffect = busy ? "none" : "copy";
+            if (!busy) setDraggingAttachment(true);
+          }}
+          onDragLeave={(event) => {
+            if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) setDraggingAttachment(false);
+          }}
+          onDrop={(event) => {
+            if (!event.dataTransfer.types.includes("Files")) return;
+            event.preventDefault();
+            setDraggingAttachment(false);
+            if (busy) return;
+            const files = Array.from(event.dataTransfer.files);
+            if (files.length === 1 && files[0].type.startsWith("image/") && selected?.supportsVision) void studio.attachImage(files[0]);
+            else void studio.attachDocuments(files);
+          }}
+          onSubmit={(event) => { event.preventDefault(); submit(); }}>
           {activeThread.draftContextImage ? <div className="text-draft-image text-draft-context">
             {draftContextImage && <img src={resolveAssetUrl(draftContextImage.url, draftContextImage.mtime)} alt="" onError={(event) => { event.currentTarget.hidden = true; }} key={draftContextImage.name} />}
             <span>Selected for next message: {draftContextImage?.prompt || activeThread.draftContextImage}</span>
@@ -457,6 +483,7 @@ export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels,
             <img src={resolveAssetUrl(`/references/${activeThread.draftImage}`)} alt="Image to send" />
             <IconButton aria-label="Remove chat image" disabled={busy} onClick={() => studio.updateThread(activeThread.id, { draftImage: undefined })}><X size={14} aria-hidden="true" /></IconButton>
           </div>}
+          {documents.length > 0 && <ChatDocumentAttachments documents={documents} disabled={busy} onRemove={studio.removeDocument} />}
           <Textarea
             ref={inputRef}
             aria-label="Message"
@@ -476,6 +503,14 @@ export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels,
           />
           <div className="text-composer-bottom">
             <div className="text-composer-model-controls">
+              <input ref={documentInput} type="file" accept={CHAT_DOCUMENT_ACCEPT} aria-label="Chat document files" hidden multiple
+                onChange={(event) => {
+                  const files = Array.from(event.currentTarget.files ?? []);
+                  event.currentTarget.value = "";
+                  void studio.attachDocuments(files);
+                }} />
+              <IconButton aria-label="Attach documents" title={documents.length >= MAX_CHAT_DOCUMENTS ? "This chat has eight documents" : "Attach documents for this chat"}
+                disabled={busy || documents.length >= MAX_CHAT_DOCUMENTS} onClick={() => documentInput.current?.click()}><Paperclip size={16} aria-hidden="true" /></IconButton>
               {selected?.supportsVision && <>
                 <input ref={attachmentInput} type="file" accept="image/png,image/jpeg,image/webp" aria-label="Chat image file" hidden onChange={(event) => {
                   const file = event.currentTarget.files?.[0];

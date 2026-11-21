@@ -163,7 +163,7 @@ interface StudioSidebarProps {
   onExpandForNew?: () => void;
   threads: Array<Pick<ImageThread, "id" | "title" | "archived"> & { hasWork: boolean }>;
   audioThreads: Array<Pick<AudioThread, "id" | "title" | "archived" | "outputs" | "text" | "renamed" | "designInstruction" | "instruction" | "referenceText">>;
-  textThreads: Array<Pick<TextThread, "id" | "title" | "archived" | "messages" | "renamed" | "draft" | "draftImage" | "draftContextImage" | "systemPrompt" | "folderId">>;
+  textThreads: Array<Pick<TextThread, "id" | "title" | "archived" | "messages" | "renamed" | "draft" | "draftImage" | "draftContextImage" | "systemPrompt" | "folderId" | "documents">>;
   chatFolders: readonly ChatFolder[];
   onOrganizeChats: (action: ChatOrganizationAction) => void;
   activeThreadId: string;
@@ -277,7 +277,7 @@ export const StudioSidebar = memo(function StudioSidebar({
   const visibleTextThreads = textThreads.filter((thread) =>
     (activeSection === "text" && thread.id === activeTextThreadId) || (!thread.archived && (
       thread.id === runningTextThreadId || thread.renamed || thread.title !== "New text thread" ||
-      thread.messages.length || thread.draft.trim() || thread.draftImage || thread.draftContextImage || thread.systemPrompt || thread.folderId
+      thread.messages.length || thread.draft.trim() || thread.draftImage || thread.draftContextImage || thread.systemPrompt || thread.folderId || thread.documents?.length
     ))
   );
   const chatRows = chatFolderRows(chatFolders, visibleTextThreads);

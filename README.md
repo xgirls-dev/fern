@@ -66,6 +66,8 @@ Duplicate a chat from its header or use **Fork chat here** on a message to conti
 
 Choose **New thread → Chat folder** to organize chats in the sidebar. Create subfolders from a folder's menu. Drag chats and folders to move them, or use **Move to folder…** from the item menu. Thread search matches the folder path. Deleting a folder moves its chats and subfolders up one level.
 
+Use the paperclip in Chat, or drop files into the composer, to ask about local PDF, DOCX, TXT, and Markdown documents. Attachments stay with the conversation for follow-up questions. Fern selects excerpts from longer documents to fit the model's context. Open **Document sources** on a response to see the excerpts supplied to the model. For scanned PDFs, attach a copy with selectable text.
+
 ### Image creation and editing
 
 Generate from a prompt, add reference images on supported models, and use seeds and render settings to make repeatable variations. The composer adjusts the available dimensions, steps, guidance, reference count, and batch size to the selected model.

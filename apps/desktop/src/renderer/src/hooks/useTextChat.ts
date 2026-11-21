@@ -9,10 +9,12 @@ import {
   startTextGeneration,
   stopTextGeneration,
   uploadChatImage,
+  uploadChatDocument,
 } from "../lib/api";
 import { readReference } from "../lib/reference";
 import { chatImageErrors, chatImageSettings } from "../lib/chatImageSettings";
 import { EMPTY_CHAT_FOLDERS, organizeChats, revealChatFolder, type ChatOrganizationAction } from "../lib/chatFolders";
+import { isChatDocument, MAX_CHAT_DOCUMENTS, validateChatDocument } from "../lib/chatDocuments";
 import {
   chatTokenLimits,
   createTextThread,
@@ -46,6 +48,8 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
   const [statusLoaded, setStatusLoaded] = useState(false);
   const [modelAction, setModelAction] = useState<string | null>(null);
   const [attachingImage, setAttachingImage] = useState(false);
+  const [attachingDocument, setAttachingDocument] = useState(false);
+  const documentUpload = useRef(false);
   const modelActionRef = useRef(false);
   const [statusError, setStatusError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -60,7 +64,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     [workspace],
   );
   const threads = workspace.threads;
-  const busy = !!modelAction || attachingImage || submitting || status.job.status === "running" || ["downloading", "preparing"].includes(status.modelInstall?.status ?? "") || threads.some((thread) => !!thread.pendingJobId);
+  const busy = !!modelAction || attachingImage || attachingDocument || submitting || status.job.status === "running" || ["downloading", "preparing"].includes(status.modelInstall?.status ?? "") || threads.some((thread) => !!thread.pendingJobId);
 
   useEffect(() => {
     persistPendingRef.current = true;
@@ -186,6 +190,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
       ?? status.models.find((item) => item.installed);
     const untouched = workspaceRef.current.threads.find((thread) => thread.folderId === folderId && !thread.archived && !thread.renamed &&
       !thread.messages.length && !thread.draft && !thread.draftImage && !thread.draftContextImage && !thread.pendingJobId && !thread.systemPrompt &&
+      !thread.documents?.length &&
       !thread.modelId && !thread.sampling && !thread.loadOptions && !thread.imageRenderSettings && thread.title === "New text thread"
       && thread.contextSize === 8192 && thread.temperature === 0.7 && thread.topP === 0.9 && thread.maxNewTokens === 512);
     const defaults = model ? workspaceRef.current.modelDefaults?.[model.id] : undefined;
@@ -310,6 +315,41 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     }
   }, [activeThread, busy, updateThread]);
 
+  const attachDocuments = async (files: File[]) => {
+    if (!activeThread || !files.length || busy || documentUpload.current) return;
+    setActionError(null);
+    if (files.length + (activeThread.documents?.length ?? 0) > MAX_CHAT_DOCUMENTS) {
+      setActionError(`Attach up to ${MAX_CHAT_DOCUMENTS} documents per chat.`);
+      return;
+    }
+    const threadId = activeThread.id;
+    documentUpload.current = true;
+    setAttachingDocument(true);
+    try {
+      files.forEach(validateChatDocument);
+      for (const file of files) {
+        const { document } = await uploadChatDocument(file);
+        if (!isChatDocument(document)) throw new Error("Fern could not save this document.");
+        setWorkspace((current) => ({ ...current, threads: current.threads.map((thread) => {
+          if (thread.id !== threadId || thread.documents?.some((item) => item.id === document.id)) return thread;
+          return { ...thread, documents: [...(thread.documents ?? []), document], updatedAt: Date.now() };
+        }) }));
+      }
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Could not attach this document.");
+    } finally {
+      documentUpload.current = false;
+      setAttachingDocument(false);
+    }
+  };
+
+  const removeDocument = (id: string) => {
+    if (!busy && activeThread) {
+      updateThread(activeThread.id, { documents: activeThread.documents?.filter((item) => item.id !== id) });
+      setActionError(null);
+    }
+  };
+
   const deleteModel = useCallback(async (id: string) => {
     if (modelActionRef.current) return false;
     modelActionRef.current = true;
@@ -410,6 +450,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
         requestId,
         threadId: activeThread.id,
         modelId,
+        ...(activeThread.documents?.length ? { documentIds: activeThread.documents.map(({ id }) => id) } : {}),
         device: computeDevice === "CPU" ? "CPU" : "AUTO",
         messages: messages.map(({ role, content, image, generatedImage, includedImage, imageThreadId }) => ({
           role, content: content || (generatedImage ? "I generated an image." : ""), image, generatedImage: generatedImage?.name, includedImage, imageThreadId,
@@ -566,11 +607,11 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
   }, [activeThread, updateThread]);
 
   return {
-    threads, activeThread, status, statusLoaded, modelAction, submitting, attachingImage, statusError, actionError, busy, computeDevice,
+    threads, activeThread, status, statusLoaded, modelAction, submitting, attachingImage, attachingDocument, statusError, actionError, busy, computeDevice,
     newThread, selectThread, forkThread, resetWorkspace, renameThread, archiveThread, deleteThread,
     modelDefaults: workspace.modelDefaults, saveModelDefaults, clearModelDefaults,
     chatPresets: workspace.presets, saveChatPreset, applyChatPreset, deleteChatPreset,
     folders: workspace.folders ?? EMPTY_CHAT_FOLDERS, organize,
-    updateThread, importModel, deleteModel, installRecommendedModel, attachImage, send, retry, restoreVersion, retryInspection, stop, refresh, selectModel, setDevice,
+    updateThread, importModel, deleteModel, installRecommendedModel, attachImage, attachDocuments, removeDocument, send, retry, restoreVersion, retryInspection, stop, refresh, selectModel, setDevice,
   };
 }

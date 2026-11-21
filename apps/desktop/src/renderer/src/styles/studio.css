@@ -56,6 +56,18 @@ body {
 .text-draft-context img[hidden] { display: none; }
 .text-draft-image button { position: absolute; top: 6px; right: 6px; background: var(--card); }
 .text-draft-context .ui-icon-button { position: static; background: transparent; }
+.text-composer[data-attachment-drop] { outline: var(--ui-focus-ring); outline-offset: 2px; }
+.text-document-attachments { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; padding: 0; list-style: none; }
+.text-document-attachments li { display: flex; align-items: center; gap: 6px; max-width: min(100%, 260px); padding-inline: 8px 2px; border-radius: 7px; background: var(--secondary-bg); font-size: 12px; }
+.text-document-attachments li > span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.text-document-attachments svg, .text-document-attachments button { flex: 0 0 auto; }
+.text-document-attachments .ui-icon-button { --ui-icon-size: 26px; min-height: 26px; }
+.text-document-sources { margin-top: 12px; color: var(--muted); font-size: 12px; }
+.text-document-sources > summary { width: fit-content; cursor: pointer; }
+.text-document-sources ul { display: grid; gap: 10px; margin: 10px 0 0; padding: 0; list-style: none; }
+.text-document-sources li { padding: 10px 12px; border-radius: 8px; background: var(--secondary-bg); overflow-wrap: anywhere; }
+.text-document-sources li > span { margin-inline-start: 8px; }
+.text-document-sources p { margin: 5px 0 0; white-space: pre-wrap; line-height: 1.5; }
 .text-model-import-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 .text-message--user { width: fit-content; max-width: 85%; align-self: flex-end; padding: 10px 17px; border-radius: 20px; background: var(--secondary-bg); }
 .text-message--user .text-message-content { white-space: pre-wrap; }

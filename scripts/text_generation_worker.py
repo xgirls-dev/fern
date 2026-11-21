@@ -10,6 +10,8 @@ import traceback
 from pathlib import Path
 from typing import Any
 
+from chat_documents import add_document_context
+
 
 PREFIX = "FERN_TEXT_EVENT:"
 
@@ -126,6 +128,12 @@ def run(model_path: str, device: str, projector_path: str = "") -> int:
             messages = request["messages"]
             if request.get("systemPrompt", "").strip():
                 messages = [{"role": "system", "content": request["systemPrompt"].strip()}, *messages]
+            sources = []
+            if passages := request.get("documentPassages"):
+                def characters(turns):
+                    return sum(len(turn["content"]) for turn in turns)
+                budget = min(80_000, characters(messages) + min(request["contextSize"] * 2, 12_000))
+                messages, sources, _ = add_document_context(messages, passages, budget, characters, chars_per_unit=1)
             prompt = tokenizer.apply_chat_template(messages, True)
 
             config = pipeline.get_generation_config()
@@ -161,6 +169,7 @@ def run(model_path: str, device: str, projector_path: str = "") -> int:
                 "type": "result",
                 "device": device,
                 "text": output,
+                **({"documentSources": sources} if sources else {}),
                 "inputTokens": input_tokens,
                 "outputTokens": output_tokens,
                 "generationSeconds": elapsed,

@@ -64,6 +64,7 @@ from text_model_download import catalog as text_model_catalog, install_model as 
 from gguf_metadata import is_projector, read_metadata as read_gguf_metadata
 from gguf_runtime import RUNTIME_PLATFORM_ERROR, apple_silicon, runtime_supported as gguf_runtime_supported
 from chat_image_tools import CHAT_IMAGE_SIZE, IMAGE_MODEL_PRIORITY, IMAGE_TOOL, chat_image_overrides, image_tool_prompt
+from chat_documents import document_ids, retrieve_passages, store_document
 from chat_context import DEFAULT_CONTEXT_SIZE, validate_context_size, validate_gguf_load_options
 from tts_model_download import catalog_spec as tts_catalog_spec, model_ready as tts_export_ready
 
@@ -802,6 +803,12 @@ def run_text_generation(payload: dict[str, Any], job_id: str, cancel_event: thre
         if model is None or not model.get("installed"):
             raise ValueError("Add this text model again; its files are no longer available.")
         device = payload["device"]
+        passages = []
+        if attachments := payload.get("documentIds"):
+            append_text_event(job_id, phase="Finding document passages…")
+            passages = retrieve_passages(DATA_DIR / "chat-documents", attachments, payload["messages"], payload["contextSize"])
+        if cancel_event.is_set():
+            raise InterruptedError()
         append_text_event(job_id, phase=f"Loading {model['name']} on {device_label(device)}…")
 
         def generate(request: dict[str, Any]) -> dict[str, Any]:
@@ -827,7 +834,8 @@ def run_text_generation(payload: dict[str, Any], job_id: str, cancel_event: thre
                 cancel_event=cancel_event,
             )
 
-        request = {**payload, **({"tools": [IMAGE_TOOL]} if image_model else {})}
+        request = {**payload, **({"tools": [IMAGE_TOOL]} if image_model else {}),
+                   **({"documentPassages": passages} if passages else {})}
         result = generate(request)
         calls = result.pop("toolCalls", [])
         if inspection_image and result.get("text", "").strip():
@@ -859,6 +867,7 @@ def run_text_generation(payload: dict[str, Any], job_id: str, cancel_event: thre
             })
             continuation = generate({
                 **request, "toolChoice": "none", "mode": "instant",
+                "documentPassages": [],
                 "maxNewTokens": min(request["maxNewTokens"], 96),
                 "messages": [
                     *request["messages"],
@@ -2595,6 +2604,15 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(400, {"error": str(error)})
             return
 
+        if parsed.path == "/api/text/documents":
+            try:
+                payload = self.read_json_body(too_large="Choose a document up to 20 MB.")
+                document = store_document(DATA_DIR / "chat-documents", payload.get("name"), payload.get("content"))
+                self.send_json(201, {"document": document})
+            except Exception as error:
+                self.send_json(400, {"error": str(error)})
+            return
+
         if parsed.path in ("/api/text/models/import", "/api/text/models/remove"):
             try:
                 payload = self.read_json_body()
@@ -2774,6 +2792,7 @@ class Handler(BaseHTTPRequestHandler):
                     "threadId": thread_id, "imageModel": image_model, "contextSize": context_size,
                     "imageSettings": image_settings,
                     "loadOptions": load_options,
+                    "documentIds": document_ids(payload.get("documentIds")),
                     "requireGpuVision": require_gpu_vision or image_model in INTEL_MEDIA_CATALOG or image_model == APPLE_IMAGE_ID,
                 }
                 start_text_job(generation, payload.get("requestId"))

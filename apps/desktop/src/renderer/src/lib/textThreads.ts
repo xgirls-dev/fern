@@ -1,5 +1,6 @@
 import type { ChatImageModel, ChatImageSettings } from "./chatImageSettings";
 import { normalizeChatFolders, type ChatFolder } from "./chatFolders";
+import { normalizeChatDocuments, normalizeDocumentSources, type ChatDocument, type ChatDocumentSource } from "./chatDocuments";
 
 const KEY = "fern-text-threads:v1";
 const DEFAULT_CONTEXT_SIZE = 8192;
@@ -81,6 +82,7 @@ export interface TextMessage {
     loadOptions?: GgufLoadOptions;
     maxNewTokens?: number;
     visionChecked?: boolean;
+    documentSources?: ChatDocumentSource[];
     context?: { size: number; compactedMessages: number; images: number; imageNames?: string[] };
   };
 }
@@ -102,6 +104,7 @@ export interface TextThread {
   draft: string;
   draftImage?: string;
   draftContextImage?: string;
+  documents?: ChatDocument[];
   mode: TextMode;
   imageModel: string;
   imageRenderSettings?: Record<string, ChatImageSettings>;
@@ -299,7 +302,8 @@ function normalizeTextMessages(messages: TextMessage[]): TextMessage[] {
       ? message.generatedImages.filter(isGeneratedChatImage).slice(0, 4) : undefined,
     inspectionJobId: typeof message.inspectionJobId === "string" ? message.inspectionJobId : undefined,
     reasoning: message.role === "assistant" && typeof message.reasoning === "string" ? message.reasoning : undefined,
-    metrics: message.metrics && [message.metrics.inputTokens, message.metrics.outputTokens, message.metrics.generationSeconds, message.metrics.tokensPerSecond].every((value) => typeof value === "number" && Number.isFinite(value) && value >= 0) ? message.metrics : undefined,
+    metrics: message.metrics && [message.metrics.inputTokens, message.metrics.outputTokens, message.metrics.generationSeconds, message.metrics.tokensPerSecond].every((value) => typeof value === "number" && Number.isFinite(value) && value >= 0)
+      ? { ...message.metrics, documentSources: normalizeDocumentSources(message.metrics.documentSources) } : undefined,
   }));
 }
 
@@ -317,6 +321,7 @@ export function loadTextThreads(): TextThreadWorkspace {
       draft: typeof thread.draft === "string" ? thread.draft : "",
       draftImage: isChatImage(thread.draftImage) ? thread.draftImage : undefined,
       draftContextImage: isOutputImage(thread.draftContextImage) ? thread.draftContextImage : undefined,
+      documents: normalizeChatDocuments(thread.documents),
       mode: thread.mode === "reasoning" ? "reasoning" : "instant",
       imageModel: typeof thread.imageModel === "string" ? thread.imageModel : "auto",
       systemPrompt: typeof thread.systemPrompt === "string" ? thread.systemPrompt : "",

@@ -22,6 +22,7 @@ from typing import Any, Callable
 
 from text_model_download import download_file
 from chat_context import DEFAULT_CONTEXT_SIZE, MAX_IMAGE_TOKENS, CompactedHistory, ContextBudgetError, fit_context, recent_images
+from chat_documents import add_document_context
 
 
 _BUILD = "b12498"
@@ -353,22 +354,34 @@ class GGUFServer:
                                previous=self.history.get(thread),
                                protected_tail=4 if request.get("toolChoice") == "none" else 1)
 
-        measure_remaining = requested_tokens > reserved_tokens
-        try:
-            history, memory = fit(context_budget - reserved_tokens)
-        except ContextBudgetError:
-            if reserved_tokens == 1:
-                raise
-            history, memory = fit(context_budget - 1)
-            measure_remaining = True
+        passages = request.get("documentPassages") or []
+        preferred_budget = context_budget - reserved_tokens
+        document_reserve = min(self.context_size // 4, 2048) if passages else 0
+        for budget in dict.fromkeys((preferred_budget - document_reserve, preferred_budget, context_budget - 1)):
+            try:
+                history, memory = fit(budget)
+                break
+            except ContextBudgetError:
+                if budget == context_budget - 1:
+                    raise
         if thread and memory is not None:
             self.history.pop(thread, None)
             self.history[thread] = memory
             if len(self.history) > 8:
                 self.history.pop(next(iter(self.history)))
 
+        document_sources = []
         max_tokens = reserved_tokens
-        if measure_remaining:
+        if passages:
+            fallback_budget = context_budget - min(128, reserved_tokens)
+            try:
+                history, document_sources, measured = add_document_context(history, passages, preferred_budget, prompt_tokens, chars_per_unit=4)
+            except ValueError:
+                if fallback_budget == preferred_budget:
+                    raise
+                history, document_sources, measured = add_document_context(history, passages, fallback_budget, prompt_tokens, chars_per_unit=4)
+            max_tokens = min(requested_tokens, context_budget - measured)
+        elif requested_tokens > reserved_tokens or budget > preferred_budget:
             max_tokens = min(requested_tokens, context_budget - prompt_tokens(history))
         messages = []
         for message in history:
@@ -443,6 +456,7 @@ class GGUFServer:
             "toolCalls": list(calls.values()),
             "maxNewTokens": max_tokens,
             "loadOptions": self.load_options,
+            **({"documentSources": document_sources} if document_sources else {}),
             "context": {
                 "size": self.context_size, "compactedMessages": memory.dropped if memory else 0,
                 "images": sum(bool(turn.get("imagePath")) for turn in history),
