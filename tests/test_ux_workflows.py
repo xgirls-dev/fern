@@ -133,14 +133,14 @@ class UxWorkflowTests(unittest.TestCase):
                 patch.object(api_server, "chat_image_path", return_value=str(explicit)),
                 patch.object(api_server, "run_flux_generation", return_value=saved) as render,
             ):
-                api_server.generate_chat_image("4b-lora", "test", "thread", "job", threading.Event(), {
+                api_server.generate_chat_image("4b-lora", "A fox.", "thread", "job", threading.Event(), {
                     "referenceImages": ["chat-image-" + "a" * 32 + ".png"],
                     "useMessageImage": True,
                     "promptSuffix": "cinematic lighting",
                     "loras": [{"path": str(adapter), "strength": 0.65, "enabled": True}],
                 }, message_image=str(attachment))
             payload = render.call_args.args[1]
-            self.assertEqual(payload["prompt"], "test, cinematic lighting")
+            self.assertEqual(payload["prompt"], "A fox. cinematic lighting")
             self.assertEqual([image.getpixel((0, 0)) for image in payload["reference_images"]], [(255, 0, 0), (0, 0, 255)])
             self.assertEqual(payload["loras"], [{"path": str(adapter), "strength": 0.65, "enabled": True}])
 

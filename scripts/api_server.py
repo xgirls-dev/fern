@@ -2223,7 +2223,8 @@ def generate_chat_image(
     overrides = dict(settings or {})
     suffix = overrides.pop("promptSuffix", "").strip()
     if suffix:
-        prompt = f"{prompt}, {suffix}"
+        separator = " " if prompt.endswith((".", "!", "?", ",")) else ", "
+        prompt = f"{prompt}{separator}{suffix}"
     references = [chat_image_path(item) for item in overrides.pop("referenceImages", [])]
     if overrides.pop("useMessageImage", False) and message_image:
         references.insert(0, message_image)
