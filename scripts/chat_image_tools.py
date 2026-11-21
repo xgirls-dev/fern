@@ -33,11 +33,14 @@ def chat_image_overrides(settings: Any) -> dict[str, Any]:
     if settings is None:
         return {}
     if not isinstance(settings, dict) or set(settings) - {
-        "width", "height", "steps", "guidance", "seed", "batchSize", "loras", "referenceImages", "useMessageImage",
+        "width", "height", "steps", "guidance", "seed", "batchSize", "loras", "referenceImages", "useMessageImage", "promptSuffix",
     }:
         raise ValueError("Choose valid image settings for this chat.")
     for key, value in settings.items():
-        if key == "loras":
+        if key == "promptSuffix":
+            if not isinstance(value, str) or len(value) > 2000:
+                raise ValueError("Image prompt additions must contain at most 2,000 characters.")
+        elif key == "loras":
             if not isinstance(value, list) or len(value) > 4:
                 raise ValueError("Choose up to four image adapters.")
         elif key == "referenceImages":
@@ -61,7 +64,7 @@ def chat_image_overrides(settings: Any) -> dict[str, Any]:
 
 def image_tool_prompt(calls: list[dict[str, Any]]) -> str:
     if len(calls) != 1 or calls[0].get("type") != "function":
-        raise ValueError("Chat can generate one image per response. Try asking for one image.")
+        raise ValueError("Chat can start one image render per response. Set the batch size in Chat settings to generate more images.")
     function = calls[0]["function"]
     if function.get("name") != IMAGE_TOOL["function"]["name"]:
         raise ValueError("The chat model requested an unavailable tool.")

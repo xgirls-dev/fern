@@ -615,6 +615,40 @@ def tts_snapshot() -> dict[str, Any]:
     return job
 
 
+def chat_image_catalog() -> list[dict[str, Any]]:
+    """List installed image models that can use the chat render path."""
+    installed = {item["id"]: item for item in MODEL_MANAGER.snapshot() if item.get("installed")}
+    if apple_silicon():
+        item = installed.get(APPLE_IMAGE_ID)
+        return [{"id": APPLE_IMAGE_ID, "label": item["label"]}] if item and apple_image.device_available() else []
+    models = [
+        {"id": key, "label": installed[key]["label"]} for key in IMAGE_MODEL_PRIORITY
+        if key in installed and key != APPLE_IMAGE_ID and (key not in INTEL_MEDIA_CATALOG or intel_media_supported())
+    ]
+    for model in tame_pony.MODEL_KEYS:
+        if model in installed:
+            item = installed[model]
+            models.append({"id": model, "label": item["label"], "defaultWidth": item["width"],
+                           "defaultHeight": item["height"], "defaultSteps": item["steps"], "defaultGuidance": item["guidance"]})
+    if qwen_turbo_model_ready():
+        ready, devices = qwen_turbo_runtime_status()
+        if ready and "GPU" in devices:
+            models.append({"id": QWEN_TURBO_MODEL_ID, "label": "Qwen Image 2.1 Turbo · official",
+                           "defaultWidth": 1024, "defaultHeight": 1024, "defaultSteps": 8, "defaultGuidance": 1})
+    try:
+        custom_models = custom_image_registry.MODEL_REGISTRY.snapshot()
+    except ValueError:
+        custom_models = []
+    for item in custom_models:
+        if not item or not item.get("installed"):
+            continue
+        family = custom_image_registry.FAMILIES[item["family"]]
+        models.append({key: item[key] for key in ("id", "label", "defaultWidth", "defaultHeight", "defaultSteps", "defaultGuidance")} | {
+            "minimumDimension": family["minimum"], "maximumDimension": family["maximum"], "dimensionMultiple": family["multiple"],
+        })
+    return models
+
+
 def text_runtime_snapshot() -> dict[str, Any]:
     try:
         # Keep native GenAI libraries in the worker. Importing them from
@@ -653,22 +687,12 @@ def text_runtime_snapshot() -> dict[str, Any]:
             "installed": bool(entry and entry.get("installed")),
             "format": spec["format"],
         })
-    installed_image_models = {
-        item["id"]: item["label"] for item in MODEL_MANAGER.snapshot()
-        if item["id"] in IMAGE_MODEL_PRIORITY and item.get("installed")
-        and (item["id"] not in INTEL_MEDIA_CATALOG or intel_media_supported())
-        and ((item["id"] == APPLE_IMAGE_ID and apple_image.device_available())
-             if apple_silicon() else item["id"] != APPLE_IMAGE_ID)
-    }
     gguf_available = gguf_runtime_supported()
     return {
         "job": job,
         "models": models,
         "recommendedModels": recommended,
-        "imageToolModels": [
-            {"id": key, "label": installed_image_models[key]}
-            for key in IMAGE_MODEL_PRIORITY if key in installed_image_models
-        ],
+        "imageToolModels": chat_image_catalog(),
         "defaultModelId": "gemma-4-e4b-gguf" if apple_silicon() else DEFAULT_TEXT_MODEL_ID,
         "modelInstall": model_install,
         "registryError": registry_error,
@@ -2139,6 +2163,14 @@ def run_flux_generation(
     return None
 
 
+def chat_image_owner(thread_id: str, source_thread_id: Any) -> str:
+    if source_thread_id is None:
+        return thread_id
+    if not isinstance(source_thread_id, str) or not source_thread_id.startswith("text-thread-") or len(source_thread_id) > 100:
+        raise ValueError("The saved image's conversation is invalid.")
+    return source_thread_id
+
+
 def prepare_image_inspection(payload: dict[str, Any]) -> dict[str, Any]:
     thread_id = payload.get("threadId")
     filename = payload.get("image")
@@ -2156,7 +2188,7 @@ def prepare_image_inspection(payload: dict[str, Any]) -> dict[str, Any]:
     if model.get("format") == "gguf" and not gguf_runtime_supported():
         raise ValueError(RUNTIME_PLATFORM_ERROR)
     metadata = gallery_store.get_image_metadata(filename)
-    if not metadata or metadata.get("threadId") != thread_id or metadata.get("source") != "chat":
+    if not metadata or metadata.get("threadId") != chat_image_owner(thread_id, payload.get("imageThreadId")) or metadata.get("source") != "chat":
         raise ValueError("Choose a saved image from this conversation.")
     path = (OUTPUTS / filename).resolve()
     if path.parent != OUTPUTS.resolve() or not path.is_file():
@@ -2180,20 +2212,27 @@ def generate_chat_image(
     *, message_image: str | None = None, on_image: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     device = APPLE_GPU if model == APPLE_IMAGE_ID else "INTEL_GPU"
-    status = (
-        model_snapshot(device, model)
-        if model in INTEL_MEDIA_CATALOG or model == APPLE_IMAGE_ID else flux2.model_status(device, model)
-    )
+    extra_model = tame_pony.is_model(model) or custom_image.is_model(model) or model == QWEN_TURBO_MODEL_ID
+    status = model_snapshot(device, model)
+    while status.get("checking"):
+        if cancel_event.wait(0.15):
+            raise InterruptedError("Image generation cancelled.")
+        status = model_snapshot(device, model)
     if not status["runtimeReady"] or status["selectedDevice"] != device:
         raise RuntimeError(str(status["runtimeNote"]))
     overrides = dict(settings or {})
+    suffix = overrides.pop("promptSuffix", "").strip()
+    if suffix:
+        prompt = f"{prompt}, {suffix}"
     references = [chat_image_path(item) for item in overrides.pop("referenceImages", [])]
     if overrides.pop("useMessageImage", False) and message_image:
         references.insert(0, message_image)
     image_request = validate_flux_payload({
-        "model": model, "prompt": prompt, "width": CHAT_IMAGE_SIZE, "height": CHAT_IMAGE_SIZE,
-        "device": device, "steps": INTEL_MEDIA_CATALOG.get(model, {}).get("defaultSteps", 4),
-        "guidance": 1.0, "thread_id": thread_id,
+        "model": model, "prompt": prompt,
+        "width": status.get("defaultWidth", 1024) if extra_model else CHAT_IMAGE_SIZE,
+        "height": status.get("defaultHeight", 1024) if extra_model else CHAT_IMAGE_SIZE,
+        "device": device, "steps": status.get("defaultSteps", 8) if extra_model else INTEL_MEDIA_CATALOG.get(model, {}).get("defaultSteps", 4),
+        "guidance": status.get("defaultGuidance", 1.0) if extra_model else 1.0, "thread_id": thread_id,
         "seed": uuid.uuid4().int % 2_147_483_647,
         "batch_size": overrides.pop("batchSize", 1),
         "reference_images": [
@@ -2647,11 +2686,12 @@ class Handler(BaseHTTPRequestHandler):
                         raise ValueError("OpenVINO messages must contain 20,000 characters or fewer.")
                     total_chars += len(content)
                     turn = {"role": message["role"], "content": content}
+                    image_owner = chat_image_owner(thread_id, message.get("imageThreadId"))
                     if message["role"] == "assistant" and isinstance(message.get("generatedImage"), str):
                         if generated_images is None:
                             generated_images = gallery_store.metadata_snapshot()
                         saved = generated_images.get(message["generatedImage"], {})
-                        if saved.get("threadId") == thread_id and saved.get("source") == "chat":
+                        if saved.get("threadId") == image_owner and saved.get("source") == "chat":
                             description = str(saved.get("prompt", ""))[:2000]
                             turn["content"] += "\n\nImage generated in this turn: " + description
                             total_chars += len(description)
@@ -2678,7 +2718,7 @@ class Handler(BaseHTTPRequestHandler):
                             generated_images = gallery_store.metadata_snapshot()
                         saved = generated_images.get(included_name, {})
                         path = (OUTPUTS / included_name).resolve()
-                        if saved.get("threadId") == thread_id and saved.get("source") == "chat" and path.parent == OUTPUTS.resolve() and path.is_file():
+                        if saved.get("threadId") == image_owner and saved.get("source") == "chat" and path.parent == OUTPUTS.resolve() and path.is_file():
                             turn["imagePath"] = str(path)
                         elif message is messages[-1]:
                             raise ValueError("The selected image is unavailable. Remove it from the draft or restore the file.")
@@ -2702,12 +2742,7 @@ class Handler(BaseHTTPRequestHandler):
                         raise ValueError("Select a vision-capable chat model with tool calling and its vision projector.")
                     if device == "CPU":
                         raise ValueError("Select GPU in Preferences to use the image tool in chat.")
-                    if (not isinstance(image_model, str) or image_model not in IMAGE_MODEL_PRIORITY
-                        or apple_silicon() != (image_model == APPLE_IMAGE_ID)
-                        or (image_model == APPLE_IMAGE_ID and not apple_image.device_available())
-                        or not any(
-                        item["id"] == image_model and item.get("installed") for item in MODEL_MANAGER.snapshot()
-                    )):
+                    if not isinstance(image_model, str) or not any(item["id"] == image_model for item in chat_image_catalog()):
                         raise ValueError("Select an installed image model in Chat settings.")
                 context_size = validate_context_size(payload.get("contextSize"), model.get("maxContextSize"))
                 load_options = validate_gguf_load_options(payload.get("loadOptions"), context_size)

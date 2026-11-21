@@ -60,6 +60,10 @@ In **Chat settings → Model**, set the response length, system prompt, and samp
 
 Edit an earlier message and resend it to try a different direction. Use **Versions** to switch between the resulting conversation and the earlier transcript.
 
+Use **Chat presets** to reuse a system prompt and sampling settings in another conversation. **Image style** adds the same style modifiers as Create Image, along with any text you want appended to generated image descriptions. The Chat image picker also supports installed Tame Pony, GPU-ready Qwen Image 2.1 Turbo, and compatible registered OpenVINO image models.
+
+Duplicate a chat from its header or use **Fork chat here** on a message to continue from that point in a new thread. Both keep the conversation's settings and references to saved images.
+
 ### Image creation and editing
 
 Generate from a prompt, add reference images on supported models, and use seeds and render settings to make repeatable variations. The composer adjusts the available dimensions, steps, guidance, reference count, and batch size to the selected model.

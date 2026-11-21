@@ -1,4 +1,4 @@
-import type { ChatImageSettings } from "./chatImageSettings";
+import type { ChatImageModel, ChatImageSettings } from "./chatImageSettings";
 
 const KEY = "fern-text-threads:v1";
 const DEFAULT_CONTEXT_SIZE = 8192;
@@ -53,6 +53,7 @@ export interface TextMessage {
   content: string;
   image?: string;
   includedImage?: string;
+  imageThreadId?: string;
   generatedImage?: GeneratedChatImage;
   generatedImages?: GeneratedChatImage[];
   inspectionJobId?: string;
@@ -158,7 +159,7 @@ export interface TextRuntimeStatus {
   models: TextModel[];
   recommendedModels?: Array<{ id: string; name: string; repo: string; bytes: number; installed: boolean; format?: string }>;
   defaultModelId?: string;
-  imageToolModels?: Array<{ id: string; label: string }>;
+  imageToolModels?: ChatImageModel[];
   modelInstall?: { id: string | null; modelId?: string | null; status: "idle" | "downloading" | "preparing" | "complete" | "failed"; phase: string | null; error: string | null };
   runtimeAvailable: boolean;
   runtimeError: string | null;
@@ -171,9 +172,24 @@ export interface TextThreadWorkspace {
   activeId: string;
   threads: TextThread[];
   modelDefaults?: Record<string, TextModelDefaults>;
+  presets?: ChatPreset[];
 }
 
 export type TextModelDefaults = Pick<TextThread, "contextSize" | "temperature" | "topP" | "maxNewTokens" | "sampling" | "loadOptions">;
+export type ChatPresetSettings = Pick<TextThread, "systemPrompt" | "temperature" | "topP" | "maxNewTokens" | "sampling">;
+export interface ChatPreset {
+  id: string;
+  name: string;
+  settings: ChatPresetSettings;
+}
+
+export function chatPresetSettings(settings: Partial<ChatPresetSettings>): ChatPresetSettings {
+  const { temperature, topP, maxNewTokens, sampling } = modelDefaultsFromThread(settings);
+  return {
+    systemPrompt: typeof settings.systemPrompt === "string" ? settings.systemPrompt.slice(0, 10_000) : "",
+    temperature, topP, maxNewTokens, sampling,
+  };
+}
 
 const hasNumber = (value: unknown, min: number, max: number, integer = false): value is number =>
   typeof value === "number" && Number.isFinite(value) && value >= min && value <= max && (!integer || Number.isInteger(value));
@@ -273,6 +289,8 @@ function normalizeTextMessages(messages: TextMessage[]): TextMessage[] {
     modelName: typeof message.modelName === "string" ? message.modelName : undefined,
     image: message.role === "user" && isChatImage(message.image) ? message.image : undefined,
     includedImage: message.role === "user" && isOutputImage(message.includedImage) ? message.includedImage : undefined,
+    imageThreadId: typeof message.imageThreadId === "string" && message.imageThreadId.startsWith("text-thread-") && message.imageThreadId.length <= 100
+      ? message.imageThreadId : undefined,
     generatedImage: message.role === "assistant" && isGeneratedChatImage(message.generatedImage) ? message.generatedImage : undefined,
     generatedImages: message.role === "assistant" && Array.isArray(message.generatedImages)
       ? message.generatedImages.filter(isGeneratedChatImage).slice(0, 4) : undefined,
@@ -309,6 +327,10 @@ export function loadTextThreads(): TextThreadWorkspace {
     if (threads.length) return {
       activeId: threads.some((thread) => thread.id === saved?.activeId) ? saved!.activeId! : threads[0].id,
       threads,
+      presets: Array.isArray(saved?.presets) ? saved.presets.filter((entry) =>
+        entry && typeof entry.id === "string" && typeof entry.name === "string" && entry.name.trim()
+        && entry.settings && typeof entry.settings === "object"
+      ).map(({ id, name, settings }) => ({ id, name: name.trim().slice(0, 80), settings: chatPresetSettings(settings) })) : undefined,
       modelDefaults: saved?.modelDefaults && typeof saved.modelDefaults === "object" && !Array.isArray(saved.modelDefaults)
         ? Object.fromEntries(Object.entries(saved.modelDefaults).filter(([, settings]) => settings && typeof settings === "object")
           .map(([id, settings]) => [id, modelDefaultsFromThread(settings)]))

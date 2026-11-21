@@ -78,11 +78,17 @@ try {
   assert(Math.abs(compact.width - compact.height) < 1, "The compact image frame should match the square output");
   assert(Math.abs(compact.left - compact.captionLeft) < 1, "The caption should align with the actual image");
   assert(compact.composerGap >= 12, "Messages at the lower edge of the scrollport should have space above the composer");
+  await page.getByRole("button", { name: "Duplicate chat", exact: true }).click();
+  await page.getByRole("heading", { name: "Poster (copy)", exact: true }).waitFor();
   await redCard.getByRole("button", { name: "Include this image again" }).click();
   await page.getByText("Selected for next message: Red circle poster", { exact: true }).waitFor();
+  await page.getByRole("textbox", { name: "Message", exact: true }).fill("Describe the poster.");
   await page.getByRole("button", { name: "Send message", exact: true }).click();
   assert.equal(state.textRequests.length, 1);
+  assert.notEqual(state.textRequests[0].threadId, "text-thread-review");
   assert.equal(state.textRequests[0].messages.at(-1).includedImage, "red-poster.png");
+  assert.equal(state.textRequests[0].messages.at(-1).imageThreadId, "text-thread-review");
+  assert.equal(state.textRequests[0].messages.find((message) => message.generatedImage === "red-poster.png").imageThreadId, "text-thread-review");
   assert.deepEqual(errors, []);
   console.log("Chat image viewer, descriptive names, keyboard return, and missing-preview recovery passed.");
 } finally {

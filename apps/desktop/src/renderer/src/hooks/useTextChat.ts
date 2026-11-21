@@ -19,6 +19,7 @@ import {
   isChatImage,
   loadTextThreads,
   modelDefaultsFromThread,
+  chatPresetSettings,
   saveTextThreads,
   snapshotTextVersion,
   textRuntimeIssue,
@@ -202,6 +203,26 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     setActionError(null);
   }, []);
 
+  const forkThread = (messageId?: string) => {
+    if (busy || sending.current || !activeThread.messages.length) return;
+    const index = messageId === undefined ? activeThread.messages.length - 1
+      : activeThread.messages.findIndex((message) => message.id === messageId);
+    if (index < 0) return;
+    const messages = activeThread.messages.slice(0, index + 1).map((message) => ({
+      ...message, id: crypto.randomUUID(),
+      imageThreadId: message.generatedImage || message.generatedImages?.length || message.includedImage
+        ? message.imageThreadId ?? activeThread.id : undefined,
+    }));
+    const thread: TextThread = {
+      ...activeThread, id: createTextThread().id, updatedAt: Date.now(), archived: false, renamed: true,
+      title: activeThread.title.slice(0, 72) + (messageId ? " (fork)" : " (copy)"),
+      messages, draft: "", draftImage: undefined, draftContextImage: undefined, pendingJobId: null, versions: undefined,
+    };
+    setWorkspace((current) => ({ ...current, activeId: thread.id, threads: [thread, ...current.threads] }));
+    setActionError(null);
+    return thread.id;
+  };
+
   const resetWorkspace = useCallback(() => {
     const thread = createTextThread();
     ++pollVersion.current;
@@ -326,10 +347,14 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     const editIndex = editId ? activeThread.messages.findIndex((message) => message.id === editId && message.role === "user") : -1;
     if (editId && editIndex < 0) return;
     const original = activeThread.messages[editIndex];
+    const contextImage = original ? original.includedImage : activeThread.draftContextImage;
+    const imageSource = contextImage ? activeThread.messages.find(({ generatedImage, generatedImages }) =>
+      generatedImage?.name === contextImage || generatedImages?.some(({ name }) => name === contextImage)) : undefined;
     const user: TextMessage = {
       id: `message-${crypto.randomUUID()}`, role: "user", content: text,
       image: original ? original.image : activeThread.draftImage,
-      includedImage: original ? original.includedImage : activeThread.draftContextImage,
+      includedImage: contextImage,
+      imageThreadId: original?.imageThreadId ?? imageSource?.imageThreadId,
       createdAt: Date.now(),
     };
     const lastUser = activeThread.messages.map((message) => message.role).lastIndexOf("user");
@@ -348,8 +373,8 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     const imageModel = model.supportsTools && model.supportsVision && computeDevice === "GPU" && imageGpuAvailable !== false
       ? (activeThread.imageModel === "auto" ? imageOptions[0] : imageOptions.find((item) => item.id === activeThread.imageModel))
       : undefined;
-    const imageSettings = imageModel ? chatImageSettings(imageModel.id, activeThread.imageRenderSettings?.[imageModel.id]) : undefined;
-    if (imageModel && imageSettings && Object.keys(chatImageErrors(imageModel.id, imageSettings)).length) {
+    const imageSettings = imageModel ? chatImageSettings(imageModel, activeThread.imageRenderSettings?.[imageModel.id]) : undefined;
+    if (imageModel && imageSettings && Object.keys(chatImageErrors(imageModel, imageSettings)).length) {
       setActionError("Correct the image settings or turn image generation off before sending.");
       return;
     }
@@ -369,12 +394,13 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
         threadId: activeThread.id,
         modelId,
         device: computeDevice === "CPU" ? "CPU" : "AUTO",
-        messages: messages.map(({ role, content, image, generatedImage, includedImage }) => ({
-          role, content: content || (generatedImage ? "I generated an image." : ""), image, generatedImage: generatedImage?.name, includedImage,
+        messages: messages.map(({ role, content, image, generatedImage, includedImage, imageThreadId }) => ({
+          role, content: content || (generatedImage ? "I generated an image." : ""), image, generatedImage: generatedImage?.name, includedImage, imageThreadId,
         })),
         ...(model.supportsReasoning ? { mode: activeThread.mode } : {}),
         ...(imageModel && imageSettings ? { imageModel: imageModel.id, imageSettings: {
           width: imageSettings.width, height: imageSettings.height, steps: imageSettings.steps, guidance: imageSettings.guidance,
+          ...(imageSettings.promptSuffix.trim() ? { promptSuffix: imageSettings.promptSuffix.trim() } : {}),
           ...(imageSettings.seedLocked ? { seed: imageSettings.seed } : {}),
           ...(imageSettings.batchSize > 1 ? { batchSize: imageSettings.batchSize } : {}),
           ...(imageSettings.loras?.length ? { loras: imageSettings.loras } : {}),
@@ -446,7 +472,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     try {
       const accepted = await inspectChatImage({
         requestId, threadId: thread.id, modelId: model.id,
-        image: message.generatedImage.name, device: computeDevice === "CPU" ? "CPU" : "AUTO",
+        image: message.generatedImage.name, imageThreadId: message.imageThreadId, device: computeDevice === "CPU" ? "CPU" : "AUTO",
       });
       setStatus(accepted.job);
       setStatusError(null);
@@ -497,14 +523,36 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     });
   }, []);
 
+  const saveChatPreset = (name: string, id?: string) => {
+    if (busy || !activeThread) return;
+    const preset = { id: id ?? crypto.randomUUID(), name, settings: chatPresetSettings(activeThread) };
+    setWorkspace((current) => ({
+      ...current, presets: [...(current.presets ?? []).filter((entry) => entry.id !== preset.id), preset]
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    }));
+    return preset.id;
+  };
+
+  const applyChatPreset = (id: string) => {
+    const preset = workspace.presets?.find((entry) => entry.id === id);
+    if (!busy && activeThread && preset) updateThread(activeThread.id, preset.settings);
+  };
+
+  const deleteChatPreset = (id: string) => {
+    if (!busy) setWorkspace((current) => ({
+      ...current, presets: current.presets?.filter((entry) => entry.id !== id),
+    }));
+  };
+
   const setDevice = useCallback((device: TextDevice) => {
     if (activeThread) updateThread(activeThread.id, { device });
   }, [activeThread, updateThread]);
 
   return {
     threads, activeThread, status, statusLoaded, modelAction, submitting, attachingImage, statusError, actionError, busy, computeDevice,
-    newThread, selectThread, resetWorkspace, renameThread, archiveThread, deleteThread,
+    newThread, selectThread, forkThread, resetWorkspace, renameThread, archiveThread, deleteThread,
     modelDefaults: workspace.modelDefaults, saveModelDefaults, clearModelDefaults,
+    chatPresets: workspace.presets, saveChatPreset, applyChatPreset, deleteChatPreset,
     updateThread, importModel, deleteModel, installRecommendedModel, attachImage, send, retry, restoreVersion, retryInspection, stop, refresh, selectModel, setDevice,
   };
 }

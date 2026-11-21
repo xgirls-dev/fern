@@ -151,6 +151,7 @@ export function inspectChatImage(payload: {
   threadId: string;
   modelId: string;
   image: string;
+  imageThreadId?: string;
   device: "AUTO" | "GPU" | "CPU";
 }): Promise<{ job: TextRuntimeStatus }> {
   return requestJson("/api/text/inspect-image", {
@@ -199,7 +200,7 @@ export function startTextGeneration(payload: {
   threadId: string;
   modelId: string;
   device: "AUTO" | "GPU" | "CPU";
-  messages: Array<{ role: "user" | "assistant"; content: string; image?: string; generatedImage?: string; includedImage?: string }>;
+  messages: Array<{ role: "user" | "assistant"; content: string; image?: string; generatedImage?: string; includedImage?: string; imageThreadId?: string }>;
   mode?: "instant" | "reasoning";
   imageModel?: string;
   imageSettings?: ChatImageOverrides;

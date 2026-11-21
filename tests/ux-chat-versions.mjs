@@ -35,10 +35,22 @@ try {
   await page.getByLabel("Conversation versions", { exact: true }).selectOption({ label: "Original follow-up" });
   await page.getByText("Original answer.", { exact: true }).waitFor();
   assert.equal(state.textRequests.length, 3);
+  await page.locator("article.text-message").filter({ hasText: "First response." })
+    .getByRole("button", { name: "Fork chat here", exact: true }).click();
+  await page.getByRole("button", { name: "Text thread: First prompt (fork)", exact: true }).waitFor();
+  await page.getByText("First response.", { exact: true }).waitFor();
+  assert.equal(await page.getByText("Original follow-up", { exact: true }).count(), 0);
+  assert.equal(await message.inputValue(), "");
+  await button("Duplicate chat").click();
+  await page.getByRole("button", { name: "Text thread: First prompt (fork) (copy)", exact: true }).waitFor();
+  await page.reload();
+  await page.getByText("First response.", { exact: true }).waitFor();
+  await page.getByRole("button", { name: "Text thread: First prompt", exact: true }).click();
+  assert.equal(await message.inputValue(), "Keep this draft");
   await page.getByLabel("Conversation versions", { exact: true }).selectOption({ label: "Revised opening" });
   await page.getByText("Revised response.", { exact: true }).waitFor();
   assert.deepEqual(errors, []);
-  console.log("Editing earlier prompts saves conversation versions, preserves the draft, and restores either version after reload.");
+  console.log("Conversation versions, forks, and duplicates persist independently across reloads.");
 } finally {
   await close();
 }

@@ -3,9 +3,9 @@ import Dices from "lucide-react/dist/esm/icons/dices.mjs";
 import Lock from "lucide-react/dist/esm/icons/lock.mjs";
 import LockOpen from "lucide-react/dist/esm/icons/lock-open.mjs";
 import Shuffle from "lucide-react/dist/esm/icons/shuffle.mjs";
-import { imageDimensionLimits } from "../lib/imageDimensions";
+import { imageDimensionLimits, type ImageDimensionHints } from "../lib/imageDimensions";
 import { fixedImagePreset, isKleinLoraModel, maxImageBatch } from "../lib/imageModels";
-import type { ModelStatus, StudioSettings } from "../lib/types";
+import type { StudioSettings } from "../lib/types";
 import { IconButton, Select } from "./ui/controls";
 
 type Canvas = Pick<StudioSettings, "width" | "height">;
@@ -30,7 +30,7 @@ const SIZE_PRESETS = [
 
 export function ImageCanvasFields({
   model, settings, errors, disabled, idPrefix = "", onChange, modelStatus,
-}: Fields<Canvas> & { modelStatus?: ModelStatus | null }) {
+}: Fields<Canvas> & { modelStatus?: ImageDimensionHints | null }) {
   const [custom, setCustom] = useState(false);
   const widthInput = useRef<HTMLInputElement>(null);
   const fixedSizes = fixedImagePreset(model)?.sizes;

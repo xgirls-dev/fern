@@ -179,7 +179,8 @@ for line in sys.stdin:
             attempt = {"threadId": thread_id, "image": "poster.png", "modelId": self.model["id"]}
             with self.assertRaisesRegex(ValueError, "saved image from this conversation"):
                 api.prepare_image_inspection({**attempt, "threadId": "text-thread-other"})
-            generation = api.prepare_image_inspection(attempt)
+            generation = api.prepare_image_inspection({**attempt, "threadId": "text-thread-fork", "imageThreadId": thread_id})
+            self.assertEqual(generation["threadId"], "text-thread-fork")
             api.run_text_generation(generation, "inspection", threading.Event())
             self.assertEqual(api.TEXT_JOB["status"], "complete")
             self.assertTrue(api.TEXT_JOB["result"]["visionChecked"])
@@ -252,9 +253,9 @@ for line in sys.stdin:
         model = {**self.model, "supportsVision": True}
         library = {"selected.png": {"source": "chat", "threadId": thread_id}}
 
-        def submit(request_id, name, owner=thread_id):
+        def submit(request_id, name, owner=thread_id, source=None):
             payload = {"requestId": request_id, "threadId": owner, "modelId": model["id"],
-                       "messages": [{"role": "user", "content": "Describe the picture.", "includedImage": name}]}
+                       "messages": [{"role": "user", "content": "Describe the picture.", "includedImage": name, "imageThreadId": source}]}
             request = urllib.request.Request(
                 f"http://127.0.0.1:{server.server_port}/api/text/generate",
                 data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"},
@@ -273,7 +274,9 @@ for line in sys.stdin:
                     submit("wrong", path.name, "text-thread-another")
                 with self.assertRaisesRegex(urllib.error.HTTPError, "400"):
                     submit("path", "../selected.png")
-                with submit("valid", path.name) as response:
+                with self.assertRaisesRegex(urllib.error.HTTPError, "400"):
+                    submit("wrong-source", path.name, "text-thread-fork", "text-thread-another")
+                with submit("valid", path.name, "text-thread-fork", thread_id) as response:
                     self.assertEqual(response.status, 202)
                 self.assertEqual(generate.call_args.args[0]["messages"][0]["imagePath"], str(path.resolve()))
         finally:

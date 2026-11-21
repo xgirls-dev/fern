@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import Copy from "lucide-react/dist/esm/icons/copy.mjs";
+import GitBranch from "lucide-react/dist/esm/icons/git-branch.mjs";
 import Plus from "lucide-react/dist/esm/icons/plus.mjs";
 import Send from "lucide-react/dist/esm/icons/arrow-up.mjs";
 import ArrowDown from "lucide-react/dist/esm/icons/arrow-down.mjs";
@@ -14,6 +15,8 @@ import { TextMarkdown } from "./TextMarkdown";
 import { Button, IconButton, Input, MenuItem, Select, Textarea } from "./ui/controls";
 import { WorkspaceThreadTitle } from "./WorkspaceThreadTitle";
 import { ImageBatchField, ImageCanvasFields, ImageSamplingFields } from "./ImageGenerationFields";
+import { ImageStyleFields } from "./ImageStyleFields";
+import { ChatPresets } from "./ChatPresets";
 import { ImageLoraFields } from "./ImageLoraFields";
 import { ChatImageReferenceFields } from "./ChatImageReferenceFields";
 
@@ -26,7 +29,7 @@ import type { useTextChat } from "../hooks/useTextChat";
 import { useReturnFocus } from "../hooks/useReturnFocus";
 import { notify } from "../lib/notifications";
 import { resolveAssetUrl } from "../lib/api";
-import { chatImageErrors, chatImageSettings, type ChatImageSettings } from "../lib/chatImageSettings";
+import { chatImageErrors, chatImageSettings, MAX_IMAGE_PROMPT_SUFFIX, type ChatImageSettings } from "../lib/chatImageSettings";
 import { isKleinLoraModel, maxReferenceImages } from "../lib/imageModels";
 import {
   chatTokenLimits, ggufLoadOptions, KV_CACHE_TYPES, textRuntimeIssue,
@@ -266,6 +269,13 @@ export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels,
 
   if (!activeThread) return null;
 
+  const forkChat = (messageId?: string) => {
+    if (!studio.forkThread(messageId)) return;
+    setEditing(null);
+    pinnedToBottom.current = true;
+    inputRef.current?.focus();
+  };
+
   const liveImages = runningHere
     ? (status.job.images?.length ? status.job.images : status.job.image ? [status.job.image] : [])
     : [];
@@ -278,8 +288,8 @@ export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels,
   const tokenLimits = chatTokenLimits(activeThread, selected);
   const loadOptions = ggufLoadOptions(activeThread.loadOptions, tokenLimits.contextSize);
   const imageModel = activeThread.imageModel === "auto" ? imageModels[0] : imageModels.find((item) => item.id === activeThread.imageModel);
-  const imageSettings = imageModel ? chatImageSettings(imageModel.id, activeThread.imageRenderSettings?.[imageModel.id]) : undefined;
-  const imageErrors = imageModel && imageSettings ? chatImageErrors(imageModel.id, imageSettings) : undefined;
+  const imageSettings = imageModel ? chatImageSettings(imageModel, activeThread.imageRenderSettings?.[imageModel.id]) : undefined;
+  const imageErrors = imageModel && imageSettings ? chatImageErrors(imageModel, imageSettings) : undefined;
   const updateImageSettings = (update: Partial<ChatImageSettings>) => {
     if (!imageModel || !imageSettings) return;
     studio.updateThread(activeThread.id, { imageRenderSettings: {
@@ -322,6 +332,8 @@ export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels,
           />
         </div>
         <div className="text-header-actions">
+          {activeThread.messages.length > 0 && <IconButton title="Duplicate chat" aria-label="Duplicate chat" disabled={busy}
+            onClick={() => forkChat()}><Copy size={15} aria-hidden="true" /></IconButton>}
           {!!activeThread.versions?.length && <Select className="chat-version-select" aria-label="Conversation versions"
             value="" disabled={busy} onChange={(event) => {
               setEditing(null);
@@ -383,6 +395,8 @@ export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels,
               </div>
             </form> : <div className="text-message-content">{message.role === "user" ? message.content : <TextMarkdown content={message.content} />}</div>}
             {message.role === "user" && !editingHere && <div className="text-message-tools">
+              <IconButton className="text-icon-button" aria-label="Fork chat here" title="Fork chat here" disabled={busy}
+                onClick={() => forkChat(message.id)}><GitBranch size={15} aria-hidden="true" /></IconButton>
               <IconButton ref={editFocus.register(message.id)} className="text-icon-button" aria-label="Edit message" title="Edit message"
                 disabled={busy || !modelAvailable || !!runtimeIssue}
                 onClick={() => setEditing({ threadId: activeThread.id, messageId: message.id, content: message.content })}><Pencil size={14} aria-hidden="true" /></IconButton>
@@ -394,6 +408,8 @@ export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels,
             {message.status === "stopped" ? <div className="text-partial-note">Stopped{message.content ? " · Partial response" : " before any text was generated"}</div> : null}
             {message.role === "assistant" && <div className="text-message-tools">
               {message.content.trim() && <IconButton className="text-icon-button" aria-label={copiedId === message.id ? "Copied" : "Copy message"} title={copiedId === message.id ? "Copied" : "Copy message"} onClick={() => void copyMessage(message.id, message.content)}><Copy size={15} aria-hidden="true" /></IconButton>}
+              <IconButton className="text-icon-button" aria-label="Fork chat here" title="Fork chat here" disabled={busy}
+                onClick={() => forkChat(message.id)}><GitBranch size={15} aria-hidden="true" /></IconButton>
               {message === lastMessage && !busy && (!message.generatedImage || message.status === "complete") && <IconButton className="text-icon-button" aria-label={message.status === "failed" || message.status === "stopped" ? "Retry response" : "Regenerate response"} title="Regenerate response" disabled={!modelAvailable || !!runtimeIssue || incompatibleImages} onClick={() => void studio.retry()}><RotateCcw size={15} aria-hidden="true" /></IconButton>}
               <IconButton className="text-icon-button" aria-label="Response details" title="Response details" aria-expanded={infoId === message.id} onClick={() => setInfoId(infoId === message.id ? null : message.id)}><Info size={15} aria-hidden="true" /></IconButton>
               {copiedId === message.id && <span role="status">Copied</span>}
@@ -535,7 +551,12 @@ export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels,
                   onClick={() => studio.updateThread(activeThread.id, { loadOptions: undefined })}>Reset model loading</Button>
               </div>
             </details>}
-            <label>System prompt<Textarea rows={3} maxLength={10_000} placeholder="Optional instructions for the model" value={activeThread.systemPrompt} disabled={busy} onChange={(event) => studio.updateThread(activeThread.id, { systemPrompt: event.target.value })} /></label>
+            <div className="field">
+              <label htmlFor="chat-system-prompt">System prompt</label>
+              <Textarea id="chat-system-prompt" rows={3} maxLength={10_000} placeholder="Optional instructions for the model" value={activeThread.systemPrompt} disabled={busy} onChange={(event) => studio.updateThread(activeThread.id, { systemPrompt: event.target.value })} />
+            </div>
+            <ChatPresets presets={studio.chatPresets ?? []} disabled={busy}
+              onApply={studio.applyChatPreset} onSave={studio.saveChatPreset} onDelete={studio.deleteChatPreset} />
             <TokenField key={`output-${activeThread.id}-${selectedModel}`}
               label="Maximum output (tokens)" value={tokenLimits.maxNewTokens} min={1} max={tokenLimits.outputMaximum}
               disabled={busy} onChange={(maxNewTokens) => studio.updateThread(activeThread.id, { maxNewTokens })}
@@ -580,12 +601,24 @@ export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels,
             {!canUseImageSetup ? <Button variant="ghost" className="text-compute-link" onClick={onOpenCompute}>Open compute settings</Button>
               : !imageModels.length ? <Button variant="ghost" className="text-compute-link" onClick={openImageSetup}>Browse image models</Button>
               : imageModel && imageSettings ? <>
-                <ImageCanvasFields key={imageModel.id} model={imageModel.id} settings={imageSettings} errors={imageErrors}
+                <ImageCanvasFields key={imageModel.id} model={imageModel.id} modelStatus={imageModel} settings={imageSettings} errors={imageErrors}
                   disabled={busy} idPrefix="chat-image-" onChange={updateImageSettings} />
                 <ImageBatchField model={imageModel.id} value={imageSettings.batchSize} disabled={busy} id="chat-image-batch-size"
                   onChange={(batchSize) => updateImageSettings({ batchSize })} />
                 <ImageSamplingFields model={imageModel.id} settings={imageSettings} errors={imageErrors}
                   disabled={busy} idPrefix="chat-image-" onChange={updateImageSettings} />
+                <details className="chat-advanced-settings">
+                  <summary>Image style</summary>
+                  <div className="text-settings-grid">
+                    <div className="field">
+                      <label htmlFor="chat-image-prompt-suffix">Image prompt additions</label>
+                      <Textarea id="chat-image-prompt-suffix" rows={3} maxLength={MAX_IMAGE_PROMPT_SUFFIX} value={imageSettings.promptSuffix} disabled={busy}
+                        onChange={(event) => updateImageSettings({ promptSuffix: event.currentTarget.value })} />
+                    </div>
+                    <ImageStyleFields value={imageSettings.promptSuffix} disabled={busy} maxLength={MAX_IMAGE_PROMPT_SUFFIX}
+                      onChange={(promptSuffix) => updateImageSettings({ promptSuffix })} />
+                  </div>
+                </details>
                 {isKleinLoraModel(imageModel.id) && <ImageLoraFields key={`loras-${imageModel.id}`} loras={imageSettings.loras ?? []}
                   error={imageErrors?.loras} disabled={busy} onChange={(loras) => updateImageSettings({ loras })} />}
                 {maxReferenceImages(imageModel.id) > 0 && <ChatImageReferenceFields key={`refs-${imageModel.id}`} settings={imageSettings}

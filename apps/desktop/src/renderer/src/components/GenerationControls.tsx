@@ -1,6 +1,6 @@
 import ChevronDown from "lucide-react/dist/esm/icons/chevron-down.mjs";
 import ImageIcon from "lucide-react/dist/esm/icons/image.mjs";
-import { Button, Input, Select, ToggleChip } from "./ui/controls";
+import { Button, Input, Select } from "./ui/controls";
 import {
   useEffect,
   useState,
@@ -13,26 +13,7 @@ import { ImageBatchField, ImageCanvasFields, ImageSamplingFields } from "./Image
 import { fixedImagePreset, isKleinLoraModel, maxReferenceImages, selectedKleinLoras } from "../lib/imageModels";
 import { ImageLoraFields } from "./ImageLoraFields";
 
-const STYLE_CHIPS = [
-  {
-    id: "photoreal",
-    suffix: "photorealistic, ultra-detailed, 50mm lens, natural lighting",
-  },
-  {
-    id: "cinematic",
-    suffix: "cinematic lighting, film grain, dramatic, anamorphic",
-  },
-  { id: "anime", suffix: "anime style, cel shading, vibrant colors" },
-  {
-    id: "render",
-    suffix: "3D render, octane, ray tracing, subsurface scattering",
-  },
-  {
-    id: "portrait",
-    suffix: "studio portrait, soft light, shallow depth of field",
-  },
-  { id: "minimal", suffix: "minimalist, clean composition, negative space" },
-];
+import { ImageStyleFields } from "./ImageStyleFields";
 
 interface PromptRecipe {
   id: string;
@@ -107,10 +88,6 @@ interface GenerationControlsProps {
   onClearReference: () => void;
   onUseOutputAsReference: () => Promise<void>;
   canUseOutput: boolean;
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function isPromptRecipe(value: unknown): value is PromptRecipe {
@@ -199,11 +176,6 @@ export function GenerationControls({
   const hasFixedSampling = isQwenTurbo || isFlux3Klein || Boolean(fixedPreset);
   const hasFixedSteps = hasFixedSampling && !adjustableSteps;
   const [referenceBusy, setReferenceBusy] = useState(false);
-  const activeChips = new Set(
-    STYLE_CHIPS.filter((chip) => settings.prompt.includes(chip.suffix)).map(
-      (chip) => chip.id,
-    ),
-  );
   const [referenceDragActive, setReferenceDragActive] = useState(false);
   const [referenceError, setReferenceError] = useState("");
   const [promptRecipes, setPromptRecipes] =
@@ -228,22 +200,6 @@ export function GenerationControls({
     window.addEventListener("fern-recipes-updated", reload);
     return () => window.removeEventListener("fern-recipes-updated", reload);
   }, []);
-
-  const toggleChip = (id: string, suffix: string) => {
-    const next = new Set(activeChips);
-    let prompt = settings.prompt;
-    if (next.has(id)) {
-      next.delete(id);
-      prompt = prompt
-        .replace(new RegExp(`,?\\s*${escapeRegExp(suffix)}`, "g"), "")
-        .replace(/^,\s*/, "")
-        .trim();
-    } else {
-      next.add(id);
-      prompt = prompt.trim() ? `${prompt.trim()}, ${suffix}` : suffix;
-    }
-    onSettingsChange({ prompt });
-  };
 
   const applyPromptRecipe = (id: string) => {
     setSelectedRecipeId(id);
@@ -500,17 +456,7 @@ export function GenerationControls({
               ) : null}
             </div>
             <div className="field">
-              <div className="ui-chip-group" role="group" aria-label="Style modifiers">
-                {STYLE_CHIPS.map((chip) => (
-                  <ToggleChip
-                    key={chip.id}
-                    selected={activeChips.has(chip.id)}
-                    onClick={() => toggleChip(chip.id, chip.suffix)}
-                  >
-                    {chip.id.charAt(0).toUpperCase() + chip.id.slice(1)}
-                  </ToggleChip>
-                ))}
-              </div>
+              <ImageStyleFields value={settings.prompt} onChange={(prompt) => onSettingsChange({ prompt })} />
             </div>
           </ControlSection>
 
