@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "id": "xgirls-dev.fern-wallpapers",
+  "name": "Fern Wallpapers",
+  "version": "0.1.0",
+  "author": "xgirls-dev",
+  "description": "Generate local AI wallpapers from the Omarchy bar with Fern.",
+  "kinds": ["bar-widget"],
+  "entryPoints": { "barWidget": "WallpaperWidget.qml" },
+  "barWidget": {
+    "displayName": "Fern Wallpapers",
+    "category": "Appearance",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}
