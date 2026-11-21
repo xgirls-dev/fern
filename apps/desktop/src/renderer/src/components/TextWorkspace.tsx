@@ -12,6 +12,8 @@ import AudioLines from "lucide-react/dist/esm/icons/audio-lines.mjs";
 import ImagePlus from "lucide-react/dist/esm/icons/image-plus.mjs";
 import Pencil from "lucide-react/dist/esm/icons/pencil.mjs";
 import Paperclip from "lucide-react/dist/esm/icons/paperclip.mjs";
+import Columns2 from "lucide-react/dist/esm/icons/columns-2.mjs";
+import ArrowLeftRight from "lucide-react/dist/esm/icons/arrow-left-right.mjs";
 import { TextMarkdown } from "./TextMarkdown";
 import { Button, IconButton, Input, MenuItem, Select, Textarea } from "./ui/controls";
 import { WorkspaceThreadTitle } from "./WorkspaceThreadTitle";
@@ -36,7 +38,7 @@ import { isKleinLoraModel, maxReferenceImages } from "../lib/imageModels";
 import { CHAT_DOCUMENT_ACCEPT, MAX_CHAT_DOCUMENTS } from "../lib/chatDocuments";
 import {
   chatTokenLimits, ggufLoadOptions, KV_CACHE_TYPES, textRuntimeIssue,
-  type GeneratedChatImage, type GgufLoadOptions, type TextMessage, type TextSamplingSettings,
+  type ChatPane, type GeneratedChatImage, type GgufLoadOptions, type TextMessage, type TextSamplingSettings, type TextThread,
 } from "../lib/textThreads";
 import type { SetupTask } from "../lib/modelSetup";
 import type { ImageRecord } from "../lib/types";
@@ -76,19 +78,20 @@ const samplerNumberFields = [
   { key: "fixedSeed", label: "Text seed", min: 0, max: 2_147_483_647, step: 1, placeholder: "Random each response" },
 ] as const;
 
-function SamplingNumberField({ field, value, disabled, onChange }: {
+function SamplingNumberField({ field, value, disabled, onChange, compact = false }: {
   field: { label: string; min: number; max: number; step: number; placeholder: string };
   value?: number;
   disabled: boolean;
+  compact?: boolean;
   onChange: (number?: number) => void;
 }) {
   const id = useId();
   const [draft, setDraft] = useState(value?.toString() ?? "");
   useEffect(() => setDraft(value?.toString() ?? ""), [value]);
   const number = Number(draft);
-  const valid = draft === "" || Number.isFinite(number) && number >= field.min && number <= field.max
-    && (field.step !== 1 || Number.isInteger(number));
-  return <label htmlFor={id}>{field.label}
+  const valid = (!draft && !compact) || (Boolean(draft) && Number.isFinite(number) && number >= field.min && number <= field.max
+    && (field.step !== 1 || Number.isInteger(number)));
+  return <label htmlFor={id}><span className={compact ? "sr-only" : undefined}>{field.label}</span>
     <Input id={id} type="number" min={field.min} max={field.max} step={field.step === 1 ? 1 : "any"} value={draft}
       placeholder={field.placeholder} disabled={disabled} aria-invalid={!valid}
       onBlur={() => { if (!valid) setDraft(value?.toString() ?? ""); }}
@@ -96,10 +99,28 @@ function SamplingNumberField({ field, value, disabled, onChange }: {
         const next = event.currentTarget.value;
         const parsed = event.currentTarget.valueAsNumber;
         setDraft(next);
-        if (!next) onChange(undefined);
+        if (!next && !compact) onChange(undefined);
         else if (Number.isFinite(parsed) && parsed >= field.min && parsed <= field.max && (field.step !== 1 || Number.isInteger(parsed))) onChange(parsed);
       }} />
   </label>;
+}
+
+function SamplingRangeField({ label, help, min, max, value, disabled, onChange }: {
+  label: string; help: string; min: number; max: number; value: number; disabled: boolean;
+  onChange: (value: number) => void;
+}) {
+  const id = useId();
+  const step = 0.01;
+  return <div className="field text-range-field">
+    <label htmlFor={id}>{label}</label>
+    <small className="text-setting-help" id={id + "-help"}>{help}</small>
+    <div className="text-range-control">
+      <input id={id} type="range" min={min} max={max} step={step} value={value} disabled={disabled} aria-describedby={id + "-help"}
+        onChange={(event) => onChange(event.currentTarget.valueAsNumber)} />
+      <SamplingNumberField compact field={{ label: label + " value", min, max, step, placeholder: "" }}
+        value={value} disabled={disabled} onChange={(next) => { if (next !== undefined) onChange(next); }} />
+    </div>
+  </div>;
 }
 
 function chatImageRecord(image: GeneratedChatImage, mtime: number): ImageRecord {
@@ -148,21 +169,33 @@ function ChatImage({ image, ordinal, checked, checking, onOpen, onRetryCheck, ca
   </figure>;
 }
 
-export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels, focusRequest = 0, imageGpuAvailable, onOpenImage, onCreateImage, onCreateSpeech, onOpenCompute }: {
+export interface TextWorkspaceProps {
   studio: TextStudio;
+  thread: TextThread;
+  pane: ChatPane;
+  focused: boolean;
+  split: boolean;
+  onChooseChat: () => void;
+  onClosePane: () => void;
   sidebarCollapsed?: boolean;
-  onSetupModels: (task: SetupTask) => void;
+  onSetupModels: (task: SetupTask, threadId: string) => void;
   focusRequest?: number;
   imageGpuAvailable?: boolean;
   onOpenImage: (image: ImageRecord, images: ImageRecord[]) => void;
   onCreateImage: () => void;
   onCreateSpeech: () => void;
   onOpenCompute: () => void;
-}) {
-  const { activeThread, status, statusError, actionError, busy } = studio;
+}
+
+export function TextWorkspace({ studio, thread: activeThread, pane, focused, split, onChooseChat, onClosePane,
+  sidebarCollapsed = false, onSetupModels, focusRequest = 0, imageGpuAvailable, onOpenImage, onCreateImage, onCreateSpeech, onOpenCompute,
+}: TextWorkspaceProps) {
+  const { status, statusError, actionError, busy } = studio;
   const [panel, setPanel] = useState<"settings" | "image" | null>(null);
-  const openModels = () => { setPanel(null); onSetupModels("chat"); };
-  const openImageSetup = () => { setPanel(null); onSetupModels("chat-image"); };
+  const openModels = () => { setPanel(null); onSetupModels("chat", activeThread.id); };
+  const openImageSetup = () => { setPanel(null); onSetupModels("chat-image", activeThread.id); };
+  const fieldPrefix = useId() + "-";
+  const inspectorId = `${fieldPrefix}chat-inspector`;
   const panelRef = useRef<HTMLElement>(null);
   const panelTrigger = useRef<HTMLButtonElement>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -172,12 +205,14 @@ export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels,
   const [showScrollButton, setShowScrollButton] = useState(false);
   const feedRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const lastFocusRequest = useRef(0);
   const attachmentInput = useRef<HTMLInputElement>(null);
   const documentInput = useRef<HTMLInputElement>(null);
   const [draggingAttachment, setDraggingAttachment] = useState(false);
   useEffect(() => {
-    if (focusRequest) inputRef.current?.focus();
-  }, [focusRequest]);
+    if (focusRequest && focusRequest !== lastFocusRequest.current && focused) inputRef.current?.focus();
+    lastFocusRequest.current = focusRequest;
+  }, [focusRequest, focused]);
   const runningHere = status.job.status === "running" && status.job.threadId === activeThread?.id;
   const models = status.models;
   const modelOptions = [
@@ -192,7 +227,8 @@ export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels,
   const modelAvailable = !!selected;
   const promptLimit = selected?.format === "gguf" ? undefined : 20_000;
   const runtimeIssue = selected ? textRuntimeIssue(status, selected) : null;
-  const visibleError = actionError ?? statusError ?? status.registryError ?? runtimeIssue;
+  const localError = actionError && (actionError.threadId ? actionError.threadId === activeThread.id : focused) ? actionError.message : null;
+  const visibleError = localError ?? (focused ? statusError ?? status.registryError : null) ?? runtimeIssue;
   const incompatibleImages = !selected?.supportsVision && !!(activeThread?.draftImage || activeThread?.draftContextImage ||
     activeThread?.messages.some((message) => message.image || message.includedImage));
   const lastMessage = activeThread?.messages.at(-1);
@@ -216,7 +252,7 @@ export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels,
 
   useEffect(() => {
     if (activeThread && !activeThread.modelId && preferredModel) {
-      selectModel(preferredModel.id);
+      selectModel(activeThread.id, preferredModel.id);
     }
   }, [activeThread?.id, activeThread?.modelId, preferredModel?.id, selectModel]);
 
@@ -269,14 +305,14 @@ export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels,
     const text = activeThread?.draft ?? "";
     if (!text.trim()) return;
     pinnedToBottom.current = true;
-    void studio.send(text);
+    void studio.send(activeThread.id, text);
   };
 
   if (!activeThread) return null;
   const documents = activeThread.documents ?? [];
 
   const forkChat = (messageId?: string) => {
-    if (!studio.forkThread(messageId)) return;
+    if (!studio.forkThread(activeThread.id, messageId)) return;
     setEditing(null);
     pinnedToBottom.current = true;
     inputRef.current?.focus();
@@ -313,7 +349,7 @@ export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels,
     const canRecover = primary && message && (message.status === "failed" || message.status === "stopped") && !message.metrics?.visionChecked;
     return <ChatImage key={image.name} image={image} ordinal={index + 1}
       checked={primary && message?.metrics?.visionChecked} checking={primary && (message ? !!message.inspectionJobId : checkingImage)}
-      onRetryCheck={canRecover ? () => void studio.retryInspection(message.id) : undefined}
+      onRetryCheck={canRecover ? () => void studio.retryInspection(activeThread.id, message.id) : undefined}
       canRetryCheck={!busy && !!selected?.supportsVision && !runtimeIssue}
       contextLabel={activeThread.draftContextImage === image.name
         ? "Selected for next message"
@@ -326,14 +362,15 @@ export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels,
   };
 
   return (
-    <section className={`text-workspace${empty ? " text-workspace--empty" : ""}`} aria-label="Text conversation">
+    <section className={`text-workspace${empty ? " text-workspace--empty" : ""}`}
+      aria-label={split ? (pane === "primary" ? "Left chat" : "Right chat") : "Text conversation"}>
       <header className="workspace-header text-header">
         <div className="workspace-heading">
           <WorkspaceThreadTitle
             thread={activeThread}
             threads={studio.threads}
             switchLabel="Open text thread"
-            sidebarCollapsed={sidebarCollapsed}
+            sidebarCollapsed={sidebarCollapsed && !split}
             onSwitch={studio.selectThread}
           />
         </div>
@@ -344,12 +381,18 @@ export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels,
             value="" disabled={busy} onChange={(event) => {
               setEditing(null);
               pinnedToBottom.current = true;
-              studio.restoreVersion(event.currentTarget.value);
+              studio.restoreVersion(activeThread.id, event.currentTarget.value);
             }}>
             <option value="">Versions</option>
             {activeThread.versions.map((version) => <option key={version.id} value={version.id}>{version.label}</option>)}
           </Select>}
-          <Button ref={panelTrigger} variant="secondary" className="workspace-settings-button" aria-label="Chat settings" aria-expanded={panel !== null} aria-controls={panel ? "text-inspector" : undefined} onClick={() => panel ? closePanel() : setPanel("settings")}><Settings2 size={15} aria-hidden="true" /><span>Chat settings</span></Button>
+          <IconButton title={split ? "Choose another chat for this pane" : "Open split chat"}
+            aria-label={split ? "Choose another chat for this pane" : "Open split chat"} onClick={onChooseChat}>
+            {split ? <ArrowLeftRight size={15} aria-hidden="true" /> : <Columns2 size={15} aria-hidden="true" />}
+          </IconButton>
+          <Button ref={panelTrigger} variant="secondary" className="workspace-settings-button" title="Chat settings"
+            aria-label="Chat settings" aria-expanded={panel !== null} aria-controls={panel ? inspectorId : undefined} onClick={() => panel ? closePanel() : setPanel("settings")}><Settings2 size={15} aria-hidden="true" /><span>Chat settings</span></Button>
+          {split && <IconButton title="Close pane" aria-label="Close pane" onClick={onClosePane}><X size={16} aria-hidden="true" /></IconButton>}
         </div>
       </header>
 
@@ -388,7 +431,7 @@ export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels,
             {editingHere ? <form className="chat-edit-message" onSubmit={(event) => {
               event.preventDefault();
               if (busy || !editingHere.content.trim() || editingHere.content.trim() === message.content.trim()) return;
-              void studio.send(editingHere.content, false, message.id).then((submitted) => {
+              void studio.send(activeThread.id, editingHere.content, false, message.id).then((submitted) => {
                 if (submitted) setEditing((current) => current?.messageId === message.id ? null : current);
               });
             }}>
@@ -417,7 +460,7 @@ export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels,
               {message.content.trim() && <IconButton className="text-icon-button" aria-label={copiedId === message.id ? "Copied" : "Copy message"} title={copiedId === message.id ? "Copied" : "Copy message"} onClick={() => void copyMessage(message.id, message.content)}><Copy size={15} aria-hidden="true" /></IconButton>}
               <IconButton className="text-icon-button" aria-label="Fork chat here" title="Fork chat here" disabled={busy}
                 onClick={() => forkChat(message.id)}><GitBranch size={15} aria-hidden="true" /></IconButton>
-              {message === lastMessage && !busy && (!message.generatedImage || message.status === "complete") && <IconButton className="text-icon-button" aria-label={message.status === "failed" || message.status === "stopped" ? "Retry response" : "Regenerate response"} title="Regenerate response" disabled={!modelAvailable || !!runtimeIssue || incompatibleImages} onClick={() => void studio.retry()}><RotateCcw size={15} aria-hidden="true" /></IconButton>}
+              {message === lastMessage && !busy && (!message.generatedImage || message.status === "complete") && <IconButton className="text-icon-button" aria-label={message.status === "failed" || message.status === "stopped" ? "Retry response" : "Regenerate response"} title="Regenerate response" disabled={!modelAvailable || !!runtimeIssue || incompatibleImages} onClick={() => void studio.retry(activeThread.id)}><RotateCcw size={15} aria-hidden="true" /></IconButton>}
               <IconButton className="text-icon-button" aria-label="Response details" title="Response details" aria-expanded={infoId === message.id} onClick={() => setInfoId(infoId === message.id ? null : message.id)}><Info size={15} aria-hidden="true" /></IconButton>
               {copiedId === message.id && <span role="status">Copied</span>}
             </div>}
@@ -444,7 +487,7 @@ export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels,
           {status.job.partialReasoning && <details className="text-reasoning"><summary>Reasoning</summary><TextMarkdown content={status.job.partialReasoning} /></details>}
           <div className="text-message-content">{status.job.partialText ? <TextMarkdown content={status.job.partialText} /> : <span className="text-thinking">{!status.job.image && (status.job.phase || (generatingImage ? "Creating an image…" : checkingImage ? "Checking the image…" : "Thinking…"))}</span>}<span className="text-stream-cursor" aria-hidden="true" /></div>
         </article> : null}
-        {lastMessage?.role === "user" && !busy && <Button variant="secondary" className="text-retry" disabled={!modelAvailable || !!runtimeIssue || incompatibleImages} onClick={() => void studio.retry()}><RotateCcw size={15} aria-hidden="true" />Retry response</Button>}
+        {lastMessage?.role === "user" && !busy && <Button variant="secondary" className="text-retry" disabled={!modelAvailable || !!runtimeIssue || incompatibleImages} onClick={() => void studio.retry(activeThread.id)}><RotateCcw size={15} aria-hidden="true" />Retry response</Button>}
 
         <div className="text-feed-end" />
       </div>
@@ -470,8 +513,8 @@ export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels,
             setDraggingAttachment(false);
             if (busy) return;
             const files = Array.from(event.dataTransfer.files);
-            if (files.length === 1 && files[0].type.startsWith("image/") && selected?.supportsVision) void studio.attachImage(files[0]);
-            else void studio.attachDocuments(files);
+            if (files.length === 1 && files[0].type.startsWith("image/") && selected?.supportsVision) void studio.attachImage(activeThread.id, files[0]);
+            else void studio.attachDocuments(activeThread.id, files);
           }}
           onSubmit={(event) => { event.preventDefault(); submit(); }}>
           {activeThread.draftContextImage ? <div className="text-draft-image text-draft-context">
@@ -483,7 +526,7 @@ export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels,
             <img src={resolveAssetUrl(`/references/${activeThread.draftImage}`)} alt="Image to send" />
             <IconButton aria-label="Remove chat image" disabled={busy} onClick={() => studio.updateThread(activeThread.id, { draftImage: undefined })}><X size={14} aria-hidden="true" /></IconButton>
           </div>}
-          {documents.length > 0 && <ChatDocumentAttachments documents={documents} disabled={busy} onRemove={studio.removeDocument} />}
+          {documents.length > 0 && <ChatDocumentAttachments documents={documents} disabled={busy} onRemove={(id) => studio.removeDocument(activeThread.id, id)} />}
           <Textarea
             ref={inputRef}
             aria-label="Message"
@@ -507,7 +550,7 @@ export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels,
                 onChange={(event) => {
                   const files = Array.from(event.currentTarget.files ?? []);
                   event.currentTarget.value = "";
-                  void studio.attachDocuments(files);
+                  void studio.attachDocuments(activeThread.id, files);
                 }} />
               <IconButton aria-label="Attach documents" title={documents.length >= MAX_CHAT_DOCUMENTS ? "This chat has eight documents" : "Attach documents for this chat"}
                 disabled={busy || documents.length >= MAX_CHAT_DOCUMENTS} onClick={() => documentInput.current?.click()}><Paperclip size={16} aria-hidden="true" /></IconButton>
@@ -515,7 +558,7 @@ export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels,
                 <input ref={attachmentInput} type="file" accept="image/png,image/jpeg,image/webp" aria-label="Chat image file" hidden onChange={(event) => {
                   const file = event.currentTarget.files?.[0];
                   event.currentTarget.value = "";
-                  if (file) void studio.attachImage(file);
+                  if (file) void studio.attachImage(activeThread.id, file);
                 }} />
                 <IconButton aria-label="Attach chat image" title={activeThread.draftContextImage ? "Remove the selected conversation image to attach a new file" : "Attach chat image"} disabled={busy || !!activeThread.draftContextImage} onClick={() => attachmentInput.current?.click()}><ImagePlus size={16} aria-hidden="true" /></IconButton>
               </>}
@@ -525,10 +568,10 @@ export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels,
               }}><option value="instant">Instant</option><option value="reasoning">Reasoning</option></Select>}
             </div>
             <div className="composer-send-tools">
-              <TextMenu label="Text model" value={selectedModel} disabled={busy} options={modelOptions} onSelect={studio.selectModel}>
+              <TextMenu label="Text model" value={selectedModel} disabled={busy} options={modelOptions} onSelect={(id) => studio.selectModel(activeThread.id, id)}>
                 <MenuItem role="menuitem" onClick={openModels}>Manage models</MenuItem>
               </TextMenu>
-            {runningHere ? <IconButton variant="danger" shape="circle" className="composer-submit is-stop" disabled={status.job.status !== "running"} onClick={() => void studio.stop()} aria-label="Stop generation" title="Stop generation"><Square size={14} fill="currentColor" aria-hidden="true" /></IconButton> : <IconButton type="submit" variant="primary" shape="circle" className="composer-submit" disabled={busy || !activeThread.draft.trim() || !modelAvailable || !!runtimeIssue || needsRetry || incompatibleImages} aria-label="Send message" title={activity || unavailableReason || "Send message"}>{studio.submitting || pendingHere ? <LoaderCircle className="spinner" size={16} aria-hidden="true" /> : <Send size={20} aria-hidden="true" />}</IconButton>}
+            {runningHere ? <IconButton variant="danger" shape="circle" className="composer-submit is-stop" disabled={status.job.status !== "running"} onClick={() => void studio.stop(activeThread.id)} aria-label="Stop generation" title="Stop generation"><Square size={14} fill="currentColor" aria-hidden="true" /></IconButton> : <IconButton type="submit" variant="primary" shape="circle" className="composer-submit" disabled={busy || !activeThread.draft.trim() || !modelAvailable || !!runtimeIssue || needsRetry || incompatibleImages} aria-label="Send message" title={activity || unavailableReason || "Send message"}>{pendingHere ? <LoaderCircle className="spinner" size={16} aria-hidden="true" /> : <Send size={20} aria-hidden="true" />}</IconButton>}
             </div>
           </div>
         </form>
@@ -539,7 +582,7 @@ export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels,
         </div>}
       </footer>
       </div>
-      {panel && <aside id="text-inspector" className="generation-inspector text-inspector" ref={panelRef} tabIndex={-1} aria-label="Chat settings panel" onKeyDown={(event) => { if (event.key === "Escape" && !event.defaultPrevented) { event.preventDefault(); closePanel(); } }}>
+      {panel && <aside id={inspectorId} className="generation-inspector text-inspector" ref={panelRef} tabIndex={-1} aria-label="Chat settings panel" onKeyDown={(event) => { if (event.key === "Escape" && !event.defaultPrevented) { event.preventDefault(); closePanel(); } }}>
         <div className="inspector-heading">
           <div className="inspector-tabs" role="group" aria-label="Chat inspector views">
             <Button variant="ghost" aria-pressed={panel === "settings"} onClick={() => showPanel("settings")}>Model</Button>
@@ -551,7 +594,7 @@ export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels,
           <p className="text-panel-description">Settings for this conversation. Changes apply to your next response.</p>
           {busy && <p className="text-panel-description" role="status">{activity || "Settings are locked while a response is generating."}</p>}
           <div className="text-settings-grid">
-            <label>Model<Select aria-label="Settings model" value={selectedModel} disabled={busy} onChange={event => studio.selectModel(event.target.value)}>{!selectedModel && <option value="">Choose a model</option>}{models.map(model => <option key={model.id} value={model.id} disabled={!model.installed}>{model.name}{model.installed ? "" : " - Unavailable"}</option>)}</Select></label>
+            <label>Model<Select aria-label="Settings model" value={selectedModel} disabled={busy} onChange={event => studio.selectModel(activeThread.id, event.target.value)}>{!selectedModel && <option value="">Choose a model</option>}{models.map(model => <option key={model.id} value={model.id} disabled={!model.installed}>{model.name}{model.installed ? "" : " - Unavailable"}</option>)}</Select></label>
             <Button variant="ghost" className="text-compute-link" onClick={openModels}>Manage models</Button>
             {selected?.format === "gguf" && <TokenField key={`context-${activeThread.id}-${selected.id}`}
               label="Context length (tokens)" value={tokenLimits.contextSize} min={tokenLimits.contextMinimum}
@@ -587,18 +630,23 @@ export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels,
               </div>
             </details>}
             <div className="field">
-              <label htmlFor="chat-system-prompt">System prompt</label>
-              <Textarea id="chat-system-prompt" rows={3} maxLength={10_000} placeholder="Optional instructions for the model" value={activeThread.systemPrompt} disabled={busy} onChange={(event) => studio.updateThread(activeThread.id, { systemPrompt: event.target.value })} />
+              <label htmlFor={fieldPrefix + "system-prompt"}>System prompt</label>
+              <Textarea id={fieldPrefix + "system-prompt"} rows={3} maxLength={10_000} placeholder="Optional instructions for the model" value={activeThread.systemPrompt} disabled={busy} onChange={(event) => studio.updateThread(activeThread.id, { systemPrompt: event.target.value })} />
             </div>
             <ChatPresets presets={studio.chatPresets ?? []} disabled={busy}
-              onApply={studio.applyChatPreset} onSave={studio.saveChatPreset} onDelete={studio.deleteChatPreset} />
+              onApply={(id) => studio.applyChatPreset(activeThread.id, id)}
+              onSave={(name, id) => studio.saveChatPreset(activeThread.id, name, id)} onDelete={studio.deleteChatPreset} />
             <TokenField key={`output-${activeThread.id}-${selectedModel}`}
               label="Maximum output (tokens)" value={tokenLimits.maxNewTokens} min={1} max={tokenLimits.outputMaximum}
               disabled={busy} onChange={(maxNewTokens) => studio.updateThread(activeThread.id, { maxNewTokens })}
               help={selected?.format === "gguf" ? "The prompt and response share the context window." : undefined}
             />
-            <label>Temperature<small className="text-setting-help">Lower for focused answers, higher for variety.</small><div className="text-range-control"><input aria-label="Temperature" type="range" min="0" max="2" step="0.05" value={activeThread.temperature} disabled={busy} onChange={(event) => studio.updateThread(activeThread.id, { temperature: Number(event.target.value) })} /><output>{activeThread.temperature.toFixed(2)}</output></div></label>
-            <label>Top P<small className="text-setting-help">Limits the range of words the model considers.</small><div className="text-range-control"><input aria-label="Top P" type="range" min="0.1" max="1" step="0.05" value={activeThread.topP} disabled={busy} onChange={(event) => studio.updateThread(activeThread.id, { topP: Number(event.target.value) })} /><output>{activeThread.topP.toFixed(2)}</output></div></label>
+            <SamplingRangeField key={activeThread.id + "-temperature"} label="Temperature" value={activeThread.temperature}
+              help="Lower for focused answers, higher for variety." min={0} max={2} disabled={busy}
+              onChange={(temperature) => studio.updateThread(activeThread.id, { temperature })} />
+            <SamplingRangeField key={activeThread.id + "-top-p"} label="Top P" value={activeThread.topP}
+              help="Limits the range of words the model considers." min={0.01} max={1} disabled={busy}
+              onChange={(topP) => studio.updateThread(activeThread.id, { topP })} />
             <details className="chat-advanced-settings">
               <summary>Advanced sampling</summary>
               <div className="text-settings-grid">
@@ -616,7 +664,7 @@ export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels,
             </details>
             {selected && <div className="chat-model-defaults">
               <Button variant="secondary" disabled={busy} onClick={() => {
-                studio.saveModelDefaults(selected.id);
+                studio.saveModelDefaults(activeThread.id, selected.id);
                 notify(`Saved defaults for ${selected.name}.`);
               }}>Save model defaults</Button>
               {studio.modelDefaults?.[selected.id] && <Button variant="ghost" className="text-compute-link" disabled={busy}
@@ -638,17 +686,17 @@ export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels,
               : !imageModels.length ? <Button variant="ghost" className="text-compute-link" onClick={openImageSetup}>Browse image models</Button>
               : imageModel && imageSettings ? <>
                 <ImageCanvasFields key={imageModel.id} model={imageModel.id} modelStatus={imageModel} settings={imageSettings} errors={imageErrors}
-                  disabled={busy} idPrefix="chat-image-" onChange={updateImageSettings} />
-                <ImageBatchField model={imageModel.id} value={imageSettings.batchSize} disabled={busy} id="chat-image-batch-size"
+                  disabled={busy} idPrefix={fieldPrefix + "image-"} onChange={updateImageSettings} />
+                <ImageBatchField model={imageModel.id} value={imageSettings.batchSize} disabled={busy} id={fieldPrefix + "image-batch-size"}
                   onChange={(batchSize) => updateImageSettings({ batchSize })} />
                 <ImageSamplingFields model={imageModel.id} settings={imageSettings} errors={imageErrors}
-                  disabled={busy} idPrefix="chat-image-" onChange={updateImageSettings} />
+                  disabled={busy} idPrefix={fieldPrefix + "image-"} onChange={updateImageSettings} />
                 <details className="chat-advanced-settings">
                   <summary>Image style</summary>
                   <div className="text-settings-grid">
                     <div className="field">
-                      <label htmlFor="chat-image-prompt-suffix">Image prompt additions</label>
-                      <Textarea id="chat-image-prompt-suffix" rows={3} maxLength={MAX_IMAGE_PROMPT_SUFFIX} value={imageSettings.promptSuffix} disabled={busy}
+                      <label htmlFor={fieldPrefix + "image-prompt-suffix"}>Image prompt additions</label>
+                      <Textarea id={fieldPrefix + "image-prompt-suffix"} rows={3} maxLength={MAX_IMAGE_PROMPT_SUFFIX} value={imageSettings.promptSuffix} disabled={busy}
                         onChange={(event) => updateImageSettings({ promptSuffix: event.currentTarget.value })} />
                     </div>
                     <ImageStyleFields value={imageSettings.promptSuffix} disabled={busy} maxLength={MAX_IMAGE_PROMPT_SUFFIX}

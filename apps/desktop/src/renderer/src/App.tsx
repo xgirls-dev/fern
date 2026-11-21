@@ -39,7 +39,7 @@ const StorageView = lazy(() => import("./components/StorageView").then((module) 
 const PreferencesView = lazy(() => import("./components/PreferencesView").then((module) => ({ default: module.PreferencesView })));
 const Qwen3TtsWorkspace = lazy(() => import("./components/Qwen3TtsWorkspace").then((module) => ({ default: module.Qwen3TtsWorkspace })));
 const VideoWorkspace = lazy(() => import("./components/VideoWorkspace").then((module) => ({ default: module.VideoWorkspace })));
-const TextWorkspace = lazy(() => import("./components/TextWorkspace").then((module) => ({ default: module.TextWorkspace })));
+const ChatWorkspace = lazy(() => import("./components/ChatWorkspace").then((module) => ({ default: module.ChatWorkspace })));
 const ModelsView = lazy(() => import("./components/ModelsView").then((module) => ({ default: module.ModelsView })));
 
 export function App() {
@@ -228,8 +228,8 @@ export function App() {
     [studio.selectThread, tts.selectThread, text.selectThread],
   );
 
-  const openModelSetup = (task: SetupTask) => {
-    const threadId = task === "image" ? studio.activeThread.id : text.activeThread?.id;
+  const openModelSetup = (task: SetupTask, textThreadId?: string) => {
+    const threadId = task === "image" ? studio.activeThread.id : textThreadId ?? text.activeThread?.id;
     if (!threadId) return;
     const setup = { task, threadId };
     setModelSetup(setup);
@@ -571,7 +571,7 @@ export function App() {
 
           {activeSection === "models" || activeSection === "preferences" ||
           activeSection === "storage" ? null : activeSection === "text" ? (
-            <Suspense fallback={<div className="dashboard-loading" role="status">Opening text workspace…</div>}><TextWorkspace studio={text} sidebarCollapsed={sidebarIsCollapsed} onSetupModels={openModelSetup} focusRequest={chatFocusRequest} imageGpuAvailable={imageGpuAvailable} onOpenImage={openImage} onCreateImage={newThread} onCreateSpeech={newAudioThread} onOpenCompute={openComputePreferences} /></Suspense>
+            <Suspense fallback={<div className="dashboard-loading" role="status">Opening text workspace…</div>}><ChatWorkspace studio={text} sidebarCollapsed={sidebarIsCollapsed} onSetupModels={openModelSetup} focusRequest={chatFocusRequest} imageGpuAvailable={imageGpuAvailable} onOpenImage={openImage} onCreateImage={newThread} onCreateSpeech={newAudioThread} onOpenCompute={openComputePreferences} /></Suspense>
           ) : activeSection === "video" ? (
             <Suspense fallback={<div className="dashboard-loading" role="status">Opening video workspace…</div>}>
               <VideoWorkspace video={video} device={compute.device} busyElsewhere={studio.running || studio.submitting || audioBusy || text.busy}
@@ -996,7 +996,7 @@ export function App() {
         onToggleSidebar={toggleSidebar}
         onStop={() => void studio.stopGeneration()}
         onStopAudio={() => void tts.stopJob()}
-        onStopText={() => void text.stop()}
+        onStopText={() => void text.stop(text.status.job.threadId ?? text.activeThread.id)}
       />
     </div>
   );

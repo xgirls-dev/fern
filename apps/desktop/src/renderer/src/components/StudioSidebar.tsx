@@ -22,10 +22,9 @@ import { Button, IconButton, Input, MenuItem, NavigationButton } from "./ui/cont
 import type { ImageThread } from "../lib/threads";
 import type { AudioThread } from "../lib/ttsThreads";
 import type { TextThread } from "../lib/textThreads";
-import { canMoveChatFolder, chatFolderPath, chatFolderRows, type ChatFolder, type ChatOrganizationAction } from "../lib/chatFolders";
+import { canMoveChatFolder, CHAT_NAV_DRAG, chatFolderPath, chatFolderRows, type ChatFolder, type ChatOrganizationAction } from "../lib/chatFolders";
 import { ChatFolderDialog, type ChatFolderDialogRequest } from "./ChatFolderDialog";
 
-const CHAT_NAV_DRAG = "application/x-fern-chat-navigation";
 type DraggedChatRow = { type: "move-chat" | "move-folder"; id: string; parentId?: string };
 
 function ThreadActions({
@@ -633,7 +632,7 @@ export const StudioSidebar = memo(function StudioSidebar({
           return <div className={`sidebar-thread-row${row.depth ? " sidebar-chat-nested" : ""}${activeSection === "text" && thread.id === activeTextThreadId ? " is-active" : ""}`} key={thread.id} style={style}>
             {renamingId === thread.id ? <Input className="thread-name-input" aria-label="Text thread name" autoFocus maxLength={80} value={threadName} onChange={(event) => setThreadName(event.target.value)} onFocus={(event) => event.target.select()} onBlur={() => { if (!cancelRename.current) onRenameTextThread(thread.id, threadName); setRenamingId(null); }} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); cancelRename.current = true; onRenameTextThread(thread.id, threadName); setRenamingId(null); focusThread(thread.id); } if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); cancelRename.current = true; setRenamingId(null); focusThread(thread.id); } }} /> : <>
               <button type="button" className="sidebar-thread-button" data-thread-id={thread.id} title={thread.title} aria-label={`Text thread: ${thread.title}${thread.archived ? " (archived)" : ""}`} aria-current={activeSection === "text" && thread.id === activeTextThreadId ? "page" : undefined} aria-description={runningTextThreadId === thread.id ? "Text response running" : undefined}
-                draggable={chatFolders.length > 0}
+                draggable
                 onDragStart={(event) => startDrag(event, { type: "move-chat", id: thread.id, parentId: thread.folderId })}
                 onDragEnd={stopDrag} onClick={() => navigate(() => onSelectTextThread(thread.id))}>
                 <MessageSquare size={14} aria-hidden="true" /><span>{thread.title}</span>{runningTextThreadId === thread.id ? <span className="thread-running-dot" aria-label="Text response running" /> : null}

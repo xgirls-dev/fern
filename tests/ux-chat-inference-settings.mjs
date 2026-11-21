@@ -24,6 +24,8 @@ try {
   await context.fill("24789");
   assert.equal(await output.getAttribute("max"), "24789");
   await output.fill("15100");
+  await page.getByLabel("Temperature value", { exact: true }).fill("0.137");
+  await page.getByLabel("Top P value", { exact: true }).fill("0.035");
   await page.getByText("Advanced model loading", { exact: true }).click();
   await page.getByLabel("Flash Attention", { exact: true }).selectOption("on");
   await page.getByLabel("Prompt batch size", { exact: true }).fill("1024");
@@ -68,6 +70,8 @@ try {
   await button("Send message").click();
   assert.equal(state.textRequests[0].contextSize, 24789);
   assert.equal(state.textRequests[0].maxNewTokens, 15100);
+  assert.equal(state.textRequests[0].temperature, 0.137);
+  assert.equal(state.textRequests[0].topP, 0.035);
   assert.deepEqual(state.textRequests[0].loadOptions, { flashAttention: "on", promptBatch: 1024, microBatch: 256, keyCacheType: "q8_0" });
   assert.equal(state.textRequests[0].seed, 37);
   assert.deepEqual(state.textRequests[0].sampling, { topK: 32, minP: 0.07, repeatPenalty: 1.15, stopSequences: ["END", "User:"] });
@@ -78,6 +82,8 @@ try {
   await button("Chat settings").click();
   assert.equal(await context.inputValue(), "24789");
   assert.equal(await output.inputValue(), "15100");
+  assert.equal(await page.getByLabel("Temperature value", { exact: true }).inputValue(), "0.137");
+  assert.equal(await page.getByLabel("Top P value", { exact: true }).inputValue(), "0.035");
   await page.getByText("Advanced model loading", { exact: true }).click();
   assert.equal(await page.getByLabel("KV key precision", { exact: true }).inputValue(), "q8_0");
   await page.getByText("Advanced sampling", { exact: true }).click();

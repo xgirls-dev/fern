@@ -175,10 +175,52 @@ export interface TextRuntimeStatus {
 }
 export interface TextThreadWorkspace {
   activeId: string;
+  secondaryId?: string;
+  activePane?: ChatPane;
+  splitPercent?: number;
   threads: TextThread[];
   modelDefaults?: Record<string, TextModelDefaults>;
   presets?: ChatPreset[];
   folders?: readonly ChatFolder[];
+}
+
+export type ChatPane = "primary" | "secondary";
+
+export function visibleChatPane(workspace: TextThreadWorkspace): ChatPane {
+  return workspace.secondaryId && workspace.activePane === "secondary" ? "secondary" : "primary";
+}
+
+export function showChatThread(workspace: TextThreadWorkspace, id: string, pane?: ChatPane): TextThreadWorkspace {
+  if (!pane) {
+    if (id === workspace.activeId) return { ...workspace, activePane: "primary" };
+    if (id === workspace.secondaryId) return { ...workspace, activePane: "secondary" };
+    pane = visibleChatPane(workspace);
+  }
+  if (pane === "secondary" && id === workspace.activeId && !workspace.secondaryId) return workspace;
+  if (pane === "primary") {
+    return { ...workspace, activeId: id, activePane: pane,
+      secondaryId: id === workspace.secondaryId ? workspace.activeId : workspace.secondaryId };
+  }
+  return { ...workspace, secondaryId: id, activePane: pane,
+    activeId: workspace.activeId === id && workspace.secondaryId ? workspace.secondaryId : workspace.activeId };
+}
+
+export function compareChatThread(workspace: TextThreadWorkspace, id: string, pane: ChatPane): TextThreadWorkspace {
+  if (!workspace.secondaryId) {
+    if (id === workspace.activeId) return workspace;
+    if (pane === "primary") return { ...workspace, activeId: id, secondaryId: workspace.activeId, activePane: pane };
+  }
+  return showChatThread(workspace, id, pane);
+}
+
+export function closeChatPane(workspace: TextThreadWorkspace, pane: ChatPane): TextThreadWorkspace {
+  if (!workspace.secondaryId) return workspace;
+  return { ...workspace, activeId: pane === "primary" ? workspace.secondaryId : workspace.activeId,
+    secondaryId: undefined, activePane: "primary" };
+}
+
+export function normalizeChatSplit(percent: unknown): number {
+  return typeof percent === "number" && Number.isFinite(percent) ? Math.round(Math.min(65, Math.max(35, percent))) : 50;
 }
 
 export type TextModelDefaults = Pick<TextThread, "contextSize" | "temperature" | "topP" | "maxNewTokens" | "sampling" | "loadOptions">;
@@ -335,19 +377,24 @@ export function loadTextThreads(): TextThreadWorkspace {
           id: version.id, label: version.label, messages: normalizeTextMessages(version.messages),
         })).filter((version) => version.messages.length > 0) : undefined,
     }));
-    if (threads.length) return {
-      activeId: threads.some((thread) => thread.id === saved?.activeId) ? saved!.activeId! : threads[0].id,
-      threads,
-      folders,
-      presets: Array.isArray(saved?.presets) ? saved.presets.filter((entry) =>
-        entry && typeof entry.id === "string" && typeof entry.name === "string" && entry.name.trim()
-        && entry.settings && typeof entry.settings === "object"
-      ).map(({ id, name, settings }) => ({ id, name: name.trim().slice(0, 80), settings: chatPresetSettings(settings) })) : undefined,
-      modelDefaults: saved?.modelDefaults && typeof saved.modelDefaults === "object" && !Array.isArray(saved.modelDefaults)
-        ? Object.fromEntries(Object.entries(saved.modelDefaults).filter(([, settings]) => settings && typeof settings === "object")
-          .map(([id, settings]) => [id, modelDefaultsFromThread(settings)]))
-        : undefined,
-    };
+    if (threads.length) {
+      const activeId = threads.find((thread) => thread.id === saved?.activeId)?.id ?? threads[0].id;
+      const secondaryId = threads.find((thread) => thread.id !== activeId && thread.id === saved?.secondaryId)?.id;
+      return {
+        activeId, secondaryId, activePane: secondaryId && saved?.activePane === "secondary" ? "secondary" : "primary",
+        splitPercent: normalizeChatSplit(saved?.splitPercent),
+        threads,
+        folders,
+        presets: Array.isArray(saved?.presets) ? saved.presets.filter((entry) =>
+          entry && typeof entry.id === "string" && typeof entry.name === "string" && entry.name.trim()
+          && entry.settings && typeof entry.settings === "object"
+        ).map(({ id, name, settings }) => ({ id, name: name.trim().slice(0, 80), settings: chatPresetSettings(settings) })) : undefined,
+        modelDefaults: saved?.modelDefaults && typeof saved.modelDefaults === "object" && !Array.isArray(saved.modelDefaults)
+          ? Object.fromEntries(Object.entries(saved.modelDefaults).filter(([, settings]) => settings && typeof settings === "object")
+            .map(([id, settings]) => [id, modelDefaultsFromThread(settings)]))
+          : undefined,
+      };
+    }
   } catch {
     // Ignore unreadable browser storage and open a clean conversation.
   }

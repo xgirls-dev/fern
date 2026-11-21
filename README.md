@@ -66,6 +66,8 @@ Duplicate a chat from its header or use **Fork chat here** on a message to conti
 
 Choose **New thread → Chat folder** to organize chats in the sidebar. Create subfolders from a folder's menu. Drag chats and folders to move them, or use **Move to folder…** from the item menu. Thread search matches the folder path. Deleting a folder moves its chats and subfolders up one level.
 
+Use **Open split chat** in the chat header or drag a chat from the sidebar onto either side of the conversation. Each pane keeps its own conversation and settings. Drag the divider to resize the panes, or focus it and use the arrow keys. In a narrow window, switch panes with **Left chat** and **Right chat**. Closing a pane keeps its chat in the sidebar.
+
 Use the paperclip in Chat, or drop files into the composer, to ask about local PDF, DOCX, TXT, and Markdown documents. Attachments stay with the conversation for follow-up questions. Fern selects excerpts from longer documents to fit the model's context. Open **Document sources** on a response to see the excerpts supplied to the model. For scanned PDFs, attach a copy with selectable text.
 
 ### Image creation and editing

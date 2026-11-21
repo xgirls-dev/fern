@@ -8,11 +8,13 @@ export function ThreadBrowser({
   initialQuery,
   onOpen,
   onClose,
+  onNewChat,
 }: {
   threads: Array<Pick<ImageThread, "id" | "title" | "archived"> & { excerpt?: string; folderPath?: string }>;
   initialQuery: string;
   onOpen: (id: string) => void;
   onClose: () => void;
+  onNewChat?: () => void;
 }) {
   const dialog = useRef<HTMLDivElement>(null);
   const search = useRef<HTMLInputElement>(null);
@@ -35,7 +37,7 @@ export function ThreadBrowser({
         ref={dialog}
         role="dialog"
         aria-modal="true"
-        aria-label="Search threads"
+        aria-label={onNewChat ? "Choose a chat" : "Search threads"}
         tabIndex={-1}
         onMouseDown={(event) => event.stopPropagation()}
       >
@@ -44,18 +46,20 @@ export function ThreadBrowser({
           className="thread-browser-search-field"
           data-autofocus
           type="search"
-          aria-label="Find a thread"
-          placeholder="Search threads…"
+          aria-label={onNewChat ? "Find a chat" : "Find a thread"}
+          placeholder={onNewChat ? "Search chats…" : "Search threads…"}
           value={query}
           onChange={(event) => {
             setQuery(event.target.value);
             setLimit(60);
           }}
-        /><IconButton aria-label="Close thread search" onClick={onClose}><X size={16} aria-hidden="true" /></IconButton></div>
-        <div className="thread-browser-filters">
+        /><IconButton aria-label={onNewChat ? "Close chat picker" : "Close thread search"} onClick={onClose}><X size={16} aria-hidden="true" /></IconButton></div>
+        {onNewChat ? <div className="thread-browser-filters">
+          <Button variant="secondary" onClick={() => { onNewChat(); onClose(); }}>New chat in this pane</Button>
+        </div> : <div className="thread-browser-filters">
           <SegmentedControl label="Thread type" value={kind} options={["All", "Chat", "Image", "Speech"].map(value => ({ value, label: value }))} onChange={value => { setKind(value); setLimit(60); }} />
           <label><Checkbox checked={archivedOnly} onChange={event => { setArchivedOnly(event.target.checked); setLimit(60); }} />Archived only</label>
-        </div>
+        </div>}
         <div className="thread-browser-list">
           {filtered.slice(0, limit).map((thread) => (
             <article key={thread.id}>
@@ -70,7 +74,7 @@ export function ThreadBrowser({
           ))}
           {filtered.length > limit && <Button variant="secondary" onClick={() => setLimit(value => value + 60)}>Show more threads</Button>}
           {!filtered.length ? <div className="thread-browser-empty">
-            <p role="status">{hasFilters ? "No matching threads" : "No threads yet"}</p>
+            <p role="status">{hasFilters ? (onNewChat ? "No matching chats" : "No matching threads") : (onNewChat ? "No other chats" : "No threads yet")}</p>
             {hasFilters ? <><small>Try a different search or clear the filters.</small><Button variant="ghost" onClick={() => { setQuery(""); setKind("All"); setArchivedOnly(false); setLimit(60); search.current?.focus(); }}>Clear filters</Button></> : null}
           </div> : null}
         </div>

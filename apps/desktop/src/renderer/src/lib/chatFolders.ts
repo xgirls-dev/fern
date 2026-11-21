@@ -8,6 +8,7 @@ export interface ChatFolder {
 }
 
 export const EMPTY_CHAT_FOLDERS: readonly ChatFolder[] = [];
+export const CHAT_NAV_DRAG = "application/x-fern-chat-navigation";
 
 export type ChatOrganizationAction =
   | { type: "create"; id: string; name: string; parentId?: string }
