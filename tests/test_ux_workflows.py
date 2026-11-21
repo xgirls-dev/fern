@@ -142,7 +142,7 @@ class UxWorkflowTests(unittest.TestCase):
             payload = render.call_args.args[1]
             self.assertEqual(payload["prompt"], "A fox. cinematic lighting")
             self.assertEqual([image.getpixel((0, 0)) for image in payload["reference_images"]], [(255, 0, 0), (0, 0, 255)])
-            self.assertEqual(payload["loras"], [{"path": str(adapter), "strength": 0.65, "enabled": True}])
+            self.assertEqual(payload["loras"], [{"path": str(adapter.resolve()), "strength": 0.65, "enabled": True}])
 
     def test_qwen_requires_dimensions_on_its_32_pixel_grid(self):
         with (
