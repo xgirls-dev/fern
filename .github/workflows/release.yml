@@ -112,9 +112,10 @@ jobs:
               }
             }
             gh release upload $tag $installer.FullName --clobber
+          } elseif ($env:STAGE_ONLY -eq 'true') {
+            gh release create $tag --draft --target $env:GITHUB_SHA --notes-file $notesPath $installer.FullName
           } else {
-            $draftFlag = if ($env:STAGE_ONLY -eq 'true') { @('--draft') } else { @() }
-            gh release create $tag $installer.FullName --notes-file $notesPath --target $env:GITHUB_SHA @draftFlag
+            gh release create $tag $installer.FullName --notes-file $notesPath --target $env:GITHUB_SHA
           }
           if ($LASTEXITCODE -ne 0) { throw "GitHub release upload/create failed for $tag." }
 
