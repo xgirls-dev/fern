@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import os
 import subprocess
 import sys
@@ -15,6 +16,23 @@ from gguf_runtime import GGUFServer, VulkanDriverError, ensure_runtime, runtime_
 
 
 class VulkanRuntimeTests(unittest.TestCase):
+    def test_gguf_output_can_use_more_than_half_of_the_available_context(self) -> None:
+        server = object.__new__(GGUFServer)
+        server.backend, server.device, server.context_size = "vulkan", "GPU", 4096
+        server.history, server.load_options = {}, {}
+        server._prompt_tokens = Mock()
+        server._request = Mock()
+        server.http = Mock()
+        request = {"messages": [{"role": "user", "content": "Hello."}],
+                   "temperature": 0, "topP": 1, "seed": 0}
+        for prompt, requested, expected in ((768, 512, 512), (768, 2450, 2450), (768, 4096, 3072), (2200, 4096, 1640)):
+            with self.subTest(prompt=prompt, requested=requested):
+                server._prompt_tokens.return_value = prompt
+                server.http.open.return_value = io.BytesIO(b"data: [DONE]\n")
+                result = server.generate({**request, "maxNewTokens": requested}, Mock())
+                self.assertEqual(server._request.call_args.args[1]["max_tokens"], expected)
+                self.assertEqual(result["maxNewTokens"], expected)
+
     def test_download_reuse_and_repair_missing_backend_dll(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

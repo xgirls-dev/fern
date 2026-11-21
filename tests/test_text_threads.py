@@ -212,11 +212,13 @@ for line in sys.stdin:
                     patch.object(api, "gguf_runtime_supported", return_value=True),
                     patch.object(api, "start_text_job") as start,
                 ):
-                    self.assertEqual(post(history * 160 + [long_turn], "long-gguf", contextSize=24_789), 202)
+                    self.assertEqual(post(history * 160 + [long_turn], "long-gguf", contextSize=24_789, maxNewTokens=15_100), 202)
                     payload = start.call_args.args[0]
                     self.assertEqual(payload["contextSize"], 24_789)
+                    self.assertEqual(payload["maxNewTokens"], 15_100)
                     self.assertEqual(payload["messages"][-1], long_turn)
                     self.assertEqual(len(payload["messages"]), 321)
+                    self.assertEqual(post([long_turn], "oversized-output", contextSize=24_789, maxNewTokens=24_790), 400)
                 self.assertEqual(post([{'role': role, 'content': 'hi'} for role in ['user', 'user', 'assistant']], 'invalid'), 400)
                 self.assertEqual(post([{'role':'user','content':'hi'}], 'bad-seed', seed=-1), 400)
                 self.assertEqual(api.TEXT_JOB['status'], 'idle')

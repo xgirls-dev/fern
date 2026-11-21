@@ -22,7 +22,8 @@ try {
   await context.fill("65537");
   assert.equal(await context.getAttribute("aria-invalid"), "true");
   await context.fill("24789");
-  await output.fill("9100");
+  assert.equal(await output.getAttribute("max"), "24789");
+  await output.fill("15100");
   await page.getByText("Advanced model loading", { exact: true }).click();
   await page.getByLabel("Flash Attention", { exact: true }).selectOption("on");
   await page.getByLabel("Prompt batch size", { exact: true }).fill("1024");
@@ -66,7 +67,7 @@ try {
   await page.getByRole("textbox", { name: "Message", exact: true }).fill("Use these chat settings.");
   await button("Send message").click();
   assert.equal(state.textRequests[0].contextSize, 24789);
-  assert.equal(state.textRequests[0].maxNewTokens, 9100);
+  assert.equal(state.textRequests[0].maxNewTokens, 15100);
   assert.deepEqual(state.textRequests[0].loadOptions, { flashAttention: "on", promptBatch: 1024, microBatch: 256, keyCacheType: "q8_0" });
   assert.equal(state.textRequests[0].seed, 37);
   assert.deepEqual(state.textRequests[0].sampling, { topK: 32, minP: 0.07, repeatPenalty: 1.15, stopSequences: ["END", "User:"] });
@@ -76,7 +77,7 @@ try {
   await page.reload();
   await button("Chat settings").click();
   assert.equal(await context.inputValue(), "24789");
-  assert.equal(await output.inputValue(), "9100");
+  assert.equal(await output.inputValue(), "15100");
   await page.getByText("Advanced model loading", { exact: true }).click();
   assert.equal(await page.getByLabel("KV key precision", { exact: true }).inputValue(), "q8_0");
   await page.getByText("Advanced sampling", { exact: true }).click();
@@ -97,7 +98,7 @@ try {
     else await button("Chat settings").click();
   }
   assert.equal(await context.inputValue(), "24789");
-  assert.equal(await output.inputValue(), "9100");
+  assert.equal(await output.inputValue(), "15100");
   const systemPrompt = page.getByLabel("System prompt", { exact: true });
   assert.equal(await systemPrompt.inputValue(), "");
   await context.fill("28000");
@@ -108,7 +109,7 @@ try {
   await button("Apply preset").click();
   assert.equal(await systemPrompt.inputValue(), "Keep the answer concise.");
   assert.equal(await context.inputValue(), "28000");
-  assert.equal(await output.inputValue(), "9100");
+  assert.equal(await output.inputValue(), "15100");
   assert.deepEqual(errors, []);
   console.log("Chat accepts, submits, and persists custom GGUF context and output lengths.");
 } finally {

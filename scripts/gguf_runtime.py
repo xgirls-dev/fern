@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from text_model_download import download_file
-from chat_context import DEFAULT_CONTEXT_SIZE, MAX_IMAGE_TOKENS, CompactedHistory, fit_context, recent_images
+from chat_context import DEFAULT_CONTEXT_SIZE, MAX_IMAGE_TOKENS, CompactedHistory, ContextBudgetError, fit_context, recent_images
 
 
 _BUILD = "b12498"
@@ -331,7 +331,11 @@ class GGUFServer:
         options: dict[str, Any] = {"chat_template_kwargs": {"enable_thinking": reasoning}}
         if request.get("tools"):
             options.update(tools=request["tools"], tool_choice=request.get("toolChoice", "auto"), parallel_tool_calls=False)
-        max_tokens = min(request["maxNewTokens"], self.context_size // 2)
+        requested_tokens = request["maxNewTokens"]
+        # Leave room for history when fitting it, and let longer responses use the
+        # remaining window once the prompt and any image overhead are measured.
+        reserved_tokens = min(requested_tokens, self.context_size // 2)
+        context_budget = self.context_size - 256
         history = recent_images(request["messages"])
         if system := request.get("systemPrompt", "").strip():
             history = [{"role": "system", "content": system}, *history]
@@ -341,18 +345,31 @@ class GGUFServer:
             emit({"type": "phase", "text": "Compacting earlier turns…"})
             return self._summarize(transcript)
 
-        history, memory = fit_context(
-            history, lambda turns: self._prompt_tokens(turns, options), compact,
-            self.context_size - max_tokens - 256,
-            previous=self.history.get(thread),
-            protected_tail=4 if request.get("toolChoice") == "none" else 1,
-        )
+        def prompt_tokens(turns: list[dict[str, Any]]) -> int:
+            return self._prompt_tokens(turns, options)
+
+        def fit(budget: int) -> tuple[list[dict[str, Any]], CompactedHistory | None]:
+            return fit_context(history, prompt_tokens, compact, budget,
+                               previous=self.history.get(thread),
+                               protected_tail=4 if request.get("toolChoice") == "none" else 1)
+
+        measure_remaining = requested_tokens > reserved_tokens
+        try:
+            history, memory = fit(context_budget - reserved_tokens)
+        except ContextBudgetError:
+            if reserved_tokens == 1:
+                raise
+            history, memory = fit(context_budget - 1)
+            measure_remaining = True
         if thread and memory is not None:
             self.history.pop(thread, None)
             self.history[thread] = memory
             if len(self.history) > 8:
                 self.history.pop(next(iter(self.history)))
 
+        max_tokens = reserved_tokens
+        if measure_remaining:
+            max_tokens = min(requested_tokens, context_budget - prompt_tokens(history))
         messages = []
         for message in history:
             content = message["content"]

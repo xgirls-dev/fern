@@ -560,6 +560,7 @@ export function TextWorkspace({ studio, sidebarCollapsed = false, onSetupModels,
             <TokenField key={`output-${activeThread.id}-${selectedModel}`}
               label="Maximum output (tokens)" value={tokenLimits.maxNewTokens} min={1} max={tokenLimits.outputMaximum}
               disabled={busy} onChange={(maxNewTokens) => studio.updateThread(activeThread.id, { maxNewTokens })}
+              help={selected?.format === "gguf" ? "The prompt and response share the context window." : undefined}
             />
             <label>Temperature<small className="text-setting-help">Lower for focused answers, higher for variety.</small><div className="text-range-control"><input aria-label="Temperature" type="range" min="0" max="2" step="0.05" value={activeThread.temperature} disabled={busy} onChange={(event) => studio.updateThread(activeThread.id, { temperature: Number(event.target.value) })} /><output>{activeThread.temperature.toFixed(2)}</output></div></label>
             <label>Top P<small className="text-setting-help">Limits the range of words the model considers.</small><div className="text-range-control"><input aria-label="Top P" type="range" min="0.1" max="1" step="0.05" value={activeThread.topP} disabled={busy} onChange={(event) => studio.updateThread(activeThread.id, { topP: Number(event.target.value) })} /><output>{activeThread.topP.toFixed(2)}</output></div></label>

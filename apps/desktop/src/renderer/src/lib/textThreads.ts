@@ -200,7 +200,7 @@ export function modelDefaultsFromThread(settings: Partial<TextModelDefaults>): T
     contextSize: hasNumber(contextSize, MIN_CHAT_CONTEXT, MAX_CHAT_CONTEXT, true) ? contextSize : DEFAULT_CONTEXT_SIZE,
     temperature: hasNumber(temperature, 0, 2) ? temperature : 0.7,
     topP: hasNumber(topP, 0.01, 1) ? topP : 0.9,
-    maxNewTokens: hasNumber(maxNewTokens, 1, Math.floor(MAX_CHAT_CONTEXT / 2), true) ? maxNewTokens : 512,
+    maxNewTokens: hasNumber(maxNewTokens, 1, MAX_CHAT_CONTEXT, true) ? maxNewTokens : 512,
     sampling: sampling && typeof sampling === "object" ? {
       topK: hasNumber(sampling.topK, 0, MAX_CHAT_CONTEXT, true) ? sampling.topK : undefined,
       minP: hasNumber(sampling.minP, 0, 0.999999) ? sampling.minP : undefined,
@@ -224,7 +224,7 @@ export function textRuntimeIssue(status: TextRuntimeStatus, model: TextModel | u
 export function chatTokenLimits(thread: TextThread, model?: TextModel) {
   const contextMaximum = Math.min(model?.maxContextSize || MAX_CHAT_CONTEXT, MAX_CHAT_CONTEXT);
   const contextSize = Math.min(thread.contextSize, contextMaximum);
-  const outputMaximum = model?.format === "gguf" ? Math.max(1, Math.floor(contextSize / 2)) : 8192;
+  const outputMaximum = model?.format === "gguf" ? contextSize : 8192;
   return {
     contextSize, contextMaximum, contextMinimum: Math.min(MIN_CHAT_CONTEXT, contextMaximum),
     maxNewTokens: Math.min(thread.maxNewTokens, outputMaximum), outputMaximum,

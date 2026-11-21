@@ -19,6 +19,10 @@ SUMMARY_RESERVE = 384
 Message = dict[str, Any]
 
 
+class ContextBudgetError(ValueError):
+    """The conversation could not fit in the requested token budget."""
+
+
 def validate_context_size(requested: object, maximum: int | None = None) -> int:
     upper = min(maximum or MAX_CONTEXT_SIZE, MAX_CONTEXT_SIZE)
     lower = min(MIN_CONTEXT_SIZE, upper)
@@ -122,12 +126,12 @@ def fit_context(
         else:
             low = mid + 1
     if low == len(boundaries):
-        raise ValueError("The latest message and its image context exceed this context size. Shorten the message or choose a larger context in Chat settings.")
+        raise ContextBudgetError("The latest message and its image context exceed this context size. Shorten the message or choose a larger context in Chat settings.")
 
     end = boundaries[low]
     transcript = "\n".join(f"{turn['role']}: {turn['content']}" for turn in turns[start:end])
     summary = summarize("\n\n".join(filter(None, (summary, transcript))))
     candidate = build(end, summary)
     if measure(candidate) > budget:
-        raise ValueError("The compacted conversation exceeds this context size. Choose a larger context in Chat settings.")
+        raise ContextBudgetError("The compacted conversation exceeds this context size. Choose a larger context in Chat settings.")
     return candidate, CompactedHistory(end, _prefix_hash(turns[:end]), summary)

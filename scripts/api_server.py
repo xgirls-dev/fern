@@ -2749,7 +2749,7 @@ class Handler(BaseHTTPRequestHandler):
                 load_options = validate_gguf_load_options(payload.get("loadOptions"), context_size)
                 if load_options and not gguf:
                     raise ValueError("These load settings require a GGUF model.")
-                maximum_output = max(8192, context_size // 2) if model.get("format") == "gguf" else 8192
+                maximum_output = context_size if gguf else 8192
                 max_new_tokens = payload.get("maxNewTokens", 512)
                 if type(max_new_tokens) is not int or not 1 <= max_new_tokens <= maximum_output:
                     raise ValueError(f"Maximum output length must be between 1 and {maximum_output:,} tokens.")
