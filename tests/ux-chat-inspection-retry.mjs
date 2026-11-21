@@ -20,7 +20,7 @@ try {
     await route.fulfill({ status: 202, json: { job: state.textStatus } });
   });
   await page.locator(".sidebar-new-button").click();
-  await page.getByRole("menuitem", { name: /New text thread|Chat/ }).click();
+  await page.getByRole("menuitem", { name: "Chat", exact: true }).click();
   const prompt = "Make a red poster";
   await page.getByRole("textbox", { name: "Message", exact: true }).fill(prompt);
   await page.getByRole("button", { name: "Send message", exact: true }).click();

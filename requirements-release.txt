@@ -45,6 +45,7 @@ protobuf==7.36.2
 psutil==7.2.2
 pydot==4.0.1
 Pygments==2.21.0
+pypdf==7.1.0
 pyparsing==3.3.3
 python-decouple==3.8
 PyYAML==6.0.3

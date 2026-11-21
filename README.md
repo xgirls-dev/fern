@@ -52,9 +52,23 @@ First loads can take longer while Fern downloads an engine or compiles a model f
 
 Use a local OpenVINO text model or a compatible instruction-tuned GGUF. Attach an image to ask about it. When importing a GGUF through **Models → Text → Import GGUF**, select the matching `mmproj` file alongside the language model to enable vision. **Instant** and **Reasoning** are available on models that support both modes.
 
-With a compatible tool-capable vision model, Chat can call Fern's image generator. It creates one **512 × 512** image per response with a fast model preset. Fern adds the image to the thread and **Images**, then sends the pixels back to the chat model for inspection. **Image checked** appears once the inspection succeeds. Recent images can be used on follow-up turns. Choose **Include this image again** to bring an older image back into context.
+With a compatible tool-capable vision model, Chat can call Fern's image generator. Fern adds the results to the thread and **Images**, then sends the first image back to the chat model for inspection. **Image checked** appears once the inspection succeeds. Recent images can be used on follow-up turns. Choose **Include this image again** to bring an older image back into context.
 
-GGUF chats offer **4K, 8K, and 16K** context, with **8K** as the default. When a conversation outgrows the available context, Fern summarizes earlier turns for the model and keeps the original transcript in the thread. Response details show the backend, device, and context usage. Image generation in Chat needs GPU memory for both the language and image models.
+Set the context length in tokens for GGUF chats. Fern starts at **8,192 tokens** or the model's declared maximum, whichever is lower. The prompt and response share that window. When a conversation outgrows the available context, Fern summarizes earlier turns for the model and keeps the original transcript in the thread. Response details show the backend, device, and context usage. Image generation in Chat needs GPU memory for both the language and image models.
+
+In **Chat settings → Model**, set the response length, system prompt, and sampling controls, or save the inference settings as defaults for that model. GGUF models also expose Flash Attention, prompt batching, and KV cache precision. In **Chat settings → Image**, choose an image model and set its canvas, steps, guidance, seed, and batch size as supported by that model. Compatible models also accept ordered references and LoRA adapters. Each conversation remembers settings for each image model.
+
+Edit an earlier message and resend it to try a different direction. Use **Versions** to switch between the resulting conversation and the earlier transcript.
+
+Use **Chat presets** to reuse a system prompt and sampling settings in another conversation. **Image style** adds the same style modifiers as Create Image, along with any text you want appended to generated image descriptions. The Chat image picker also supports installed Tame Pony, GPU-ready Qwen Image 2.1 Turbo, and compatible registered OpenVINO image models.
+
+Duplicate a chat from its header or use **Fork chat here** on a message to continue from that point in a new thread. Both keep the conversation's settings and references to saved images.
+
+Choose **New thread → Chat folder** to organize chats in the sidebar. Create subfolders from a folder's menu. Drag chats and folders to move them, or use **Move to folder…** from the item menu. Thread search matches the folder path. Deleting a folder moves its chats and subfolders up one level.
+
+Use **Open split chat** in the chat header or drag a chat from the sidebar onto either side of the conversation. Each pane keeps its own conversation and settings. Drag the divider to resize the panes, or focus it and use the arrow keys. In a narrow window, switch panes with **Left chat** and **Right chat**. Closing a pane keeps its chat in the sidebar.
+
+Use the paperclip in Chat, or drop files into the composer, to ask about local PDF, DOCX, TXT, and Markdown documents. Attachments stay with the conversation for follow-up questions. Fern selects excerpts from longer documents to fit the model's context. Open **Document sources** on a response to see the excerpts supplied to the model. For scanned PDFs, attach a copy with selectable text.
 
 ### Image creation and editing
 

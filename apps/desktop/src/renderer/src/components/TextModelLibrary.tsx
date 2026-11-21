@@ -10,7 +10,7 @@ export function TextModelLibrary({ studio, recommendedId }: { studio: ReturnType
   const { status, busy } = studio;
   const recommendations = status.recommendedModels ?? [];
   const ordered = recommendedId ? [...recommendations].sort((a, b) => Number(b.id === recommendedId) - Number(a.id === recommendedId)) : recommendations;
-  const error = studio.actionError ?? studio.statusError ?? status.registryError;
+  const error = (studio.actionError?.threadId ? undefined : studio.actionError?.message) ?? studio.statusError ?? status.registryError;
   return <section aria-label="Text models">
     <div className="models-section-heading"><div><h3>Text models</h3><p>Run private conversations on your device.</p></div><div className="text-model-import-actions">
       {window.studio.platform !== "darwin" && <Button type="button" disabled={busy} onClick={() => void studio.importModel()}>Add local model</Button>}

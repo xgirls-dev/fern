@@ -6,7 +6,9 @@ import type {
   DeviceId,
 } from "./types";
 import { repairMojibakeDeep } from "./text";
-import type { GeneratedChatImage, TextModel, TextRuntimeStatus } from "./textThreads";
+import type { GeneratedChatImage, GgufLoadOptions, TextModel, TextRuntimeStatus, TextSamplingOverrides } from "./textThreads";
+import type { ChatImageOverrides } from "./chatImageSettings";
+import type { ChatDocument } from "./chatDocuments";
 
 let apiBaseUrl = "";
 let cachedImages: FluxStatusResponse["images"] = [];
@@ -140,7 +142,7 @@ export function fetchTextStatus(): Promise<TextRuntimeStatus> {
   return requestJson<TextRuntimeStatus>("/api/text/status", { signal: AbortSignal.timeout(15_000) });
 }
 
-export function recoverChatImage(threadId: string, jobId: string): Promise<{ image: GeneratedChatImage | null }> {
+export function recoverChatImage(threadId: string, jobId: string): Promise<{ image: GeneratedChatImage | null; images?: GeneratedChatImage[] }> {
   const query = new URLSearchParams({ threadId, jobId });
   return requestJson(`/api/text/recover-image?${query}`, { signal: AbortSignal.timeout(15_000) });
 }
@@ -150,6 +152,7 @@ export function inspectChatImage(payload: {
   threadId: string;
   modelId: string;
   image: string;
+  imageThreadId?: string;
   device: "AUTO" | "GPU" | "CPU";
 }): Promise<{ job: TextRuntimeStatus }> {
   return requestJson("/api/text/inspect-image", {
@@ -177,6 +180,21 @@ export function uploadChatImage(image: string): Promise<{ image: string }> {
   });
 }
 
+export async function uploadChatDocument(file: File): Promise<{ document: ChatDocument }> {
+  const content = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(",", 2)[1]);
+    reader.onerror = () => reject(new Error("Fern could not read the document. Try attaching it again."));
+    reader.readAsDataURL(file);
+  });
+  return requestJson("/api/text/documents", {
+    method: "POST",
+    signal: AbortSignal.timeout(120_000),
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: file.name, content }),
+  });
+}
+
 export function installTextModel(modelId: string): Promise<TextRuntimeStatus> {
   return requestJson("/api/text/models/install", {
     method: "POST",
@@ -198,13 +216,17 @@ export function startTextGeneration(payload: {
   threadId: string;
   modelId: string;
   device: "AUTO" | "GPU" | "CPU";
-  messages: Array<{ role: "user" | "assistant"; content: string; image?: string; generatedImage?: string; includedImage?: string }>;
+  documentIds?: string[];
+  messages: Array<{ role: "user" | "assistant"; content: string; image?: string; generatedImage?: string; includedImage?: string; imageThreadId?: string }>;
   mode?: "instant" | "reasoning";
   imageModel?: string;
+  imageSettings?: ChatImageOverrides;
   contextSize?: number;
+  loadOptions?: GgufLoadOptions;
   systemPrompt: string;
   temperature: number;
   topP: number;
+  sampling?: TextSamplingOverrides;
   maxNewTokens: number;
   seed: number;
 }): Promise<{ job: TextRuntimeStatus }> {

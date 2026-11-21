@@ -10,6 +10,8 @@ import traceback
 from pathlib import Path
 from typing import Any
 
+from chat_documents import add_document_context
+
 
 PREFIX = "FERN_TEXT_EVENT:"
 
@@ -48,6 +50,7 @@ def run_gguf(file: Path, device: str, projector: Path | None) -> int:
                     raise ValueError("Unsupported text worker request.")
                 vision = bool(request.get("tools")) or any(message.get("imagePath") for message in request["messages"])
                 context_size = request.get("contextSize", DEFAULT_CONTEXT_SIZE)
+                load_options = request.get("loadOptions") or {}
                 if vision and not projector:
                     raise ValueError("Add the model's vision projector before sending an image.")
                 if sys.platform == "darwin":
@@ -64,7 +67,7 @@ def run_gguf(file: Path, device: str, projector: Path | None) -> int:
                     raise ValueError("This image conversation requires GPU vision. Select Available GPU in Preferences.")
                 if (
                     server is None or server.backend != backend or server.context_size != context_size
-                    or server.gpu_projector != gpu_projector
+                    or server.gpu_projector != gpu_projector or server.load_options != load_options
                 ):
                     if server is not None:
                         server.close()
@@ -74,7 +77,7 @@ def run_gguf(file: Path, device: str, projector: Path | None) -> int:
                     phase(f"Loading the GGUF model with {backend}…")
                     server = GGUFServer(
                         executable, file, projector if vision else None, target, backend, context_size,
-                        gpu_projector=gpu_projector,
+                        gpu_projector=gpu_projector, load_options=load_options,
                     )
                 emit(server.generate(request, emit))
             except Exception as error:
@@ -125,6 +128,12 @@ def run(model_path: str, device: str, projector_path: str = "") -> int:
             messages = request["messages"]
             if request.get("systemPrompt", "").strip():
                 messages = [{"role": "system", "content": request["systemPrompt"].strip()}, *messages]
+            sources = []
+            if passages := request.get("documentPassages"):
+                def characters(turns):
+                    return sum(len(turn["content"]) for turn in turns)
+                budget = min(80_000, characters(messages) + min(request["contextSize"] * 2, 12_000))
+                messages, sources, _ = add_document_context(messages, passages, budget, characters, chars_per_unit=1)
             prompt = tokenizer.apply_chat_template(messages, True)
 
             config = pipeline.get_generation_config()
@@ -134,6 +143,12 @@ def run(model_path: str, device: str, projector_path: str = "") -> int:
             config.top_p = float(request["topP"])
             config.do_sample = float(request["temperature"]) > 0
             config.rng_seed = int(request.get("seed", 0))
+            sampling = request.get("sampling") or {}
+            for option, attribute in (("topK", "top_k"), ("minP", "min_p"), ("repeatPenalty", "repetition_penalty")):
+                if option in sampling:
+                    setattr(config, attribute, sampling[option])
+            if "stopSequences" in sampling:
+                config.stop_strings = set(sampling["stopSequences"])
 
             parts: list[str] = []
             started = time.perf_counter()
@@ -154,6 +169,7 @@ def run(model_path: str, device: str, projector_path: str = "") -> int:
                 "type": "result",
                 "device": device,
                 "text": output,
+                **({"documentSources": sources} if sources else {}),
                 "inputTokens": input_tokens,
                 "outputTokens": output_tokens,
                 "generationSeconds": elapsed,

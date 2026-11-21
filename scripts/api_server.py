@@ -63,8 +63,9 @@ from text_model_download import DEFAULT_MODEL_ID as DEFAULT_TEXT_MODEL_ID
 from text_model_download import catalog as text_model_catalog, install_model as install_text_model, model_files as text_model_files
 from gguf_metadata import is_projector, read_metadata as read_gguf_metadata
 from gguf_runtime import RUNTIME_PLATFORM_ERROR, apple_silicon, runtime_supported as gguf_runtime_supported
-from chat_image_tools import CHAT_IMAGE_SIZE, IMAGE_MODEL_PRIORITY, IMAGE_TOOL, image_tool_prompt
-from chat_context import CONTEXT_SIZES, DEFAULT_CONTEXT_SIZE
+from chat_image_tools import CHAT_IMAGE_SIZE, IMAGE_MODEL_PRIORITY, IMAGE_TOOL, chat_image_overrides, image_tool_prompt
+from chat_documents import document_ids, retrieve_passages, store_document
+from chat_context import DEFAULT_CONTEXT_SIZE, validate_context_size, validate_gguf_load_options
 from tts_model_download import catalog_spec as tts_catalog_spec, model_ready as tts_export_ready
 
 GENERATION_WORKER = GenerationWorker()
@@ -615,6 +616,40 @@ def tts_snapshot() -> dict[str, Any]:
     return job
 
 
+def chat_image_catalog() -> list[dict[str, Any]]:
+    """List installed image models that can use the chat render path."""
+    installed = {item["id"]: item for item in MODEL_MANAGER.snapshot() if item.get("installed")}
+    if apple_silicon():
+        item = installed.get(APPLE_IMAGE_ID)
+        return [{"id": APPLE_IMAGE_ID, "label": item["label"]}] if item and apple_image.device_available() else []
+    models = [
+        {"id": key, "label": installed[key]["label"]} for key in IMAGE_MODEL_PRIORITY
+        if key in installed and key != APPLE_IMAGE_ID and (key not in INTEL_MEDIA_CATALOG or intel_media_supported())
+    ]
+    for model in tame_pony.MODEL_KEYS:
+        if model in installed:
+            item = installed[model]
+            models.append({"id": model, "label": item["label"], "defaultWidth": item["width"],
+                           "defaultHeight": item["height"], "defaultSteps": item["steps"], "defaultGuidance": item["guidance"]})
+    if qwen_turbo_model_ready():
+        ready, devices = qwen_turbo_runtime_status()
+        if ready and "GPU" in devices:
+            models.append({"id": QWEN_TURBO_MODEL_ID, "label": "Qwen Image 2.1 Turbo · official",
+                           "defaultWidth": 1024, "defaultHeight": 1024, "defaultSteps": 8, "defaultGuidance": 1})
+    try:
+        custom_models = custom_image_registry.MODEL_REGISTRY.snapshot()
+    except ValueError:
+        custom_models = []
+    for item in custom_models:
+        if not item or not item.get("installed"):
+            continue
+        family = custom_image_registry.FAMILIES[item["family"]]
+        models.append({key: item[key] for key in ("id", "label", "defaultWidth", "defaultHeight", "defaultSteps", "defaultGuidance")} | {
+            "minimumDimension": family["minimum"], "maximumDimension": family["maximum"], "dimensionMultiple": family["multiple"],
+        })
+    return models
+
+
 def text_runtime_snapshot() -> dict[str, Any]:
     try:
         # Keep native GenAI libraries in the worker. Importing them from
@@ -653,22 +688,12 @@ def text_runtime_snapshot() -> dict[str, Any]:
             "installed": bool(entry and entry.get("installed")),
             "format": spec["format"],
         })
-    installed_image_models = {
-        item["id"]: item["label"] for item in MODEL_MANAGER.snapshot()
-        if item["id"] in IMAGE_MODEL_PRIORITY and item.get("installed")
-        and (item["id"] not in INTEL_MEDIA_CATALOG or intel_media_supported())
-        and ((item["id"] == APPLE_IMAGE_ID and apple_image.device_available())
-             if apple_silicon() else item["id"] != APPLE_IMAGE_ID)
-    }
     gguf_available = gguf_runtime_supported()
     return {
         "job": job,
         "models": models,
         "recommendedModels": recommended,
-        "imageToolModels": [
-            {"id": key, "label": installed_image_models[key]}
-            for key in IMAGE_MODEL_PRIORITY if key in installed_image_models
-        ],
+        "imageToolModels": chat_image_catalog(),
         "defaultModelId": "gemma-4-e4b-gguf" if apple_silicon() else DEFAULT_TEXT_MODEL_ID,
         "modelInstall": model_install,
         "registryError": registry_error,
@@ -727,10 +752,32 @@ def start_text_job(payload: dict[str, Any], request_id: Any) -> None:
             id=job_id, threadId=payload["threadId"], modelId=payload["modelId"],
             status="running", phase="Queued…", partialText="", partialReasoning="",
             startedAt=time.time(), finishedAt=None, result=None, image=payload.get("inspectionImage"),
+            images=[],
             inspection=payload.get("inspectionImage") is not None,
             error=None, errorCode=None,
         )
     threading.Thread(target=run_text_generation, args=(payload, job_id, cancel_event), daemon=True).start()
+
+
+def validate_text_sampling(options: Any) -> dict[str, Any]:
+    if options is None:
+        return {}
+    if not isinstance(options, dict) or set(options) - {"topK", "minP", "repeatPenalty", "stopSequences"}:
+        raise ValueError("Choose valid text sampling options.")
+    if "topK" in options and (type(options["topK"]) is not int or not 0 <= options["topK"] <= 2_147_483_647):
+        raise ValueError("Top K must be a non-negative whole number.")
+    if "minP" in options and (type(options["minP"]) not in (int, float) or not 0 <= options["minP"] < 1):
+        raise ValueError("Min P must be at least zero and less than one.")
+    if "repeatPenalty" in options and (
+        type(options["repeatPenalty"]) not in (int, float) or not 0 < options["repeatPenalty"] <= 3.402823466e38
+    ):
+        raise ValueError("Repetition penalty must be a positive number.")
+    if "stopSequences" in options:
+        values = options["stopSequences"]
+        if (not isinstance(values, list) or len(values) > 32
+            or any(not isinstance(value, str) or not value.strip() or len(value) > 256 for value in values)):
+            raise ValueError("Use up to 32 stop sequences of 256 characters each.")
+    return options
 
 
 def run_text_generation(payload: dict[str, Any], job_id: str, cancel_event: threading.Event) -> None:
@@ -756,6 +803,12 @@ def run_text_generation(payload: dict[str, Any], job_id: str, cancel_event: thre
         if model is None or not model.get("installed"):
             raise ValueError("Add this text model again; its files are no longer available.")
         device = payload["device"]
+        passages = []
+        if attachments := payload.get("documentIds"):
+            append_text_event(job_id, phase="Finding document passages…")
+            passages = retrieve_passages(DATA_DIR / "chat-documents", attachments, payload["messages"], payload["contextSize"])
+        if cancel_event.is_set():
+            raise InterruptedError()
         append_text_event(job_id, phase=f"Loading {model['name']} on {device_label(device)}…")
 
         def generate(request: dict[str, Any]) -> dict[str, Any]:
@@ -781,7 +834,8 @@ def run_text_generation(payload: dict[str, Any], job_id: str, cancel_event: thre
                 cancel_event=cancel_event,
             )
 
-        request = {**payload, **({"tools": [IMAGE_TOOL]} if image_model else {})}
+        request = {**payload, **({"tools": [IMAGE_TOOL]} if image_model else {}),
+                   **({"documentPassages": passages} if passages else {})}
         result = generate(request)
         calls = result.pop("toolCalls", [])
         if inspection_image and result.get("text", "").strip():
@@ -793,10 +847,18 @@ def run_text_generation(payload: dict[str, Any], job_id: str, cancel_event: thre
                 raise RuntimeError("Select GPU in Preferences to use the image tool in chat.")
             prompt = image_tool_prompt(calls)
             append_text_event(job_id, phase="Generating an image…")
-            image = generate_chat_image(image_model, prompt, payload["threadId"], job_id, cancel_event)
-            with TEXT_JOB_LOCK:
-                if TEXT_JOB.get("id") == job_id:
-                    TEXT_JOB["image"] = image
+
+            def show_image(artifact: dict[str, Any]) -> None:
+                with TEXT_JOB_LOCK:
+                    if TEXT_JOB.get("id") == job_id:
+                        saved = TEXT_JOB.setdefault("images", [])
+                        if not any(item["name"] == artifact["name"] for item in saved):
+                            saved.append(artifact)
+                        TEXT_JOB["image"] = saved[0]
+
+            image = generate_chat_image(image_model, prompt, payload["threadId"], job_id, cancel_event, payload.get("imageSettings"),
+                                        message_image=payload["messages"][-1].get("imagePath"), on_image=show_image)
+            show_image(image)
             append_text_event(job_id, phase="Checking the generated image…")
             prior = result.get("text", "").strip()
             tool_reply = json.dumps({
@@ -805,6 +867,7 @@ def run_text_generation(payload: dict[str, Any], job_id: str, cancel_event: thre
             })
             continuation = generate({
                 **request, "toolChoice": "none", "mode": "instant",
+                "documentPassages": [],
                 "maxNewTokens": min(request["maxNewTokens"], 96),
                 "messages": [
                     *request["messages"],
@@ -838,7 +901,8 @@ def run_text_generation(payload: dict[str, Any], job_id: str, cancel_event: thre
             if TEXT_JOB.get("id") == job_id:
                 result.update(modelId=model["id"], modelName=model["name"], device=result.get("device", device),
                               seed=payload["seed"], temperature=payload["temperature"],
-                              topP=payload["topP"], maxNewTokens=result.get("maxNewTokens", payload["maxNewTokens"]))
+                              topP=payload["topP"], maxNewTokens=result.get("maxNewTokens", payload["maxNewTokens"]),
+                              sampling=payload.get("sampling"))
                 TEXT_JOB.update(
                     status="complete", finishedAt=time.time(), phase="Response complete.",
                     partialText=result.get("text", ""), partialReasoning=result.get("reasoning", ""),
@@ -1722,6 +1786,7 @@ def run_flux_generation(
     cancel_event: threading.Event,
     *,
     on_chat_progress: Callable[[str], None] | None = None,
+    on_chat_artifact: Callable[[dict[str, Any]], None] | None = None,
     chat_job_id: str | None = None,
 ) -> dict[str, Any] | None:
     log_event = on_chat_progress or append_flux_log
@@ -2036,6 +2101,8 @@ def run_flux_generation(
                 metadata["referenceUrls"] = reference_urls
             metadata["generationTime"] = round(generation_time, 1)
             last_record = image_record(output_path, metadata)
+            if on_chat_artifact is not None:
+                on_chat_artifact(last_record)
         if on_chat_progress is not None:
             return last_record
         append_flux_log(f"Batch complete | {payload['batch_size']} image(s).")
@@ -2105,6 +2172,14 @@ def run_flux_generation(
     return None
 
 
+def chat_image_owner(thread_id: str, source_thread_id: Any) -> str:
+    if source_thread_id is None:
+        return thread_id
+    if not isinstance(source_thread_id, str) or not source_thread_id.startswith("text-thread-") or len(source_thread_id) > 100:
+        raise ValueError("The saved image's conversation is invalid.")
+    return source_thread_id
+
+
 def prepare_image_inspection(payload: dict[str, Any]) -> dict[str, Any]:
     thread_id = payload.get("threadId")
     filename = payload.get("image")
@@ -2122,7 +2197,7 @@ def prepare_image_inspection(payload: dict[str, Any]) -> dict[str, Any]:
     if model.get("format") == "gguf" and not gguf_runtime_supported():
         raise ValueError(RUNTIME_PLATFORM_ERROR)
     metadata = gallery_store.get_image_metadata(filename)
-    if not metadata or metadata.get("threadId") != thread_id or metadata.get("source") != "chat":
+    if not metadata or metadata.get("threadId") != chat_image_owner(thread_id, payload.get("imageThreadId")) or metadata.get("source") != "chat":
         raise ValueError("Choose a saved image from this conversation.")
     path = (OUTPUTS / filename).resolve()
     if path.parent != OUTPUTS.resolve() or not path.is_file():
@@ -2142,34 +2217,69 @@ def prepare_image_inspection(payload: dict[str, Any]) -> dict[str, Any]:
 
 def generate_chat_image(
     model: str, prompt: str, thread_id: str,
-    job_id: str, cancel_event: threading.Event,
+    job_id: str, cancel_event: threading.Event, settings: dict[str, Any] | None = None,
+    *, message_image: str | None = None, on_image: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     device = APPLE_GPU if model == APPLE_IMAGE_ID else "INTEL_GPU"
-    status = (
-        model_snapshot(device, model)
-        if model in INTEL_MEDIA_CATALOG or model == APPLE_IMAGE_ID else flux2.model_status(device, model)
-    )
+    extra_model = tame_pony.is_model(model) or custom_image.is_model(model) or model == QWEN_TURBO_MODEL_ID
+    status = model_snapshot(device, model)
+    while status.get("checking"):
+        if cancel_event.wait(0.15):
+            raise InterruptedError("Image generation cancelled.")
+        status = model_snapshot(device, model)
     if not status["runtimeReady"] or status["selectedDevice"] != device:
         raise RuntimeError(str(status["runtimeNote"]))
+    overrides = dict(settings or {})
+    suffix = overrides.pop("promptSuffix", "").strip()
+    if suffix:
+        separator = " " if prompt.endswith((".", "!", "?", ",")) else ", "
+        prompt = f"{prompt}{separator}{suffix}"
+    references = [chat_image_path(item) for item in overrides.pop("referenceImages", [])]
+    if overrides.pop("useMessageImage", False) and message_image:
+        references.insert(0, message_image)
     image_request = validate_flux_payload({
-        "model": model, "prompt": prompt, "width": CHAT_IMAGE_SIZE, "height": CHAT_IMAGE_SIZE,
-        "device": device, "steps": INTEL_MEDIA_CATALOG.get(model, {}).get("defaultSteps", 4),
-        "guidance": 1.0, "thread_id": thread_id,
+        "model": model, "prompt": prompt,
+        "width": status.get("defaultWidth", 1024) if extra_model else CHAT_IMAGE_SIZE,
+        "height": status.get("defaultHeight", 1024) if extra_model else CHAT_IMAGE_SIZE,
+        "device": device, "steps": status.get("defaultSteps", 8) if extra_model else INTEL_MEDIA_CATALOG.get(model, {}).get("defaultSteps", 4),
+        "guidance": status.get("defaultGuidance", 1.0) if extra_model else 1.0, "thread_id": thread_id,
         "seed": uuid.uuid4().int % 2_147_483_647,
+        "batch_size": overrides.pop("batchSize", 1),
+        "reference_images": [
+            "data:image/png;base64," + base64.b64encode(Path(source).read_bytes()).decode("ascii")
+            for source in dict.fromkeys(references)
+        ],
+        **overrides,
     })
     image_request["modelRevision"] = status["modelRevision"]
+    first_image = None
+
+    def publish_artifact(record: dict[str, Any]) -> None:
+        nonlocal first_image
+        artifact = chat_image_artifact(record)
+        if first_image is None:
+            first_image = artifact
+        if on_image is not None:
+            on_image(artifact)
+
     record = run_flux_generation(
         uuid.uuid4().hex, image_request, cancel_event,
         on_chat_progress=lambda message: append_text_event(job_id, phase=f"Generating image · {message}"),
+        on_chat_artifact=publish_artifact,
         chat_job_id=job_id,
     )
     if record is None:
         raise RuntimeError("The image tool did not return a saved image.")
+    return first_image if first_image is not None else chat_image_artifact(record)
+
+
+def chat_image_artifact(record: dict[str, Any]) -> dict[str, Any]:
     return {key: record[key] for key in ("name", "width", "height", "modelLabel", "prompt")}
 
 
-def recover_chat_image(thread_id: str, job_id: str) -> dict[str, Any] | None:
-    """Match a saved render to a pending chat request after a backend restart."""
+def recover_chat_images(thread_id: str, job_id: str) -> list[dict[str, Any]]:
+    """Match saved renders to a pending chat request after a backend restart."""
+    images = []
     for filename, metadata in gallery_store.metadata_snapshot().items():
         if (
             metadata.get("source") != "chat"
@@ -2179,8 +2289,11 @@ def recover_chat_image(thread_id: str, job_id: str) -> dict[str, Any] | None:
             continue
         path = (OUTPUTS / filename).resolve()
         if path.parent == OUTPUTS.resolve() and path.suffix.lower() == ".png" and path.is_file():
-            return {key: metadata[key] for key in ("name", "width", "height", "modelLabel", "prompt")}
-    return None
+            try:
+                images.append((path.stat().st_mtime_ns, chat_image_artifact(metadata)))
+            except FileNotFoundError:
+                continue
+    return [image for _, image in sorted(images, key=lambda item: item[0])]
 
 
 def delete_thread_assets(thread_id: str, legacy_names: list[str]) -> list[str]:
@@ -2228,10 +2341,10 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def read_json_body(self) -> dict[str, Any]:
+    def read_json_body(self, *, too_large: str = "Request is too large. Attach up to 4 images smaller than 10 MB each.") -> dict[str, Any]:
         length = int(self.headers.get("Content-Length", "0"))
         if length > 60 * 1024 * 1024:
-            raise ValueError("Request is too large. Attach up to 4 images smaller than 10 MB each.")
+            raise ValueError(too_large)
         if length <= 0:
             return {}
         payload = json.loads(self.rfile.read(length).decode("utf-8"))
@@ -2258,7 +2371,8 @@ class Handler(BaseHTTPRequestHandler):
             if not thread_id.startswith("text-thread-") or len(thread_id) > 100 or not job_id or len(job_id) > 100:
                 self.send_json(400, {"error": "The pending chat request could not be identified."})
             else:
-                self.send_json(200, {"image": recover_chat_image(thread_id, job_id)})
+                images = recover_chat_images(thread_id, job_id)
+                self.send_json(200, {"image": images[0] if images else None, "images": images})
             return
 
         if parsed.path == "/api/video/status":
@@ -2490,6 +2604,15 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(400, {"error": str(error)})
             return
 
+        if parsed.path == "/api/text/documents":
+            try:
+                payload = self.read_json_body(too_large="Choose a document up to 20 MB.")
+                document = store_document(DATA_DIR / "chat-documents", payload.get("name"), payload.get("content"))
+                self.send_json(201, {"document": document})
+            except Exception as error:
+                self.send_json(400, {"error": str(error)})
+            return
+
         if parsed.path in ("/api/text/models/import", "/api/text/models/remove"):
             try:
                 payload = self.read_json_body()
@@ -2543,7 +2666,7 @@ class Handler(BaseHTTPRequestHandler):
 
         if parsed.path == "/api/text/generate":
             try:
-                payload = self.read_json_body()
+                payload = self.read_json_body(too_large="The conversation exceeds Fern's 60 MB request limit.")
                 model_id = payload.get("modelId")
                 if not isinstance(model_id, str) or len(model_id) > 64:
                     raise ValueError("Select a text model first.")
@@ -2564,27 +2687,30 @@ class Handler(BaseHTTPRequestHandler):
                 gguf = model.get("format") == "gguf"
                 if apple_silicon() and not gguf:
                     raise ValueError("Choose a GGUF model on this Mac.")
-                message_limit = 300 if gguf else 100
-                if not isinstance(messages, list) or not 1 <= len(messages) <= message_limit:
-                    raise ValueError(f"A conversation must contain 1 to {message_limit} messages.")
+                if not isinstance(messages, list) or not messages:
+                    raise ValueError("The conversation must contain at least one message.")
+                if not gguf and len(messages) > 100:
+                    raise ValueError("This OpenVINO chat supports up to 100 messages per conversation.")
                 safe_messages = []
                 total_chars = 0
-                image_count = 0
                 generated_images = None
                 require_gpu_vision = False
                 for message in messages:
                     if not isinstance(message, dict) or message.get("role") not in ("user", "assistant"):
                         raise ValueError("The conversation contains an unsupported message.")
                     content = message.get("content")
-                    if not isinstance(content, str) or not content.strip() or len(content) > 20_000:
-                        raise ValueError("Each message must contain between 1 and 20,000 characters.")
+                    if not isinstance(content, str) or not content.strip():
+                        raise ValueError("Each message must contain text.")
+                    if not gguf and len(content) > 20_000:
+                        raise ValueError("OpenVINO messages must contain 20,000 characters or fewer.")
                     total_chars += len(content)
                     turn = {"role": message["role"], "content": content}
+                    image_owner = chat_image_owner(thread_id, message.get("imageThreadId"))
                     if message["role"] == "assistant" and isinstance(message.get("generatedImage"), str):
                         if generated_images is None:
                             generated_images = gallery_store.metadata_snapshot()
                         saved = generated_images.get(message["generatedImage"], {})
-                        if saved.get("threadId") == thread_id and saved.get("source") == "chat":
+                        if saved.get("threadId") == image_owner and saved.get("source") == "chat":
                             description = str(saved.get("prompt", ""))[:2000]
                             turn["content"] += "\n\nImage generated in this turn: " + description
                             total_chars += len(description)
@@ -2596,10 +2722,11 @@ class Handler(BaseHTTPRequestHandler):
                     if message.get("image") is not None:
                         if message["role"] != "user" or not model.get("supportsVision"):
                             raise ValueError("Choose a vision-capable GGUF model to use chat images.")
-                        image_count += 1
-                        if image_count > 8:
-                            raise ValueError("Start a new conversation to attach more than eight images.")
-                        turn["imagePath"] = chat_image_path(message["image"])
+                        try:
+                            turn["imagePath"] = chat_image_path(message["image"])
+                        except ValueError:
+                            if message is messages[-1]:
+                                raise
                     included_name = message.get("includedImage")
                     if included_name is not None:
                         if message["role"] != "user" or not model.get("supportsVision") or "imagePath" in turn:
@@ -2610,14 +2737,14 @@ class Handler(BaseHTTPRequestHandler):
                             generated_images = gallery_store.metadata_snapshot()
                         saved = generated_images.get(included_name, {})
                         path = (OUTPUTS / included_name).resolve()
-                        if saved.get("threadId") == thread_id and saved.get("source") == "chat" and path.parent == OUTPUTS.resolve() and path.is_file():
+                        if saved.get("threadId") == image_owner and saved.get("source") == "chat" and path.parent == OUTPUTS.resolve() and path.is_file():
                             turn["imagePath"] = str(path)
                         elif message is messages[-1]:
                             raise ValueError("The selected image is unavailable. Remove it from the draft or restore the file.")
                     safe_messages.append(turn)
                 if safe_messages[-1]["role"] != "user" or any(item["role"] != ("user" if index % 2 == 0 else "assistant") for index, item in enumerate(safe_messages)):
                     raise ValueError("The last conversation message must be from you.")
-                if total_chars > (200_000 if gguf else 80_000):
+                if not gguf and total_chars > 80_000:
                     raise ValueError("This conversation is too long. Start a new text thread to continue.")
                 system_prompt = payload.get("systemPrompt", "")
                 if not isinstance(system_prompt, str) or len(system_prompt) > 10_000:
@@ -2626,26 +2753,27 @@ class Handler(BaseHTTPRequestHandler):
                 if device not in ("AUTO", "GPU", "CPU"):
                     raise ValueError("Choose Auto, Intel GPU, or CPU.")
                 image_model = payload.get("imageModel")
+                image_settings = chat_image_overrides(payload.get("imageSettings"))
+                if image_model is None and image_settings:
+                    raise ValueError("Select an image generation model before setting image options.")
                 if image_model is not None:
                     if not (model.get("supportsTools") and model.get("supportsVision")):
                         raise ValueError("Select a vision-capable chat model with tool calling and its vision projector.")
                     if device == "CPU":
                         raise ValueError("Select GPU in Preferences to use the image tool in chat.")
-                    if (not isinstance(image_model, str) or image_model not in IMAGE_MODEL_PRIORITY
-                        or apple_silicon() != (image_model == APPLE_IMAGE_ID)
-                        or (image_model == APPLE_IMAGE_ID and not apple_image.device_available())
-                        or not any(
-                        item["id"] == image_model and item.get("installed") for item in MODEL_MANAGER.snapshot()
-                    )):
+                    if not isinstance(image_model, str) or not any(item["id"] == image_model for item in chat_image_catalog()):
                         raise ValueError("Select an installed image model in Chat settings.")
-                context_size = payload.get("contextSize", DEFAULT_CONTEXT_SIZE)
-                if type(context_size) is not int or context_size not in CONTEXT_SIZES:
-                    raise ValueError("Choose a context size of 4K, 8K, or 16K tokens.")
+                context_size = validate_context_size(payload.get("contextSize"), model.get("maxContextSize"))
+                load_options = validate_gguf_load_options(payload.get("loadOptions"), context_size)
+                if load_options and not gguf:
+                    raise ValueError("These load settings require a GGUF model.")
+                maximum_output = context_size if gguf else 8192
                 max_new_tokens = payload.get("maxNewTokens", 512)
-                if isinstance(max_new_tokens, bool) or not isinstance(max_new_tokens, int) or not 1 <= max_new_tokens <= 8192:
-                    raise ValueError("Maximum output length must be between 1 and 8,192 tokens.")
+                if type(max_new_tokens) is not int or not 1 <= max_new_tokens <= maximum_output:
+                    raise ValueError(f"Maximum output length must be between 1 and {maximum_output:,} tokens.")
                 temperature = payload.get("temperature", 0.7)
                 top_p = payload.get("topP", 0.9)
+                sampling = validate_text_sampling(payload.get("sampling"))
                 if isinstance(temperature, bool) or not isinstance(temperature, (int, float)) or not 0 <= temperature <= 2:
                     raise ValueError("Temperature must be between 0 and 2.")
                 if isinstance(top_p, bool) or not isinstance(top_p, (int, float)) or not 0.01 <= top_p <= 1:
@@ -2657,10 +2785,14 @@ class Handler(BaseHTTPRequestHandler):
                     "modelId": model_id, "device": device,
                     "messages": safe_messages, "systemPrompt": system_prompt.strip(),
                     "temperature": float(temperature), "topP": float(top_p),
+                    "sampling": sampling,
                     "maxNewTokens": max_new_tokens,
                     "seed": seed,
                     "mode": mode,
                     "threadId": thread_id, "imageModel": image_model, "contextSize": context_size,
+                    "imageSettings": image_settings,
+                    "loadOptions": load_options,
+                    "documentIds": document_ids(payload.get("documentIds")),
                     "requireGpuVision": require_gpu_vision or image_model in INTEL_MEDIA_CATALOG or image_model == APPLE_IMAGE_ID,
                 }
                 start_text_job(generation, payload.get("requestId"))

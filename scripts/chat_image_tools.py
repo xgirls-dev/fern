@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 from typing import Any
 
 
@@ -28,9 +29,42 @@ IMAGE_TOOL = {
 }
 
 
+def chat_image_overrides(settings: Any) -> dict[str, Any]:
+    if settings is None:
+        return {}
+    if not isinstance(settings, dict) or set(settings) - {
+        "width", "height", "steps", "guidance", "seed", "batchSize", "loras", "referenceImages", "useMessageImage", "promptSuffix",
+    }:
+        raise ValueError("Choose valid image settings for this chat.")
+    for key, value in settings.items():
+        if key == "promptSuffix":
+            if not isinstance(value, str) or len(value) > 2000:
+                raise ValueError("Image prompt additions must contain at most 2,000 characters.")
+        elif key == "loras":
+            if not isinstance(value, list) or len(value) > 4:
+                raise ValueError("Choose up to four image adapters.")
+        elif key == "referenceImages":
+            if not isinstance(value, list) or len(value) > 4 or any(not isinstance(name, str) for name in value):
+                raise ValueError("Choose up to four saved reference images.")
+        elif key == "useMessageImage":
+            if type(value) is not bool:
+                raise ValueError("Choose whether to use the image attached to the message.")
+        elif key == "batchSize":
+            if type(value) is not int or not 1 <= value <= 4:
+                raise ValueError("Choose between one and four images per render.")
+        elif key == "guidance":
+            if type(value) not in (int, float) or not 0 <= value <= 20 or not math.isfinite(value):
+                raise ValueError("Image guidance must be a valid number.")
+        elif type(value) is not int or not (0 if key == "seed" else 1) <= value <= 2_147_483_647:
+            raise ValueError(f"Image {key} must be a valid whole number.")
+    if len(settings.get("referenceImages", [])) + int(settings.get("useMessageImage", False)) > 4:
+        raise ValueError("Choose up to four reference images in total.")
+    return settings
+
+
 def image_tool_prompt(calls: list[dict[str, Any]]) -> str:
     if len(calls) != 1 or calls[0].get("type") != "function":
-        raise ValueError("Chat can generate one image per response. Try asking for one image.")
+        raise ValueError("Chat can start one image render per response. Set the batch size in Chat settings to generate more images.")
     function = calls[0]["function"]
     if function.get("name") != IMAGE_TOOL["function"]["name"]:
         raise ValueError("The chat model requested an unavailable tool.")

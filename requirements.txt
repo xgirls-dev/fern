@@ -13,6 +13,7 @@ huggingface-hub
 wheel
 python-decouple
 defusedxml
+pypdf==7.1.0
 # The OpenVINO NVIDIA plugin is built from openvino_contrib/modules/nvidia_plugin
 # against this OpenVINO runtime; it is intentionally not a pip-only dependency.
 

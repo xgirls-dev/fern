@@ -24,7 +24,7 @@ interface CommandPaletteProps {
   onOpenVideo: () => void;
   onStopVideo: () => void;
   textRunning: boolean;
-  threads: Array<{ id: string; title: string; updatedAt: number; archived?: boolean; excerpt?: string }>;
+  threads: Array<{ id: string; title: string; updatedAt: number; archived?: boolean; excerpt?: string; folderPath?: string }>;
   onOpenThread: (id: string) => void;
   onOpenThreadSearch: (query: string) => void;
   sidebarCollapsed: boolean;
@@ -195,7 +195,7 @@ export function CommandPalette({
   };
   const matchingCommands = actions.filter((action) => `${action.label} ${action.description}`.toLowerCase().includes(normalized));
   const recentThreads: PaletteAction[] = open ? threads
-    .filter((thread) => !thread.archived && `${thread.title} ${thread.excerpt ?? ""}`.toLowerCase().includes(normalized))
+    .filter((thread) => !thread.archived && `${thread.title} ${thread.folderPath ?? ""} ${thread.excerpt ?? ""}`.toLowerCase().includes(normalized))
     .sort((a, b) => b.updatedAt - a.updatedAt)
     .slice(0, normalized ? 20 : 6)
     .map((thread) => {
@@ -204,7 +204,7 @@ export function CommandPalette({
       const date = Number.isFinite(thread.updatedAt) ? new Date(thread.updatedAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "";
       const duplicate = threads.some((other) => other.id !== thread.id && !other.archived && other.title === thread.title);
       const excerpt = thread.excerpt?.trim().replace(/\s+/g, " ").slice(0, 90);
-      const description = [kind, duplicate && excerpt ? excerpt : date].filter(Boolean).join(" · ");
+      const description = [kind, thread.folderPath, duplicate && excerpt ? excerpt : date].filter(Boolean).join(" · ");
       const duplicateDate = duplicate && threads.some((other) => other.id !== thread.id && !other.archived &&
         other.title === thread.title && other.excerpt?.trim() === thread.excerpt?.trim() &&
         Math.floor(other.updatedAt / 60_000) === Math.floor(thread.updatedAt / 60_000));

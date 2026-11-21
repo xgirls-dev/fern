@@ -40,6 +40,7 @@ try {
   await button("New thread").click();
   await menuItem("Chat").click();
   await button("Chat settings").click();
+  await button("Image").click();
   await page.getByLabel("Image generation model", { exact: true }).selectOption(model.id);
   await button("Close chat settings").click();
   await page.getByRole("textbox", { name: "Message", exact: true }).fill("Make a picture of a fox");

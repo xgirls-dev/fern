@@ -1,5 +1,5 @@
 # macOS 15 arm64, Python 3.12. Regenerate with uv pip compile using
-# mflux==0.24.0, defusedxml==0.7.1, psutil==7.2.2, and certifi as inputs.
+# mflux==0.24.0, defusedxml==0.7.1, pypdf==7.1.0, psutil==7.2.2, and certifi as inputs.
 annotated-doc==0.0.7
 annotated-types==0.8.0
 anyio==4.16.0
@@ -41,6 +41,7 @@ psutil==7.2.2
 pydantic==2.14.4
 pydantic-core==2.50.5
 pygments==2.21.0
+pypdf==7.1.0
 pyparsing==3.3.3
 python-dateutil==4.0.0
 pyyaml==6.0.3

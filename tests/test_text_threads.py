@@ -9,7 +9,7 @@ import urllib.error
 import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 from http.server import ThreadingHTTPServer
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
@@ -131,6 +131,7 @@ for line in sys.stdin:
         event = threading.Event()
         call = {"id": "image-call", "type": "function", "function": {"name": "generate_image", "arguments": '{"prompt":"red teapot"}'}}
         image = {"name": "teapot.png", "width": 512, "height": 512}
+        image_settings = {"width": 768, "height": 512, "steps": 6, "guidance": 1, "seed": 19}
         metrics = {"device": "GPU", "text": "", "outputTokens": 8, "inputTokens": 12, "generationSeconds": 0.3}
         with patch.object(api, 'TEXT_MODEL_REGISTRY', self.registry), \
              patch.object(api.TEXT_GENERATION_WORKER, 'generate', side_effect=[
@@ -140,14 +141,15 @@ for line in sys.stdin:
              patch.object(api, 'generate_chat_image', return_value=image) as generate_image, \
              patch.dict(api.TEXT_JOB, {'id': 'test-tool', 'status': 'running', 'partialText': ''}, clear=True):
             api.run_text_generation({
-                "modelId": self.model["id"], "device": "AUTO", "imageModel": "4b-lora",
+                "modelId": self.model["id"], "device": "AUTO", "imageModel": "4b-lora", "imageSettings": image_settings,
                 "threadId": "text-thread-test", "messages": [{"role": "user", "content": "Draw a teapot."}],
                 "maxNewTokens": 512, "seed": 1, "temperature": 0, "topP": 0.9,
             }, "test-tool", event)
             self.assertEqual(api.TEXT_JOB["status"], "complete")
             self.assertEqual(api.TEXT_JOB["image"], image)
             self.assertEqual(api.TEXT_JOB["partialText"], "The image is ready.")
-            generate_image.assert_called_once_with("4b-lora", "red teapot", "text-thread-test", "test-tool", event)
+            generate_image.assert_called_once_with("4b-lora", "red teapot", "text-thread-test", "test-tool", event, image_settings,
+                                                   message_image=None, on_image=ANY)
             first, resumed = (item.kwargs["request"] for item in reply.call_args_list)
             self.assertEqual(first["tools"][0]["function"]["name"], "generate_image")
             self.assertEqual(resumed["toolChoice"], "none")
@@ -172,12 +174,13 @@ for line in sys.stdin:
              patch.object(api.TEXT_GENERATION_WORKER, "generate", return_value={"text": "A red circle."}) as inspect, \
              patch.object(api, "generate_chat_image") as render, \
              patch.dict(api.TEXT_JOB, {"id": "inspection", "status": "running"}, clear=True):
-            self.assertEqual(api.recover_chat_image(thread_id, "original"), image)
-            self.assertIsNone(api.recover_chat_image("text-thread-other", "original"))
+            self.assertEqual(api.recover_chat_images(thread_id, "original"), [image])
+            self.assertEqual(api.recover_chat_images("text-thread-other", "original"), [])
             attempt = {"threadId": thread_id, "image": "poster.png", "modelId": self.model["id"]}
             with self.assertRaisesRegex(ValueError, "saved image from this conversation"):
                 api.prepare_image_inspection({**attempt, "threadId": "text-thread-other"})
-            generation = api.prepare_image_inspection(attempt)
+            generation = api.prepare_image_inspection({**attempt, "threadId": "text-thread-fork", "imageThreadId": thread_id})
+            self.assertEqual(generation["threadId"], "text-thread-fork")
             api.run_text_generation(generation, "inspection", threading.Event())
             self.assertEqual(api.TEXT_JOB["status"], "complete")
             self.assertTrue(api.TEXT_JOB["result"]["visionChecked"])
@@ -201,6 +204,21 @@ for line in sys.stdin:
                 return error.code
         try:
             with patch.object(api, 'TEXT_MODEL_REGISTRY', self.registry), patch.object(api, 'run_text_generation'), patch.object(api, 'text_runtime_snapshot', return_value={}), patch.object(api, 'start_qwen_turbo_setup') as start_qwen_setup, patch.dict(api.TEXT_JOB, {'status': 'idle'}, clear=True), patch.dict(api.TTS_JOB, {'status': 'idle'}), patch.dict(api.FLUX_JOB, {'status': 'idle', 'output': None}), patch.dict(api.QWEN_JOB, {'status': 'idle'}):
+                gguf_model = {**self.model, "format": "gguf", "maxContextSize": 65_536, "installed": True}
+                long_turn = {"role": "user", "content": "long input " * 2_000}
+                history = [{"role": role, "content": "History"} for role in ("user", "assistant")]
+                with (
+                    patch.object(self.registry, "snapshot", return_value=[gguf_model]),
+                    patch.object(api, "gguf_runtime_supported", return_value=True),
+                    patch.object(api, "start_text_job") as start,
+                ):
+                    self.assertEqual(post(history * 160 + [long_turn], "long-gguf", contextSize=24_789, maxNewTokens=15_100), 202)
+                    payload = start.call_args.args[0]
+                    self.assertEqual(payload["contextSize"], 24_789)
+                    self.assertEqual(payload["maxNewTokens"], 15_100)
+                    self.assertEqual(payload["messages"][-1], long_turn)
+                    self.assertEqual(len(payload["messages"]), 321)
+                    self.assertEqual(post([long_turn], "oversized-output", contextSize=24_789, maxNewTokens=24_790), 400)
                 self.assertEqual(post([{'role': role, 'content': 'hi'} for role in ['user', 'user', 'assistant']], 'invalid'), 400)
                 self.assertEqual(post([{'role':'user','content':'hi'}], 'bad-seed', seed=-1), 400)
                 self.assertEqual(api.TEXT_JOB['status'], 'idle')
@@ -237,9 +255,9 @@ for line in sys.stdin:
         model = {**self.model, "supportsVision": True}
         library = {"selected.png": {"source": "chat", "threadId": thread_id}}
 
-        def submit(request_id, name, owner=thread_id):
+        def submit(request_id, name, owner=thread_id, source=None):
             payload = {"requestId": request_id, "threadId": owner, "modelId": model["id"],
-                       "messages": [{"role": "user", "content": "Describe the picture.", "includedImage": name}]}
+                       "messages": [{"role": "user", "content": "Describe the picture.", "includedImage": name, "imageThreadId": source}]}
             request = urllib.request.Request(
                 f"http://127.0.0.1:{server.server_port}/api/text/generate",
                 data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"},
@@ -258,7 +276,9 @@ for line in sys.stdin:
                     submit("wrong", path.name, "text-thread-another")
                 with self.assertRaisesRegex(urllib.error.HTTPError, "400"):
                     submit("path", "../selected.png")
-                with submit("valid", path.name) as response:
+                with self.assertRaisesRegex(urllib.error.HTTPError, "400"):
+                    submit("wrong-source", path.name, "text-thread-fork", "text-thread-another")
+                with submit("valid", path.name, "text-thread-fork", thread_id) as response:
                     self.assertEqual(response.status, 202)
                 self.assertEqual(generate.call_args.args[0]["messages"][0]["imagePath"], str(path.resolve()))
         finally:

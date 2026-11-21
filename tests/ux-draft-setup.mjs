@@ -61,7 +61,7 @@ try {
   assert.equal(state.payloads[0].model, klein.id);
 
   await page.locator(".sidebar-new-button").click();
-  await page.getByRole("menuitem", { name: /New text thread|Chat/ }).click();
+  await page.getByRole("menuitem", { name: "Chat", exact: true }).click();
   const message = page.getByRole("textbox", { name: "Message", exact: true });
   await message.fill(draft);
   await button("Set up images in chat").click();
@@ -76,6 +76,7 @@ try {
   await device.selectOption("CPU");
   await page.getByRole("button", { name: /Text thread: New text thread/ }).click();
   await button("Chat settings").click();
+  await button("Image").click();
   await button("Open compute settings").click();
   await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Generation device");
   await device.selectOption("GPU");

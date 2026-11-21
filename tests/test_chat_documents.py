@@ -1,0 +1,100 @@
+from __future__ import annotations
+
+import base64
+import io
+import sys
+import tempfile
+import unittest
+import zipfile
+from pathlib import Path
+
+from pypdf import PdfWriter
+from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+from chat_documents import add_document_context, document_ids, retrieve_passages, store_document
+
+
+def pdf_with_pages(*contents: str) -> bytes:
+    writer = PdfWriter()
+    for text in contents:
+        page = writer.add_blank_page(612, 792)
+        font = DictionaryObject({NameObject("/Type"): NameObject("/Font"), NameObject("/Subtype"): NameObject("/Type1"),
+                                 NameObject("/BaseFont"): NameObject("/Helvetica")})
+        page[NameObject("/Resources")] = DictionaryObject({NameObject("/Font"): DictionaryObject({NameObject("/F1"): font})})
+        stream = DecodedStreamObject()
+        stream.set_data(f"BT /F1 12 Tf 72 720 Td ({text}) Tj ET".encode("ascii"))
+        page.replace_contents(stream)
+    result = io.BytesIO()
+    writer.write(result)
+    return result.getvalue()
+
+
+def docx_with_text(text: str) -> bytes:
+    result = io.BytesIO()
+    with zipfile.ZipFile(result, "w") as archive:
+        archive.writestr("word/document.xml",
+                         '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+                         f"<w:body><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:body></w:document>")
+    return result.getvalue()
+
+
+class ChatDocumentTests(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name)
+
+    def attach(self, name, data):
+        document = store_document(self.root, name, base64.b64encode(data).decode("ascii"))
+        return document
+
+    def test_text_word_and_markdown_extract_and_duplicate_upload_is_idempotent(self):
+        candidates = [
+            ("Notes.txt", "The dial is copper.".encode("utf-16"), "dial is copper"),
+            ("Readme.md", b"## Beacon\nThe signal is amber.", "signal is amber"),
+            ("Guide.docx", docx_with_text("The call sign is Alder."), "call sign is Alder"),
+        ]
+        for name, bytes_, phrase in candidates:
+            with self.subTest(name=name):
+                document = self.attach(name, bytes_)
+                self.assertEqual(document, self.attach(name, bytes_))
+                passages = retrieve_passages(self.root, [document["id"]], [{"role": "user", "content": "Summarize"}], 8192)
+                self.assertIn(phrase, passages[0]["text"])
+        self.assertEqual(len(list(self.root.iterdir())), 3)
+
+    def test_long_pdf_retrieval_uses_current_and_prior_questions_and_page_labels(self):
+        padding = ["Generic receiving policies and warehouse labels. " * 25] * 26
+        relevant = "The Zircon intake code is ZY-4179. Its call coordinator is Mara Bell."
+        document = self.attach("Workshop.pdf", pdf_with_pages(*padding, relevant))
+        question = [
+            {"role": "user", "content": "What is the Zircon intake code?"},
+            {"role": "assistant", "content": "It is ZY-4179."},
+            {"role": "user", "content": "And who is the coordinator?"},
+        ]
+        passages = retrieve_passages(self.root, document_ids([document["id"]]), question, 4096)
+        self.assertEqual(passages[0]["location"], "Page 27")
+        self.assertIn("Mara Bell", passages[0]["text"])
+        def measure(turns):
+            return sum(len(turn["content"]) for turn in turns)
+        messages, sources, cost = add_document_context(question, passages, 790, measure, chars_per_unit=1)
+        self.assertEqual(messages[:2], question[:2])
+        self.assertIn("Mara Bell", messages[-1]["content"])
+        self.assertIn("as quoted data", messages[-1]["content"])
+        self.assertEqual(sources[0]["location"], "Page 27")
+        self.assertLessEqual(cost, 790)
+        self.assertEqual(question[-1]["content"], "And who is the coordinator?")
+
+    def test_bad_file_and_missing_document_errors_are_actionable(self):
+        for name, data, error in (
+            ("../../private.txt", b"text", "valid filename"),
+            ("bad.txt", b"\0\0\0", "readable text"),
+            ("bad.docx", b"broken file", "Word document"),
+            ("blank.pdf", pdf_with_pages(""), "selectable text"),
+        ):
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, error):
+                self.attach(name, data)
+        with self.assertRaisesRegex(ValueError, "saved documents"):
+            document_ids(["../not-a-document"])
+        with self.assertRaisesRegex(ValueError, "attached document is missing"):
+            retrieve_passages(self.root, ["doc-" + "a" * 64], [{"role": "user", "content": "Look up policy"}], 8192)

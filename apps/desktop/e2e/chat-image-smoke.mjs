@@ -46,7 +46,9 @@ try {
   await page.locator(".sidebar-new-menu > button").click();
   await page.getByRole("menuitem", { name: "Chat", exact: true }).click();
   await page.getByRole("button", { name: "Chat settings" }).click();
+  await page.getByRole("button", { name: "Image", exact: true }).click();
   await expect(page.getByRole("combobox", { name: "Image generation model" })).toHaveValue("auto");
+  await page.getByRole("button", { name: "Model", exact: true }).click();
   await page.getByLabel("Temperature", { exact: true }).press("Home");
   await page.getByRole("button", { name: "Close chat settings" }).click();
 

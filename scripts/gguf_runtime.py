@@ -21,7 +21,8 @@ from pathlib import Path
 from typing import Any, Callable
 
 from text_model_download import download_file
-from chat_context import DEFAULT_CONTEXT_SIZE, MAX_IMAGE_TOKENS, CompactedHistory, fit_context, recent_images
+from chat_context import DEFAULT_CONTEXT_SIZE, MAX_IMAGE_TOKENS, CompactedHistory, ContextBudgetError, fit_context, recent_images
+from chat_documents import add_document_context
 
 
 _BUILD = "b12498"
@@ -145,12 +146,13 @@ def ensure_runtime(root: Path, backend: str, progress: Callable[[str], None]) ->
 class GGUFServer:
     def __init__(
         self, executable: Path, model: Path, projector: Path | None, device: str, backend: str,
-        context_size: int = DEFAULT_CONTEXT_SIZE, *, gpu_projector: bool = False,
+        context_size: int = DEFAULT_CONTEXT_SIZE, *, gpu_projector: bool = False, load_options: dict[str, Any] | None = None,
     ):
         self.backend = backend
         self.device = device
         self.context_size = context_size
         self.gpu_projector = gpu_projector
+        self.load_options = load_options or {}
         self.history: dict[str, CompactedHistory] = {}
         self.process: subprocess.Popen[bytes] | None = None
         self.diagnostics = tempfile.TemporaryDirectory(prefix="fern-llama-")
@@ -176,6 +178,12 @@ class GGUFServer:
                 "--ctx-size", str(context_size), "--parallel", "1", "--reasoning-format", "deepseek",
                 "--jinja", "--no-context-shift",
             ]
+            for option, flag in (
+                ("flashAttention", "--flash-attn"), ("promptBatch", "--batch-size"), ("microBatch", "--ubatch-size"),
+                ("keyCacheType", "--cache-type-k"), ("valueCacheType", "--cache-type-v"),
+            ):
+                if option in self.load_options:
+                    command.extend((flag, str(self.load_options[option])))
             if projector:
                 command += ["--mmproj", str(projector), "--image-max-tokens", str(MAX_IMAGE_TOKENS)]
                 command.append("--mmproj-offload" if gpu_projector else "--no-mmproj-offload")
@@ -324,7 +332,11 @@ class GGUFServer:
         options: dict[str, Any] = {"chat_template_kwargs": {"enable_thinking": reasoning}}
         if request.get("tools"):
             options.update(tools=request["tools"], tool_choice=request.get("toolChoice", "auto"), parallel_tool_calls=False)
-        max_tokens = min(request["maxNewTokens"], self.context_size // 2)
+        requested_tokens = request["maxNewTokens"]
+        # Leave room for history when fitting it, and let longer responses use the
+        # remaining window once the prompt and any image overhead are measured.
+        reserved_tokens = min(requested_tokens, self.context_size // 2)
+        context_budget = self.context_size - 256
         history = recent_images(request["messages"])
         if system := request.get("systemPrompt", "").strip():
             history = [{"role": "system", "content": system}, *history]
@@ -334,18 +346,43 @@ class GGUFServer:
             emit({"type": "phase", "text": "Compacting earlier turns…"})
             return self._summarize(transcript)
 
-        history, memory = fit_context(
-            history, lambda turns: self._prompt_tokens(turns, options), compact,
-            self.context_size - max_tokens - 256,
-            previous=self.history.get(thread),
-            protected_tail=4 if request.get("toolChoice") == "none" else 1,
-        )
+        def prompt_tokens(turns: list[dict[str, Any]]) -> int:
+            return self._prompt_tokens(turns, options)
+
+        def fit(budget: int) -> tuple[list[dict[str, Any]], CompactedHistory | None]:
+            return fit_context(history, prompt_tokens, compact, budget,
+                               previous=self.history.get(thread),
+                               protected_tail=4 if request.get("toolChoice") == "none" else 1)
+
+        passages = request.get("documentPassages") or []
+        preferred_budget = context_budget - reserved_tokens
+        document_reserve = min(self.context_size // 4, 2048) if passages else 0
+        for budget in dict.fromkeys((preferred_budget - document_reserve, preferred_budget, context_budget - 1)):
+            try:
+                history, memory = fit(budget)
+                break
+            except ContextBudgetError:
+                if budget == context_budget - 1:
+                    raise
         if thread and memory is not None:
             self.history.pop(thread, None)
             self.history[thread] = memory
             if len(self.history) > 8:
                 self.history.pop(next(iter(self.history)))
 
+        document_sources = []
+        max_tokens = reserved_tokens
+        if passages:
+            fallback_budget = context_budget - min(128, reserved_tokens)
+            try:
+                history, document_sources, measured = add_document_context(history, passages, preferred_budget, prompt_tokens, chars_per_unit=4)
+            except ValueError:
+                if fallback_budget == preferred_budget:
+                    raise
+                history, document_sources, measured = add_document_context(history, passages, fallback_budget, prompt_tokens, chars_per_unit=4)
+            max_tokens = min(requested_tokens, context_budget - measured)
+        elif requested_tokens > reserved_tokens or budget > preferred_budget:
+            max_tokens = min(requested_tokens, context_budget - prompt_tokens(history))
         messages = []
         for message in history:
             content = message["content"]
@@ -359,6 +396,10 @@ class GGUFServer:
             "temperature": request["temperature"], "top_p": request["topP"], "seed": request["seed"],
             "stream": True, "stream_options": {"include_usage": True},
         }
+        sampling = request.get("sampling") or {}
+        for option, parameter in (("topK", "top_k"), ("minP", "min_p"), ("repeatPenalty", "repeat_penalty"), ("stopSequences", "stop")):
+            if option in sampling:
+                body[parameter] = sampling[option]
         text, thoughts = [], []
         calls = {}
         usage = {}
@@ -414,6 +455,8 @@ class GGUFServer:
             "text": "".join(text), "reasoning": "".join(thoughts),
             "toolCalls": list(calls.values()),
             "maxNewTokens": max_tokens,
+            "loadOptions": self.load_options,
+            **({"documentSources": document_sources} if document_sources else {}),
             "context": {
                 "size": self.context_size, "compactedMessages": memory.dropped if memory else 0,
                 "images": sum(bool(turn.get("imagePath")) for turn in history),

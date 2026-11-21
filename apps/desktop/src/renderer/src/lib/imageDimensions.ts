@@ -6,7 +6,9 @@ export function normalizeQwenDimension(value: number): number {
   return Math.max(256, Math.min(1920, Math.ceil(value / 32) * 32));
 }
 
-export function imageDimensionLimits(model: string | undefined, status?: ModelStatus | null) {
+export type ImageDimensionHints = Pick<ModelStatus, "dimensionMultiple" | "minimumDimension" | "maximumDimension">;
+
+export function imageDimensionLimits(model: string | undefined, status?: ImageDimensionHints | null) {
   const intel = fixedImagePreset(model);
   if (intel?.sizes) return { multiple: 16, minimum: intel.sizes[0], maximum: intel.sizes[intel.sizes.length - 1] };
   if (model === "kromoss-opd-dmd2") return { multiple: 16, minimum: 64, maximum: 4096 };

@@ -1,7 +1,33 @@
+import type { ChatImageModel, ChatImageSettings } from "./chatImageSettings";
+import { normalizeChatFolders, type ChatFolder } from "./chatFolders";
+import { normalizeChatDocuments, normalizeDocumentSources, type ChatDocument, type ChatDocumentSource } from "./chatDocuments";
+
 const KEY = "fern-text-threads:v1";
+const DEFAULT_CONTEXT_SIZE = 8192;
+export const MIN_CHAT_CONTEXT = 1024;
+export const MAX_CHAT_CONTEXT = 2_147_483_647;
+export const KV_CACHE_TYPES = ["f32", "f16", "bf16", "f8_e4m3", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"] as const;
+type CacheType = typeof KV_CACHE_TYPES[number];
+export interface GgufLoadOptions {
+  flashAttention?: "auto" | "on" | "off";
+  promptBatch?: number;
+  microBatch?: number;
+  keyCacheType?: CacheType;
+  valueCacheType?: CacheType;
+}
 
 export type TextDevice = "AUTO" | "GPU" | "CPU";
 export type TextMode = "instant" | "reasoning";
+export interface TextSamplingOverrides {
+  topK?: number;
+  minP?: number;
+  repeatPenalty?: number;
+  stopSequences?: string[];
+}
+export interface TextSamplingSettings extends Omit<TextSamplingOverrides, "stopSequences"> {
+  fixedSeed?: number;
+  stopText?: string;
+}
 export const isChatImage = (value: unknown): value is string =>
   typeof value === "string" && /^chat-image-[a-f0-9]{32}\.png$/.test(value);
 const isOutputImage = (value: unknown): value is string =>
@@ -29,7 +55,9 @@ export interface TextMessage {
   content: string;
   image?: string;
   includedImage?: string;
+  imageThreadId?: string;
   generatedImage?: GeneratedChatImage;
+  generatedImages?: GeneratedChatImage[];
   inspectionJobId?: string;
   reasoning?: string;
   createdAt: number;
@@ -50,14 +78,18 @@ export interface TextMessage {
     seed?: number;
     temperature?: number;
     topP?: number;
+    sampling?: TextSamplingOverrides;
+    loadOptions?: GgufLoadOptions;
     maxNewTokens?: number;
     visionChecked?: boolean;
+    documentSources?: ChatDocumentSource[];
     context?: { size: number; compactedMessages: number; images: number; imageNames?: string[] };
   };
 }
 export interface TextThread {
   id: string;
   title: string;
+  folderId?: string;
   renamed?: boolean;
   archived: boolean;
   updatedAt: number;
@@ -67,14 +99,34 @@ export interface TextThread {
   temperature: number;
   topP: number;
   maxNewTokens: number;
+  sampling?: TextSamplingSettings;
+  loadOptions?: GgufLoadOptions;
   draft: string;
   draftImage?: string;
   draftContextImage?: string;
+  documents?: ChatDocument[];
   mode: TextMode;
   imageModel: string;
+  imageRenderSettings?: Record<string, ChatImageSettings>;
   contextSize: number;
   messages: TextMessage[];
+  versions?: TextVersion[];
   pendingJobId?: string | null;
+}
+
+export interface TextVersion {
+  id: string;
+  label: string;
+  messages: TextMessage[];
+}
+
+export function snapshotTextVersion(messages: TextMessage[]): TextVersion {
+  const prompt = messages.filter((message) => message.role === "user").at(-1)?.content;
+  return {
+    id: crypto.randomUUID(),
+    label: prompt?.replace(/\s+/g, " ").trim().slice(0, 64) || "Previous conversation",
+    messages,
+  };
 }
 export interface TextModel {
   id: string;
@@ -86,6 +138,7 @@ export interface TextModel {
   supportsVision?: boolean;
   supportsReasoning?: boolean;
   supportsTools?: boolean;
+  maxContextSize?: number | null;
   installed: boolean;
   error?: string | null;
 }
@@ -98,6 +151,7 @@ export interface TextJob {
   partialText: string;
   partialReasoning?: string;
   image?: GeneratedChatImage | null;
+  images?: GeneratedChatImage[];
   inspection?: boolean;
   startedAt: number | null;
   finishedAt: number | null;
@@ -110,7 +164,7 @@ export interface TextRuntimeStatus {
   models: TextModel[];
   recommendedModels?: Array<{ id: string; name: string; repo: string; bytes: number; installed: boolean; format?: string }>;
   defaultModelId?: string;
-  imageToolModels?: Array<{ id: string; label: string }>;
+  imageToolModels?: ChatImageModel[];
   modelInstall?: { id: string | null; modelId?: string | null; status: "idle" | "downloading" | "preparing" | "complete" | "failed"; phase: string | null; error: string | null };
   runtimeAvailable: boolean;
   runtimeError: string | null;
@@ -121,7 +175,89 @@ export interface TextRuntimeStatus {
 }
 export interface TextThreadWorkspace {
   activeId: string;
+  secondaryId?: string;
+  activePane?: ChatPane;
+  splitPercent?: number;
   threads: TextThread[];
+  modelDefaults?: Record<string, TextModelDefaults>;
+  presets?: ChatPreset[];
+  folders?: readonly ChatFolder[];
+}
+
+export type ChatPane = "primary" | "secondary";
+
+export function visibleChatPane(workspace: TextThreadWorkspace): ChatPane {
+  return workspace.secondaryId && workspace.activePane === "secondary" ? "secondary" : "primary";
+}
+
+export function showChatThread(workspace: TextThreadWorkspace, id: string, pane?: ChatPane): TextThreadWorkspace {
+  if (!pane) {
+    if (id === workspace.activeId) return { ...workspace, activePane: "primary" };
+    if (id === workspace.secondaryId) return { ...workspace, activePane: "secondary" };
+    pane = visibleChatPane(workspace);
+  }
+  if (pane === "secondary" && id === workspace.activeId && !workspace.secondaryId) return workspace;
+  if (pane === "primary") {
+    return { ...workspace, activeId: id, activePane: pane,
+      secondaryId: id === workspace.secondaryId ? workspace.activeId : workspace.secondaryId };
+  }
+  return { ...workspace, secondaryId: id, activePane: pane,
+    activeId: workspace.activeId === id && workspace.secondaryId ? workspace.secondaryId : workspace.activeId };
+}
+
+export function compareChatThread(workspace: TextThreadWorkspace, id: string, pane: ChatPane): TextThreadWorkspace {
+  if (!workspace.secondaryId) {
+    if (id === workspace.activeId) return workspace;
+    if (pane === "primary") return { ...workspace, activeId: id, secondaryId: workspace.activeId, activePane: pane };
+  }
+  return showChatThread(workspace, id, pane);
+}
+
+export function closeChatPane(workspace: TextThreadWorkspace, pane: ChatPane): TextThreadWorkspace {
+  if (!workspace.secondaryId) return workspace;
+  return { ...workspace, activeId: pane === "primary" ? workspace.secondaryId : workspace.activeId,
+    secondaryId: undefined, activePane: "primary" };
+}
+
+export function normalizeChatSplit(percent: unknown): number {
+  return typeof percent === "number" && Number.isFinite(percent) ? Math.round(Math.min(65, Math.max(35, percent))) : 50;
+}
+
+export type TextModelDefaults = Pick<TextThread, "contextSize" | "temperature" | "topP" | "maxNewTokens" | "sampling" | "loadOptions">;
+export type ChatPresetSettings = Pick<TextThread, "systemPrompt" | "temperature" | "topP" | "maxNewTokens" | "sampling">;
+export interface ChatPreset {
+  id: string;
+  name: string;
+  settings: ChatPresetSettings;
+}
+
+export function chatPresetSettings(settings: Partial<ChatPresetSettings>): ChatPresetSettings {
+  const { temperature, topP, maxNewTokens, sampling } = modelDefaultsFromThread(settings);
+  return {
+    systemPrompt: typeof settings.systemPrompt === "string" ? settings.systemPrompt.slice(0, 10_000) : "",
+    temperature, topP, maxNewTokens, sampling,
+  };
+}
+
+const hasNumber = (value: unknown, min: number, max: number, integer = false): value is number =>
+  typeof value === "number" && Number.isFinite(value) && value >= min && value <= max && (!integer || Number.isInteger(value));
+
+export function modelDefaultsFromThread(settings: Partial<TextModelDefaults>): TextModelDefaults {
+  const { contextSize, temperature, topP, maxNewTokens, sampling, loadOptions } = settings;
+  return {
+    contextSize: hasNumber(contextSize, MIN_CHAT_CONTEXT, MAX_CHAT_CONTEXT, true) ? contextSize : DEFAULT_CONTEXT_SIZE,
+    temperature: hasNumber(temperature, 0, 2) ? temperature : 0.7,
+    topP: hasNumber(topP, 0.01, 1) ? topP : 0.9,
+    maxNewTokens: hasNumber(maxNewTokens, 1, MAX_CHAT_CONTEXT, true) ? maxNewTokens : 512,
+    sampling: sampling && typeof sampling === "object" ? {
+      topK: hasNumber(sampling.topK, 0, MAX_CHAT_CONTEXT, true) ? sampling.topK : undefined,
+      minP: hasNumber(sampling.minP, 0, 0.999999) ? sampling.minP : undefined,
+      repeatPenalty: hasNumber(sampling.repeatPenalty, 0.001, 3.402823466e38) ? sampling.repeatPenalty : undefined,
+      fixedSeed: hasNumber(sampling.fixedSeed, 0, MAX_CHAT_CONTEXT, true) ? sampling.fixedSeed : undefined,
+      stopText: typeof sampling.stopText === "string" ? sampling.stopText.slice(0, 8192) : undefined,
+    } : undefined,
+    loadOptions: loadOptions && typeof loadOptions === "object" ? ggufLoadOptions(loadOptions, MAX_CHAT_CONTEXT) : undefined,
+  };
 }
 
 export function textRuntimeIssue(status: TextRuntimeStatus, model: TextModel | undefined): string | null {
@@ -131,6 +267,37 @@ export function textRuntimeIssue(status: TextRuntimeStatus, model: TextModel | u
       : null;
   }
   return status.runtimeAvailable ? null : status.runtimeError ?? "The OpenVINO text runtime is unavailable.";
+}
+
+export function chatTokenLimits(thread: TextThread, model?: TextModel) {
+  const contextMaximum = Math.min(model?.maxContextSize || MAX_CHAT_CONTEXT, MAX_CHAT_CONTEXT);
+  const contextSize = Math.min(thread.contextSize, contextMaximum);
+  const outputMaximum = model?.format === "gguf" ? contextSize : 8192;
+  return {
+    contextSize, contextMaximum, contextMinimum: Math.min(MIN_CHAT_CONTEXT, contextMaximum),
+    maxNewTokens: Math.min(thread.maxNewTokens, outputMaximum), outputMaximum,
+  };
+}
+
+export function textSamplingOverrides(settings?: TextSamplingSettings): TextSamplingOverrides {
+  if (!settings) return {};
+  const { topK, minP, repeatPenalty, stopText } = settings;
+  const stopSequences = stopText?.split(/\r?\n/).filter((line) => line.trim().length);
+  return { topK, minP, repeatPenalty, ...(stopSequences?.length ? { stopSequences } : {}) };
+}
+
+export function ggufLoadOptions(options: GgufLoadOptions | undefined, contextSize: number): GgufLoadOptions {
+  if (!options) return {};
+  const { flashAttention, promptBatch, microBatch, keyCacheType, valueCacheType } = options;
+  const batch = hasNumber(promptBatch, 1, MAX_CHAT_CONTEXT, true) ? Math.min(promptBatch, contextSize) : undefined;
+  return {
+    flashAttention: flashAttention === "on" || flashAttention === "off" || flashAttention === "auto" ? flashAttention : undefined,
+    promptBatch: batch,
+    microBatch: hasNumber(microBatch, 1, MAX_CHAT_CONTEXT, true)
+      ? Math.min(microBatch, batch ?? Math.min(2048, contextSize)) : undefined,
+    keyCacheType: keyCacheType && KV_CACHE_TYPES.includes(keyCacheType) ? keyCacheType : undefined,
+    valueCacheType: valueCacheType && KV_CACHE_TYPES.includes(valueCacheType) ? valueCacheType : undefined,
+  };
 }
 
 export function createTextThread(): TextThread {
@@ -148,7 +315,7 @@ export function createTextThread(): TextThread {
     draft: "",
     mode: "instant",
     imageModel: "auto",
-    contextSize: 8192,
+    contextSize: DEFAULT_CONTEXT_SIZE,
     messages: [],
   };
 }
@@ -160,43 +327,74 @@ function validThread(value: unknown): value is TextThread {
     && typeof thread.title === "string" && Array.isArray(thread.messages);
 }
 
+function normalizeTextMessages(messages: TextMessage[]): TextMessage[] {
+  return messages.filter((message) => message && ["user", "assistant"].includes(message.role) && typeof message.content === "string").map((message) => ({
+    ...message,
+    id: typeof message.id === "string" ? message.id : `message-${crypto.randomUUID()}`,
+    createdAt: Number.isFinite(message.createdAt) ? message.createdAt : Date.now(),
+    error: typeof message.error === "string" ? message.error : null,
+    errorCode: typeof message.errorCode === "string" ? message.errorCode : null,
+    modelName: typeof message.modelName === "string" ? message.modelName : undefined,
+    image: message.role === "user" && isChatImage(message.image) ? message.image : undefined,
+    includedImage: message.role === "user" && isOutputImage(message.includedImage) ? message.includedImage : undefined,
+    imageThreadId: typeof message.imageThreadId === "string" && message.imageThreadId.startsWith("text-thread-") && message.imageThreadId.length <= 100
+      ? message.imageThreadId : undefined,
+    generatedImage: message.role === "assistant" && isGeneratedChatImage(message.generatedImage) ? message.generatedImage : undefined,
+    generatedImages: message.role === "assistant" && Array.isArray(message.generatedImages)
+      ? message.generatedImages.filter(isGeneratedChatImage).slice(0, 4) : undefined,
+    inspectionJobId: typeof message.inspectionJobId === "string" ? message.inspectionJobId : undefined,
+    reasoning: message.role === "assistant" && typeof message.reasoning === "string" ? message.reasoning : undefined,
+    metrics: message.metrics && [message.metrics.inputTokens, message.metrics.outputTokens, message.metrics.generationSeconds, message.metrics.tokensPerSecond].every((value) => typeof value === "number" && Number.isFinite(value) && value >= 0)
+      ? { ...message.metrics, documentSources: normalizeDocumentSources(message.metrics.documentSources) } : undefined,
+  }));
+}
+
 export function loadTextThreads(): TextThreadWorkspace {
   try {
     const saved = JSON.parse(localStorage.getItem(KEY) ?? "null") as Partial<TextThreadWorkspace> | null;
+    const folders = normalizeChatFolders(saved?.folders);
+    const folderIds = new Set(folders.map(({ id }) => id));
     const threads = (Array.isArray(saved?.threads) ? saved.threads : []).filter(validThread).map((thread): TextThread => ({
       ...createTextThread(),
       ...thread,
+      folderId: thread.folderId && folderIds.has(thread.folderId) ? thread.folderId : undefined,
       archived: thread.archived === true,
       updatedAt: Number.isFinite(thread.updatedAt) ? thread.updatedAt : Date.now(),
       draft: typeof thread.draft === "string" ? thread.draft : "",
       draftImage: isChatImage(thread.draftImage) ? thread.draftImage : undefined,
       draftContextImage: isOutputImage(thread.draftContextImage) ? thread.draftContextImage : undefined,
+      documents: normalizeChatDocuments(thread.documents),
       mode: thread.mode === "reasoning" ? "reasoning" : "instant",
       imageModel: typeof thread.imageModel === "string" ? thread.imageModel : "auto",
-      contextSize: [4096, 8192, 16384].includes(thread.contextSize) ? thread.contextSize : 8192,
       systemPrompt: typeof thread.systemPrompt === "string" ? thread.systemPrompt : "",
       modelId: typeof thread.modelId === "string" ? thread.modelId : null,
       pendingJobId: typeof thread.pendingJobId === "string" ? thread.pendingJobId : null,
       device: (["AUTO", "GPU", "CPU"].includes(thread.device) ? thread.device : "AUTO") as TextDevice,
-      temperature: typeof thread.temperature === "number" && thread.temperature >= 0 && thread.temperature <= 2 ? thread.temperature : 0.7,
-      topP: typeof thread.topP === "number" && thread.topP > 0 && thread.topP <= 1 ? thread.topP : 0.9,
-      maxNewTokens: Number.isInteger(thread.maxNewTokens) && thread.maxNewTokens! >= 1 && thread.maxNewTokens! <= 8192 ? thread.maxNewTokens : 512,
-      messages: thread.messages.filter((message) => message && ["user", "assistant"].includes(message.role) && typeof message.content === "string").map((message) => ({
-        ...message,
-        id: typeof message.id === "string" ? message.id : `message-${crypto.randomUUID()}`,
-        createdAt: Number.isFinite(message.createdAt) ? message.createdAt : Date.now(),
-        error: typeof message.error === "string" ? message.error : null,
-        errorCode: typeof message.errorCode === "string" ? message.errorCode : null,
-        modelName: typeof message.modelName === "string" ? message.modelName : undefined,
-        image: message.role === "user" && isChatImage(message.image) ? message.image : undefined,
-        includedImage: message.role === "user" && isOutputImage(message.includedImage) ? message.includedImage : undefined,
-        generatedImage: message.role === "assistant" && isGeneratedChatImage(message.generatedImage) ? message.generatedImage : undefined,
-        inspectionJobId: typeof message.inspectionJobId === "string" ? message.inspectionJobId : undefined,
-        reasoning: message.role === "assistant" && typeof message.reasoning === "string" ? message.reasoning : undefined,
-        metrics: message.metrics && [message.metrics.inputTokens, message.metrics.outputTokens, message.metrics.generationSeconds, message.metrics.tokensPerSecond].every((value) => typeof value === "number" && Number.isFinite(value) && value >= 0) ? message.metrics : undefined,
-      })),
+      ...modelDefaultsFromThread(thread),
+      messages: normalizeTextMessages(thread.messages),
+      versions: Array.isArray(thread.versions) ? thread.versions.filter((version) => version && typeof version.id === "string"
+        && typeof version.label === "string" && Array.isArray(version.messages)).map((version) => ({
+          id: version.id, label: version.label, messages: normalizeTextMessages(version.messages),
+        })).filter((version) => version.messages.length > 0) : undefined,
     }));
-    if (threads.length) return { activeId: threads.some((thread) => thread.id === saved?.activeId) ? saved!.activeId! : threads[0].id, threads };
+    if (threads.length) {
+      const activeId = threads.find((thread) => thread.id === saved?.activeId)?.id ?? threads[0].id;
+      const secondaryId = threads.find((thread) => thread.id !== activeId && thread.id === saved?.secondaryId)?.id;
+      return {
+        activeId, secondaryId, activePane: secondaryId && saved?.activePane === "secondary" ? "secondary" : "primary",
+        splitPercent: normalizeChatSplit(saved?.splitPercent),
+        threads,
+        folders,
+        presets: Array.isArray(saved?.presets) ? saved.presets.filter((entry) =>
+          entry && typeof entry.id === "string" && typeof entry.name === "string" && entry.name.trim()
+          && entry.settings && typeof entry.settings === "object"
+        ).map(({ id, name, settings }) => ({ id, name: name.trim().slice(0, 80), settings: chatPresetSettings(settings) })) : undefined,
+        modelDefaults: saved?.modelDefaults && typeof saved.modelDefaults === "object" && !Array.isArray(saved.modelDefaults)
+          ? Object.fromEntries(Object.entries(saved.modelDefaults).filter(([, settings]) => settings && typeof settings === "object")
+            .map(([id, settings]) => [id, modelDefaultsFromThread(settings)]))
+          : undefined,
+      };
+    }
   } catch {
     // Ignore unreadable browser storage and open a clean conversation.
   }

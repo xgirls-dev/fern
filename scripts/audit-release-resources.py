@@ -23,7 +23,7 @@ ALLOWED_BACKEND = {
     'qwen21_turbo_download.py', 'qwen21_turbo_model_catalog.json',
     'tts_model_download.py', 'tts_model_catalog.json', 'requirements-qwen3-tts-runtime.txt',
     'text_generation_worker.py', 'text_generation_process.py', 'text_model_registry.py',
-    'text_model_download.py', 'text_model_catalog.json', 'gguf_metadata.py', 'gguf_runtime.py', 'chat_image_tools.py', 'chat_context.py',
+    'text_model_download.py', 'text_model_catalog.json', 'gguf_metadata.py', 'gguf_runtime.py', 'chat_image_tools.py', 'chat_context.py', 'chat_documents.py',
     'requirements-qwen21-turbo-export.txt', 'requirements-qwen21-turbo-overlay.txt',
     'install-qwen3-tts.ps1', 'gallery_store.py', 'generation_worker.py',
     'storage_manager.py', 'bootstrap_install.py',

@@ -6,16 +6,24 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from chat_image_tools import CHAT_IMAGE_SIZE, image_tool_prompt
+from chat_image_tools import CHAT_IMAGE_SIZE, chat_image_overrides, image_tool_prompt
 
 
 class ChatImageToolTests(unittest.TestCase):
     def call(self, name="generate_image", **args):
         return [{"id": "call", "type": "function", "function": {"name": name, "arguments": json.dumps(args)}}]
 
-    def test_chat_has_a_fixed_render_size(self):
+    def test_chat_has_a_default_render_size(self):
         self.assertEqual(CHAT_IMAGE_SIZE, 512)
         self.assertEqual(image_tool_prompt(self.call(prompt="  Red teapot  ")), "Red teapot")
+
+    def test_prompt_additions_are_supplied_by_chat_settings(self):
+        self.assertEqual(chat_image_overrides({"promptSuffix": "Watercolor"}), {"promptSuffix": "Watercolor"})
+        for value in (42, "x" * 2001):
+            with self.assertRaises(ValueError):
+                chat_image_overrides({"promptSuffix": value})
+        with self.assertRaises(ValueError):
+            image_tool_prompt(self.call(prompt="Red teapot", promptSuffix="Watercolor"))
 
     def test_rejects_multiple_unknown_or_oversized_calls(self):
         for calls in (self.call(name="run_command", prompt="text"),

@@ -9,14 +9,30 @@ import {
   startTextGeneration,
   stopTextGeneration,
   uploadChatImage,
+  uploadChatDocument,
 } from "../lib/api";
 import { readReference } from "../lib/reference";
+import { chatImageErrors, chatImageSettings } from "../lib/chatImageSettings";
+import { EMPTY_CHAT_FOLDERS, organizeChats, revealChatFolder, type ChatOrganizationAction } from "../lib/chatFolders";
+import { isChatDocument, MAX_CHAT_DOCUMENTS, validateChatDocument } from "../lib/chatDocuments";
 import {
+  chatTokenLimits,
+  closeChatPane,
+  compareChatThread,
   createTextThread,
+  ggufLoadOptions,
   isChatImage,
   loadTextThreads,
+  modelDefaultsFromThread,
+  normalizeChatSplit,
+  chatPresetSettings,
   saveTextThreads,
+  showChatThread,
+  snapshotTextVersion,
   textRuntimeIssue,
+  textSamplingOverrides,
+  visibleChatPane,
+  type ChatPane,
   type TextDevice,
   type TextMessage,
   type TextRuntimeStatus,
@@ -38,21 +54,30 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
   const [statusLoaded, setStatusLoaded] = useState(false);
   const [modelAction, setModelAction] = useState<string | null>(null);
   const [attachingImage, setAttachingImage] = useState(false);
+  const [attachingDocument, setAttachingDocument] = useState(false);
+  const documentUpload = useRef(false);
   const modelActionRef = useRef(false);
   const [statusError, setStatusError] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionError, setError] = useState<{ message: string; threadId?: string } | null>(null);
+  const setActionError = useCallback((message: string | null, threadId?: string) => {
+    setError(message ? { message, threadId } : null);
+  }, []);
   const [refreshKey, setRefreshKey] = useState(0);
   const sending = useRef(false);
   const pollVersion = useRef(0);
   const polling = useRef(false);
   const recovering = useRef(new Set<string>());
   const [submitting, setSubmitting] = useState(false);
-  const activeThread = useMemo(
-    () => workspace.threads.find((thread) => thread.id === workspace.activeId) ?? workspace.threads[0]!,
+  const primaryThread = useMemo(
+    () => workspace.threads.find((thread) => thread.id === workspace.activeId) ?? workspace.threads[0],
     [workspace],
   );
+  const secondaryThread = workspace.threads.find((thread) => thread.id === workspace.secondaryId);
+  const activePane = visibleChatPane(workspace);
+  const activeThread = activePane === "secondary" && secondaryThread ? secondaryThread : primaryThread;
+  const getThread = useCallback((id: string) => workspaceRef.current.threads.find((thread) => thread.id === id), []);
   const threads = workspace.threads;
-  const busy = !!modelAction || attachingImage || submitting || status.job.status === "running" || ["downloading", "preparing"].includes(status.modelInstall?.status ?? "") || threads.some((thread) => !!thread.pendingJobId);
+  const busy = !!modelAction || attachingImage || attachingDocument || submitting || status.job.status === "running" || ["downloading", "preparing"].includes(status.modelInstall?.status ?? "") || threads.some((thread) => !!thread.pendingJobId);
 
   useEffect(() => {
     persistPendingRef.current = true;
@@ -68,7 +93,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     };
     window.addEventListener("pagehide", flush);
     return () => { window.clearTimeout(timer); window.removeEventListener("pagehide", flush); };
-  }, [workspace]);
+  }, [workspace, setActionError]);
 
   const refresh = useCallback(async () => {
     if (!ready || polling.current || sending.current) return;
@@ -102,6 +127,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
       status: job.status as "complete" | "failed" | "stopped", error: job.error, errorCode: job.errorCode,
       reasoning: job.partialReasoning || undefined,
       generatedImage: job.image ?? undefined,
+      generatedImages: job.images?.length ? job.images : undefined,
       modelName: job.result?.modelName ?? status.models.find((model) => model.id === job.modelId)?.name ?? "Unavailable model",
       createdAt: job.finishedAt ? job.finishedAt * 1000 : Date.now(),
       metrics: job.result ?? undefined,
@@ -131,10 +157,10 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     for (const { id, pendingJobId: jobId } of workspaceRef.current.threads) {
       if (!jobId || jobId === status.job.id || recovering.current.has(jobId)) continue;
       recovering.current.add(jobId);
-      void recoverChatImage(id, jobId).then(({ image }) => {
+      void recoverChatImage(id, jobId).then(({ image, images }) => {
         const response: TextMessage = {
           id: `response-${jobId}`, jobId, role: "assistant", content: "",
-          createdAt: Date.now(), status: "failed", generatedImage: image ?? undefined,
+          createdAt: Date.now(), status: "failed", generatedImage: image ?? undefined, generatedImages: images?.length ? images : undefined,
           error: image ? "The image was saved before the backend restarted." : "The backend restarted before this response was saved. Retry the response.",
         };
         setWorkspace((current) => ({
@@ -166,25 +192,96 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     }));
   }, []);
 
-  const newThread = useCallback(() => {
-    const untouched = workspaceRef.current.threads.find((thread) => !thread.archived && !thread.renamed &&
+  const organize = useCallback((action: ChatOrganizationAction) => {
+    setWorkspace((current) => organizeChats(current, action));
+  }, []);
+
+  const newThread = useCallback((requestedFolder?: string, comparisonPane?: ChatPane) => {
+    const current = workspaceRef.current;
+    const folders = current.folders ?? EMPTY_CHAT_FOLDERS;
+    const folderId = folders.some((folder) => folder.id === requestedFolder) ? requestedFolder : undefined;
+    const model = status.models.find((item) => item.installed && item.id === status.defaultModelId)
+      ?? status.models.find((item) => item.installed);
+    const untouched = current.threads.find((thread) =>
+      (!(comparisonPane || current.secondaryId) || (thread.id !== current.activeId && thread.id !== current.secondaryId)) &&
+      thread.folderId === folderId && !thread.archived && !thread.renamed &&
       !thread.messages.length && !thread.draft && !thread.draftImage && !thread.draftContextImage && !thread.pendingJobId && !thread.systemPrompt &&
-      thread.title === "New text thread");
+      !thread.documents?.length &&
+      !thread.modelId && !thread.sampling && !thread.loadOptions && !thread.imageRenderSettings && thread.title === "New text thread"
+      && thread.contextSize === 8192 && thread.temperature === 0.7 && thread.topP === 0.9 && thread.maxNewTokens === 512);
+    const defaults = model ? current.modelDefaults?.[model.id] : undefined;
+    const place = (state: typeof current, id: string) =>
+      comparisonPane ? compareChatThread(state, id, comparisonPane) : showChatThread(state, id);
     if (untouched) {
-      setWorkspace((current) => current.activeId === untouched.id ? current : { ...current, activeId: untouched.id });
+      setWorkspace((current) => ({
+        ...place(current, untouched.id), folders: revealChatFolder(current.folders ?? EMPTY_CHAT_FOLDERS, folderId),
+        threads: defaults && model
+          ? current.threads.map((item) => item.id === untouched.id ? { ...item, ...defaults, modelId: model.id } : item)
+          : current.threads,
+      }));
       setActionError(null);
       return untouched.id;
     }
-    const thread = createTextThread();
-    setWorkspace((current) => ({ activeId: thread.id, threads: [thread, ...current.threads] }));
+    const thread = { ...createTextThread(), ...defaults, folderId, ...(defaults && model ? { modelId: model.id } : {}) };
+    setWorkspace((current) => ({
+      ...place(current, thread.id), threads: [thread, ...current.threads],
+      folders: revealChatFolder(current.folders ?? EMPTY_CHAT_FOLDERS, folderId),
+    }));
     setActionError(null);
     return thread.id;
-  }, []);
+  }, [status.defaultModelId, status.models, setActionError]);
 
   const selectThread = useCallback((id: string) => {
-    setWorkspace((current) => current.threads.some((thread) => thread.id === id) ? { ...current, activeId: id } : current);
+    setWorkspace((current) => {
+      const thread = current.threads.find((item) => item.id === id);
+      return thread ? { ...showChatThread(current, id),
+        folders: revealChatFolder(current.folders ?? EMPTY_CHAT_FOLDERS, thread.folderId) } : current;
+    });
     setActionError(null);
+  }, [setActionError]);
+
+  const compareThread = useCallback((id: string, pane: ChatPane) => {
+    setWorkspace((current) => {
+      const thread = current.threads.find((item) => item.id === id);
+      return thread ? { ...compareChatThread(current, id, pane),
+        folders: revealChatFolder(current.folders ?? EMPTY_CHAT_FOLDERS, thread.folderId) } : current;
+    });
   }, []);
+
+  const focusPane = useCallback((pane: ChatPane) => {
+    setWorkspace((current) => visibleChatPane(current) === pane || (pane === "secondary" && !current.secondaryId)
+      ? current : { ...current, activePane: pane });
+  }, []);
+
+  const closePane = useCallback((pane: ChatPane) => setWorkspace((current) => closeChatPane(current, pane)), []);
+  const resizePanes = useCallback((percent: number) => setWorkspace((current) => ({
+    ...current, splitPercent: normalizeChatSplit(percent),
+  })), []);
+
+  const forkThread = (threadId: string, messageId?: string) => {
+    const activeThread = getThread(threadId);
+    if (busy || sending.current || !activeThread?.messages.length) return;
+    const index = messageId === undefined ? activeThread.messages.length - 1
+      : activeThread.messages.findIndex((message) => message.id === messageId);
+    if (index < 0) return;
+    const messages = activeThread.messages.slice(0, index + 1).map((message) => ({
+      ...message, id: crypto.randomUUID(),
+      imageThreadId: message.generatedImage || message.generatedImages?.length || message.includedImage
+        ? message.imageThreadId ?? activeThread.id : undefined,
+    }));
+    const thread: TextThread = {
+      ...activeThread, id: createTextThread().id, updatedAt: Date.now(), archived: false, renamed: true,
+      title: activeThread.title.slice(0, 72) + (messageId ? " (fork)" : " (copy)"),
+      messages, draft: "", draftImage: undefined, draftContextImage: undefined, pendingJobId: null, versions: undefined,
+    };
+    setWorkspace((current) => ({
+      ...showChatThread(current, thread.id, current.secondaryId === threadId ? "secondary" : "primary"),
+      threads: [thread, ...current.threads],
+      folders: revealChatFolder(current.folders ?? EMPTY_CHAT_FOLDERS, thread.folderId),
+    }));
+    setActionError(null);
+    return thread.id;
+  };
 
   const resetWorkspace = useCallback(() => {
     const thread = createTextThread();
@@ -194,7 +291,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     setRefreshKey((value) => value + 1);
     setWorkspace({ activeId: thread.id, threads: [thread] });
     setActionError(null);
-  }, []);
+  }, [setActionError]);
 
   const renameThread = useCallback((id: string, title: string) => {
     const clean = title.trim().replace(/\s+/g, " ").slice(0, 80);
@@ -205,18 +302,20 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
 
   const deleteThread = useCallback((id: string) => {
     if (workspace.threads.some((thread) => thread.id === id && thread.pendingJobId) || (busy && status.job.threadId === id)) {
-      setActionError("Stop the response before deleting this text thread.");
+      setActionError("Stop the response before deleting this text thread.", id);
       return;
     }
     setWorkspace((current) => {
       const remaining = current.threads.filter((thread) => thread.id !== id);
       if (!remaining.length) {
         const fresh = createTextThread();
-        return { activeId: fresh.id, threads: [fresh] };
+        return { ...current, activeId: fresh.id, secondaryId: undefined, activePane: "primary", threads: [fresh] };
       }
-      return { activeId: current.activeId === id ? remaining[0].id : current.activeId, threads: remaining };
+      if (current.secondaryId && (current.activeId === id || current.secondaryId === id))
+        return { ...closeChatPane(current, current.activeId === id ? "primary" : "secondary"), threads: remaining };
+      return { ...current, activeId: current.activeId === id ? remaining[0].id : current.activeId, threads: remaining };
     });
-  }, [busy, status.job.threadId, workspace.threads]);
+  }, [busy, status.job.threadId, workspace.threads, setActionError]);
 
   const importModel = useCallback(async (format: "openvino" | "gguf" = "openvino") => {
     if (modelActionRef.current) return;
@@ -237,10 +336,11 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     }
   }, []);
 
-  const attachImage = useCallback(async (file: File) => {
+  const attachImage = useCallback(async (threadId: string, file: File) => {
+    const activeThread = getThread(threadId);
     if (!activeThread || busy) return;
     if (activeThread.draftContextImage) {
-      setActionError("Remove the selected conversation image before attaching a new file.");
+      setActionError("Remove the selected conversation image before attaching a new file.", threadId);
       return;
     }
     setActionError(null);
@@ -250,11 +350,47 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
       if (!isChatImage(image)) throw new Error("Fern could not save this chat image.");
       updateThread(activeThread.id, { draftImage: image });
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : "Could not attach this image.");
+      setActionError(error instanceof Error ? error.message : "Could not attach this image.", threadId);
     } finally {
       setAttachingImage(false);
     }
-  }, [activeThread, busy, updateThread]);
+  }, [getThread, busy, updateThread, setActionError]);
+
+  const attachDocuments = async (threadId: string, files: File[]) => {
+    const activeThread = getThread(threadId);
+    if (!activeThread || !files.length || busy || documentUpload.current) return;
+    setActionError(null);
+    if (files.length + (activeThread.documents?.length ?? 0) > MAX_CHAT_DOCUMENTS) {
+      setActionError(`Attach up to ${MAX_CHAT_DOCUMENTS} documents per chat.`, threadId);
+      return;
+    }
+    documentUpload.current = true;
+    setAttachingDocument(true);
+    try {
+      files.forEach(validateChatDocument);
+      for (const file of files) {
+        const { document } = await uploadChatDocument(file);
+        if (!isChatDocument(document)) throw new Error("Fern could not save this document.");
+        setWorkspace((current) => ({ ...current, threads: current.threads.map((thread) => {
+          if (thread.id !== threadId || thread.documents?.some((item) => item.id === document.id)) return thread;
+          return { ...thread, documents: [...(thread.documents ?? []), document], updatedAt: Date.now() };
+        }) }));
+      }
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Could not attach this document.", threadId);
+    } finally {
+      documentUpload.current = false;
+      setAttachingDocument(false);
+    }
+  };
+
+  const removeDocument = (threadId: string, id: string) => {
+    const activeThread = getThread(threadId);
+    if (!busy && activeThread) {
+      updateThread(activeThread.id, { documents: activeThread.documents?.filter((item) => item.id !== id) });
+      setActionError(null);
+    }
+  };
 
   const deleteModel = useCallback(async (id: string) => {
     if (modelActionRef.current) return false;
@@ -292,30 +428,41 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     }
   }, []);
 
-  const send = useCallback(async (input: string, retry = false) => {
+  const send = useCallback(async (threadId: string, input: string, retry = false, editId?: string) => {
+    const activeThread = getThread(threadId);
     const text = input.trim();
     if ((!text && !retry) || !activeThread || busy || sending.current) return;
     setActionError(null);
     const modelId = activeThread.modelId ?? status.models.find((model) => model.id === status.defaultModelId && model.installed)?.id ?? status.models.find((model) => model.installed)?.id;
     const model = status.models.find((item) => item.id === modelId && item.installed);
     if (!modelId || !model) {
-      setActionError("Add a local text model before starting a conversation.");
+      setActionError("Add a local text model before starting a conversation.", threadId);
       return;
     }
     const runtimeIssue = textRuntimeIssue(status, model);
     if (runtimeIssue) {
-      setActionError(runtimeIssue);
+      setActionError(runtimeIssue, threadId);
       return;
     }
+    const editIndex = editId ? activeThread.messages.findIndex((message) => message.id === editId && message.role === "user") : -1;
+    if (editId && editIndex < 0) return;
+    const original = activeThread.messages[editIndex];
+    const contextImage = original ? original.includedImage : activeThread.draftContextImage;
+    const imageSource = contextImage ? activeThread.messages.find(({ generatedImage, generatedImages }) =>
+      generatedImage?.name === contextImage || generatedImages?.some(({ name }) => name === contextImage)) : undefined;
     const user: TextMessage = {
       id: `message-${crypto.randomUUID()}`, role: "user", content: text,
-      image: activeThread.draftImage, includedImage: activeThread.draftContextImage, createdAt: Date.now(),
+      image: original ? original.image : activeThread.draftImage,
+      includedImage: contextImage,
+      imageThreadId: original?.imageThreadId ?? imageSource?.imageThreadId,
+      createdAt: Date.now(),
     };
     const lastUser = activeThread.messages.map((message) => message.role).lastIndexOf("user");
-    const messages = retry ? activeThread.messages.slice(0, lastUser + 1) : [...activeThread.messages, user];
+    const messages = editId ? [...activeThread.messages.slice(0, editIndex), user]
+      : retry ? activeThread.messages.slice(0, lastUser + 1) : [...activeThread.messages, user];
     if (!messages.length) return;
     if (!model.supportsVision && messages.some((message) => message.image || message.includedImage)) {
-      setActionError("Choose a vision model for this conversation's images.");
+      setActionError("Choose a vision model for this conversation's images.", threadId);
       return;
     }
     const title = !activeThread.renamed && activeThread.messages.length === 0 && activeThread.title === "New text thread"
@@ -326,30 +473,48 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     const imageModel = model.supportsTools && model.supportsVision && computeDevice === "GPU" && imageGpuAvailable !== false
       ? (activeThread.imageModel === "auto" ? imageOptions[0] : imageOptions.find((item) => item.id === activeThread.imageModel))
       : undefined;
+    const imageSettings = imageModel ? chatImageSettings(imageModel, activeThread.imageRenderSettings?.[imageModel.id]) : undefined;
+    if (imageModel && imageSettings && Object.keys(chatImageErrors(imageModel, imageSettings)).length) {
+      setActionError("Correct the image settings or turn image generation off before sending.", threadId);
+      return;
+    }
+    const { contextSize, maxNewTokens } = chatTokenLimits(activeThread, model);
+    const preserveVersion = Boolean(editId || (retry && activeThread.messages.at(-1)?.status === "complete"));
     sending.current = true;
     setSubmitting(true);
     ++pollVersion.current;
     updateThread(activeThread.id, {
       messages, title, modelId, pendingJobId: requestId,
-      ...(retry ? {} : { draft: "", draftImage: undefined, draftContextImage: undefined }),
+      ...(preserveVersion ? { versions: [snapshotTextVersion(activeThread.messages), ...(activeThread.versions ?? [])] } : {}),
+      ...(retry || editId ? {} : { draft: "", draftImage: undefined, draftContextImage: undefined }),
     });
     try {
       const accepted = await startTextGeneration({
         requestId,
         threadId: activeThread.id,
         modelId,
+        ...(activeThread.documents?.length ? { documentIds: activeThread.documents.map(({ id }) => id) } : {}),
         device: computeDevice === "CPU" ? "CPU" : "AUTO",
-        messages: messages.map(({ role, content, image, generatedImage, includedImage }) => ({
-          role, content: content || (generatedImage ? "I generated an image." : ""), image, generatedImage: generatedImage?.name, includedImage,
+        messages: messages.map(({ role, content, image, generatedImage, includedImage, imageThreadId }) => ({
+          role, content: content || (generatedImage ? "I generated an image." : ""), image, generatedImage: generatedImage?.name, includedImage, imageThreadId,
         })),
         ...(model.supportsReasoning ? { mode: activeThread.mode } : {}),
-        ...(imageModel ? { imageModel: imageModel.id } : {}),
-        ...(model.format === "gguf" ? { contextSize: activeThread.contextSize } : {}),
+        ...(imageModel && imageSettings ? { imageModel: imageModel.id, imageSettings: {
+          width: imageSettings.width, height: imageSettings.height, steps: imageSettings.steps, guidance: imageSettings.guidance,
+          ...(imageSettings.promptSuffix.trim() ? { promptSuffix: imageSettings.promptSuffix.trim() } : {}),
+          ...(imageSettings.seedLocked ? { seed: imageSettings.seed } : {}),
+          ...(imageSettings.batchSize > 1 ? { batchSize: imageSettings.batchSize } : {}),
+          ...(imageSettings.loras?.length ? { loras: imageSettings.loras } : {}),
+          ...(imageSettings.references?.length ? { referenceImages: imageSettings.references.map((image) => image.name) } : {}),
+          ...(imageSettings.useMessageImage ? { useMessageImage: true } : {}),
+        } } : {}),
+        ...(model.format === "gguf" ? { contextSize, loadOptions: ggufLoadOptions(activeThread.loadOptions, contextSize) } : {}),
         systemPrompt: activeThread.systemPrompt,
         temperature: activeThread.temperature,
         topP: activeThread.topP,
-        maxNewTokens: activeThread.maxNewTokens,
-        seed: Math.floor(Math.random() * 2_147_483_647),
+        ...(activeThread.sampling ? { sampling: textSamplingOverrides(activeThread.sampling) } : {}),
+        maxNewTokens,
+        seed: activeThread.sampling?.fixedSeed ?? Math.floor(Math.random() * 2_147_483_647),
       });
       ++pollVersion.current;
       setStatus(accepted.job);
@@ -369,19 +534,31 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
         }
       } catch {
         setStatusError("Connection lost while checking the pending response.");
-        setActionError("Connection lost. Fern will check the pending response when the backend reconnects.");
+        setActionError("Connection lost. Fern will check the pending response when the backend reconnects.", threadId);
       }
     } finally {
       sending.current = false;
       setSubmitting(false);
     }
-  }, [activeThread, busy, computeDevice, imageGpuAvailable, status, updateThread]);
+    return true;
+  }, [getThread, busy, computeDevice, imageGpuAvailable, status, updateThread, setActionError]);
 
-  const retry = useCallback(() => send("", true), [send]);
+  const retry = useCallback((threadId: string) => send(threadId, "", true), [send]);
+  const restoreVersion = useCallback((threadId: string, id: string) => {
+    const activeThread = getThread(threadId);
+    if (busy || !activeThread?.versions) return;
+    const previous = activeThread.versions.find((version) => version.id === id);
+    if (!previous) return;
+    updateThread(activeThread.id, {
+      messages: previous.messages,
+      versions: [snapshotTextVersion(activeThread.messages), ...activeThread.versions.filter((version) => version.id !== id)],
+    });
+    setActionError(null);
+  }, [getThread, busy, updateThread, setActionError]);
 
-  const retryInspection = async (messageId: string) => {
+  const retryInspection = async (threadId: string, messageId: string) => {
     if (busy || sending.current) return;
-    const thread = workspaceRef.current.threads.find((item) => item.id === workspaceRef.current.activeId);
+    const thread = getThread(threadId);
     const message = thread?.messages.find((item) => item.id === messageId);
     const model = status.models.find((item) => item.id === thread?.modelId && item.installed);
     if (!thread || !message?.generatedImage || !model?.supportsVision || textRuntimeIssue(status, model)) return;
@@ -397,7 +574,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     try {
       const accepted = await inspectChatImage({
         requestId, threadId: thread.id, modelId: model.id,
-        image: message.generatedImage.name, device: computeDevice === "CPU" ? "CPU" : "AUTO",
+        image: message.generatedImage.name, imageThreadId: message.imageThreadId, device: computeDevice === "CPU" ? "CPU" : "AUTO",
       });
       setStatus(accepted.job);
       setStatusError(null);
@@ -422,22 +599,66 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     }
   };
 
-  const stop = useCallback(async () => {
+  const stop = useCallback(async (threadId: string) => {
     try { await stopTextGeneration(); await refresh(); }
-    catch (error) { setActionError(error instanceof Error ? error.message : "Could not stop text generation."); }
-  }, [refresh]);
+    catch (error) { setActionError(error instanceof Error ? error.message : "Could not stop text generation.", threadId); }
+  }, [refresh, setActionError]);
 
-  const selectModel = useCallback((modelId: string) => {
-    if (activeThread) updateThread(activeThread.id, { modelId: modelId || null });
-  }, [activeThread, updateThread]);
+  const selectModel = useCallback((threadId: string, modelId: string) => {
+    const activeThread = getThread(threadId);
+    if (activeThread && activeThread.modelId !== modelId) {
+      const defaults = workspaceRef.current.modelDefaults?.[modelId];
+      updateThread(activeThread.id, { ...defaults, modelId: modelId || null });
+    }
+  }, [getThread, updateThread]);
 
-  const setDevice = useCallback((device: TextDevice) => {
-    if (activeThread) updateThread(activeThread.id, { device });
-  }, [activeThread, updateThread]);
+  const saveModelDefaults = useCallback((threadId: string, modelId: string) => {
+    const activeThread = getThread(threadId);
+    if (!activeThread) return;
+    const defaults = modelDefaultsFromThread(activeThread);
+    setWorkspace((current) => ({ ...current, modelDefaults: { ...current.modelDefaults, [modelId]: defaults } }));
+  }, [getThread]);
+
+  const clearModelDefaults = useCallback((modelId: string) => {
+    setWorkspace((current) => {
+      const remaining = { ...current.modelDefaults };
+      delete remaining[modelId];
+      return { ...current, modelDefaults: remaining };
+    });
+  }, []);
+
+  const saveChatPreset = (threadId: string, name: string, id?: string) => {
+    const activeThread = getThread(threadId);
+    if (busy || !activeThread) return;
+    const preset = { id: id ?? crypto.randomUUID(), name, settings: chatPresetSettings(activeThread) };
+    setWorkspace((current) => ({
+      ...current, presets: [...(current.presets ?? []).filter((entry) => entry.id !== preset.id), preset]
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    }));
+    return preset.id;
+  };
+
+  const applyChatPreset = (threadId: string, id: string) => {
+    const activeThread = getThread(threadId);
+    const preset = workspace.presets?.find((entry) => entry.id === id);
+    if (!busy && activeThread && preset) updateThread(activeThread.id, preset.settings);
+  };
+
+  const deleteChatPreset = (id: string) => {
+    if (!busy) setWorkspace((current) => ({
+      ...current, presets: current.presets?.filter((entry) => entry.id !== id),
+    }));
+  };
+
+  const setDevice = useCallback((threadId: string, device: TextDevice) => updateThread(threadId, { device }), [updateThread]);
 
   return {
-    threads, activeThread, status, statusLoaded, modelAction, submitting, attachingImage, statusError, actionError, busy, computeDevice,
-    newThread, selectThread, resetWorkspace, renameThread, archiveThread, deleteThread,
-    updateThread, importModel, deleteModel, installRecommendedModel, attachImage, send, retry, retryInspection, stop, refresh, selectModel, setDevice,
+    threads, activeThread, status, statusLoaded, modelAction, submitting, attachingImage, attachingDocument, statusError, actionError, busy, computeDevice,
+    primaryThread, secondaryThread, activePane, splitPercent: workspace.splitPercent ?? 50, compareThread, closePane, resizePanes, focusPane,
+    newThread, selectThread, forkThread, resetWorkspace, renameThread, archiveThread, deleteThread,
+    modelDefaults: workspace.modelDefaults, saveModelDefaults, clearModelDefaults,
+    chatPresets: workspace.presets, saveChatPreset, applyChatPreset, deleteChatPreset,
+    folders: workspace.folders ?? EMPTY_CHAT_FOLDERS, organize,
+    updateThread, importModel, deleteModel, installRecommendedModel, attachImage, attachDocuments, removeDocument, send, retry, restoreVersion, retryInspection, stop, refresh, selectModel, setDevice,
   };
 }

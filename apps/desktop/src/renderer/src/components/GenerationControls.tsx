@@ -1,86 +1,19 @@
 import ChevronDown from "lucide-react/dist/esm/icons/chevron-down.mjs";
-import Dices from "lucide-react/dist/esm/icons/dices.mjs";
 import ImageIcon from "lucide-react/dist/esm/icons/image.mjs";
-import Lock from "lucide-react/dist/esm/icons/lock.mjs";
-import LockOpen from "lucide-react/dist/esm/icons/lock-open.mjs";
-import Plus from "lucide-react/dist/esm/icons/plus.mjs";
-import Shuffle from "lucide-react/dist/esm/icons/shuffle.mjs";
-import X from "lucide-react/dist/esm/icons/x.mjs";
-import { Button, Checkbox, IconButton, Input, Select, ToggleChip } from "./ui/controls";
+import { Button, Input, Select } from "./ui/controls";
 import {
   useEffect,
-  useMemo,
-  useRef,
   useState,
-  type ComponentProps,
 } from "react";
 import type { ModelStatus, StudioSettings } from "../lib/types";
 
 import { notify } from "../lib/notifications";
 import { readReference, validateReference } from "../lib/reference";
-import { imageDimensionLimits } from "../lib/imageDimensions";
+import { ImageBatchField, ImageCanvasFields, ImageSamplingFields } from "./ImageGenerationFields";
 import { fixedImagePreset, isKleinLoraModel, maxReferenceImages, selectedKleinLoras } from "../lib/imageModels";
-import { getApiBaseUrl } from "../lib/api";
+import { ImageLoraFields } from "./ImageLoraFields";
 
-function loraDisplayName(path: string): string {
-  const parts = path.split(/[\\/]/).filter(Boolean);
-  const filename = parts.at(-1)?.replace(/\.safetensors$/i, "").replace(/^[a-f0-9]{12}-/, "") ?? path;
-  return /^(pytorch_lora_weights|adapter_model)$/i.test(filename) && parts.length > 1 && parts[parts.length - 2].toLowerCase() !== "loras"
-    ? parts[parts.length - 2]
-    : filename;
-}
-
-function downloadedLoraLabel(url: string, path: string): string {
-  const fallback = loraDisplayName(path);
-  if (!/^(pytorch_lora_weights|adapter_model)$/i.test(fallback)) return fallback;
-  try {
-    const source = new URL(url);
-    const parts = source.pathname.split("/").filter(Boolean);
-    if (source.hostname.endsWith("huggingface.co") && parts.length >= 5) {
-      return decodeURIComponent(parts.length > 5 ? parts[parts.length - 2] : parts[1]);
-    }
-  } catch { /* Use the filename when the source link is unavailable. */ }
-  return fallback;
-}
-
-const STYLE_CHIPS = [
-  {
-    id: "photoreal",
-    suffix: "photorealistic, ultra-detailed, 50mm lens, natural lighting",
-  },
-  {
-    id: "cinematic",
-    suffix: "cinematic lighting, film grain, dramatic, anamorphic",
-  },
-  { id: "anime", suffix: "anime style, cel shading, vibrant colors" },
-  {
-    id: "render",
-    suffix: "3D render, octane, ray tracing, subsurface scattering",
-  },
-  {
-    id: "portrait",
-    suffix: "studio portrait, soft light, shallow depth of field",
-  },
-  { id: "minimal", suffix: "minimalist, clean composition, negative space" },
-];
-
-const SIZE_PRESETS = [
-  { value: "720x1280", label: "720 × 1280 · Portrait 9:16" },
-  { value: "1280x720", label: "1280 × 720 · Landscape 16:9" },
-  { value: "1920x1088", label: "1920 × 1088 · Wide" },
-  { value: "1088x1920", label: "1088 × 1920 · Tall" },
-  { value: "1024x1024", label: "1024 x 1024 (1:1)" },
-  { value: "832x1216", label: "832 x 1216 (Portrait)" },
-  { value: "896x1152", label: "896 x 1152 (Portrait)" },
-  { value: "1216x832", label: "1216 x 832 (Landscape)" },
-  { value: "1152x896", label: "1152 x 896 (Landscape)" },
-  { value: "1024x768", label: "1024 x 768 (4:3)" },
-  { value: "768x1024", label: "768 x 1024 (3:4)" },
-  { value: "1024x576", label: "1024 x 576 (16:9)" },
-  { value: "576x1024", label: "576 x 1024 (9:16)" },
-  { value: "768x768", label: "768 x 768 (1:1)" },
-  { value: "custom", label: "Custom" },
-];
+import { ImageStyleFields } from "./ImageStyleFields";
 
 interface PromptRecipe {
   id: string;
@@ -155,10 +88,6 @@ interface GenerationControlsProps {
   onClearReference: () => void;
   onUseOutputAsReference: () => Promise<void>;
   canUseOutput: boolean;
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function isPromptRecipe(value: unknown): value is PromptRecipe {
@@ -236,56 +165,8 @@ export function GenerationControls({
   onUseOutputAsReference,
   canUseOutput,
 }: GenerationControlsProps) {
-  const [customSize, setCustomSize] = useState(false);
-  const [loraError, setLoraError] = useState("");
-  const [loraUrl, setLoraUrl] = useState("");
-  const [loraDownload, setLoraDownload] = useState<{ status: string; name?: string; path?: string; downloaded?: number; bytes?: number; error?: string }>({ status: "idle" });
-  const [startingLoraDownload, setStartingLoraDownload] = useState(false);
-  const [loraDownloadOpen, setLoraDownloadOpen] = useState(false);
   const isLoraModel = isKleinLoraModel(settings.model);
   const loras = selectedKleinLoras(settings);
-  useEffect(() => {
-    if (!isLoraModel || !loraDownloadOpen) return;
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout>;
-    const poll = async () => {
-      try {
-        const response = await fetch(`${getApiBaseUrl()}/api/loras/download`, { signal: AbortSignal.timeout(5000) });
-        if (!response.ok) throw new Error("Could not check the LoRA download.");
-        const state = await response.json();
-        if (!cancelled) { setLoraDownload(state); if (["checking", "downloading"].includes(state.status)) timer = setTimeout(poll, 1200); }
-      } catch (error) { if (!cancelled) setLoraError(error instanceof Error ? error.message : "Could not check the LoRA download."); }
-    };
-    void poll();
-    return () => { cancelled = true; clearTimeout(timer); };
-  }, [isLoraModel, loraDownloadOpen, startingLoraDownload]);
-  const downloadLora = async (cancel = false) => {
-    setStartingLoraDownload(true); setLoraError("");
-    try {
-      const response = await fetch(`${getApiBaseUrl()}/api/loras/download${cancel ? "/cancel" : ""}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(cancel ? {} : { url: loraUrl }) });
-      const state = await response.json();
-      if (!response.ok) throw new Error(state.error || "Could not download the LoRA.");
-      setLoraDownload(state);
-    } catch (error) { setLoraError(error instanceof Error ? error.message : "Could not download the LoRA."); }
-    finally { setStartingLoraDownload(false); }
-  };
-  const addLoras = async () => {
-    try {
-      const paths = await window.studio.pickLoraFiles();
-      const existing = new Set(loras.map((item) => item.path.toLowerCase()));
-      const next = [...loras];
-      for (const path of paths) {
-        if (existing.has(path.toLowerCase())) continue;
-        if (next.length >= 4) { setLoraError("Choose up to four LoRAs."); break; }
-        existing.add(path.toLowerCase());
-        next.push({ path, strength: 1, enabled: true });
-      }
-      if (next.length <= 4 && paths.length <= 4 - loras.length) setLoraError("");
-      onSettingsChange({ loras: next });
-    } catch (error) {
-      setLoraError(error instanceof Error ? error.message : "Could not open the file picker.");
-    }
-  };
   const isQwenTurbo = settings.model === "qwen21-turbo";
   const isFlux3Klein = settings.model === "flux3-klein";
   const isCustomImage = settings.model?.startsWith("custom-") ?? false;
@@ -294,26 +175,7 @@ export function GenerationControls({
   const adjustableSteps = Boolean(fixedPreset?.maximumSteps);
   const hasFixedSampling = isQwenTurbo || isFlux3Klein || Boolean(fixedPreset);
   const hasFixedSteps = hasFixedSampling && !adjustableSteps;
-  const { multiple: dimensionMultiple, minimum: minimumDimension, maximum: maximumDimension } = imageDimensionLimits(settings.model, modelStatus);
-  const availableSizePresets = useMemo(
-    () =>
-      fixedSizes ? fixedSizes.map((size) => ({ value: `${size}x${size}`, label: `${size} × ${size}` }))
-      : (adjustableSteps ? [{ value: "512x512", label: "512 × 512 (1:1)" }, ...SIZE_PRESETS] : SIZE_PRESETS).filter((preset) => {
-        if (isFlux3Klein) return preset.value === "1024x1024";
-        if (preset.value === "custom") return true;
-        const [width, height] = preset.value.split("x").map(Number);
-        return width >= minimumDimension && height >= minimumDimension
-          && width <= maximumDimension && height <= maximumDimension
-          && width % dimensionMultiple === 0 && height % dimensionMultiple === 0;
-      }),
-    [adjustableSteps, dimensionMultiple, fixedSizes, isFlux3Klein, maximumDimension, minimumDimension],
-  );
   const [referenceBusy, setReferenceBusy] = useState(false);
-  const activeChips = new Set(
-    STYLE_CHIPS.filter((chip) => settings.prompt.includes(chip.suffix)).map(
-      (chip) => chip.id,
-    ),
-  );
   const [referenceDragActive, setReferenceDragActive] = useState(false);
   const [referenceError, setReferenceError] = useState("");
   const [promptRecipes, setPromptRecipes] =
@@ -338,43 +200,6 @@ export function GenerationControls({
     window.addEventListener("fern-recipes-updated", reload);
     return () => window.removeEventListener("fern-recipes-updated", reload);
   }, []);
-
-  const sizePreset = useMemo(() => {
-    const value = `${settings.width}x${settings.height}`;
-    return availableSizePresets.some((preset) => preset.value === value)
-      ? value
-      : "custom";
-  }, [availableSizePresets, settings.height, settings.width]);
-
-  const applySizePreset = (value: string) => {
-    setCustomSize(value === "custom");
-    if (value === "custom") {
-      document.getElementById("width")?.focus();
-      return;
-    }
-    const [width, height] = value.split("x").map(Number);
-    if (width && height) onSettingsChange({ width, height });
-  };
-
-  const swapDimensions = () => {
-    onSettingsChange({ width: settings.height, height: settings.width });
-  };
-
-  const toggleChip = (id: string, suffix: string) => {
-    const next = new Set(activeChips);
-    let prompt = settings.prompt;
-    if (next.has(id)) {
-      next.delete(id);
-      prompt = prompt
-        .replace(new RegExp(`,?\\s*${escapeRegExp(suffix)}`, "g"), "")
-        .replace(/^,\s*/, "")
-        .trim();
-    } else {
-      next.add(id);
-      prompt = prompt.trim() ? `${prompt.trim()}, ${suffix}` : suffix;
-    }
-    onSettingsChange({ prompt });
-  };
 
   const applyPromptRecipe = (id: string) => {
     setSelectedRecipeId(id);
@@ -515,31 +340,7 @@ export function GenerationControls({
         <div className="control-sections">
           {isLoraModel ? (
             <ControlSection title="LoRAs" summary={loras.length ? `${loras.filter((item) => item.enabled).length} of ${loras.length} active` : "Optional · up to 4"} defaultOpen>
-              <p className="lora-intro">Add local LoRAs to guide your image. Include their trigger words in your prompt.</p>
-              {loras.length ? <div className="lora-list-heading" aria-hidden="true"><span>LoRA</span><span>Strength</span><span /></div> : null}
-              {loras.map((lora, index) => (
-                <div className={`lora-control${lora.enabled ? "" : " is-disabled"}`} key={lora.path}>
-                  <div className="lora-control-heading">
-                    <label className="lora-control-name" title={lora.path}>
-                      <Checkbox checked={lora.enabled} aria-label={lora.path.split(/[\\/]/).pop()} onChange={(event) => onSettingsChange({ loras: loras.map((item, i) => i === index ? { ...item, enabled: event.target.checked } : item) })} />
-                      <span>{lora.label || loraDisplayName(lora.path)}</span>
-                    </label>
-                    <label className="lora-control-strength"><span className="sr-only">Strength</span>
-                      <Input type="number" min={-4} max={4} step={0.1} value={lora.strength} title="LoRA strength" aria-label={`Strength for ${lora.path.split(/[\\/]/).pop()}`} onChange={(event) => onSettingsChange({ loras: loras.map((item, i) => i === index ? { ...item, strength: Number(event.target.value) } : item) })} />
-                    </label>
-                    <IconButton onClick={() => onSettingsChange({ loras: loras.filter((_, i) => i !== index) })} aria-label={`Remove ${lora.path.split(/[\\/]/).pop()}`} title="Remove LoRA"><X size={15} aria-hidden="true" /></IconButton>
-                  </div>
-                </div>
-              ))}
-              <Button variant="ghost" className="lora-add" disabled={loras.length >= 4} onClick={() => void addLoras()}><Plus size={15} aria-hidden="true" /> Add LoRA files</Button>
-              <details className="lora-download" onToggle={(event) => setLoraDownloadOpen(event.currentTarget.open)}><summary>Download from a link</summary><div className="lora-download-content">
-                <label htmlFor="lora-download-url">Hugging Face or Civitai link</label>
-                <Input id="lora-download-url" type="url" placeholder="https://…" value={loraUrl} onChange={(event) => setLoraUrl(event.target.value)} disabled={startingLoraDownload || ["checking", "downloading"].includes(loraDownload.status)} />
-                {["checking", "downloading"].includes(loraDownload.status) ? <><p role="status">{loraDownload.status === "checking" ? "Checking link…" : `Downloading ${loraDownload.name ?? "LoRA"}…`}</p><progress aria-label="LoRA download" {...(loraDownload.bytes ? { value: loraDownload.downloaded ?? 0, max: loraDownload.bytes } : {})} /><Button onClick={() => void downloadLora(true)} disabled={startingLoraDownload}>Cancel download</Button></> : <Button disabled={!loraUrl.trim() || startingLoraDownload || loras.length >= 4} onClick={() => void downloadLora()}>Download LoRA</Button>}
-                {loraDownload.status === "complete" && loraDownload.path ? <div className="lora-downloaded"><span title={loraDownload.name}>{loraDownload.name} downloaded</span><Button disabled={loras.length >= 4 || loras.some((item) => item.path.toLowerCase() === loraDownload.path!.toLowerCase())} onClick={() => onSettingsChange({ loras: [...loras, { path: loraDownload.path!, strength: 1, enabled: true, label: downloadedLoraLabel(loraUrl, loraDownload.path!) }] })}>Add to thread</Button></div> : null}
-                {loraDownload.status === "failed" ? <p role="alert" className="field-error">{loraDownload.error || "Download failed."}</p> : null}
-              </div></details>
-              {loraError || errors.loras ? <p role="alert" className="field-error">{loraError || errors.loras}</p> : null}
+              <ImageLoraFields loras={loras} error={errors.loras} onChange={(next) => onSettingsChange({ loras: next })} />
             </ControlSection>
           ) : null}
           <ControlSection
@@ -556,88 +357,11 @@ export function GenerationControls({
               </p>
             ) : null}
             {isCustomImage ? <p className="model-note field-note">{modelStatus?.familyLabel ?? "Custom OpenVINO GenAI model"} · text-to-image only. Fern uses the selected family to apply safe canvas limits and recommended defaults.</p> : null}
-            <div className="field">
-              <div className="field-header">
-                <label htmlFor="size-preset">Resolution</label>
-              </div>
-              <Select
-                id="size-preset"
-                name="size-preset"
-                value={isFlux3Klein ? "1024x1024" : customSize && !fixedSizes ? "custom" : sizePreset}
-                onChange={(event) => applySizePreset(event.target.value)}
-              >
-                {availableSizePresets.map((preset) => (
-                  <option key={preset.value} value={preset.value}>
-                    {preset.label}
-                  </option>
-                ))}
-              </Select>
-            </div>
-
-            <div className="dims-row" hidden={Boolean(fixedSizes)}>
-              <div className="field">
-                <label htmlFor="width">Width</label>
-                <DraftNumberInput
-                  error={errors.width}
-                  id="width"
-                  name="width"
-                  type="number"
-                  disabled={isFlux3Klein}
-                  min={minimumDimension}
-                  max={maximumDimension}
-                  step={dimensionMultiple}
-                  value={settings.width}
-                  onChange={(event) =>
-                    onSettingsChange({ width: Number(event.target.value) })
-                  }
-                />
-              </div>
-              <IconButton
-                disabled={isFlux3Klein}
-                onClick={swapDimensions}
-                title="Swap dimensions"
-                aria-label="Swap width and height"
-              >
-                <Shuffle size={15} aria-hidden="true" />
-              </IconButton>
-              <div className="field">
-                <label htmlFor="height">Height</label>
-                <DraftNumberInput
-                  error={errors.height}
-                  id="height"
-                  name="height"
-                  type="number"
-                  disabled={isFlux3Klein}
-                  min={minimumDimension}
-                  max={maximumDimension}
-                  step={dimensionMultiple}
-                  value={settings.height}
-                  onChange={(event) =>
-                    onSettingsChange({ height: Number(event.target.value) })
-                  }
-                />
-              </div>
-            </div>
+            <ImageCanvasFields model={settings.model} settings={settings} modelStatus={modelStatus}
+              errors={errors} onChange={onSettingsChange} />
 
             <div className="row-2">
-              <div className="field">
-                <label htmlFor="batch-size">Images per render</label>
-                <Select
-                  id="batch-size"
-                  name="batch-size"
-                  value={hasFixedSampling ? 1 : settings.batchSize}
-                  disabled={hasFixedSampling}
-                  onChange={(event) =>
-                    onSettingsChange({ batchSize: Number(event.target.value) })
-                  }
-                >
-                  <option value={1}>1 image</option>
-                  <option value={2}>2 images</option>
-                  <option value={3}>3 images</option>
-                  <option value={4}>4 images</option>
-                </Select>
-                {hasFixedSampling ? <small className="field-note">{"This model generates one image per request."}</small> : null}
-              </div>
+              <ImageBatchField model={settings.model} value={settings.batchSize} onChange={(batchSize) => onSettingsChange({ batchSize })} />
             </div>
             <p
               className={`device-status-note ${deviceStatusClass}`}
@@ -732,17 +456,7 @@ export function GenerationControls({
               ) : null}
             </div>
             <div className="field">
-              <div className="ui-chip-group" role="group" aria-label="Style modifiers">
-                {STYLE_CHIPS.map((chip) => (
-                  <ToggleChip
-                    key={chip.id}
-                    selected={activeChips.has(chip.id)}
-                    onClick={() => toggleChip(chip.id, chip.suffix)}
-                  >
-                    {chip.id.charAt(0).toUpperCase() + chip.id.slice(1)}
-                  </ToggleChip>
-                ))}
-              </div>
+              <ImageStyleFields value={settings.prompt} onChange={(prompt) => onSettingsChange({ prompt })} />
             </div>
           </ControlSection>
 
@@ -855,164 +569,10 @@ export function GenerationControls({
                 : isFlux3Klein ? "16 steps | no guidance (fixed)" : "8 steps | guidance 1.0 (fixed)"
               : `${settings.steps} steps | guidance ${settings.guidance}`}
           >
-            <div className="field">
-              <label htmlFor="seed">Seed</label>
-              <div className="seed-row">
-                <DraftNumberInput
-                  error={errors.seed}
-                  id="seed"
-                  name="seed"
-                  type="number"
-                  value={settings.seed}
-                  onChange={(event) =>
-                    onSettingsChange({ seed: Number(event.target.value) })
-                  }
-                />
-                <IconButton
-                  title="Randomize seed"
-                  aria-label="Randomize seed"
-                  onClick={() =>
-                    onSettingsChange({
-                      seed: Math.floor(Math.random() * 1_000_000_000),
-                    })
-                  }
-                >
-                  <Dices size={15} aria-hidden="true" />
-                </IconButton>
-                <IconButton
-                  title={settings.seedLocked ? "Unlock seed" : "Lock seed"}
-                  aria-label={settings.seedLocked ? "Unlock seed" : "Lock seed"}
-                  aria-pressed={settings.seedLocked}
-                  onClick={() =>
-                    onSettingsChange({ seedLocked: !settings.seedLocked })
-                  }
-                >
-                  {settings.seedLocked ? (
-                    <Lock size={15} aria-hidden="true" />
-                  ) : (
-                    <LockOpen size={15} aria-hidden="true" />
-                  )}
-                </IconButton>
-              </div>
-            </div>
-
-            <div className="field" hidden={hasFixedSteps}>
-              <label htmlFor="steps">Steps</label>
-              <div className={adjustableSteps ? undefined : "range-pair"}>
-                {!adjustableSteps ? <input
-                  id="steps"
-                  aria-invalid={Boolean(errors.steps)}
-                  aria-describedby={
-                    errors.steps ? "step-count-error" : undefined
-                  }
-                  name="steps"
-                  type="range"
-                  min={1}
-                  max={50}
-                  step={1}
-                  value={settings.steps}
-                  onChange={(event) =>
-                    onSettingsChange({ steps: Number(event.target.value) })
-                  }
-                /> : null}
-                <DraftNumberInput
-                  error={errors.steps}
-                  className={adjustableSteps ? undefined : "compact-input"}
-                  id={adjustableSteps ? "steps" : undefined}
-                  aria-label="Step count"
-                  name="step-count"
-                  type="number"
-                  min={1}
-                  max={fixedPreset?.maximumSteps ?? 50}
-                  value={settings.steps}
-                  onChange={(event) =>
-                    onSettingsChange({ steps: Number(event.target.value) })
-                  }
-                />
-              </div>
-              {adjustableSteps ? <small className="field-note">{fixedPreset?.steps} steps recommended for the bundled DMD2 adapter.</small> : null}
-            </div>
-
-            <div className="field" hidden={hasFixedSampling || isLoraModel}>
-              <label htmlFor="guidance">Guidance</label>
-              <div className="range-pair">
-                <input
-                  id="guidance"
-                  aria-invalid={Boolean(errors.guidance)}
-                  aria-describedby={
-                    errors.guidance ? "guidance-value-error" : undefined
-                  }
-                  name="guidance"
-                  type="range"
-                  min={0}
-                  max={isCustomImage ? 20 : 10}
-                  step={0.1}
-                  value={settings.guidance}
-                  onChange={(event) =>
-                    onSettingsChange({ guidance: Number(event.target.value) })
-                  }
-                />
-                <DraftNumberInput
-                  error={errors.guidance}
-                  className="compact-input"
-                  aria-label="Guidance value"
-                  name="guidance-value"
-                  type="number"
-                  min={0}
-                  max={isCustomImage ? 20 : 10}
-                  step={0.1}
-                  value={settings.guidance}
-                  onChange={(event) =>
-                    onSettingsChange({ guidance: Number(event.target.value) })
-                  }
-                />
-              </div>
-            </div>
+            <ImageSamplingFields model={settings.model} settings={settings} errors={errors} onChange={onSettingsChange} />
           </ControlSection>
         </div>
       </div>
     </section>
-  );
-}
-
-function DraftNumberInput({
-  error,
-  ...props
-}: ComponentProps<"input"> & { error?: string }) {
-  const [draft, setDraft] = useState(String(props.value ?? ""));
-  const focused = useRef(false);
-  const lastEdit = useRef(props.value);
-  useEffect(() => {
-    if (!focused.current || props.value !== lastEdit.current)
-      setDraft(String(props.value ?? ""));
-  }, [props.value]);
-  const errorId = `${props.id ?? props.name}-error`;
-  return (
-    <>
-      <input
-        {...props}
-        value={draft}
-        aria-invalid={Boolean(error)}
-        aria-describedby={error ? errorId : undefined}
-        onFocus={(event) => {
-          focused.current = true;
-          props.onFocus?.(event);
-        }}
-        onBlur={(event) => {
-          focused.current = false;
-          props.onBlur?.(event);
-        }}
-        onChange={(event) => {
-          lastEdit.current = Number(event.target.value);
-          setDraft(event.target.value);
-          props.onChange?.(event);
-        }}
-      />
-      {error ? (
-        <span className="field-error" id={errorId} role="alert">
-          {error}
-        </span>
-      ) : null}
-    </>
   );
 }

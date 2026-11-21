@@ -11,12 +11,15 @@ from text_model_download import model_files, model_spec
 from text_model_registry import TextModelRegistry, inspect_model
 
 
-def write_gguf(path: Path, **metadata: str) -> None:
+def write_gguf(path: Path, **metadata: str | int) -> None:
     def string(value: str) -> bytes:
         encoded = value.encode()
         return struct.pack("<Q", len(encoded)) + encoded
 
-    entries = b"".join(string(key) + struct.pack("<I", 8) + string(value) for key, value in metadata.items())
+    entries = b"".join(
+        string(key) + (struct.pack("<II", 4, value) if isinstance(value, int) else struct.pack("<I", 8) + string(value))
+        for key, value in metadata.items()
+    )
     path.write_bytes(b"GGUF" + struct.pack("<IQQ", 3, 1, len(metadata)) + entries)
 
 
@@ -29,6 +32,8 @@ class GGUFRegistryTests(unittest.TestCase):
         write_gguf(self.model, **{
             "general.architecture": "gemma4",
             "general.name": "Gemma 4",
+            "gemma4.context_length": 131072,
+            "llama.context_length": 4096,
             "tokenizer.chat_template": "{% if enable_thinking %}<|think|>{% endif %}",
         })
         write_gguf(self.projector, **{"general.architecture": "clip"})
@@ -37,6 +42,7 @@ class GGUFRegistryTests(unittest.TestCase):
     def test_add_projector_preserves_model_identity_and_persists_capabilities(self) -> None:
         text_model = self.registry.add(str(self.model))
         self.assertTrue(text_model["supportsReasoning"])
+        self.assertEqual(text_model["maxContextSize"], 131072)
         self.assertFalse(text_model["supportsVision"])
         vision_model = self.registry.add(str(self.model), str(self.projector))
         self.assertEqual(vision_model["id"], text_model["id"])

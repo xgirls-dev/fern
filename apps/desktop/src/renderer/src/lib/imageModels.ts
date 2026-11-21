@@ -21,6 +21,10 @@ export function maxReferenceImages(model = "9b"): number {
   return model === "qwen21-turbo" ? 1 : 0;
 }
 
+export function maxImageBatch(model?: string): number {
+  return fixedImagePreset(model) || model === "flux3-klein" || model === "qwen21-turbo" ? 1 : 4;
+}
+
 const fixedImagePresets: Record<string, { sizes?: number[]; steps: number; guidance: number; maximumSteps?: number }> = {
   [APPLE_IMAGE_MODEL]: { sizes: [512], steps: 4, guidance: 1 },
   "sana-sprint": { sizes: [512, 1024], steps: 2, guidance: 4.5 },
