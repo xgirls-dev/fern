@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { mkdtemp, readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { fixture } from './ui-fixture.mjs';
+import { chooseMessageAction, fixture } from './ui-fixture.mjs';
 
 const root = resolve('.');
 const installedModel = resolve(process.argv[2] || 'models/text/qwen3-4b-instruct-2507-openvino');
@@ -71,7 +71,7 @@ try {
   await page.getByRole('button', { name: 'Send message', exact: true }).click();
   await page.getByRole('button', { name: 'Regenerate response', exact: true }).waitFor({ timeout: 180000 });
   assert.match(await page.locator('.text-message--assistant .text-message-content').last().textContent(), /four|4/i);
-  await page.getByRole('button', { name: 'Response details', exact: true }).last().click();
+  await chooseMessageAction(page.locator('.text-message--assistant').last(), 'Response details');
   assert.match(await page.locator('.text-response-details').last().textContent(), /GPU/);
   assert.equal((await apiJson('/api/text/status')).job.modelId, installed.models[0].id);
   assert.deepEqual(errors, []);

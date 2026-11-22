@@ -1,4 +1,10 @@
 const MOJIBAKE_MARKERS = /[\u00c2\u00c3\u00e2]/;
+let graphemeSegmenter: Intl.Segmenter | undefined;
+
+export function segmentGraphemes(text: string) {
+  graphemeSegmenter ??= new Intl.Segmenter(undefined, { granularity: "grapheme" });
+  return graphemeSegmenter.segment(text);
+}
 
 /** Repair text decoded as a single-byte Windows encoding before it reached the renderer. */
 export function repairMojibake(value: string): string {

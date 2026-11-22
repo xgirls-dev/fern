@@ -27,10 +27,10 @@ import { WorkspaceThreadTitle } from "./components/WorkspaceThreadTitle";
 import { Button, IconButton, PageHeader } from "./components/ui/controls";
 
 import { Notifications } from "./components/Notifications";
-import { ThreadBrowser } from "./components/ThreadBrowser";
 import { notify } from "./lib/notifications";
 import { validateReference } from "./lib/reference";
 import { loadModelSetup, saveModelSetup, type SetupSelection, type SetupTask } from "./lib/modelSetup";
+import { textRuntimeIssue } from "./lib/textThreads";
 import { loadLastWorkspace, matchesShortcut, saveLastWorkspace, shortcuts } from "./lib/workspaceNavigation";
 import { fixedImagePreset, isKleinLoraModel, kleinLoraLabel, maxReferenceImages } from "./lib/imageModels";
 import { chatFolderPath } from "./lib/chatFolders";
@@ -40,6 +40,7 @@ const PreferencesView = lazy(() => import("./components/PreferencesView").then((
 const Qwen3TtsWorkspace = lazy(() => import("./components/Qwen3TtsWorkspace").then((module) => ({ default: module.Qwen3TtsWorkspace })));
 const VideoWorkspace = lazy(() => import("./components/VideoWorkspace").then((module) => ({ default: module.VideoWorkspace })));
 const ChatWorkspace = lazy(() => import("./components/ChatWorkspace").then((module) => ({ default: module.ChatWorkspace })));
+const ThreadBrowser = lazy(() => import("./components/ThreadBrowser").then((module) => ({ default: module.ThreadBrowser })));
 const ModelsView = lazy(() => import("./components/ModelsView").then((module) => ({ default: module.ModelsView })));
 
 export function App() {
@@ -91,13 +92,16 @@ export function App() {
     modelSetup && modelSetup.task !== "image" ? "text" : "image",
   );
   const [chatFocusRequest, setChatFocusRequest] = useState(0);
+  const [chatFindRequest, setChatFindRequest] = useState<{ threadId: string; query: string } | null>(null);
+  const clearChatFindRequest = useCallback(() => setChatFindRequest(null), []);
   const [computeFocusRequest, setComputeFocusRequest] = useState(0);
   useEffect(() => { saveLastWorkspace(activeSection); }, [activeSection]);
   useEffect(() => {
     if (modelSetup) saveModelSetup({ ...modelSetup, viewing: activeSection === "models" });
   }, [activeSection, modelSetup]);
   const chatFolderIndex = useMemo(() => new Map(text.folders.map((folder) => [folder.id, folder])), [text.folders]);
-  const searchableThreads = commandPaletteOpen || threadSearchQuery !== null ? [
+  const searchingThreads = threadSearchQuery !== null;
+  const searchableThreads = commandPaletteOpen || searchingThreads ? [
     ...studio.searchThreads(),
     ...tts.threads.map((thread) => ({ ...thread, excerpt: thread.text })),
     ...text.threads.map((thread) => ({
@@ -195,7 +199,14 @@ export function App() {
   const newTextThread = useCallback((folderId?: string) => {
     text.newThread(folderId);
     setActiveSection("text");
+    setChatFocusRequest((value) => value + 1);
   }, [text.newThread]);
+
+  const duplicateTextThread = useCallback((id: string) => {
+    text.copyThread(id);
+    setActiveSection("text");
+    setChatFocusRequest((value) => value + 1);
+  }, [text.copyThread]);
 
   const selectTextThread = useCallback((id: string) => {
     text.selectThread(id);
@@ -233,7 +244,7 @@ export function App() {
     if (!threadId) return;
     const setup = { task, threadId };
     setModelSetup(setup);
-    const hasVisionModel = text.status.models.some((model) => model.installed && model.supportsTools && model.supportsVision);
+    const hasVisionModel = text.status.models.some((model) => model.installed && model.supportsTools && model.supportsVision && !textRuntimeIssue(text.status, model));
     setModelCategory(task === "image" || (task === "chat-image" && hasVisionModel) ? "image" : "text");
     setActiveSection("models");
   };
@@ -421,7 +432,7 @@ export function App() {
         return;
       const actions = {
         commands: openCommands,
-        image: newThread, speech: newAudioThread, chat: newTextThread, images: openLibrary,
+        image: activeSection === "text" ? newTextThread : newThread, speech: newAudioThread, chat: newTextThread, images: openLibrary,
         sidebar: toggleSidebar,
       };
       const match = (Object.keys(shortcuts) as Array<keyof typeof shortcuts>).find((key) => matchesShortcut(event, shortcuts[key]));
@@ -432,7 +443,7 @@ export function App() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [newThread, newAudioThread, newTextThread, openLibrary, openCommands, toggleSidebar, onSidebarNavigate]);
+  }, [activeSection, newThread, newAudioThread, newTextThread, openLibrary, openCommands, toggleSidebar, onSidebarNavigate]);
 
   const previewUrl = studio.preview
     ? resolveAssetUrl(studio.preview.url, studio.preview.mtime)
@@ -520,6 +531,8 @@ export function App() {
           onSelectTextThread={selectTextThread}
           onNewTextThread={newTextThread}
           onRenameTextThread={text.renameThread}
+          onDuplicateTextThread={duplicateTextThread}
+          onExportTextThread={text.exportTranscript}
           onArchiveTextThread={text.archiveThread}
           onDeleteTextThread={text.deleteThread}
           onRenameAudioThread={tts.renameThread}
@@ -547,9 +560,9 @@ export function App() {
           {activeSection === "models" ? <Suspense fallback={<div className="dashboard-loading" role="status">Opening models…</div>}><ModelsView category={modelCategory} onCategoryChange={setModelCategory} text={text} audio={tts} setup={modelSetup} onReturnToDraft={returnToDraft} imageGpuAvailable={imageGpuAvailable} /></Suspense> : null}
           {activeSection === "storage" ? <Suspense fallback={<div className="dashboard-loading" role="status">Opening storage…</div>}><StorageView
             active={activeSection === "storage"}
-            running={studio.running || audioBusy || text.busy || video.running}
+            running={studio.running || audioBusy || text.busy || text.savingAttachment || video.running}
             onOpenModels={openModels}
-            onResetLocalData={async () => { await studio.resetLocalData(); tts.resetWorkspace(); text.resetWorkspace(); video.reset(); saveModelSetup(null); setModelSetup(null); }}
+            onResetLocalData={async () => { await studio.resetLocalData(); await text.resetWorkspace(); tts.resetWorkspace(); video.reset(); saveModelSetup(null); setModelSetup(null); }}
           /></Suspense> : null}
           {activeSection === "preferences" ? <Suspense fallback={<div className="dashboard-loading" role="status">Opening preferences…</div>}><PreferencesView
             active={activeSection === "preferences"}
@@ -571,7 +584,11 @@ export function App() {
 
           {activeSection === "models" || activeSection === "preferences" ||
           activeSection === "storage" ? null : activeSection === "text" ? (
-            <Suspense fallback={<div className="dashboard-loading" role="status">Opening text workspace…</div>}><ChatWorkspace studio={text} sidebarCollapsed={sidebarIsCollapsed} onSetupModels={openModelSetup} focusRequest={chatFocusRequest} imageGpuAvailable={imageGpuAvailable} onOpenImage={openImage} onCreateImage={newThread} onCreateSpeech={newAudioThread} onOpenCompute={openComputePreferences} /></Suspense>
+            text.storageReady
+              ? <Suspense fallback={<div className="dashboard-loading" role="status">Opening chat…</div>}><ChatWorkspace studio={text} sidebarCollapsed={sidebarIsCollapsed} onSetupModels={openModelSetup} focusRequest={chatFocusRequest} findRequest={chatFindRequest} onFindRequestHandled={clearChatFindRequest} imageGpuAvailable={imageGpuAvailable} onOpenImage={openImage} onNewChat={newTextThread} onCreateImage={newThread} onCreateSpeech={newAudioThread} onOpenCompute={openComputePreferences} /></Suspense>
+              : <div className="dashboard-loading">
+                {text.storageError ? <><span role="alert">{text.storageError}</span><Button variant="secondary" onClick={text.retryStorage}>Retry opening chats</Button></> : <span role="status">Opening chats…</span>}
+              </div>
           ) : activeSection === "video" ? (
             <Suspense fallback={<div className="dashboard-loading" role="status">Opening video workspace…</div>}>
               <VideoWorkspace video={video} device={compute.device} busyElsewhere={studio.running || studio.submitting || audioBusy || text.busy}
@@ -913,14 +930,18 @@ export function App() {
         />
       )}
       <Notifications />
-      {threadSearchQuery !== null ? (
+      {threadSearchQuery !== null ? <Suspense fallback={null}>
         <ThreadBrowser
           threads={searchableThreads}
           initialQuery={threadSearchQuery}
-          onOpen={(id) => { onSidebarNavigate(); openThread(id); }}
+          onOpen={(id, query) => {
+            onSidebarNavigate();
+            openThread(id);
+            setChatFindRequest(query && id.startsWith("text-thread-") ? { threadId: id, query } : null);
+          }}
           onClose={() => setThreadSearchQuery(null)}
         />
-      ) : null}
+      </Suspense> : null}
       {runtimeDismissed && !studio.running && (connectionError || showImageRuntimeStatus) ? (
         <div className="runtime-banner" role="status">
           <span>
@@ -985,6 +1006,8 @@ export function App() {
         videoRunning={video.running}
         onStopVideo={() => void video.update("stop")}
         onOpenText={() => setActiveSection("text")}
+        onExportChat={activeSection === "text" && text.activeThread.messages.length
+          ? (destination) => void text.exportTranscript(text.activeThread.id, destination) : undefined}
         onOpenLibrary={openLibrary}
         onOpenData={openStorage}
         onOpenPreferences={openPreferences}

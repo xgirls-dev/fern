@@ -1,29 +1,24 @@
 import assert from "node:assert/strict";
+import { expect } from "@playwright/test";
 import { fixture } from "./ui-fixture.mjs";
 
 const models = [
   { id: "gemma", name: "Gemma", installed: true, format: "gguf", maxContextSize: 65536, supportsVision: true, supportsTools: true },
   { id: "qwen", name: "Qwen", installed: true, format: "gguf", maxContextSize: 65536, supportsVision: true, supportsTools: true },
 ];
+const document = { id: `doc-${"a".repeat(64)}`, name: "Research notes.txt", bytes: 35 };
 const { page, state, errors, dir, close } = await fixture({
-  imageCount: 0, threadCount: 0, viewport: { width: 1500, height: 900 },
+  firstRun: true, imageCount: 0, threadCount: 0, viewport: { width: 1500, height: 900 },
   textStatus: { models, runtimeAvailable: true, ggufAvailable: true, imageToolModels: [{ id: "4b", label: "Klein 4B" }],
     job: { id: null, status: "idle" } },
-});
-const document = { id: `doc-${"a".repeat(64)}`, name: "Research notes.txt", bytes: 35 };
-await page.addInitScript((doc) => {
-  if (sessionStorage.getItem("fern-split-fixture")) return;
-  sessionStorage.setItem("fern-split-fixture", "true");
-  localStorage.setItem("fern-last-workspace:v1", "text");
-  localStorage.setItem("fern-text-threads:v1", JSON.stringify({
+  legacyTextWorkspace: {
     activeId: "text-thread-writing",
     threads: [
       { id: "text-thread-writing", title: "Writing draft", messages: [], modelId: "gemma" },
-      { id: "text-thread-research", title: "Research sources", messages: [], modelId: "qwen", documents: [doc] },
+      { id: "text-thread-research", title: "Research sources", messages: [], modelId: "qwen", documents: [document] },
     ],
-  }));
-}, document);
-await page.reload();
+  },
+});
 
 const region = (name) => page.getByRole("region", { name, exact: true });
 const button = (name, root = page) => root.getByRole("button", { name, exact: true });
@@ -83,6 +78,7 @@ try {
   await message(left).fill("Continue the left draft");
   await message(right).fill("Answer the right prompt");
   await button("Send message", right).click();
+  await expect.poll(() => state.textRequests.length).toBe(1);
   const rightRequest = state.textRequests[0];
   assert.equal(rightRequest.threadId, "text-thread-research");
   assert.equal(rightRequest.contextSize, 23456);
@@ -95,6 +91,7 @@ try {
   await complete("Right answer.", right);
 
   await button("Send message", left).click();
+  await expect.poll(() => state.textRequests.length).toBe(2);
   const leftRequest = state.textRequests[1];
   assert.equal(leftRequest.threadId, "text-thread-writing");
   assert.equal(leftRequest.contextSize, 12345);

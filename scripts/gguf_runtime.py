@@ -406,6 +406,7 @@ class GGUFServer:
         finished = False
         finish_reason = None
         started = time.perf_counter()
+        emit({"type": "phase", "text": "Waiting for the first token…"})
         try:
             with self.http.open(self._request("/v1/chat/completions", body), timeout=180) as response:
                 for raw in response:
@@ -463,5 +464,6 @@ class GGUFServer:
                 "imageNames": [Path(turn["imagePath"]).name for turn in history if turn.get("imagePath")],
             },
             "inputTokens": usage.get("prompt_tokens", 0), "outputTokens": output_tokens,
+            "finishReason": finish_reason,
             "generationSeconds": elapsed, "tokensPerSecond": output_tokens / elapsed,
         }

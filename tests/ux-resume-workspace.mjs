@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { fixture } from "./ui-fixture.mjs";
+import { expect } from "@playwright/test";
+import { fixture, savedTextWorkspace } from "./ui-fixture.mjs";
 
 const { page, errors, dir, close } = await fixture({ imageCount: 0, threadCount: 0, platform: "linux", viewport: { width: 1440, height: 920 } });
 const add = async (name) => {
@@ -11,23 +12,20 @@ try {
     for (let index = 0; index < 3; index++) await add(name);
   }
   await page.waitForFunction(() => {
-    const keys = ["fern-threads:v1", "fern-text-threads:v1", "fern-qwen3-tts-threads:v1"];
+    const keys = ["fern-threads:v1", "fern-qwen3-tts-threads:v1"];
     return keys.every((key) => JSON.parse(localStorage.getItem(key) ?? "null")?.threads.length === 1);
   });
   await page.screenshot({ path: `${dir}/03-empty-speech-threads-linux-fixture-light-1440x920.png` });
 
-  await page.addInitScript(() => {
-    if (sessionStorage.getItem("fern-relaunch-test-seeded")) return;
-    sessionStorage.setItem("fern-relaunch-test-seeded", "true");
-    const now = Date.now();
-    localStorage.setItem("fern-text-threads:v1", JSON.stringify({
+  assert.equal((await savedTextWorkspace(page)).threads.length, 1);
+  const now = Date.now();
+  await savedTextWorkspace(page, {
       activeId: "text-thread-newest", threads: [
         { id: "text-thread-newest", title: "Poster", draft: "Newer draft", messages: [], updatedAt: now },
         { id: "text-thread-earlier", title: "Poster", draft: "Earlier draft", messages: [], updatedAt: now - 120_000 },
         { id: "text-thread-archived", title: "Poster", archived: true, messages: [], updatedAt: now - 60_000 },
         { id: "text-thread-renamed", title: "Named empty draft", renamed: true, messages: [], updatedAt: now },
       ],
-    }));
   });
   await page.reload();
   await page.getByRole("button", { name: "Preferences", exact: true }).click();
@@ -71,7 +69,7 @@ try {
   assert.equal(await page.locator(".thread-browser-list article").count(), 1);
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Text thread: Named empty draft", exact: true }).waitFor();
-  await page.waitForFunction(() => JSON.parse(localStorage.getItem("fern-text-threads:v1") ?? "null")?.activeId === "text-thread-earlier");
+  await expect.poll(async () => (await savedTextWorkspace(page)).activeId).toBe("text-thread-earlier");
   await page.reload();
   await composer.waitFor();
   assert.equal(await composer.inputValue(), "Earlier draft");

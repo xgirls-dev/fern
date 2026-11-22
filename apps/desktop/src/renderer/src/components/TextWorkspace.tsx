@@ -1,20 +1,25 @@
-import { useEffect, useId, useRef, useState } from "react";
-import Copy from "lucide-react/dist/esm/icons/copy.mjs";
-import GitBranch from "lucide-react/dist/esm/icons/git-branch.mjs";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import Plus from "lucide-react/dist/esm/icons/plus.mjs";
 import Send from "lucide-react/dist/esm/icons/arrow-up.mjs";
 import ArrowDown from "lucide-react/dist/esm/icons/arrow-down.mjs";
 import RotateCcw from "lucide-react/dist/esm/icons/rotate-ccw.mjs";
-import Info from "lucide-react/dist/esm/icons/info.mjs";
 import Check from "lucide-react/dist/esm/icons/check.mjs";
 import ImageOff from "lucide-react/dist/esm/icons/image-off.mjs";
 import AudioLines from "lucide-react/dist/esm/icons/audio-lines.mjs";
 import ImagePlus from "lucide-react/dist/esm/icons/image-plus.mjs";
-import Pencil from "lucide-react/dist/esm/icons/pencil.mjs";
+import Copy from "lucide-react/dist/esm/icons/copy.mjs";
 import Paperclip from "lucide-react/dist/esm/icons/paperclip.mjs";
 import Columns2 from "lucide-react/dist/esm/icons/columns-2.mjs";
 import ArrowLeftRight from "lucide-react/dist/esm/icons/arrow-left-right.mjs";
-import { TextMarkdown } from "./TextMarkdown";
+import Search from "lucide-react/dist/esm/icons/search.mjs";
+import GitBranch from "lucide-react/dist/esm/icons/git-branch.mjs";
+import Pencil from "lucide-react/dist/esm/icons/pencil.mjs";
+import { TextChatMessage, type TextReplyProgress } from "./TextChatMessage";
+import { TextPromptEditor } from "./TextPromptEditor";
+import { TextPromptVersions } from "./TextPromptVersions";
+import { TextReplyAnnouncement } from "./TextReplyAnnouncement";
+import { TEXT_TRANSCRIPT_WINDOW_THRESHOLD, TextTranscriptWindow } from "./TextTranscriptWindow";
+import { TextFindBar } from "./TextFindBar";
 import { Button, IconButton, Input, MenuItem, Select, Textarea } from "./ui/controls";
 import { WorkspaceThreadTitle } from "./WorkspaceThreadTitle";
 import { ImageBatchField, ImageCanvasFields, ImageSamplingFields } from "./ImageGenerationFields";
@@ -22,7 +27,7 @@ import { ImageStyleFields } from "./ImageStyleFields";
 import { ChatPresets } from "./ChatPresets";
 import { ImageLoraFields } from "./ImageLoraFields";
 import { ChatImageReferenceFields } from "./ChatImageReferenceFields";
-import { ChatDocumentAttachments, ChatDocumentSources } from "./ChatDocuments";
+import { ChatDocumentAttachments } from "./ChatDocuments";
 
 import { TextMenu } from "./TextMenu";
 import X from "lucide-react/dist/esm/icons/x.mjs";
@@ -30,16 +35,16 @@ import Settings2 from "lucide-react/dist/esm/icons/settings-2.mjs";
 import Square from "lucide-react/dist/esm/icons/square.mjs";
 import LoaderCircle from "lucide-react/dist/esm/icons/loader-circle.mjs";
 import type { useTextChat } from "../hooks/useTextChat";
-import { useReturnFocus } from "../hooks/useReturnFocus";
-import { notify } from "../lib/notifications";
+import { clearTextFindHighlight, useTextScroll } from "../hooks/useTextScroll";
+import { useTextDraftField } from "../hooks/useTextDraftField";
 import { resolveAssetUrl } from "../lib/api";
+import type { ChatSearchMatch } from "../lib/chatSearch";
+import { notify } from "../lib/notifications";
+import { canContinueTextReply, findChatImage, latestTextPrompt, replyVersions, resolveTextModel, savedVersionForDeletedReply, showReplyVersion, textRuntimeIssue, type GeneratedChatImage, type TextMessage } from "../lib/textThreads";
 import { chatImageErrors, chatImageSettings, MAX_IMAGE_PROMPT_SUFFIX, type ChatImageSettings } from "../lib/chatImageSettings";
 import { isKleinLoraModel, maxReferenceImages } from "../lib/imageModels";
 import { CHAT_DOCUMENT_ACCEPT, MAX_CHAT_DOCUMENTS } from "../lib/chatDocuments";
-import {
-  chatTokenLimits, ggufLoadOptions, KV_CACHE_TYPES, textRuntimeIssue,
-  type ChatPane, type GeneratedChatImage, type GgufLoadOptions, type TextMessage, type TextSamplingSettings, type TextThread,
-} from "../lib/textThreads";
+import { chatTokenLimits, ggufLoadOptions, KV_CACHE_TYPES, type ChatPane, type GgufLoadOptions, type TextSamplingSettings, type TextThread } from "../lib/textThreads";
 import type { SetupTask } from "../lib/modelSetup";
 import type { ImageRecord } from "../lib/types";
 
@@ -123,6 +128,23 @@ function SamplingRangeField({ label, help, min, max, value, disabled, onChange }
   </div>;
 }
 
+interface ModelReadiness {
+  label: string;
+  detail?: string | null;
+  tone?: "pending" | "error";
+  action?: { label: string; run: () => void };
+}
+
+function ChatModelReadiness({ notice, actionRef }: { notice: ModelReadiness; actionRef: (node: HTMLButtonElement | null) => void }) {
+  return <div className="text-model-readiness" data-tone={notice.tone}>
+    <div className="text-model-readiness-message" role={notice.tone === "error" ? "alert" : "status"} aria-atomic="true">
+      {notice.tone === "pending" && <LoaderCircle className="spinner" size={15} aria-hidden="true" />}
+      <div><span>{notice.label}</span>{notice.detail && <small>{notice.detail}</small>}</div>
+    </div>
+    {notice.action && <Button ref={actionRef} variant="secondary" onClick={notice.action.run}>{notice.action.label}</Button>}
+  </div>;
+}
+
 function chatImageRecord(image: GeneratedChatImage, mtime: number): ImageRecord {
   return { ...image, url: `/outputs/${encodeURIComponent(image.name)}`, mtime };
 }
@@ -131,7 +153,14 @@ function messageImages(message: TextMessage): GeneratedChatImage[] {
   return message.generatedImages?.length ? message.generatedImages : message.generatedImage ? [message.generatedImage] : [];
 }
 
-function ChatImage({ image, ordinal, checked, checking, onOpen, onRetryCheck, canRetryCheck, contextLabel, onInclude }: {
+function estimateRowHeight(message: TextMessage) {
+  const sample = message.content.slice(0, 30_000);
+  const lines = sample.split("\n").reduce((total, line) => total + Math.max(1, Math.ceil(line.length / 84)), 0);
+  const illustration = message.generatedImage ? 420 : message.image ? 220 : 0;
+  return 64 + lines * 25 + illustration + (message.reasoning ? 26 : 0) + (message.error ? 24 : 0);
+}
+
+function ChatImage({ image, ordinal, checked, checking, onOpen, onRetryCheck, canRetryCheck, contextLabel, onInclude, showFindCaption }: {
   image: GeneratedChatImage;
   ordinal: number;
   checked?: boolean;
@@ -141,6 +170,7 @@ function ChatImage({ image, ordinal, checked, checking, onOpen, onRetryCheck, ca
   canRetryCheck?: boolean;
   contextLabel?: string;
   onInclude?: () => void;
+  showFindCaption?: boolean;
 }) {
   const [failed, setFailed] = useState(false);
   const [revision, setRevision] = useState(0);
@@ -162,8 +192,12 @@ function ChatImage({ image, ordinal, checked, checking, onOpen, onRetryCheck, ca
       </span>}
       <span className="text-artifact-metadata">{[image.modelLabel, `${image.width} × ${image.height}`].filter(Boolean).join(" · ")}</span>
     </figcaption>}
+    {showFindCaption && <p className="text-find-image-caption" data-find-target>{image.prompt}</p>}
     {!failed && !checking && (onRetryCheck || onInclude) ? <div className="text-artifact-actions">
-      {onRetryCheck ? <Button variant="secondary" disabled={!canRetryCheck} onClick={onRetryCheck}>Retry image check</Button> : null}
+      {onRetryCheck ? <Button variant="secondary" disabled={!canRetryCheck} onClick={(event) => {
+        event.currentTarget.closest<HTMLElement>("[data-chat-message]")?.focus({ preventScroll: true });
+        onRetryCheck();
+      }}>Retry image check</Button> : null}
       {onInclude ? <Button variant="ghost" onClick={onInclude}>Include this image again</Button> : null}
     </div> : null}
   </figure>;
@@ -180,152 +214,399 @@ export interface TextWorkspaceProps {
   sidebarCollapsed?: boolean;
   onSetupModels: (task: SetupTask, threadId: string) => void;
   focusRequest?: number;
+  findRequest?: { threadId: string; query: string } | null;
+  onFindRequestHandled: () => void;
   imageGpuAvailable?: boolean;
   onOpenImage: (image: ImageRecord, images: ImageRecord[]) => void;
+  onNewChat: () => void;
   onCreateImage: () => void;
   onCreateSpeech: () => void;
   onOpenCompute: () => void;
 }
 
 export function TextWorkspace({ studio, thread: activeThread, pane, focused, split, onChooseChat, onClosePane,
-  sidebarCollapsed = false, onSetupModels, focusRequest = 0, imageGpuAvailable, onOpenImage, onCreateImage, onCreateSpeech, onOpenCompute,
-}: TextWorkspaceProps) {
+  sidebarCollapsed = false, onSetupModels, focusRequest = 0, findRequest, onFindRequestHandled, imageGpuAvailable,
+  onOpenImage, onNewChat, onCreateImage, onCreateSpeech, onOpenCompute }: TextWorkspaceProps) {
   const { status, statusError, actionError, busy } = studio;
+  const fieldPrefix = useId() + "-";
+  const inspectorId = fieldPrefix + "chat-inspector";
+  const stopping = studio.isStopping(activeThread);
+  const pendingReplyOutput = studio.pendingReplyOutput(activeThread);
+  const documents = activeThread.documents ?? [];
   const [panel, setPanel] = useState<"settings" | "image" | null>(null);
   const openModels = () => { setPanel(null); onSetupModels("chat", activeThread.id); };
   const openImageSetup = () => { setPanel(null); onSetupModels("chat-image", activeThread.id); };
-  const fieldPrefix = useId() + "-";
-  const inspectorId = `${fieldPrefix}chat-inspector`;
   const panelRef = useRef<HTMLElement>(null);
   const panelTrigger = useRef<HTMLButtonElement>(null);
-  const [copiedId, setCopiedId] = useState<string | null>(null);
-  const [infoId, setInfoId] = useState<string | null>(null);
-  const [editing, setEditing] = useState<{ threadId: string; messageId: string; content: string } | null>(null);
-  const editFocus = useReturnFocus();
-  const [showScrollButton, setShowScrollButton] = useState(false);
-  const feedRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
-  const lastFocusRequest = useRef(0);
+  const findTrigger = useRef<HTMLButtonElement>(null);
+  const [findThreadId, setFindThreadId] = useState<string | null>(null);
+  const [findInitialQuery, setFindInitialQuery] = useState("");
+  const [findRevision, setFindRevision] = useState(0);
+  const [findMatch, setFindMatch] = useState<ChatSearchMatch | null>(null);
+  const [replyPreviews, setReplyPreviews] = useState<Record<string, string>>({});
+  const findOpen = findThreadId === activeThread.id;
+  const activeMatch = findOpen && focused ? findMatch : null;
+  const previousFind = useRef<ChatSearchMatch | null>(null);
+  const previousFindPreview = useRef<{ threadId: string; messageId: string } | undefined>(undefined);
+  const closeFind = useCallback(() => {
+    setFindThreadId(null);
+    findTrigger.current?.focus({ preventScroll: true });
+  }, []);
+  const { feedRef, transcriptRef, followingLatest, showScrollButton, restoreAnchorId, restoreReasoningId, jumpToLatest, revealMessage,
+    onScroll, onFocus: onHistoryFocus, onKeyDown: onHistoryKeyDown } = useTextScroll(activeThread.id);
+  const { fieldRef: inputRef, bindField: bindDraftField } = useTextDraftField(`composer:${activeThread.id}`, activeThread.draft, 200);
+  const modelActionControl = useRef<HTMLButtonElement | null>(null);
+  const bindModelAction = useCallback((button: HTMLButtonElement | null) => {
+    if (!button && modelActionControl.current === document.activeElement) inputRef.current?.focus({ preventScroll: true });
+    modelActionControl.current = button;
+  }, []);
+  const stopControl = useRef<HTMLButtonElement | null>(null);
+  const bindStopControl = useCallback((button: HTMLButtonElement | null) => {
+    // React detaches the ref before removing the focused Stop button.
+    if (!button && stopControl.current === document.activeElement) inputRef.current?.focus({ preventScroll: true });
+    stopControl.current = button;
+  }, []);
+  const undoButton = useRef<HTMLButtonElement>(null);
+  const focusUndoFor = useRef<string | undefined>(undefined);
+  const [focusJump, setFocusJump] = useState<{ threadId: string; messageId: string; block?: "start" } | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ threadId: string; messageId: string } | null>(null);
   const attachmentInput = useRef<HTMLInputElement>(null);
   const documentInput = useRef<HTMLInputElement>(null);
-  const [draggingAttachment, setDraggingAttachment] = useState(false);
+  const [fileOver, setFileOver] = useState(false);
+  const dragDepth = useRef(0);
+  const focusBranchId = useRef<string | undefined>(undefined);
+  const focusAfterRevision = useRef<string | undefined>(undefined);
+  const focusEditId = useRef<string | undefined>(undefined);
+  const [editJump, setEditJump] = useState<{ threadId: string; messageId: string } | null>(null);
+  const handledFocusRequest = useRef(0);
+  useLayoutEffect(() => {
+    if (!focused || focusRequest === handledFocusRequest.current) return;
+    if (findRequest || document.activeElement?.closest('[role="menu"], [aria-haspopup="menu"][aria-expanded="true"], [aria-modal="true"]')) {
+      handledFocusRequest.current = focusRequest;
+      return;
+    }
+    if (panel) { setPanel(null); return; }
+    handledFocusRequest.current = focusRequest;
+    setFindThreadId(null);
+    inputRef.current?.focus({ preventScroll: true });
+  }, [findRequest, focusRequest, focused, panel]);
   useEffect(() => {
-    if (focusRequest && focusRequest !== lastFocusRequest.current && focused) inputRef.current?.focus();
-    lastFocusRequest.current = focusRequest;
-  }, [focusRequest, focused]);
+    if (findRequest?.threadId !== activeThread.id) return;
+    setPanel(null);
+    setFindInitialQuery(findRequest.query);
+    setFindThreadId(activeThread.id);
+    setFindRevision((value) => value + 1);
+    onFindRequestHandled();
+  }, [activeThread.id, findRequest, onFindRequestHandled]);
   const runningHere = status.job.status === "running" && status.job.threadId === activeThread?.id;
+  const canFind = activeThread.messages.length > 0 || runningHere;
+  useEffect(() => {
+    if (!canFind || !focused) return;
+    const onFind = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.isComposing || !(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "f"
+        || document.querySelector('[aria-modal="true"]')) return;
+      event.preventDefault();
+      if (findOpen) {
+        document.querySelector<HTMLInputElement>('.text-find-bar input')?.select();
+      } else {
+        setPanel(null);
+        setFindInitialQuery("");
+        setFindThreadId(activeThread.id);
+      }
+    };
+    window.addEventListener("keydown", onFind);
+    return () => window.removeEventListener("keydown", onFind);
+  }, [activeThread.id, canFind, findOpen, focused]);
+  const sourceChat = activeThread.sourceThreadId ? studio.threads.find((thread) => thread.id === activeThread.sourceThreadId) : undefined;
+  const promptEdit = activeThread.promptEdit;
+  const deletions = studio.messageDeletions.get(activeThread.id);
+  const deletion = deletions?.at(-1);
+  const deletionCount = deletions?.length ?? 0;
   const models = status.models;
   const modelOptions = [
-    ...models.map(model => ({ value: model.id, label: model.name, description: model.installed ? undefined : "Unavailable", disabled: !model.installed })),
+    ...models.map((model) => {
+      const description = !model.installed ? "Unavailable" : textRuntimeIssue(status, model) ? "Runtime unavailable" : undefined;
+      return { value: model.id, label: model.name, description, disabled: !!description };
+    }),
     ...(status.recommendedModels ?? []).filter(model => !model.installed && !models.some(installed => installed.id === model.id))
       .map(model => ({ value: model.id, label: model.name, description: "Not installed", disabled: true })),
   ];
   const installedModels = models.filter((model) => model.installed);
-  const preferredModel = installedModels.find((model) => model.id === status.defaultModelId) ?? installedModels[0];
-  const selectedModel = activeThread?.modelId ?? preferredModel?.id ?? "";
-  const selected = models.find((model) => model.id === selectedModel && model.installed);
+  const selectedModel = resolveTextModel(status, activeThread) ?? "";
+  const modelRecord = models.find((model) => model.id === selectedModel);
+  const selected = modelRecord?.installed ? modelRecord : undefined;
   const modelAvailable = !!selected;
-  const promptLimit = selected?.format === "gguf" ? undefined : 20_000;
   const runtimeIssue = selected ? textRuntimeIssue(status, selected) : null;
-  const localError = actionError && (actionError.threadId ? actionError.threadId === activeThread.id : focused) ? actionError.message : null;
-  const visibleError = localError ?? (focused ? statusError ?? status.registryError : null) ?? runtimeIssue;
-  const incompatibleImages = !selected?.supportsVision && !!(activeThread?.draftImage || activeThread?.draftContextImage ||
-    activeThread?.messages.some((message) => message.image || message.includedImage));
+  const attachment = studio.draftAttachments.get(activeThread.id);
+  const attachingImage = attachment?.status === "saving";
+  const attachmentRetry = attachment?.status === "failed" ? attachment.retryFile : undefined;
+  const hasDraftImage = !!(activeThread.draftImage || activeThread.draftContextImage);
+  const incompatibleImages = !selected?.supportsVision && hasDraftImage;
   const lastMessage = activeThread?.messages.at(-1);
-  const needsRetry = !!lastMessage && (lastMessage.role === "user" || (!lastMessage.content.trim() && !lastMessage.generatedImage));
+  const replaceablePrompt = latestTextPrompt(activeThread.messages);
+  const lastPrompt = activeThread.messages[activeThread.messages.map((message) => message.role).lastIndexOf("user")];
+  const canRetry = modelAvailable && !runtimeIssue && (selected.supportsVision || !(lastPrompt?.image || lastPrompt?.includedImage));
+  const canSend = !busy && !attachingImage && modelAvailable && !runtimeIssue && !incompatibleImages && (!!activeThread.draft.trim() || hasDraftImage);
+  const canAttach = studio.attachmentReady && !attachingImage && !activeThread.draftContextImage;
+  useEffect(() => { dragDepth.current = 0; setFileOver(false); }, [activeThread.id]);
   const imageModels = status.imageToolModels ?? [];
   const imageModelAvailable = imageModels.some((model) => activeThread?.imageModel === "auto" || activeThread?.imageModel === model.id);
   const canUseImageSetup = studio.computeDevice === "GPU" && imageGpuAvailable !== false;
   const canCreateImage = canUseImageSetup && !runtimeIssue && selected?.supportsVision && selected.supportsTools && imageModelAvailable;
-  const generatingImage = runningHere && !!status.job.phase?.startsWith("Generating");
-  const checkingImage = runningHere && !!status.job.phase?.startsWith("Checking the generated image");
-  const spokenPhase = runningHere
-    ? checkingImage || status.job.inspection ? "Checking the image…" : generatingImage ? "Creating an image…" : "Responding…"
-    : "";
-  const pinnedToBottom = useRef(true);
+  const phase = runningHere ? status.job.phase ?? "" : "";
   const empty = !activeThread?.messages.length && !runningHere;
   const checking = !studio.statusLoaded && !statusError;
+  const catalogError = statusError ?? status.registryError;
+  const install = status.modelInstall;
+  const installing = install?.status === "downloading" || install?.status === "preparing";
+  const installName = status.recommendedModels?.find((model) => model.id === install?.modelId)?.name
+    ?? models.find((model) => model.id === install?.modelId)?.name;
+  const modelSetupAction = { label: installedModels.some((model) => model.id !== selectedModel && !textRuntimeIssue(status, model))
+    ? "Choose another model" : "Browse models", run: openModels };
   const pendingHere = !!activeThread?.pendingJobId && !runningHere;
-  const unavailableReason = checking ? "Checking local models…" : !modelAvailable ? "Choose an installed model to send" : runtimeIssue ? "Text runtime unavailable" : incompatibleImages ? "Choose a vision model for the attached images" : needsRetry && !busy ? "Retry the response to continue" : "";
-  const activity = studio.modelAction ?? (studio.attachingDocument ? "Reading documents…" : studio.attachingImage ? "Attaching image…" : ["downloading", "preparing"].includes(status.modelInstall?.status ?? "") ? status.modelInstall?.phase ?? "Installing model…" : pendingHere ? "Preparing your response…" : busy && !runningHere ? "Another response is running" : "");
-  const { selectModel } = studio;
+  const responseHere = runningHere || pendingHere;
+  const displayJobId = activeThread.pendingJobId ?? (runningHere ? status.job.id : null);
+  const inspectionMessageId = displayJobId ? activeThread.messages.find((message) => message.inspectionJobId === displayJobId)?.id : undefined;
+  const liveJob = displayJobId && status.job.id === displayJobId && status.job.threadId === activeThread.id ? status.job : null;
+  const replyContent = pendingReplyOutput?.content || liveJob?.partialText || "";
+  const replyReasoning = pendingReplyOutput?.reasoning ?? liveJob?.partialReasoning;
+  const replyImages = liveJob?.images ?? pendingReplyOutput?.generatedImages;
+  const replyImage = liveJob?.image ?? replyImages?.[0] ?? pendingReplyOutput?.generatedImage;
+  useEffect(() => { setDeleteTarget(null); }, [activeThread.id, responseHere]);
+  const runningThread = status.job.status === "running" ? studio.threads.find((thread) => thread.id === status.job.threadId) : undefined;
+  const otherResponseThread = responseHere ? undefined : runningThread ?? studio.threads.find((thread) => thread.pendingJobId);
+  const reconnecting = !!statusError && (responseHere || !!otherResponseThread);
+  const checkingImage = runningHere && !reconnecting && !stopping && (phase.startsWith("Checking") || !!liveJob?.inspection || !!replyImage);
+  const modelNotice: ModelReadiness | null = responseHere || otherResponseThread ? null
+    : installing ? { label: `Installing ${installName ?? "a chat model"}`, detail: install.phase, tone: "pending", action: { label: "View model download", run: openModels } }
+    : studio.modelAction ? { label: studio.modelAction, tone: "pending" }
+    : checking ? { label: "Checking local models…", tone: "pending" }
+    : catalogError && !modelAvailable ? { label: "Could not check local models.", detail: catalogError, tone: "error",
+        action: { label: "Retry checking models", run: () => { void studio.refresh(); } } }
+    : install?.status === "failed" && !modelAvailable && (!selectedModel || selectedModel === install.modelId)
+      ? { label: "Model download failed.", detail: install.error, tone: "error", action: { label: "Open model setup", run: openModels } }
+    : selectedModel && !modelAvailable ? { label: modelRecord ? `${modelRecord.name} is unavailable.` : "This chat’s model is unavailable.",
+        detail: modelRecord?.error, tone: "error", action: modelSetupAction }
+    : !modelAvailable ? { label: "Download a local model to start chatting.", action: { label: "Browse models", run: openModels } }
+    : runtimeIssue ? { label: "The selected model can’t run right now.", detail: runtimeIssue, tone: "error", action: modelSetupAction }
+    : null;
+  const localError = actionError && (actionError.threadId ? actionError.threadId === activeThread.id : focused) ? actionError.message : null;
+  const visibleError = localError ?? (reconnecting || modelNotice?.tone === "error" ? null : catalogError);
+  const undoBlocked = responseHere;
+  const replyPaused = runningHere && studio.replyPaused;
+  const statusLabel = reconnecting ? stopping ? "Reconnecting to stop…" : "Reconnecting to the text runtime…"
+    : stopping ? "Stopping…"
+    : pendingHere ? liveJob && liveJob.status !== "idle" ? "Finishing response…" : "Starting response…"
+    : phase.startsWith("Generating image") || phase.startsWith("Generating an image") ? "Creating an image…"
+    : phase.startsWith("Finding document") ? phase
+    : phase.includes("Compacting") ? "Summarizing earlier messages…"
+    : /download/i.test(phase) ? "Downloading the text runtime…"
+    : /^(loading|starting the text worker)/i.test(phase) ? "Loading model…" : null;
+  const replyProgress: TextReplyProgress = checkingImage ? { kind: "image-check", label: "Checking the image…" }
+    : statusLabel ? { kind: "status", label: statusLabel }
+    : replyContent.trim() ? { kind: "answer", label: replyPaused ? "Waiting for more text…" : "Responding…", waiting: replyPaused }
+    : replyReasoning?.trim() ? { kind: "reasoning", label: replyPaused ? "Still reasoning…" : "Reasoning…" }
+    : { kind: "status", label: phase.startsWith("Waiting for")
+      ? replyPaused ? "Still waiting for the first token…" : "Waiting for the first token…" : "Preparing conversation…" };
+  const unavailableReason = modelNotice?.label ?? (!modelAvailable ? "Choose an installed model to send" : incompatibleImages ? "Choose a vision model or remove the attachment" : "");
+  const activity = responseHere ? replyProgress.label
+    : reconnecting ? "Reconnecting to the running chat…"
+    : studio.attachingDocument ? "Reading documents…"
+    : otherResponseThread ? runningThread ? "A response is running in another chat" : "A response is starting in another chat" : "";
+  const streamId = displayJobId && !liveJob?.inspection && !inspectionMessageId ? `response-${displayJobId}` : null;
+  const replyStartedAt = (liveJob?.startedAt ?? 0) * 1000;
+  const replyModelName = models.find((model) => model.id === liveJob?.modelId)?.name ?? selected?.name;
+  const streamingMessage = useMemo<TextMessage | null>(() => streamId ? {
+    id: streamId, role: "assistant", createdAt: replyStartedAt,
+    modelName: replyModelName,
+    content: replyContent,
+    reasoning: replyReasoning,
+    generatedImage: replyImage,
+    generatedImages: replyImages,
+  } : null, [replyContent, replyImage, replyImages, replyModelName, replyReasoning, replyStartedAt, streamId]);
+  const foundMessageId = activeMatch?.savedPromptId ? undefined : activeMatch?.messageId;
+  const foundVersionId = foundMessageId ? activeMatch?.versionId : undefined;
+  const displayMessages = useMemo(() => activeThread.messages.map((message) => {
+    const previewId = foundMessageId === message.id ? foundVersionId : replyPreviews[`${activeThread.id}:${message.id}`];
+    return showReplyVersion(message, previewId);
+  }), [activeThread.id, activeThread.messages, foundMessageId, foundVersionId, replyPreviews]);
+  const storedRows = useMemo(() => {
+    let previouslyTrimmed = false;
+    let previouslySummarized = false;
+    return displayMessages.map((message, index) => {
+      const stored = activeThread.messages[index];
+      const context = stored.requestContext;
+      const trimmed = !!(context?.omittedMessages || context?.shortenedMessages || context?.omittedAttachments);
+      const summarized = (stored.metrics?.context?.compactedMessages ?? 0) > 0;
+      const contextChanged = (trimmed && !previouslyTrimmed) || (summarized && !previouslySummarized);
+      if (stored.role === "assistant") {
+        previouslyTrimmed = trimmed;
+        previouslySummarized = summarized;
+      }
+      const versionAnchor = message.alternatives?.length ? replyVersions(message)[0].id : message.id;
+      return { message, contextChanged, key: `${activeThread.id}:${versionAnchor}`, estimatedHeight: estimateRowHeight(message) };
+    });
+  }, [activeThread.id, activeThread.messages, displayMessages]);
+  const transcript = streamingMessage ? [...storedRows, {
+    message: streamingMessage, contextChanged: false, key: `${activeThread.id}:${streamingMessage.id}`, estimatedHeight: 0,
+  }] : storedRows;
+  const windowed = transcript.length > TEXT_TRANSCRIPT_WINDOW_THRESHOLD;
+  const requestedEdit = editJump?.threadId === activeThread.id && editJump.messageId === promptEdit?.messageId ? editJump.messageId : undefined;
+  const requestedFocus = focusJump?.threadId === activeThread.id ? focusJump : null;
+  const focusedMessageId = requestedFocus && activeThread.messages.find((message) =>
+    message.id === requestedFocus.messageId || message.alternatives?.some((version) => version.id === requestedFocus.messageId))?.id;
+  const revealId = focusedMessageId ?? requestedEdit ?? activeMatch?.messageId;
+  const revealIndex = revealId ? transcript.findIndex(({ message }, index) => (activeThread.messages[index]?.id ?? message.id) === revealId) : -1;
+  const revealKey = transcript[revealIndex]?.key;
+  const restoreIndex = restoreAnchorId ? transcript.findIndex(({ message }, index) =>
+    (activeThread.messages[index]?.id ?? message.id) === restoreAnchorId,
+  ) : -1;
 
-  useEffect(() => {
-    if (activeThread && !activeThread.modelId && preferredModel) {
-      selectModel(activeThread.id, preferredModel.id);
+  useLayoutEffect(() => {
+    const previous = previousFindPreview.current;
+    const find = !focusedMessageId && !requestedEdit ? activeMatch : null;
+    const shouldScroll = !find || previousFind.current !== find;
+    previousFind.current = find;
+    const preview = find && (find.savedPromptId || find.versionId !== find.messageId || find.section !== "body" || promptEdit?.messageId === find.messageId);
+    previousFindPreview.current = preview && revealId ? { threadId: activeThread.id, messageId: revealId } : undefined;
+    const stopWatching = revealId ? revealMessage(revealId, find ?? undefined, requestedFocus?.block, shouldScroll) : undefined;
+    if (!revealId && previous?.threadId === activeThread.id) revealMessage(previous.messageId);
+    if (focusedMessageId) {
+      feedRef.current?.querySelector<HTMLElement>(`[data-chat-message="${CSS.escape(focusedMessageId)}"]`)?.focus({ preventScroll: true });
+      setFocusJump(null);
     }
-  }, [activeThread?.id, activeThread?.modelId, preferredModel?.id, selectModel]);
+    return find ? () => { stopWatching?.(); clearTextFindHighlight(); } : undefined;
+  }, [activeMatch, activeThread.id, feedRef, focusedMessageId, promptEdit?.messageId, requestedEdit, requestedFocus?.block, revealId, revealIndex, revealKey, revealMessage, windowed]);
 
-  useEffect(() => {
-    const element = feedRef.current;
-    if (element && pinnedToBottom.current) {
-      const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-      element.scrollTo({ top: element.scrollHeight, behavior: busy || reduce ? "instant" : "smooth" });
-    }
-  }, [activeThread?.messages.at(-1)?.id, status.job.partialText, status.job.partialReasoning, status.job.image?.name, status.job.images?.length, status.job.status, busy]);
-  useEffect(() => {
-    pinnedToBottom.current = true;
-    setShowScrollButton(false);
-    feedRef.current?.scrollTo({ top: feedRef.current.scrollHeight });
+  useLayoutEffect(() => {
+    if (!deletion || focusUndoFor.current !== activeThread.id) return;
+    focusUndoFor.current = undefined;
+    undoButton.current?.focus({ preventScroll: true });
+  }, [activeThread.id, deletion]);
 
-  }, [activeThread?.id]);
-
-  useEffect(() => {
-    const input = inputRef.current;
-    if (input) { input.style.height = "auto"; input.style.height = `${Math.min(input.scrollHeight, 200)}px`; }
-  }, [activeThread?.draft, activeThread?.id]);
+  useLayoutEffect(() => {
+    const openedBranch = focusBranchId.current === activeThread.id;
+    const sentRevision = focusAfterRevision.current === activeThread.id && !promptEdit;
+    if (!openedBranch && !sentRevision) return;
+    if (openedBranch) focusBranchId.current = undefined;
+    if (sentRevision) focusAfterRevision.current = undefined;
+    inputRef.current?.focus({ preventScroll: true });
+  }, [activeThread.id, promptEdit]);
 
   const closePanel = () => {
     setPanel(null);
     panelTrigger.current?.focus();
   };
 
-  const inspectorOpen = panel !== null;
-  const showPanel = (view: "settings" | "image") => {
-    if (view === panel) return;
-    if (panelRef.current) panelRef.current.scrollTop = 0;
-    setPanel(view);
-  };
   useEffect(() => {
-    if (inspectorOpen) panelRef.current?.focus({ preventScroll: true });
-  }, [inspectorOpen]);
-
-  const copyMessage = async (id: string, content: string) => {
-    try {
-      await window.studio.copyText(content);
-      setCopiedId(id);
-      window.setTimeout(() => setCopiedId((current) => current === id ? null : current), 1300);
-    } catch {
-      notify("Could not copy the response. Select the text and copy it manually.", "error");
-    }
-  };
+    if (panel && focused) panelRef.current?.focus();
+  }, [focused, panel]);
 
   const submit = () => {
-    if (busy || needsRetry || !modelAvailable || !!runtimeIssue || incompatibleImages) return;
-    const text = activeThread?.draft ?? "";
-    if (!text.trim()) return;
-    pinnedToBottom.current = true;
-    void studio.send(activeThread.id, text);
+    if (!canSend) return;
+    jumpToLatest();
+    inputRef.current?.focus({ preventScroll: true });
+    void studio.send(activeThread.id, activeThread.draft);
   };
 
-  if (!activeThread) return null;
-  const documents = activeThread.documents ?? [];
-
-  const forkChat = (messageId?: string) => {
-    if (!studio.forkThread(activeThread.id, messageId)) return;
-    setEditing(null);
-    pinnedToBottom.current = true;
-    inputRef.current?.focus();
+  const stageAttachment = (files: File[]) => {
+    if (!files.length) return;
+    inputRef.current?.focus({ preventScroll: true });
+    void studio.attachImages(activeThread.id, files);
   };
 
-  const liveImages = runningHere
-    ? (status.job.images?.length ? status.job.images : status.job.image ? [status.job.image] : [])
-    : [];
-  const imageCollection = activeThread.messages.flatMap((message) => messageImages(message).map((image) => chatImageRecord(image, message.createdAt)));
-  for (const image of liveImages) {
-    if (!imageCollection.some((item) => item.name === image.name)) imageCollection.push(chatImageRecord(image, (status.job.startedAt ?? 0) * 1000));
+  const retry = () => {
+    jumpToLatest();
+    inputRef.current?.focus({ preventScroll: true });
+    void studio.retry(activeThread.id);
+  };
+  const continueReply = (id: string) => {
+    jumpToLatest();
+    inputRef.current?.focus({ preventScroll: true });
+    void studio.continueReply(activeThread.id, id);
+  };
+  const stopFromComposer = () => {
+    inputRef.current?.focus({ preventScroll: true });
+    void studio.stop(activeThread.id);
+  };
+
+  const selectVersion = useCallback((messageId: string, versionId: string) => {
+    if (messageId === lastMessage?.id) {
+      studio.selectReply(activeThread.id, messageId, versionId);
+      return;
+    }
+    setReplyPreviews((current) => ({ ...current, [`${activeThread.id}:${messageId}`]: versionId }));
+  }, [activeThread.id, lastMessage?.id, studio.selectReply]);
+
+  const branchReply = useCallback((message: TextMessage) => {
+    setPanel(null);
+    focusBranchId.current = studio.copyThread(activeThread.id, message.id);
+  }, [activeThread.id, studio.copyThread]);
+  const editMessage = useCallback((message: TextMessage) => {
+    setDeleteTarget(null);
+    revealMessage(message.id);
+    focusEditId.current = message.id;
+    studio.updateThread(activeThread.id, { promptEdit: { messageId: message.id, content: message.content } });
+  }, [activeThread.id, revealMessage, studio.updateThread]);
+  const clearEditFocus = useCallback(() => { focusEditId.current = undefined; setEditJump(null); }, []);
+  const applyRevision = (sendNow: boolean) => {
+    if (!promptEdit) return;
+    setPanel(null);
+    const action = !sendNow ? "draft" : promptEdit.messageId === replaceablePrompt?.id ? "replace" : "branch";
+    const chatId = studio.revisePrompt(activeThread.id, promptEdit.messageId, promptEdit.content, action);
+    if (action === "replace" && chatId) {
+      focusAfterRevision.current = chatId;
+      setFindThreadId(null);
+      jumpToLatest();
+    } else if (chatId) focusBranchId.current = chatId;
+  };
+  const requestDelete = useCallback((messageId: string | null) => {
+    setDeleteTarget(messageId ? { threadId: activeThread.id, messageId } : null);
+  }, [activeThread.id]);
+  const deleteMessage = useCallback((id: string) => {
+    setDeleteTarget(null);
+    focusUndoFor.current = activeThread.id;
+    studio.deleteMessage(activeThread.id, id);
+  }, [activeThread.id, studio.deleteMessage]);
+  const undoDeletion = () => {
+    if (!deletion || undoBlocked) return;
+    const prompt = activeThread.messages.find((message) => message.id === deletion.beforeId);
+    const savedPrompt = prompt && savedVersionForDeletedReply(prompt, deletion) ? prompt : undefined;
+    studio.undoMessageDeletion(activeThread.id);
+    setFindThreadId(null);
+    setFocusJump({ threadId: activeThread.id, messageId: savedPrompt?.id ?? deletion.messages[0].id });
+    if (savedPrompt) notify("Reply restored to Prompt versions.");
+  };
+  const dismissDeletion = () => {
+    if (!deletion) return;
+    studio.dismissMessageDeletion(activeThread.id);
+    const feed = feedRef.current;
+    if (!showScrollButton || !feed) {
+      inputRef.current?.focus({ preventScroll: true });
+      return;
+    }
+    const viewport = feed.getBoundingClientRect();
+    const visible = [...feed.querySelectorAll<HTMLElement>("[data-chat-message]")].filter((row) => {
+      const bounds = row.getBoundingClientRect();
+      return bounds.bottom > viewport.top && bounds.top < viewport.bottom;
+    });
+    for (const id of [deletion.afterId, deletion.beforeId]) {
+      if (!id) continue;
+      const message = activeThread.messages.find((item) => item.id === id || item.alternatives?.some((reply) => reply.id === id));
+      const neighbor = visible.find((row) => row.dataset.chatMessage === message?.id);
+      if (neighbor) { neighbor.focus({ preventScroll: true }); return; }
+    }
+    (visible[0] ?? feed).focus({ preventScroll: true });
+  };
+
+  const savedImages = useMemo(() => displayMessages.flatMap((message) => messageImages(message).map((image) => chatImageRecord(image, message.createdAt))), [displayMessages]);
+  let imageCollection = savedImages;
+  if (streamingMessage) {
+    imageCollection = [...savedImages, ...messageImages(streamingMessage).filter((image) => !savedImages.some((saved) => saved.name === image.name))
+      .map((image) => chatImageRecord(image, streamingMessage.createdAt))];
   }
-  const draftContextImage = imageCollection.find((image) => image.name === activeThread.draftContextImage);
+  const draftArtifact = findChatImage(activeThread, activeThread.draftContextImage);
+  const draftContextImage = imageCollection.find((image) => image.name === activeThread.draftContextImage) ?? (draftArtifact && chatImageRecord(draftArtifact, 0));
   const latestContext = [...activeThread.messages].reverse().find((message) => message.status === "complete")?.metrics?.context;
   const tokenLimits = chatTokenLimits(activeThread, selected);
   const loadOptions = ggufLoadOptions(activeThread.loadOptions, tokenLimits.contextSize);
@@ -342,28 +623,32 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
     studio.updateThread(activeThread.id, { sampling: { ...activeThread.sampling, ...update } });
   const updateLoadOptions = (update: Partial<GgufLoadOptions>) =>
     studio.updateThread(activeThread.id, { loadOptions: { ...activeThread.loadOptions, ...update } });
-  let previousCompacted = 0;
-  const renderChatImage = (image: GeneratedChatImage, message?: TextMessage) => {
-    const index = imageCollection.findIndex((item) => item.name === image.name);
-    const primary = message ? message.generatedImage?.name === image.name : liveImages[0]?.name === image.name;
-    const canRecover = primary && message && (message.status === "failed" || message.status === "stopped") && !message.metrics?.visionChecked;
-    return <ChatImage key={image.name} image={image} ordinal={index + 1}
-      checked={primary && message?.metrics?.visionChecked} checking={primary && (message ? !!message.inspectionJobId : checkingImage)}
+  const showPanel = (view: "settings" | "image") => setPanel(view);
+  const renderChatImage = (image: GeneratedChatImage, message?: TextMessage, { preview = false, reviewOnly = false, showFindCaption = false }: {
+    preview?: boolean; reviewOnly?: boolean; showFindCaption?: boolean;
+  } = {}) => {
+    const existing = imageCollection.findIndex((item) => item.name === image.name);
+    const collection = existing < 0 ? [...imageCollection, chatImageRecord(image, message?.createdAt ?? 0)] : imageCollection;
+    const index = existing < 0 ? collection.length - 1 : existing;
+    const firstImage = image.name === (message ? messageImages(message)[0]?.name : replyImage?.name);
+    const canRecover = message && firstImage && !preview && (message.status === "failed" || message.status === "stopped") && !message.metrics?.visionChecked;
+    return <ChatImage key={image.name} image={image} ordinal={index + 1} showFindCaption={showFindCaption}
+      checked={firstImage && message?.metrics?.visionChecked} checking={firstImage && (message ? !!message.inspectionJobId : checkingImage)}
       onRetryCheck={canRecover ? () => void studio.retryInspection(activeThread.id, message.id) : undefined}
       canRetryCheck={!busy && !!selected?.supportsVision && !runtimeIssue}
       contextLabel={activeThread.draftContextImage === image.name
         ? "Selected for next message"
         : message && latestContext?.imageNames?.includes(image.name) ? "Used in the latest response" : undefined}
-      onInclude={message && !busy && selected?.supportsVision && !activeThread.draftImage && activeThread.draftContextImage !== image.name ? () => {
-        studio.updateThread(activeThread.id, { draftContextImage: image.name });
+      onInclude={message && !reviewOnly && !attachingImage && !activeThread.draftImage && activeThread.draftContextImage !== image.name ? () => {
+        studio.clearAttachment(activeThread.id);
+        studio.updateThread(activeThread.id, { draftContextImage: image.name, draftContextImageThreadId: image.originThreadId ?? message.imageThreadId });
         inputRef.current?.focus();
       } : undefined}
-      onOpen={() => onOpenImage(imageCollection[index], imageCollection)} />;
+      onOpen={() => onOpenImage(collection[index], collection)} />;
   };
 
   return (
-    <section className={`text-workspace${empty ? " text-workspace--empty" : ""}`}
-      aria-label={split ? (pane === "primary" ? "Left chat" : "Right chat") : "Text conversation"}>
+    <section className={`text-workspace${empty ? " text-workspace--empty" : ""}`} aria-label={split ? pane === "primary" ? "Left chat" : "Right chat" : "Text conversation"}>
       <header className="workspace-header text-header">
         <div className="workspace-heading">
           <WorkspaceThreadTitle
@@ -373,14 +658,17 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
             sidebarCollapsed={sidebarCollapsed && !split}
             onSwitch={studio.selectThread}
           />
+          {sourceChat && <Button variant="ghost" className="text-branch-source" aria-label="Open original chat" title={`Open original chat: ${sourceChat.title}`} onClick={() => {
+            focusBranchId.current = sourceChat.id;
+            studio.selectThread(sourceChat.id);
+          }}><GitBranch size={14} aria-hidden="true" /><span>Original chat</span></Button>}
         </div>
         <div className="text-header-actions">
           {activeThread.messages.length > 0 && <IconButton title="Duplicate chat" aria-label="Duplicate chat" disabled={busy}
-            onClick={() => forkChat()}><Copy size={15} aria-hidden="true" /></IconButton>}
+            onClick={() => { studio.copyThread(activeThread.id); }}><Copy size={15} aria-hidden="true" /></IconButton>}
           {!!activeThread.versions?.length && <Select className="chat-version-select" aria-label="Conversation versions"
             value="" disabled={busy} onChange={(event) => {
-              setEditing(null);
-              pinnedToBottom.current = true;
+              jumpToLatest();
               studio.restoreVersion(activeThread.id, event.currentTarget.value);
             }}>
             <option value="">Versions</option>
@@ -390,21 +678,31 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
             aria-label={split ? "Choose another chat for this pane" : "Open split chat"} onClick={onChooseChat}>
             {split ? <ArrowLeftRight size={15} aria-hidden="true" /> : <Columns2 size={15} aria-hidden="true" />}
           </IconButton>
-          <Button ref={panelTrigger} variant="secondary" className="workspace-settings-button" title="Chat settings"
-            aria-label="Chat settings" aria-expanded={panel !== null} aria-controls={panel ? inspectorId : undefined} onClick={() => panel ? closePanel() : setPanel("settings")}><Settings2 size={15} aria-hidden="true" /><span>Chat settings</span></Button>
+          {promptEdit && windowed && <IconButton aria-label="Resume prompt edit" title="Resume prompt edit" onClick={() => {
+            setPanel(null);
+            setFindThreadId(null);
+            focusEditId.current = promptEdit.messageId;
+            setEditJump({ threadId: activeThread.id, messageId: promptEdit.messageId });
+          }}><Pencil size={16} aria-hidden="true" /></IconButton>}
+          {canFind && <IconButton ref={findTrigger} aria-label="Find in chat" aria-expanded={findOpen} title="Find in chat" onClick={() => { setPanel(null); setFindInitialQuery(""); setFindThreadId(findOpen ? null : activeThread.id); }}><Search size={16} aria-hidden="true" /></IconButton>}
+          <IconButton aria-label="New chat" title="New chat" onClick={onNewChat}><Plus size={18} aria-hidden="true" /></IconButton>
+          <Button ref={panelTrigger} variant="secondary" className="workspace-settings-button" aria-label="Chat settings" aria-expanded={panel !== null} aria-controls={panel ? inspectorId : undefined} onClick={() => { if (panel) closePanel(); else { setFindThreadId(null); setPanel("settings"); } }}><Settings2 size={15} aria-hidden="true" /><span>Chat settings</span></Button>
           {split && <IconButton title="Close pane" aria-label="Close pane" onClick={onClosePane}><X size={16} aria-hidden="true" /></IconButton>}
         </div>
       </header>
 
       <div className={`text-layout${panel ? " text-layout--inspecting" : ""}`}>
       <div className="text-main">
-      <div className="text-conversation" ref={feedRef} onScroll={(event) => { const el = event.currentTarget; pinnedToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80; setShowScrollButton(!pinnedToBottom.current); }} role="log" aria-label="Conversation" aria-live="polite" aria-relevant="additions text">
+      {findOpen && <TextFindBar key={`${activeThread.id}:${findRevision}`} initialQuery={findInitialQuery}
+        messages={activeThread.messages} liveMessage={streamingMessage} onMatch={setFindMatch} onClose={closeFind} />}
+      <div className="text-conversation" ref={feedRef} onScroll={onScroll} onFocusCapture={onHistoryFocus} onKeyDown={onHistoryKeyDown} data-following={followingLatest || undefined} tabIndex={0} role="log" aria-label="Conversation" aria-live="off">
+        <div className="text-transcript" ref={transcriptRef}>
         {!activeThread.messages.length && !runningHere ? (
           <div className="text-empty-state">
             <h3>What can I help with?</h3>
-            {checking ? <p role="status">Checking local models…</p> : !installedModels.length && <p>Download a model to start chatting on your device.</p>}
-            {!checking && !installedModels.length && <Button variant="secondary" onClick={openModels}><Plus size={16} aria-hidden="true" /> Browse models</Button>}
-            {!checking && canUseImageSetup && status.ggufAvailable === true && !canCreateImage && <Button variant="ghost" onClick={openImageSetup}>Set up images in chat</Button>}
+            {modelNotice && <ChatModelReadiness notice={modelNotice} actionRef={bindModelAction} />}
+            {studio.statusLoaded && !catalogError && !installing && !studio.modelAction && modelNotice?.tone !== "error" && canUseImageSetup && status.ggufAvailable === true && !canCreateImage &&
+              <Button variant="ghost" onClick={openImageSetup}>Set up images in chat</Button>}
             {canCreateImage && <Button variant="ghost" onClick={() => {
               if (!activeThread.draft.trim()) studio.updateThread(activeThread.id, { draft: "Create a small poster with a red circle on cream, then describe what you see." });
               inputRef.current?.focus();
@@ -412,135 +710,161 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
           </div>
         ) : null}
 
-        {activeThread.messages.map((message) => {
-          const editingHere = editing?.threadId === activeThread.id && editing.messageId === message.id ? editing : null;
-          const cancelEdit = () => {
-            setEditing(null);
-            editFocus.restore(message.id);
-          };
-          const compacted = message.metrics?.context?.compactedMessages ?? 0;
-          const newlyCompacted = compacted > previousCompacted;
-          if (compacted > previousCompacted) previousCompacted = compacted;
-          return (
-          <article className={`text-message text-message--${message.role}`} key={message.id}>
-            {newlyCompacted ? <p className="text-context-note">Earlier messages were summarized to fit this response. Include a previous image again if you want the model to see it.</p> : null}
-            {message.image && <img className="text-message-image" src={resolveAssetUrl(`/references/${message.image}`)} alt="Attached chat image" />}
-            {message.includedImage ? <p className="text-context-note">Selected image: {imageCollection.find((image) => image.name === message.includedImage)?.prompt || message.includedImage}</p> : null}
-            {messageImages(message).map((image) => renderChatImage(image, message))}
-            {message.reasoning && <details className="text-reasoning"><summary>Reasoning</summary><TextMarkdown content={message.reasoning} /></details>}
-            {editingHere ? <form className="chat-edit-message" onSubmit={(event) => {
-              event.preventDefault();
-              if (busy || !editingHere.content.trim() || editingHere.content.trim() === message.content.trim()) return;
-              void studio.send(activeThread.id, editingHere.content, false, message.id).then((submitted) => {
-                if (submitted) setEditing((current) => current?.messageId === message.id ? null : current);
-              });
-            }}>
-              <Textarea aria-label="Edited message" rows={3} value={editingHere.content} maxLength={promptLimit} autoFocus
-                onChange={(event) => setEditing({ ...editingHere, content: event.currentTarget.value })}
-                onKeyDown={(event) => { if (event.key === "Escape") cancelEdit(); }} />
-              <div className="chat-edit-actions">
-                <Button variant="ghost" onClick={cancelEdit}>Cancel</Button>
-                <Button variant="primary" type="submit" disabled={busy || !editingHere.content.trim() || editingHere.content.trim() === message.content.trim()}>Resend</Button>
-              </div>
-            </form> : <div className="text-message-content">{message.role === "user" ? message.content : <TextMarkdown content={message.content} />}</div>}
-            {!!message.metrics?.documentSources?.length && <ChatDocumentSources sources={message.metrics.documentSources} />}
-            {message.role === "user" && !editingHere && <div className="text-message-tools">
-              <IconButton className="text-icon-button" aria-label="Fork chat here" title="Fork chat here" disabled={busy}
-                onClick={() => forkChat(message.id)}><GitBranch size={15} aria-hidden="true" /></IconButton>
-              <IconButton ref={editFocus.register(message.id)} className="text-icon-button" aria-label="Edit message" title="Edit message"
-                disabled={busy || !modelAvailable || !!runtimeIssue}
-                onClick={() => setEditing({ threadId: activeThread.id, messageId: message.id, content: message.content })}><Pencil size={14} aria-hidden="true" /></IconButton>
-            </div>}
-            {message.status === "failed" ? <div className="text-error" role="alert">
-              {message.error ?? "Generation failed. Retry the response."}
-              {message.errorCode === "intel-vulkan-driver" && window.studio.platform === "win32" && <> <a href="https://www.intel.com/content/www/us/en/support/detect.html" target="_blank" rel="noreferrer">Get Intel graphics drivers</a></>}
-            </div> : null}
-            {message.status === "stopped" ? <div className="text-partial-note">Stopped{message.content ? " · Partial response" : " before any text was generated"}</div> : null}
-            {message.role === "assistant" && <div className="text-message-tools">
-              {message.content.trim() && <IconButton className="text-icon-button" aria-label={copiedId === message.id ? "Copied" : "Copy message"} title={copiedId === message.id ? "Copied" : "Copy message"} onClick={() => void copyMessage(message.id, message.content)}><Copy size={15} aria-hidden="true" /></IconButton>}
-              <IconButton className="text-icon-button" aria-label="Fork chat here" title="Fork chat here" disabled={busy}
-                onClick={() => forkChat(message.id)}><GitBranch size={15} aria-hidden="true" /></IconButton>
-              {message === lastMessage && !busy && (!message.generatedImage || message.status === "complete") && <IconButton className="text-icon-button" aria-label={message.status === "failed" || message.status === "stopped" ? "Retry response" : "Regenerate response"} title="Regenerate response" disabled={!modelAvailable || !!runtimeIssue || incompatibleImages} onClick={() => void studio.retry(activeThread.id)}><RotateCcw size={15} aria-hidden="true" /></IconButton>}
-              <IconButton className="text-icon-button" aria-label="Response details" title="Response details" aria-expanded={infoId === message.id} onClick={() => setInfoId(infoId === message.id ? null : message.id)}><Info size={15} aria-hidden="true" /></IconButton>
-              {copiedId === message.id && <span role="status">Copied</span>}
-            </div>}
-            {infoId === message.id && <div className="text-response-details"><span className="text-message-label">{message.modelName ?? message.metrics?.modelName ?? "Local model"}</span>{message.metrics && <span>{message.metrics.backend ? `${message.metrics.backend} · ` : ""}{message.metrics.device} · {message.metrics.inputTokens} in / {message.metrics.outputTokens} out · {message.metrics.tokensPerSecond.toFixed(1)} tokens/s · {message.metrics.generationSeconds.toFixed(1)} s<br />Temperature {message.metrics.temperature ?? "unknown"} · Top P {message.metrics.topP ?? "unknown"} · Seed {message.metrics.seed ?? "unknown"} · Max tokens {message.metrics.maxNewTokens ?? "unknown"}</span>}</div>}
-            {infoId === message.id && message.metrics?.context && <div className="text-response-details">
-              {message.metrics.context.size.toLocaleString()} token context · {message.metrics.context.images} {message.metrics.context.images === 1 ? "image" : "images"}
-              {message.metrics.context.compactedMessages > 0 && ` · ${message.metrics.context.compactedMessages} earlier messages compacted`}
-            </div>}
-            {infoId === message.id && message.metrics?.loadOptions && Object.keys(message.metrics.loadOptions).length > 0 && <div className="text-response-details">
-              {[
-                message.metrics.loadOptions.flashAttention && `Flash Attention ${message.metrics.loadOptions.flashAttention}`,
-                message.metrics.loadOptions.promptBatch && `Prompt batch ${message.metrics.loadOptions.promptBatch}`,
-                message.metrics.loadOptions.microBatch && `Microbatch ${message.metrics.loadOptions.microBatch}`,
-                message.metrics.loadOptions.keyCacheType && `KV keys ${message.metrics.loadOptions.keyCacheType}`,
-                message.metrics.loadOptions.valueCacheType && `KV values ${message.metrics.loadOptions.valueCacheType}`,
-              ].filter(Boolean).join(" · ")}
-            </div>}
+        <TextTranscriptWindow key={activeThread.id} threadId={activeThread.id} items={transcript} revealIndex={revealIndex} restoreIndex={restoreIndex} renderItem={(index) => {
+          const row = transcript[index];
+          const { message } = row;
+          const contextMessage = activeThread.messages[index];
+          const preview = !!contextMessage && contextMessage.id !== message.id;
+          const match = activeMatch?.messageId === (contextMessage?.id ?? message.id) ? activeMatch : undefined;
+          const savedMatch = match?.savedPromptId ? match : undefined;
+          const latest = contextMessage === lastMessage;
+          const live = message === streamingMessage;
+          const canDelete = !live && !runningHere && !activeThread.pendingJobId;
+          const user = message.role === "user";
+          const editing = user && promptEdit?.messageId === message.id;
+          const replaceLatest = user && message.id === replaceablePrompt?.id;
+          const hasImage = !!(message.image || message.includedImage);
+          const editUnavailable = busy ? "Finish the current response before sending this revision."
+            : !modelAvailable ? "Choose an installed model to send this revision."
+            : runtimeIssue ? "The text runtime is unavailable."
+            : hasImage && !selected?.supportsVision ? "Choose a vision model to send this image." : "";
+          return <TextChatMessage
+            key={row.key}
+            message={message}
+            initialReasoningOpen={!!restoreReasoningId && (contextMessage?.id ?? message.id) === restoreReasoningId}
+            contextVersionId={contextMessage?.id}
+            findMatch={match}
+            progress={live ? replyProgress : undefined}
+            contextChanged={row.contextChanged && !preview}
+            generatedImage={message.generatedImage || message.generatedImages?.length ? messageImages(message).map((image, index) => renderChatImage(image, live ? undefined : message, { preview, showFindCaption: index === 0 && !savedMatch && match?.section === "image" })) : undefined}
+            includedImageLabel={findChatImage(activeThread, message.includedImage)?.prompt}
+            editor={editing && <TextPromptEditor draftKey={`revision:${activeThread.id}:${message.id}`} content={promptEdit.content} original={message.content} replaceLatest={replaceLatest}
+              focusRequested={focusEditId.current === message.id}
+              onFocusHandled={clearEditFocus} hasImage={hasImage} sendUnavailable={editUnavailable}
+              onChange={(content) => studio.updateThread(activeThread.id, { promptEdit: { messageId: message.id, content } })}
+              onCancel={() => studio.updateThread(activeThread.id, { promptEdit: undefined })} onApply={applyRevision}
+              onResend={!replaceLatest ? () => { jumpToLatest(); void studio.send(activeThread.id, promptEdit.content, message.id); } : undefined} />}
+            promptVersions={user && (!editing || savedMatch) && !!message.promptAlternatives?.length && <TextPromptVersions alternatives={message.promptAlternatives}
+              searchMatch={savedMatch} onCloseSearch={closeFind}
+              busy={busy} onRestore={replaceLatest ? (id) => studio.restorePromptVersion(activeThread.id, message.id, id) : undefined}
+              renderImage={(reply) => reply.generatedImage && renderChatImage(reply.generatedImage, reply, { preview: true, reviewOnly: !!savedMatch })} />}
+            onEdit={!live && user ? editMessage : undefined}
+            editingAnother={user && !!promptEdit && !editing}
+            onFork={!live && !user && !busy ? () => studio.copyThread(activeThread.id, message.id, true) : undefined}
+            onBranch={!live && !user && (message.content.trim() || message.generatedImage) ? branchReply : undefined}
+            onDelete={canDelete ? deleteMessage : undefined}
+            onDeleteRequested={canDelete ? requestDelete : undefined}
+            confirmDelete={deleteTarget?.threadId === activeThread.id && deleteTarget.messageId === contextMessage?.id}
+            deleteTurn={user && activeThread.messages[index + 1]?.role === "assistant"}
+            onRetry={latest && !preview && !live && !user && !busy && (!message.generatedImage || message.status === "complete") ? retry : undefined}
+            canRetry={latest && canRetry}
+            onContinue={latest && !preview && !live && canContinueTextReply(message) ? continueReply : undefined}
+            canContinue={!busy && modelAvailable && !runtimeIssue}
+            onSelectVersion={!user && !live && message.alternatives?.length ? selectVersion : undefined}
+            busy={(latest && busy) || !!match}
+          />;
+        }} />
+        {lastMessage?.role === "user" && !busy && <Button variant="secondary" className="text-retry" disabled={!canRetry} onClick={retry}><RotateCcw size={15} aria-hidden="true" />Retry response</Button>}
 
-          </article>
-          );
-        })}
-        {runningHere && !status.job.inspection ? <article className="text-message text-message--assistant text-message--streaming" aria-live="off">
-          {liveImages.map((image) => renderChatImage(image))}
-          {status.job.partialReasoning && <details className="text-reasoning"><summary>Reasoning</summary><TextMarkdown content={status.job.partialReasoning} /></details>}
-          <div className="text-message-content">{status.job.partialText ? <TextMarkdown content={status.job.partialText} /> : <span className="text-thinking">{!status.job.image && (status.job.phase || (generatingImage ? "Creating an image…" : checkingImage ? "Checking the image…" : "Thinking…"))}</span>}<span className="text-stream-cursor" aria-hidden="true" /></div>
-        </article> : null}
-        {lastMessage?.role === "user" && !busy && <Button variant="secondary" className="text-retry" disabled={!modelAvailable || !!runtimeIssue || incompatibleImages} onClick={() => void studio.retry(activeThread.id)}><RotateCcw size={15} aria-hidden="true" />Retry response</Button>}
-
-        <div className="text-feed-end" />
+        </div>
       </div>
 
-      <div className="sr-only" role="status">{spokenPhase}</div>
       <footer className="text-composer-area">
-        {showScrollButton && <IconButton shape="circle" className="text-scroll-latest" aria-label="Jump to latest message" title="Jump to latest message" onClick={() => { pinnedToBottom.current = true; setShowScrollButton(false); const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches; feedRef.current?.scrollTo({ top: feedRef.current.scrollHeight, behavior: reduce ? "instant" : "smooth" }); }}><ArrowDown size={16} aria-hidden="true" /></IconButton>}
+        {showScrollButton && <IconButton shape="circle" className="text-scroll-latest" aria-label="Jump to latest message" title="Jump to latest message" onClick={() => { jumpToLatest(); inputRef.current?.focus({ preventScroll: true }); }}><ArrowDown size={16} aria-hidden="true" /></IconButton>}
+        {studio.storageError && <div className="text-error" role="alert">{studio.storageError}<Button variant="secondary" onClick={studio.retryStorage}>Retry saving chats</Button></div>}
         {visibleError ? <div className="text-error" role="alert">{visibleError}<Button variant="secondary" onClick={() => { void studio.refresh(); }}>Refresh status</Button></div> : null}
-        {selectedModel && !modelAvailable ? <div className="text-error" role="alert">{models.find((model) => model.id === selectedModel)?.error ?? "This thread’s model was removed. Add its folder again or select another model."}</div> : null}
-        <form className="text-composer" data-attachment-drop={draggingAttachment || undefined}
+        {!empty && modelNotice && <ChatModelReadiness notice={modelNotice} actionRef={bindModelAction} />}
+        {deletion && <div className="text-deletion-notice">
+          <span id="text-deletion-status" role="status">{deletion.messages.length > 1 ? "Message and reply deleted." : deletion.messages[0].role === "assistant" ? "Reply deleted." : "Message deleted."}
+            {deletionCount > 1 && ` ${deletionCount} deletions to undo.`}
+            {undoBlocked && " Undo is available after the response."}</span>
+          <Button ref={undoButton} variant="ghost" aria-describedby="text-deletion-status" disabled={undoBlocked} onClick={undoDeletion}>Undo deletion</Button>
+          <IconButton aria-label={deletionCount > 1 ? "Dismiss undo for all deletions" : "Dismiss deletion notice"}
+            title={deletionCount > 1 ? "Dismiss undo for all deletions" : "Dismiss deletion notice"} onClick={dismissDeletion}><X size={14} aria-hidden="true" /></IconButton>
+        </div>}
+        <form className={`text-composer${fileOver ? " is-file-over" : ""}`} onSubmit={(event) => { event.preventDefault(); submit(); }}
+          onDragEnter={(event) => {
+            if (!event.dataTransfer.types.includes("Files")) return;
+            event.preventDefault();
+            dragDepth.current += 1;
+            setFileOver(canAttach);
+          }}
           onDragOver={(event) => {
             if (!event.dataTransfer.types.includes("Files")) return;
             event.preventDefault();
-            event.dataTransfer.dropEffect = busy ? "none" : "copy";
-            if (!busy) setDraggingAttachment(true);
+            event.dataTransfer.dropEffect = canAttach ? "copy" : "none";
           }}
-          onDragLeave={(event) => {
-            if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) setDraggingAttachment(false);
-          }}
+          onDragLeave={() => { if (--dragDepth.current <= 0) { dragDepth.current = 0; setFileOver(false); } }}
           onDrop={(event) => {
-            if (!event.dataTransfer.types.includes("Files")) return;
+            if (!event.dataTransfer.files.length) return;
             event.preventDefault();
-            setDraggingAttachment(false);
-            if (busy) return;
+            dragDepth.current = 0;
+            setFileOver(false);
             const files = Array.from(event.dataTransfer.files);
-            if (files.length === 1 && files[0].type.startsWith("image/") && selected?.supportsVision) void studio.attachImage(activeThread.id, files[0]);
+            if (files.every((file) => file.type.startsWith("image/"))) stageAttachment(files);
             else void studio.attachDocuments(activeThread.id, files);
-          }}
-          onSubmit={(event) => { event.preventDefault(); submit(); }}>
+          }}>
+          {attachment?.status === "saving" && <div className="text-attachment-notice">
+            <LoaderCircle className="spinner" size={15} aria-hidden="true" />
+            <span className="text-attachment-status" role="status"><span title={attachment.filename}>{attachment.filename}</span><small>Attaching image…</small></span>
+            <IconButton aria-label="Cancel image attachment" title="Cancel image attachment" onClick={() => {
+              studio.clearAttachment(activeThread.id);
+              inputRef.current?.focus({ preventScroll: true });
+            }}><X size={14} aria-hidden="true" /></IconButton>
+          </div>}
+          {attachment?.status === "failed" && <div className="text-attachment-notice text-attachment-notice--error">
+            <span role="alert">{attachment.message}</span>
+            {attachmentRetry && <Button variant="ghost" aria-label="Retry image attachment" onClick={() => stageAttachment([attachmentRetry])}>Retry</Button>}
+            <IconButton aria-label="Dismiss attachment message" title="Dismiss attachment message" onClick={() => {
+              studio.clearAttachment(activeThread.id);
+              inputRef.current?.focus({ preventScroll: true });
+            }}><X size={14} aria-hidden="true" /></IconButton>
+          </div>}
           {activeThread.draftContextImage ? <div className="text-draft-image text-draft-context">
             {draftContextImage && <img src={resolveAssetUrl(draftContextImage.url, draftContextImage.mtime)} alt="" onError={(event) => { event.currentTarget.hidden = true; }} key={draftContextImage.name} />}
             <span>Selected for next message: {draftContextImage?.prompt || activeThread.draftContextImage}</span>
-            <IconButton aria-label="Remove selected conversation image" disabled={busy} onClick={() => studio.updateThread(activeThread.id, { draftContextImage: undefined })}><X size={14} aria-hidden="true" /></IconButton>
+            <IconButton aria-label="Remove selected conversation image" onClick={() => {
+              studio.updateThread(activeThread.id, { draftContextImage: undefined, draftContextImageThreadId: undefined });
+              inputRef.current?.focus({ preventScroll: true });
+            }}><X size={14} aria-hidden="true" /></IconButton>
           </div> : null}
           {activeThread.draftImage && <div className="text-draft-image">
             <img src={resolveAssetUrl(`/references/${activeThread.draftImage}`)} alt="Image to send" />
-            <IconButton aria-label="Remove chat image" disabled={busy} onClick={() => studio.updateThread(activeThread.id, { draftImage: undefined })}><X size={14} aria-hidden="true" /></IconButton>
+            <IconButton aria-label="Remove chat image" disabled={attachingImage} onClick={() => {
+              studio.updateThread(activeThread.id, { draftImage: undefined });
+              inputRef.current?.focus({ preventScroll: true });
+            }}><X size={14} aria-hidden="true" /></IconButton>
           </div>}
+          {!responseHere && lastMessage?.role === "assistant" && <Button className="text-latest-reply-link" onClick={() => {
+            setFindThreadId(null);
+            setFocusJump({ threadId: activeThread.id, messageId: lastMessage.id, block: "start" });
+          }}>Go to latest reply</Button>}
           {documents.length > 0 && <ChatDocumentAttachments documents={documents} disabled={busy} onRemove={(id) => studio.removeDocument(activeThread.id, id)} />}
           <Textarea
-            ref={inputRef}
+            key={activeThread.id}
+            ref={bindDraftField}
             aria-label="Message"
             name="message"
             autoComplete="off"
-            placeholder={checking ? "Ask anything…" : installedModels.length ? "Ask anything…" : "Download a model to get started"}
+            placeholder={hasDraftImage ? "Ask about this image…" : "Write a message…"}
             rows={1}
-            maxLength={promptLimit}
+            maxLength={selected?.format === "gguf" ? undefined : 20_000}
             value={activeThread.draft}
             onChange={(event) => studio.updateThread(activeThread.id, { draft: event.target.value })}
+            onPaste={(event) => {
+              const images = Array.from(event.clipboardData.files).filter((item) => item.type.startsWith("image/"));
+              if (!images.length) return;
+              if (!event.clipboardData.getData("text/plain")) event.preventDefault();
+              void studio.attachImages(activeThread.id, images);
+            }}
             onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+              if (event.key === "Escape" && (runningHere || pendingHere) && !event.nativeEvent.isComposing) {
                 event.preventDefault();
-                submit();
+                void studio.stop(activeThread.id);
+              }
+              if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) {
+                event.preventDefault();
+                if (!event.repeat) submit();
               }
             }}
           />
@@ -554,14 +878,14 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
                 }} />
               <IconButton aria-label="Attach documents" title={documents.length >= MAX_CHAT_DOCUMENTS ? "This chat has eight documents" : "Attach documents for this chat"}
                 disabled={busy || documents.length >= MAX_CHAT_DOCUMENTS} onClick={() => documentInput.current?.click()}><Paperclip size={16} aria-hidden="true" /></IconButton>
-              {selected?.supportsVision && <>
-                <input ref={attachmentInput} type="file" accept="image/png,image/jpeg,image/webp" aria-label="Chat image file" hidden onChange={(event) => {
-                  const file = event.currentTarget.files?.[0];
-                  event.currentTarget.value = "";
-                  if (file) void studio.attachImage(activeThread.id, file);
-                }} />
-                <IconButton aria-label="Attach chat image" title={activeThread.draftContextImage ? "Remove the selected conversation image to attach a new file" : "Attach chat image"} disabled={busy || !!activeThread.draftContextImage} onClick={() => attachmentInput.current?.click()}><ImagePlus size={16} aria-hidden="true" /></IconButton>
-              </>}
+              <input ref={attachmentInput} type="file" accept="image/png,image/jpeg,image/webp" aria-label="Chat image file" hidden onChange={(event) => {
+                const files = Array.from(event.currentTarget.files ?? []);
+                event.currentTarget.value = "";
+                stageAttachment(files);
+              }} />
+              <IconButton aria-label="Attach chat image" title={activeThread.draftContextImage ? "Remove the selected conversation image to attach a new file"
+                : attachingImage ? "Attaching image…" : "Attach chat image · Paste or drop an image"} disabled={!canAttach}
+                onClick={() => attachmentInput.current?.click()}><ImagePlus size={16} aria-hidden="true" /></IconButton>
               {selected?.supportsReasoning && <Select className="text-response-mode" aria-label="Response mode" value={activeThread.mode} disabled={busy} onChange={(event) => {
                 const mode = event.target.value === "reasoning" ? "reasoning" : "instant";
                 studio.updateThread(activeThread.id, { mode, ...(mode === "reasoning" && activeThread.maxNewTokens === 512 ? { maxNewTokens: 1024 } : {}) });
@@ -571,11 +895,12 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
               <TextMenu label="Text model" value={selectedModel} disabled={busy} options={modelOptions} onSelect={(id) => studio.selectModel(activeThread.id, id)}>
                 <MenuItem role="menuitem" onClick={openModels}>Manage models</MenuItem>
               </TextMenu>
-            {runningHere ? <IconButton variant="danger" shape="circle" className="composer-submit is-stop" disabled={status.job.status !== "running"} onClick={() => void studio.stop(activeThread.id)} aria-label="Stop generation" title="Stop generation"><Square size={14} fill="currentColor" aria-hidden="true" /></IconButton> : <IconButton type="submit" variant="primary" shape="circle" className="composer-submit" disabled={busy || !activeThread.draft.trim() || !modelAvailable || !!runtimeIssue || needsRetry || incompatibleImages} aria-label="Send message" title={activity || unavailableReason || "Send message"}>{pendingHere ? <LoaderCircle className="spinner" size={16} aria-hidden="true" /> : <Send size={20} aria-hidden="true" />}</IconButton>}
+            {responseHere ? <IconButton key="stop" ref={bindStopControl} variant="danger" shape="circle" className="composer-submit is-stop" disabled={stopping} onClick={stopFromComposer} aria-label="Stop generation" title={stopping ? "Stopping generation…" : "Stop generation (Esc in composer)"}>{stopping ? <LoaderCircle className="spinner" size={16} aria-hidden="true" /> : <Square size={14} fill="currentColor" aria-hidden="true" />}</IconButton> : <IconButton key="send" type="submit" variant="primary" shape="circle" className="composer-submit" disabled={!canSend} aria-label="Send message" title={attachingImage ? "Attaching image…" : activity || unavailableReason || "Send message"}><Send size={20} aria-hidden="true" /></IconButton>}
             </div>
           </div>
         </form>
-        <div className="text-composer-hint"><span role="status">{activity || unavailableReason || "Your conversations stay on this device"}</span><span className="text-keyboard-hint">{promptLimit && activeThread.draft.length > promptLimit * 0.9 ? `${activeThread.draft.length.toLocaleString()} / ${promptLimit.toLocaleString()}` : "Enter to send · Shift + Enter for newline"}</span></div>
+        <div className="text-composer-hint"><span role="status" aria-atomic="true">{modelNotice ? "" : activity || unavailableReason}</span>{otherResponseThread && <Button variant="ghost" className="text-open-running" onClick={() => studio.selectThread(otherResponseThread.id)}>Open running chat</Button>}<span className="text-keyboard-hint">{activeThread.draft.length > 18000 ? `${activeThread.draft.length.toLocaleString()} / 20,000` : "Enter to send · Shift + Enter for newline"}</span></div>
+        <TextReplyAnnouncement key={activeThread.id} jobId={displayJobId} inspectionMessageId={inspectionMessageId} messages={activeThread.messages} />
         {empty && <div className="text-empty-actions" role="group" aria-label="Creation workspaces">
           <Button variant="ghost" onClick={onCreateImage}><ImagePlus size={15} aria-hidden="true" /> Create image</Button>
           <Button variant="ghost" onClick={onCreateSpeech}><AudioLines size={15} aria-hidden="true" /> Create speech</Button>

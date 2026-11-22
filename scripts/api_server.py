@@ -135,6 +135,10 @@ TTS_JOB: dict[str, Any] = {
     "output": None, "error": None, "diagnostics": [], "phase": None,
 }
 TEXT_JOB_LOCK = threading.Lock()
+TEXT_ADMISSION_LOCK = threading.Lock()
+TEXT_PENDING_STOPS: dict[tuple[str, str], float] = {}
+TEXT_PENDING_STOP_SECONDS = 300
+TEXT_PENDING_STOP_LIMIT = 256
 # Serialize admission and cancellation across modalities.
 JOB_ADMISSION_LOCK = threading.RLock()
 TEXT_CANCEL_EVENT: threading.Event | None = None
@@ -650,6 +654,20 @@ def chat_image_catalog() -> list[dict[str, Any]]:
     return models
 
 
+def text_job_snapshot() -> dict[str, Any]:
+    with TEXT_JOB_LOCK:
+        return dict(TEXT_JOB)
+
+
+def text_job_receipt(payload: dict[str, Any], job: dict[str, Any] | None = None) -> dict[str, Any]:
+    if payload.get("jobOnly") is True:
+        return {"textJob": job if job is not None else text_job_snapshot()}
+    runtime = text_runtime_snapshot()
+    if job is not None:
+        runtime["job"] = job
+    return {"job": runtime}
+
+
 def text_runtime_snapshot() -> dict[str, Any]:
     try:
         # Keep native GenAI libraries in the worker. Importing them from
@@ -663,8 +681,7 @@ def text_runtime_snapshot() -> dict[str, Any]:
     except Exception as error:
         runtime_available = False
         runtime_error = str(error).splitlines()[-1][:300]
-    with TEXT_JOB_LOCK:
-        job = dict(TEXT_JOB)
+    job = text_job_snapshot()
     try:
         models = TEXT_MODEL_REGISTRY.snapshot()
         registry_error = None
@@ -691,6 +708,8 @@ def text_runtime_snapshot() -> dict[str, Any]:
     gguf_available = gguf_runtime_supported()
     return {
         "job": job,
+        "supportsJobPolling": True,
+        "supportsPendingStop": True,
         "models": models,
         "recommendedModels": recommended,
         "imageToolModels": chat_image_catalog(),
@@ -707,7 +726,8 @@ def text_runtime_snapshot() -> dict[str, Any]:
 
 def append_text_event(job_id: str, *, phase: str | None = None, token: str | None = None, reasoning: str | None = None) -> None:
     with TEXT_JOB_LOCK:
-        if TEXT_JOB.get("id") != job_id or TEXT_JOB.get("status") != "running":
+        if (TEXT_JOB.get("id") != job_id or TEXT_JOB.get("status") != "running"
+                or TEXT_JOB.get("phase") == "Stopping generation…"):
             return
         if phase is not None:
             TEXT_JOB["phase"] = phase[:500]
@@ -730,7 +750,22 @@ def qwen_turbo_setup_running() -> bool:
         return QWEN_JOB.get("status") in ("setting_up", "downloading")
 
 
-def start_text_job(payload: dict[str, Any], request_id: Any) -> None:
+def record_pending_text_stop(request_id: str, thread_id: str) -> bool:
+    with TEXT_ADMISSION_LOCK, TEXT_JOB_LOCK:
+        if TEXT_JOB.get("id") == request_id and TEXT_JOB.get("threadId") == thread_id:
+            return False
+        now = time.monotonic()
+        for key, expires in list(TEXT_PENDING_STOPS.items()):
+            if expires <= now:
+                del TEXT_PENDING_STOPS[key]
+        key = (request_id, thread_id)
+        if key not in TEXT_PENDING_STOPS and len(TEXT_PENDING_STOPS) >= TEXT_PENDING_STOP_LIMIT:
+            raise ValueError("Could not cancel this pending request. Try stopping it when the model starts.")
+        TEXT_PENDING_STOPS[key] = now + TEXT_PENDING_STOP_SECONDS
+        return True
+
+
+def start_text_job(payload: dict[str, Any], request_id: Any, admit_before: Any = None) -> dict[str, Any] | None:
     global TEXT_CANCEL_EVENT
     with TTS_JOB_LOCK:
         audio_busy = TTS_JOB.get("status") in ("running", "setting_up", "stopping")
@@ -741,9 +776,18 @@ def start_text_job(payload: dict[str, Any], request_id: Any) -> None:
     job_id = request_id or str(uuid.uuid4())
     if not isinstance(job_id, str) or len(job_id) > 100:
         raise ValueError("Invalid text request ID.")
-    with TEXT_JOB_LOCK:
+    with TEXT_ADMISSION_LOCK, TEXT_JOB_LOCK:
+        if TEXT_PENDING_STOPS.get((job_id, payload["threadId"]), 0) > time.monotonic():
+            return {
+                "id": job_id, "threadId": payload["threadId"], "modelId": payload["modelId"],
+                "status": "stopped", "phase": "Generation stopped.", "partialText": "", "startedAt": None,
+                "finishedAt": time.time(), "result": None, "error": None,
+            }
         if TEXT_JOB.get("id") == job_id and TEXT_JOB.get("threadId") == payload["threadId"]:
-            return
+            return None
+        # The renderer already stopped waiting. Do not start a response from a delayed POST.
+        if admit_before is not None and (type(admit_before) is not int or admit_before <= time.time() * 1000):
+            raise ValueError("The request timed out before the model could start. Try again.")
         if TEXT_JOB.get("status") == "running":
             raise ValueError("A text response is already running.")
         cancel_event = threading.Event()
@@ -757,6 +801,7 @@ def start_text_job(payload: dict[str, Any], request_id: Any) -> None:
             error=None, errorCode=None,
         )
     threading.Thread(target=run_text_generation, args=(payload, job_id, cancel_event), daemon=True).start()
+    return None
 
 
 def validate_text_sampling(options: Any) -> dict[str, Any]:
@@ -803,13 +848,13 @@ def run_text_generation(payload: dict[str, Any], job_id: str, cancel_event: thre
         if model is None or not model.get("installed"):
             raise ValueError("Add this text model again; its files are no longer available.")
         device = payload["device"]
+        append_text_event(job_id, phase="Preparing conversation…")
         passages = []
         if attachments := payload.get("documentIds"):
             append_text_event(job_id, phase="Finding document passages…")
             passages = retrieve_passages(DATA_DIR / "chat-documents", attachments, payload["messages"], payload["contextSize"])
         if cancel_event.is_set():
             raise InterruptedError()
-        append_text_event(job_id, phase=f"Loading {model['name']} on {device_label(device)}…")
 
         def generate(request: dict[str, Any]) -> dict[str, Any]:
             return TEXT_GENERATION_WORKER.generate(
@@ -893,6 +938,7 @@ def run_text_generation(payload: dict[str, Any], job_id: str, cancel_event: thre
             result["tokensPerSecond"] = result["outputTokens"] / max(result["generationSeconds"], 0.001)
             result["visionChecked"] = True
             result["context"] = continuation.get("context")
+            result["finishReason"] = continuation.get("finishReason")
         if cancel_event.is_set():
             raise InterruptedError()
         with TEXT_JOB_LOCK:
@@ -2364,6 +2410,10 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(200, text_runtime_snapshot())
             return
 
+        if parsed.path == "/api/text/job":
+            self.send_json(200, text_job_snapshot())
+            return
+
         if parsed.path == "/api/text/recover-image":
             query = urllib.parse.parse_qs(parsed.query)
             thread_id = query.get("threadId", [""])[0]
@@ -2491,8 +2541,43 @@ class Handler(BaseHTTPRequestHandler):
         self.send_error(404)
 
     def do_POST(self) -> None:
+        if urllib.parse.urlparse(self.path).path == "/api/text/stop":
+            self.stop_text()
+            return
         with JOB_ADMISSION_LOCK:
             self.handle_post()
+
+    def stop_text(self) -> None:
+        try:
+            payload = self.read_json_body()
+            request_id = payload.get("requestId")
+            thread_id = payload.get("threadId")
+            if thread_id is not None:
+                if (not isinstance(thread_id, str) or not thread_id.startswith("text-thread-") or len(thread_id) > 100
+                        or not isinstance(request_id, str) or not 1 <= len(request_id) <= 100):
+                    raise ValueError("Invalid pending text request.")
+                # Pending cancellation must be able to answer while another POST is still being admitted.
+                if record_pending_text_stop(request_id, thread_id):
+                    self.send_json(202, {"cancelledBeforeStart": True})
+                    return
+        except ValueError as error:
+            self.send_json(400, {"error": str(error)})
+            return
+
+        with JOB_ADMISSION_LOCK, TEXT_ADMISSION_LOCK:
+            with TEXT_JOB_LOCK:
+                running = (TEXT_JOB.get("status") == "running"
+                           and (request_id is None or request_id == TEXT_JOB.get("id"))
+                           and (thread_id is None or thread_id == TEXT_JOB.get("threadId")))
+                if running:
+                    TEXT_JOB["phase"] = "Stopping generation…"
+                    if TEXT_CANCEL_EVENT is not None:
+                        TEXT_CANCEL_EVENT.set()
+            if running:
+                TEXT_GENERATION_WORKER.interrupt()
+                INTEL_MEDIA.interrupt()
+            receipt = text_job_receipt(payload)
+        self.send_json(202, receipt)
 
     def start_video(self, payload: dict[str, Any]) -> None:
         if (
@@ -2554,20 +2639,6 @@ class Handler(BaseHTTPRequestHandler):
             "/api/storage/cleanup-cache", "/api/storage/clear-local-data",
         ):
             self.send_json(409, {"error": "Finish or stop the current video generation first."})
-            return
-
-        if parsed.path == "/api/text/stop":
-            with TEXT_JOB_LOCK:
-                running = TEXT_JOB.get("status") == "running"
-                if running:
-                    TEXT_JOB["phase"] = "Stopping generation…"
-                    cancel_event = TEXT_CANCEL_EVENT
-                    if cancel_event is not None:
-                        cancel_event.set()
-            if running:
-                TEXT_GENERATION_WORKER.interrupt()
-                INTEL_MEDIA.interrupt()
-            self.send_json(202, {"job": text_runtime_snapshot()})
             return
 
         if parsed.path == "/api/text/models/install":
@@ -2658,8 +2729,8 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/text/inspect-image":
             try:
                 payload = self.read_json_body()
-                start_text_job(prepare_image_inspection(payload), payload.get("requestId"))
-                self.send_json(202, {"job": text_runtime_snapshot()})
+                job = start_text_job(prepare_image_inspection(payload), payload.get("requestId"), payload.get("admitBefore"))
+                self.send_json(202, text_job_receipt(payload, job))
             except Exception as error:
                 self.send_json(400, {"error": str(error)})
             return
@@ -2795,8 +2866,8 @@ class Handler(BaseHTTPRequestHandler):
                     "documentIds": document_ids(payload.get("documentIds")),
                     "requireGpuVision": require_gpu_vision or image_model in INTEL_MEDIA_CATALOG or image_model == APPLE_IMAGE_ID,
                 }
-                start_text_job(generation, payload.get("requestId"))
-                self.send_json(202, {"job": text_runtime_snapshot()})
+                job = start_text_job(generation, payload.get("requestId"), payload.get("admitBefore"))
+                self.send_json(202, text_job_receipt(payload, job))
             except Exception as error:
                 self.send_json(400, {"error": str(error)})
             return

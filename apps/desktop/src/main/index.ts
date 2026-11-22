@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { createServer } from "node:net";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import {
   app,
   BrowserWindow,
@@ -190,6 +190,7 @@ function buildMenu(): void {
         { role: "quit" },
       ],
     },
+    { role: "editMenu" },
     {
       label: "View",
       submenu: [
@@ -266,6 +267,32 @@ function registerIpc(): void {
 
   ipcMain.handle("studio:copy-text", (_event, text: string) => {
     clipboard.writeText(text);
+  });
+
+  ipcMain.handle("studio:save-chat-transcript", async (event, title: unknown, markdown: unknown) => {
+    if (typeof title !== "string" || typeof markdown !== "string" || !markdown.trim()) throw new Error("Invalid chat transcript.");
+    const cleanName = [...title.replace(/[<>:"/\\|?*\x00-\x1f\x7f]/g, " ").replace(/\s+/g, " ").trim()].slice(0, 80)
+      .join("").replace(/^[. ]+|[. ]+$/g, "");
+    const options: Electron.SaveDialogOptions = {
+      title: "Save chat transcript",
+      defaultPath: `${cleanName || "Conversation"} - Fern chat.md`,
+      filters: [{ name: "Markdown", extensions: ["md"] }],
+      properties: ["showOverwriteConfirmation"],
+    };
+    const owner = BrowserWindow.fromWebContents(event.sender);
+    const result = owner ? await dialog.showSaveDialog(owner, options) : await dialog.showSaveDialog(options);
+    if (result.canceled || !result.filePath) return false;
+
+    const { mkdtemp, rename, rm, writeFile } = await import("node:fs/promises");
+    const temporary = await mkdtemp(join(dirname(result.filePath), ".fern-transcript-"));
+    try {
+      const staged = join(temporary, "chat.md");
+      await writeFile(staged, markdown, "utf8");
+      await rename(staged, result.filePath);
+      return true;
+    } finally {
+      await rm(temporary, { recursive: true, force: true }).catch(() => undefined);
+    }
   });
 
   ipcMain.handle("studio:clear-web-cache", async (event) => {

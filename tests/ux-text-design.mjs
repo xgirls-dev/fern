@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { fixture } from './ui-fixture.mjs';
+import { fixture, savedTextWorkspace } from './ui-fixture.mjs';
 const textStatus = { models: [{ id: 'qwen', name: 'Qwen 2.5 · 0.5B', path: 'C:/models/qwen2.5-0.5b-instruct-int4', installed: true }], runtimeAvailable: true, runtimeError: null, devices: ['AUTO','GPU','CPU'], job: {id:null,status:'idle'} };
 const {page, errors, dir, close} = await fixture({textStatus});
 try {
@@ -54,13 +54,11 @@ try {
   await page.getByRole('complementary',{name:'Chat settings panel'}).getByRole('button',{name:'Manage models',exact:true}).click();
   await page.screenshot({path:`${dir}/text-design-library.png`});
   await page.keyboard.press('Escape');
-  await page.addInitScript(()=>{
-    const w=JSON.parse(localStorage.getItem('fern-text-threads:v1'));
-    const t=w.threads.find(t=>t.id===w.activeId);
-    t.title='A simple way to get started';
-    t.messages=[{id:'u1',role:'user',content:'How do I run a quantized model locally with OpenVINO?',createdAt:Date.now()},{id:'a1',role:'assistant',content:'You can run the model entirely on your machine. Once you have an OpenVINO export, the setup is small.\n\n### Load the model\n\nUse `LLMPipeline` to load the folder and choose your device:\n\n```python\nimport openvino_genai as ov_genai\n\npipeline = ov_genai.LLMPipeline(\n    "models/qwen2.5-0.5b-instruct-int4", "GPU"\n)\nresponse = pipeline.generate(\n    "Explain quantization in one sentence.",\n    max_new_tokens=128,\n)\nprint(response)\n```\n\n**A few things to keep in mind:**\n\n- Keep the tokenizer files alongside the model.\n- Use a small output limit for your first test.\n- The first response may take longer while the model loads.\n\nAfter that, you can keep the pipeline warm for the next turn.',createdAt:Date.now(),status:'complete',modelName:'Qwen 2.5 · 0.5B',metrics:{device:'GPU',inputTokens:30,outputTokens:160,generationSeconds:4.8,tokensPerSecond:33.3}}];
-    localStorage.setItem('fern-text-threads:v1',JSON.stringify(w));
-  });
+  const storedChats = await savedTextWorkspace(page);
+  const t = storedChats.threads.find((thread) => thread.id === storedChats.activeId);
+  t.title='A simple way to get started';
+  t.messages=[{id:'u1',role:'user',content:'How do I run a quantized model locally with OpenVINO?',createdAt:Date.now()},{id:'a1',role:'assistant',content:'You can run the model entirely on your machine. Once you have an OpenVINO export, the setup is small.\n\n### Load the model\n\nUse `LLMPipeline` to load the folder and choose your device:\n\n```python\nimport openvino_genai as ov_genai\n\npipeline = ov_genai.LLMPipeline(\n    "models/qwen2.5-0.5b-instruct-int4", "GPU"\n)\nresponse = pipeline.generate(\n    "Explain quantization in one sentence.",\n    max_new_tokens=128,\n)\nprint(response)\n```\n\n**A few things to keep in mind:**\n\n- Keep the tokenizer files alongside the model.\n- Use a small output limit for your first test.\n- The first response may take longer while the model loads.\n\nAfter that, you can keep the pipeline warm for the next turn.',createdAt:Date.now(),status:'complete',modelName:'Qwen 2.5 · 0.5B',metrics:{device:'GPU',inputTokens:30,outputTokens:160,generationSeconds:4.8,tokensPerSecond:33.3}}];
+  await savedTextWorkspace(page, storedChats);
   await page.reload();
   await page.getByRole('button',{name:'Text thread: A simple way to get started',exact:true}).click();
   await page.locator('.text-message-content pre').waitFor();

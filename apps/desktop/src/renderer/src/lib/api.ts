@@ -6,7 +6,7 @@ import type {
   DeviceId,
 } from "./types";
 import { repairMojibakeDeep } from "./text";
-import type { GeneratedChatImage, GgufLoadOptions, TextModel, TextRuntimeStatus, TextSamplingOverrides } from "./textThreads";
+import type { GeneratedChatImage, GgufLoadOptions, TextJob, TextModel, TextPromptMessage, TextRuntimeStatus, TextSamplingOverrides } from "./textThreads";
 import type { ChatImageOverrides } from "./chatImageSettings";
 import type { ChatDocument } from "./chatDocuments";
 
@@ -142,9 +142,25 @@ export function fetchTextStatus(): Promise<TextRuntimeStatus> {
   return requestJson<TextRuntimeStatus>("/api/text/status", { signal: AbortSignal.timeout(15_000) });
 }
 
+export function fetchTextJob(): Promise<TextJob> {
+  return requestJson<TextJob>("/api/text/job", { signal: AbortSignal.timeout(4_000) });
+}
+
 export function recoverChatImage(threadId: string, jobId: string): Promise<{ image: GeneratedChatImage | null; images?: GeneratedChatImage[] }> {
   const query = new URLSearchParams({ threadId, jobId });
   return requestJson(`/api/text/recover-image?${query}`, { signal: AbortSignal.timeout(15_000) });
+}
+
+export type TextJobAcceptance = { textJob: TextJob } | { job: TextRuntimeStatus };
+
+function submitTextJob(path: string, payload: object): Promise<TextJobAcceptance> {
+  const timeout = 30_000;
+  return requestJson(path, {
+    method: "POST",
+    signal: AbortSignal.timeout(timeout),
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...payload, admitBefore: Date.now() + timeout, jobOnly: true }),
+  });
 }
 
 export function inspectChatImage(payload: {
@@ -154,13 +170,8 @@ export function inspectChatImage(payload: {
   image: string;
   imageThreadId?: string;
   device: "AUTO" | "GPU" | "CPU";
-}): Promise<{ job: TextRuntimeStatus }> {
-  return requestJson("/api/text/inspect-image", {
-    method: "POST",
-    signal: AbortSignal.timeout(30_000),
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
+}): Promise<TextJobAcceptance> {
+  return submitTextJob("/api/text/inspect-image", payload);
 }
 
 export function addTextModel(source: string | string[]): Promise<{ model: TextModel; models: TextModel[] }> {
@@ -171,10 +182,10 @@ export function addTextModel(source: string | string[]): Promise<{ model: TextMo
   });
 }
 
-export function uploadChatImage(image: string): Promise<{ image: string }> {
+export function uploadChatImage(image: string, cancel?: AbortSignal): Promise<{ image: string }> {
   return requestJson("/api/text/images", {
     method: "POST",
-    signal: AbortSignal.timeout(30_000),
+    signal: cancel ? AbortSignal.any([cancel, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000),
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ image }),
   });
@@ -217,7 +228,7 @@ export function startTextGeneration(payload: {
   modelId: string;
   device: "AUTO" | "GPU" | "CPU";
   documentIds?: string[];
-  messages: Array<{ role: "user" | "assistant"; content: string; image?: string; generatedImage?: string; includedImage?: string; imageThreadId?: string }>;
+  messages: TextPromptMessage[];
   mode?: "instant" | "reasoning";
   imageModel?: string;
   imageSettings?: ChatImageOverrides;
@@ -229,17 +240,17 @@ export function startTextGeneration(payload: {
   sampling?: TextSamplingOverrides;
   maxNewTokens: number;
   seed: number;
-}): Promise<{ job: TextRuntimeStatus }> {
-  return requestJson("/api/text/generate", {
-    signal: AbortSignal.timeout(30_000),
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
+}): Promise<TextJobAcceptance> {
+  return submitTextJob("/api/text/generate", payload);
 }
 
-export function stopTextGeneration(): Promise<void> {
-  return requestJson("/api/text/stop", { method: "POST" });
+export function stopTextGeneration(requestId: string, threadId?: string): Promise<{ cancelledBeforeStart?: boolean }> {
+  return requestJson("/api/text/stop", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ requestId, threadId, jobOnly: true }),
+    signal: AbortSignal.timeout(15_000),
+  });
 }
 
 export async function deleteThreadAssets(

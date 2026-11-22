@@ -25,7 +25,7 @@ try {
   await send("Original follow-up", "Original answer.");
   await message.fill("Keep this draft");
   await button("Edit message").first().click();
-  await page.getByRole("textbox", { name: "Edited message" }).fill("Revised opening");
+  await page.getByRole("textbox", { name: "Edited prompt" }).fill("Revised opening");
   await button("Resend").click();
   assert.deepEqual(state.textRequests[2].messages, [{ role: "user", content: "Revised opening" }]);
   await complete("Revised response.");

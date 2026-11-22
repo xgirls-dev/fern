@@ -1,7 +1,8 @@
 import { createServer, preview } from "vite";
 import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-export async function fixture({ builtRenderer = false, firstRun = false, imageCount = 3, threadCount = 1, textStatus = null, imageGenerationTime = 65, platform = "win32", viewport = { width: 1440, height: 900 }, installedModels = [{ id: "9b", label: "Klein 9B" }] } = {}) {
+export async function fixture({ builtRenderer = false, firstRun = false, imageCount = 3, threadCount = 1, textStatus = null, legacyTextWorkspace = null, imageGenerationTime = 65, platform = "win32", viewport = { width: 1440, height: 900 }, installedModels = [{ id: "9b", label: "Klein 9B" }] } = {}) {
+  builtRenderer ||= process.env.FERN_UI_BUILT === "1";
   const address = { host: "127.0.0.1", port: 0 };
   const server = builtRenderer
     ? await preview({
@@ -14,7 +15,10 @@ export async function fixture({ builtRenderer = false, firstRun = false, imageCo
         configFile: false,
         root: fileURLToPath(new URL("../apps/desktop/src/renderer", import.meta.url)),
         server: address,
-        optimizeDeps: { include: ["react/jsx-dev-runtime"] },
+        optimizeDeps: {
+          entries: ["index.html", "src/components/TextMarkdown.tsx", "src/lib/textCodeHighlight.ts"],
+          include: ["react/jsx-dev-runtime"],
+        },
       });
   if (!builtRenderer) await server.listen();
   const { chromium } = await import(
@@ -56,7 +60,7 @@ export async function fixture({ builtRenderer = false, firstRun = false, imageCo
     referenceLabel: "",
   }));
   await page.addInitScript(
-    ({ firstRun, threads, platform }) => {
+    ({ firstRun, threads, platform, legacyTextWorkspace }) => {
       let maximized = false;
       const maximizedListeners = new Set();
       window.studio = new Proxy(
@@ -93,8 +97,12 @@ export async function fixture({ builtRenderer = false, firstRun = false, imageCo
           "fern-threads:v1",
           JSON.stringify({ activeId: "study", threads }),
         );
+      if (legacyTextWorkspace && !sessionStorage.getItem("legacy-chat-fixture")) {
+        sessionStorage.setItem("legacy-chat-fixture", "1");
+        localStorage.setItem("fern-text-threads:v1", JSON.stringify(legacyTextWorkspace));
+      }
     },
-    { firstRun, threads, platform },
+    { firstRun, threads, platform, legacyTextWorkspace },
   );
   const svg =
     "data:image/svg+xml," +
@@ -224,4 +232,47 @@ export async function fixture({ builtRenderer = false, firstRun = false, imageCo
       await server.close();
     },
   };
+}
+
+export async function chooseMessageAction(message, name) {
+  await message.getByRole("button", { name: "More message actions", exact: true }).click();
+  await message.getByRole("menuitem", { name, exact: true }).click();
+}
+
+export function savedTextWorkspace(page, replacement = null) {
+  return page.evaluate((replacement) => new Promise((resolve, reject) => {
+    const opened = indexedDB.open("fern-text-workspace");
+    opened.onupgradeneeded = () => opened.transaction.abort();
+    opened.onerror = () => reject(opened.error);
+    opened.onsuccess = () => {
+      const db = opened.result;
+      const transaction = db.transaction(["workspace", "transcripts"], replacement ? "readwrite" : "readonly");
+      const meta = transaction.objectStore("workspace");
+      const transcripts = transaction.objectStore("transcripts");
+      transaction.onabort = () => { db.close(); reject(transaction.error); };
+      if (replacement) {
+        meta.clear();
+        transcripts.clear();
+        for (const { messages, ...thread } of replacement.threads) {
+          meta.put(thread, thread.id);
+          transcripts.put({ id: thread.id, messages });
+        }
+        const { threads, ...header } = replacement;
+        meta.put({ ...header, order: threads.map((thread) => thread.id) }, "header");
+        transaction.oncomplete = () => { db.close(); resolve(replacement); };
+      } else {
+        const header = meta.get("header");
+        const records = meta.getAll();
+        const messages = transcripts.getAll();
+        transaction.oncomplete = () => {
+          db.close();
+          if (!header.result) { resolve(null); return; }
+          const metadata = new Map(records.result.map((thread) => [thread.id, thread]));
+          const history = new Map(messages.result.map((thread) => [thread.id, thread.messages]));
+          const { order, membershipRevision: _, ...settings } = header.result;
+          resolve({ ...settings, threads: order.map((id) => ({ ...metadata.get(id), messages: history.get(id) })) });
+        };
+      }
+    };
+  }), replacement);
 }

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import os
 import subprocess
 import sys
@@ -13,6 +14,35 @@ from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from gguf_runtime import GGUFServer, VulkanDriverError, ensure_runtime, runtime_supported
+
+
+class GGUFCompletionTests(unittest.TestCase):
+    def test_stream_result_retains_the_reported_finish_reason(self) -> None:
+        server = GGUFServer.__new__(GGUFServer)
+        server.context_size = 4096
+        server.load_options = {}
+        server.device = "CPU"
+        server.backend = "cpu"
+        server.history = {}
+        server._prompt_tokens = Mock(return_value=16)
+        server._request = Mock()
+        server.http = Mock()
+        request = {"messages": [{"role": "user", "content": "Explain."}], "maxNewTokens": 64,
+                   "temperature": 0.5, "topP": 0.9, "seed": 11}
+
+        for reason in ("length", "stop", None):
+            with self.subTest(reason=reason):
+                chunks = [
+                    {"choices": [{"delta": {"content": "The answer"}}]},
+                    {"choices": [{"delta": {}, "finish_reason": reason}]},
+                    {"choices": [], "usage": {"prompt_tokens": 16, "completion_tokens": 64}},
+                ]
+                encoded = b"".join(b"data: " + json.dumps(chunk).encode() + b"\n\n" for chunk in chunks)
+                server.http.open.return_value = io.BytesIO(encoded + b"data: [DONE]\n\n")
+                result = server.generate(request, Mock())
+                self.assertEqual(result["text"], "The answer")
+                self.assertEqual(result["outputTokens"], 64)
+                self.assertEqual(result["finishReason"], reason)
 
 
 class VulkanRuntimeTests(unittest.TestCase):

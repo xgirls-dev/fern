@@ -2,7 +2,6 @@ import type { ChatImageModel, ChatImageSettings } from "./chatImageSettings";
 import { normalizeChatFolders, type ChatFolder } from "./chatFolders";
 import { normalizeChatDocuments, normalizeDocumentSources, type ChatDocument, type ChatDocumentSource } from "./chatDocuments";
 
-const KEY = "fern-text-threads:v1";
 const DEFAULT_CONTEXT_SIZE = 8192;
 export const MIN_CHAT_CONTEXT = 1024;
 export const MAX_CHAT_CONTEXT = 2_147_483_647;
@@ -39,6 +38,7 @@ export interface GeneratedChatImage {
   height: number;
   modelLabel: string;
   prompt: string;
+  originThreadId?: string;
 }
 
 function isGeneratedChatImage(value: unknown): value is GeneratedChatImage {
@@ -56,6 +56,7 @@ export interface TextMessage {
   image?: string;
   includedImage?: string;
   imageThreadId?: string;
+  includedImageThreadId?: string;
   generatedImage?: GeneratedChatImage;
   generatedImages?: GeneratedChatImage[];
   inspectionJobId?: string;
@@ -66,6 +67,11 @@ export interface TextMessage {
   error?: string | null;
   errorCode?: string | null;
   modelName?: string;
+  alternatives?: TextMessage[];
+  promptVersionId?: string;
+  promptAlternatives?: TextPromptVersion[];
+  continuationOf?: string;
+  requestContext?: TextRequestContext;
   metrics?: {
     inputTokens: number;
     outputTokens: number;
@@ -81,11 +87,15 @@ export interface TextMessage {
     sampling?: TextSamplingOverrides;
     loadOptions?: GgufLoadOptions;
     maxNewTokens?: number;
+    finishReason?: "length" | "stop";
     visionChecked?: boolean;
     documentSources?: ChatDocumentSource[];
     context?: { size: number; compactedMessages: number; images: number; imageNames?: string[] };
   };
 }
+
+export type TextReplyPreview = Pick<TextMessage, "content" | "reasoning" | "generatedImage" | "generatedImages">;
+
 export interface TextThread {
   id: string;
   title: string;
@@ -105,6 +115,9 @@ export interface TextThread {
   draftImage?: string;
   draftContextImage?: string;
   documents?: ChatDocument[];
+  draftContextImageThreadId?: string;
+  promptEdit?: TextPromptEdit;
+  sourceThreadId?: string;
   mode: TextMode;
   imageModel: string;
   imageRenderSettings?: Record<string, ChatImageSettings>;
@@ -112,6 +125,28 @@ export interface TextThread {
   messages: TextMessage[];
   versions?: TextVersion[];
   pendingJobId?: string | null;
+  pendingPreview?: TextReplyPreview;
+  pendingContext?: TextRequestContext;
+}
+
+export interface TextRequestContext {
+  omittedMessages: number;
+  shortenedMessages: number;
+  unansweredPrompts: number;
+  omittedAttachments: number;
+}
+
+export interface TextPromptVersion {
+  id: string;
+  content: string;
+  createdAt: number;
+  continuationOf?: string;
+  response?: TextMessage;
+}
+
+export interface TextPromptEdit {
+  messageId: string;
+  content: string;
 }
 
 export interface TextVersion {
@@ -170,6 +205,8 @@ export interface TextRuntimeStatus {
   runtimeError: string | null;
   ggufAvailable?: boolean;
   ggufUnavailableReason?: string | null;
+  supportsJobPolling?: boolean;
+  supportsPendingStop?: boolean;
   devices: TextDevice[];
   job: TextJob;
 }
@@ -260,6 +297,66 @@ export function modelDefaultsFromThread(settings: Partial<TextModelDefaults>): T
   };
 }
 
+export function textResponseMetrics(metrics: TextMessage["metrics"] | null): TextMessage["metrics"] {
+  if (!metrics || ![metrics.inputTokens, metrics.outputTokens, metrics.generationSeconds, metrics.tokensPerSecond]
+    .every((value) => typeof value === "number" && Number.isFinite(value) && value >= 0)) return;
+  const { inputTokens, outputTokens, generationSeconds, tokensPerSecond, modelName, device, backend,
+    mode, seed, temperature, topP, maxNewTokens, visionChecked, context, finishReason } = metrics;
+  return { inputTokens, outputTokens, generationSeconds, tokensPerSecond, modelName, device, backend,
+    mode, seed, temperature, topP, maxNewTokens, visionChecked, context, sampling: metrics.sampling, loadOptions: metrics.loadOptions,
+    documentSources: normalizeDocumentSources(metrics.documentSources),
+    finishReason: finishReason === "length" || finishReason === "stop" ? finishReason : undefined };
+}
+
+export function canContinueTextReply(message: TextMessage | undefined): boolean {
+  if (message?.role !== "assistant" || !message.content.trim()) return false;
+  if (message.status === "complete") return message.metrics?.finishReason === "length";
+  return !message.generatedImage && (message.status === "stopped" || message.status === "failed");
+}
+
+export function keepStreamedText(previous: string | undefined, next: string | undefined): string | undefined {
+  if (!next?.trim()) return previous;
+  return previous && next.length < previous.length && previous.startsWith(next) ? previous : next;
+}
+
+export function mergeTextReplyPreview(preview: TextReplyPreview | undefined, next: TextReplyPreview | undefined): TextReplyPreview | undefined {
+  if (!next) return preview;
+  const content = keepStreamedText(preview?.content, next.content) ?? "";
+  const reasoning = keepStreamedText(preview?.reasoning, next.reasoning);
+  const generatedImages = next.generatedImages ?? preview?.generatedImages;
+  const generatedImage = next.generatedImage ?? generatedImages?.[0] ?? preview?.generatedImage;
+  if (!content && !reasoning && !generatedImage) return preview;
+  if (preview?.content === content && preview.reasoning === reasoning && preview.generatedImage?.name === generatedImage?.name && preview.generatedImages?.length === generatedImages?.length) return preview;
+  return { content, reasoning, generatedImage, generatedImages };
+}
+
+export function restoreTextReplyPreview(preview: TextReplyPreview | undefined): TextReplyPreview | undefined {
+  if (typeof preview?.content !== "string") return;
+  return {
+    content: preview.content,
+    reasoning: typeof preview.reasoning === "string" ? preview.reasoning : undefined,
+    generatedImage: isGeneratedChatImage(preview.generatedImage) ? preview.generatedImage : undefined,
+    generatedImages: Array.isArray(preview.generatedImages) ? preview.generatedImages.filter(isGeneratedChatImage).slice(0, 4) : undefined,
+  };
+}
+
+export function pendingTextReply(thread: TextThread, job: TextJob): TextThread["pendingPreview"] {
+  const preview = thread.pendingPreview;
+  if (job.status !== "running" || job.inspection || !job.id || job.id !== thread.pendingJobId || job.threadId !== thread.id) return preview;
+  return mergeTextReplyPreview(preview, { content: job.partialText, reasoning: job.partialReasoning, generatedImage: job.image ?? undefined, generatedImages: job.images });
+}
+
+export function checkpointTextReply(workspace: TextThreadWorkspace, job: TextJob): TextThreadWorkspace {
+  if (job.status !== "running" || job.inspection || !job.id) return workspace;
+  const thread = workspace.threads.find((item) => item.id === job.threadId && item.pendingJobId === job.id);
+  if (!thread) return workspace;
+  const preview = pendingTextReply(thread, job);
+  if (preview === thread.pendingPreview) return workspace;
+  return { ...workspace, threads: workspace.threads.map((item) => item !== thread ? item : {
+    ...item, pendingPreview: preview,
+  }) };
+}
+
 export function textRuntimeIssue(status: TextRuntimeStatus, model: TextModel | undefined): string | null {
   if (model?.format === "gguf") {
     return status.ggufAvailable === false
@@ -300,6 +397,288 @@ export function ggufLoadOptions(options: GgufLoadOptions | undefined, contextSiz
   };
 }
 
+export function resolveTextModel(status: TextRuntimeStatus, thread: TextThread): string | undefined {
+  if (thread.modelId != null) return thread.modelId;
+  const installed = status.models.filter((model) => model.installed);
+  const ready = installed.filter((model) => !textRuntimeIssue(status, model));
+  const candidates = ready.length ? ready : installed;
+  return candidates.find((model) => model.id === status.defaultModelId)?.id ?? candidates[0]?.id;
+}
+
+export function finishTextReply(thread: TextThread, reply: TextMessage): TextMessage[] {
+  const previous = thread.messages.at(-1);
+  if (previous?.role !== "assistant") return [...thread.messages, reply];
+  // Keep every attempt in order, including attempts made after selecting an older response.
+  const { alternatives = [], ...selected } = previous;
+  return [...thread.messages.slice(0, -1), { ...reply, alternatives: [...alternatives, selected] }];
+}
+
+export function replyVersions(message: TextMessage): TextMessage[] {
+  const { alternatives = [], ...selected } = message;
+  return [...alternatives, selected].sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id));
+}
+
+export function showReplyVersion(message: TextMessage, id: string | undefined): TextMessage {
+  if (!id || id === message.id) return message;
+  const selected = message.alternatives?.find((version) => version.id === id);
+  if (!selected) return message;
+  const { alternatives = [], ...current } = message;
+  return { ...selected, alternatives: [...alternatives.filter((version) => version.id !== id), current] };
+}
+
+export function latestTextPrompt(messages: TextMessage[]): TextMessage | undefined {
+  const last = messages.at(-1);
+  const prompt = last?.role === "assistant" ? messages.at(-2) : last;
+  return prompt?.role === "user" ? prompt : undefined;
+}
+
+export function replaceLatestPromptVersion(thread: TextThread, messageId: string, version: TextPromptVersion): TextMessage[] | undefined {
+  if (thread.pendingJobId) return;
+  const current = latestTextPrompt(thread.messages);
+  if (current?.id !== messageId || version.id === (current.promptVersionId ?? current.id)) return;
+  const last = thread.messages.at(-1);
+  const response = last?.role === "assistant" ? last : undefined;
+  const alternatives = (current.promptAlternatives ?? []).filter((item) => item.id !== version.id);
+  alternatives.push({ id: current.promptVersionId ?? current.id, content: current.content, createdAt: current.createdAt,
+    continuationOf: current.continuationOf, response });
+  return [
+    ...thread.messages.slice(0, response ? -2 : -1),
+    { ...current, content: version.content, createdAt: version.createdAt, continuationOf: version.continuationOf,
+      promptVersionId: version.id, promptAlternatives: alternatives },
+    ...(version.response ? [version.response] : []),
+  ];
+}
+
+export function findChatImage(thread: TextThread, name: string | undefined): GeneratedChatImage | undefined {
+  if (!name) return;
+  const imageFrom = (message: TextMessage | undefined) => message?.generatedImage?.name === name
+    ? message.generatedImage : message?.generatedImages?.find((image) => image.name === name) ?? message?.alternatives?.find((item) => item.generatedImage?.name === name)?.generatedImage;
+  for (const message of thread.messages) {
+    const image = imageFrom(message);
+    if (image) return image;
+    for (const version of message.promptAlternatives ?? []) {
+      const previous = imageFrom(version.response);
+      if (previous) return previous;
+    }
+  }
+}
+
+export interface TextMessageDeletion {
+  messages: TextMessage[];
+  index: number;
+  beforeId?: string;
+  afterId?: string;
+  replyPromptVersionId?: string;
+  promptEdit?: TextPromptEdit;
+  draftContext?: { name: string; threadId?: string; draft: string; lastId?: string };
+}
+
+export function removeTextMessage(thread: TextThread, messageId: string, updatedAt: number) {
+  if (thread.pendingJobId) return;
+  const index = thread.messages.findIndex((message) => message.id === messageId);
+  if (index < 0) return;
+  const end = index + (thread.messages[index].role === "user" && thread.messages[index + 1]?.role === "assistant" ? 2 : 1);
+  const messages = [...thread.messages.slice(0, index), ...thread.messages.slice(end)];
+  const before = thread.messages[index - 1];
+  const deletion: TextMessageDeletion = {
+    messages: thread.messages.slice(index, end), index,
+    beforeId: before?.id, afterId: thread.messages[end]?.id,
+    replyPromptVersionId: thread.messages[index].role === "assistant" && before?.role === "user" ? before.promptVersionId ?? before.id : undefined,
+    promptEdit: thread.promptEdit?.messageId === messageId ? thread.promptEdit : undefined,
+  };
+  const next = { ...thread, messages, updatedAt };
+  if (deletion.promptEdit) next.promptEdit = undefined;
+  if (thread.draftContextImage && findChatImage(thread, thread.draftContextImage) && !findChatImage(next, thread.draftContextImage)) {
+    deletion.draftContext = {
+      name: thread.draftContextImage, threadId: thread.draftContextImageThreadId, draft: thread.draft,
+      lastId: messages.at(-1)?.id,
+    };
+    next.draftContextImage = undefined;
+    next.draftContextImageThreadId = undefined;
+  }
+  return { thread: next, deletion };
+}
+
+export function savedVersionForDeletedReply(prompt: TextMessage | undefined, deletion: TextMessageDeletion) {
+  if (!prompt || prompt.id !== deletion.beforeId || !deletion.replyPromptVersionId) return;
+  return prompt.promptAlternatives?.find((version) => version.id === deletion.replyPromptVersionId);
+}
+
+function restoreReplyVersions(current: TextMessage, removed: TextMessage): TextMessage {
+  return { ...current, alternatives: [...replyVersions(removed), ...(current.alternatives ?? [])] };
+}
+
+export function restoreTextMessages(thread: TextThread, deletion: TextMessageDeletion, updatedAt: number): TextThread {
+  if (thread.pendingJobId) return thread;
+  const matches = (message: TextMessage | undefined, id: string | undefined) => !!id &&
+    (message?.id === id || !!message?.alternatives?.some((version) => version.id === id));
+  const after = thread.messages.findIndex((message) => matches(message, deletion.afterId));
+  const before = thread.messages.findIndex((message) => matches(message, deletion.beforeId));
+  const removedReply = deletion.messages[0];
+  const prompt = thread.messages[before];
+  const savedVersion = savedVersionForDeletedReply(prompt, deletion);
+  if (savedVersion && prompt?.promptAlternatives) {
+    // Keep the answer with the wording that produced it when the prompt was revised after deletion.
+    const response = savedVersion.response ? restoreReplyVersions(savedVersion.response, removedReply) : removedReply;
+    const promptAlternatives = prompt.promptAlternatives.map((version) => version === savedVersion ? { ...version, response } : version);
+    return { ...thread, updatedAt, messages: thread.messages.map((item) => item === prompt ? { ...item, promptAlternatives } : item) };
+  }
+  const index = after >= 0 ? after : before >= 0 ? before + 1 : Math.min(deletion.index, thread.messages.length);
+  const replacement = thread.messages[index];
+  // A retry can fill the slot of a deleted reply while Undo is available.
+  const mergeReply = !deletion.afterId && before >= 0 && thread.messages[before].role === "user" &&
+    removedReply.role === "assistant" && replacement?.role === "assistant";
+  const restored = mergeReply
+    ? [restoreReplyVersions(replacement, removedReply)]
+    : deletion.messages;
+  const next: TextThread = {
+    ...thread, updatedAt,
+    messages: [...thread.messages.slice(0, index), ...restored, ...thread.messages.slice(mergeReply ? index + 1 : index)],
+    promptEdit: thread.promptEdit ?? deletion.promptEdit,
+  };
+  const draft = deletion.draftContext;
+  const last = thread.messages.at(-1);
+  const sameTail = draft && (draft.lastId ? matches(last, draft.lastId) : !last);
+  if (draft && sameTail && thread.draft === draft.draft && !thread.draftContextImage && !thread.draftImage) {
+    next.draftContextImage = draft.name;
+    next.draftContextImageThreadId = draft.threadId;
+  }
+  return next;
+}
+
+export function draftContextImageOwner(thread: TextThread): string | undefined {
+  if (!thread.draftContextImage) return;
+  return thread.draftContextImageThreadId ?? findChatImage(thread, thread.draftContextImage)?.originThreadId;
+}
+
+export function copyTextHistory(thread: TextThread, messages: TextMessage[]): TextMessage[] {
+  const copy = (message: TextMessage): TextMessage => ({
+    ...message,
+    inspectionJobId: undefined,
+    includedImageThreadId: message.includedImage ? message.includedImageThreadId ?? findChatImage(thread, message.includedImage)?.originThreadId ?? thread.id : undefined,
+    generatedImage: message.generatedImage && {
+      ...message.generatedImage, originThreadId: message.generatedImage.originThreadId ?? message.imageThreadId ?? thread.id,
+    },
+    generatedImages: message.generatedImages?.map((image) => ({ ...image, originThreadId: image.originThreadId ?? message.imageThreadId ?? thread.id })),
+    alternatives: message.alternatives?.map(copy),
+    promptAlternatives: message.promptAlternatives?.map((version) => ({ ...version, response: version.response && copy(version.response) })),
+  });
+  return messages.map(copy);
+}
+
+export interface TextPromptMessage {
+  role: TextMessage["role"];
+  content: string;
+  image?: string;
+  generatedImage?: string;
+  includedImage?: string;
+  imageThreadId?: string;
+}
+
+export const TEXT_MESSAGE_CHARACTER_LIMIT = 20_000;
+
+function normalizeRequestContext(context: TextRequestContext | undefined): TextRequestContext | undefined {
+  if (!context) return;
+  const { omittedMessages, shortenedMessages, unansweredPrompts, omittedAttachments } = context;
+  const counts = [omittedMessages, shortenedMessages, unansweredPrompts, omittedAttachments];
+  if (counts.every((value) => Number.isSafeInteger(value) && value >= 0) && counts.some((value) => value > 0)) {
+    return { omittedMessages, shortenedMessages, unansweredPrompts, omittedAttachments };
+  }
+}
+
+function promptPrefixLength(content: string) {
+  if (content.length <= TEXT_MESSAGE_CHARACTER_LIMIT) return content.length;
+  let length = 0;
+  let characters = 0;
+  for (const character of content) {
+    length += character.length;
+    if (++characters === TEXT_MESSAGE_CHARACTER_LIMIT) break;
+  }
+  return length;
+}
+
+export function textPromptExceedsLimit(content: string) {
+  if (content.length <= TEXT_MESSAGE_CHARACTER_LIMIT) return false;
+  const trimmed = content.trim();
+  return promptPrefixLength(trimmed) < trimmed.length;
+}
+
+function shortenHistoryMessage(message: TextPromptMessage) {
+  const length = promptPrefixLength(message.content);
+  return length < message.content.length ? { ...message, content: message.content.slice(0, length) } : message;
+}
+
+export function textPromptHistory(history: TextMessage[], model: TextModel): { messages: TextPromptMessage[]; context?: TextRequestContext } {
+  const imageOrigins = new Map<string, string | undefined>();
+  const turns: { user: TextPromptMessage; reply: TextPromptMessage; omittedAttachment: boolean }[] = [];
+  let prompt: { message: TextPromptMessage; omittedAttachment: boolean } | undefined;
+  let unansweredPrompts = 0;
+  for (const message of history) {
+    const artifact = message.generatedImage;
+    if (artifact) imageOrigins.set(artifact.name, artifact.originThreadId);
+    for (const variant of message.alternatives ?? []) {
+      if (variant.generatedImage) imageOrigins.set(variant.generatedImage.name, variant.generatedImage.originThreadId);
+    }
+    const hasAttachment = message.role === "user" && !!(message.image || message.includedImage);
+    const content = message.content.trim() || (artifact ? "I generated an image." : hasAttachment ? "An image was attached." : "");
+    if (!content) continue;
+    if (message.role === "user") {
+      // The model requires alternating turns. Unanswered prompts stay in the transcript.
+      if (prompt) unansweredPrompts += 1;
+      prompt = { omittedAttachment: hasAttachment && !model.supportsVision, message: {
+        role: "user", content,
+        image: model.supportsVision ? message.image : undefined,
+        includedImage: model.supportsVision ? message.includedImage : undefined,
+        imageThreadId: model.supportsVision && message.includedImage ? message.includedImageThreadId ?? imageOrigins.get(message.includedImage) : undefined,
+      } };
+    } else if (prompt) {
+      turns.push({ user: prompt.message, reply: { role: "assistant", content, generatedImage: artifact?.name,
+        imageThreadId: artifact?.originThreadId ?? message.imageThreadId }, omittedAttachment: prompt.omittedAttachment });
+      prompt = undefined;
+    }
+  }
+  if (!prompt) return { messages: [] };
+  const continuationOf = history.at(-1)?.continuationOf;
+  if (continuationOf) {
+    const previous = history.at(-2);
+    const reply = previous?.id === continuationOf ? previous : previous?.alternatives?.find((item) => item.id === continuationOf);
+    if (reply?.role === "assistant" && reply.content.trim()) {
+      // Keep the cutoff point available even if the earlier reply gets shortened or compacted.
+      // A code point takes at most two UTF-16 code units.
+      const ending = [...reply.content.trimEnd().slice(-2_000)].slice(-1_000).join("");
+      prompt.message.content += "\n\nThe previous reply ended with this text:\n" + ending;
+    }
+  }
+  const gguf = model.format === "gguf";
+  const recent = [prompt.message];
+  let characters = prompt.message.content.length;
+  let shortenedMessages = 0;
+  let omittedAttachments = 0;
+  // Shorten only the turns that can still fit in the outgoing context window.
+  for (const turn of turns.reverse()) {
+    if (recent.length + 2 > (gguf ? 300 : 100)) break;
+    const user = shortenHistoryMessage(turn.user);
+    const reply = shortenHistoryMessage(turn.reply);
+    const size = user.content.length + reply.content.length + (reply.generatedImage ? 2_000 : 0);
+    if (characters + size > (gguf ? 200_000 : 80_000)) break;
+    characters += size;
+    shortenedMessages += Number(user !== turn.user) + Number(reply !== turn.reply);
+    omittedAttachments += Number(turn.omittedAttachment);
+    recent.push(reply, user);
+  }
+  recent.reverse();
+  let images = 0;
+  for (let index = recent.length - 1; index >= 0; index -= 1) {
+    if (recent[index].image && ++images > 8) {
+      recent[index].image = undefined;
+      omittedAttachments += 1;
+    }
+  }
+  return { messages: recent, context: normalizeRequestContext({
+    omittedMessages: turns.length * 2 - (recent.length - 1), shortenedMessages, unansweredPrompts, omittedAttachments,
+  }) };
+}
+
 export function createTextThread(): TextThread {
   return {
     id: `text-thread-${crypto.randomUUID()}`,
@@ -327,8 +706,16 @@ function validThread(value: unknown): value is TextThread {
     && typeof thread.title === "string" && Array.isArray(thread.messages);
 }
 
-function normalizeTextMessages(messages: TextMessage[]): TextMessage[] {
-  return messages.filter((message) => message && ["user", "assistant"].includes(message.role) && typeof message.content === "string").map((message) => ({
+function validMessage(message: TextMessage): boolean {
+  return !!message && (message.role === "user" || message.role === "assistant") && typeof message.content === "string";
+}
+
+function isTextThreadId(value: unknown): value is string {
+  return typeof value === "string" && value.startsWith("text-thread-") && value.length <= 100;
+}
+
+function restoreMessage(message: TextMessage, restoreAlternatives = true): TextMessage {
+  return {
     ...message,
     id: typeof message.id === "string" ? message.id : `message-${crypto.randomUUID()}`,
     createdAt: Number.isFinite(message.createdAt) ? message.createdAt : Date.now(),
@@ -337,21 +724,39 @@ function normalizeTextMessages(messages: TextMessage[]): TextMessage[] {
     modelName: typeof message.modelName === "string" ? message.modelName : undefined,
     image: message.role === "user" && isChatImage(message.image) ? message.image : undefined,
     includedImage: message.role === "user" && isOutputImage(message.includedImage) ? message.includedImage : undefined,
-    imageThreadId: typeof message.imageThreadId === "string" && message.imageThreadId.startsWith("text-thread-") && message.imageThreadId.length <= 100
-      ? message.imageThreadId : undefined,
+    includedImageThreadId: message.role === "user" && isTextThreadId(message.includedImageThreadId ?? message.imageThreadId)
+      ? message.includedImageThreadId ?? message.imageThreadId : undefined,
     generatedImage: message.role === "assistant" && isGeneratedChatImage(message.generatedImage) ? message.generatedImage : undefined,
     generatedImages: message.role === "assistant" && Array.isArray(message.generatedImages)
       ? message.generatedImages.filter(isGeneratedChatImage).slice(0, 4) : undefined,
     inspectionJobId: typeof message.inspectionJobId === "string" ? message.inspectionJobId : undefined,
     reasoning: message.role === "assistant" && typeof message.reasoning === "string" ? message.reasoning : undefined,
-    metrics: message.metrics && [message.metrics.inputTokens, message.metrics.outputTokens, message.metrics.generationSeconds, message.metrics.tokensPerSecond].every((value) => typeof value === "number" && Number.isFinite(value) && value >= 0)
-      ? { ...message.metrics, documentSources: normalizeDocumentSources(message.metrics.documentSources) } : undefined,
-  }));
+    metrics: textResponseMetrics(message.metrics),
+    requestContext: message.role === "assistant" ? normalizeRequestContext(message.requestContext) : undefined,
+    continuationOf: message.role === "user" && typeof message.continuationOf === "string" ? message.continuationOf : undefined,
+    alternatives: restoreAlternatives && message.role === "assistant" && Array.isArray(message.alternatives)
+      ? message.alternatives.filter((variant) => validMessage(variant) && variant.role === "assistant").map((variant) => restoreMessage(variant, false))
+      : undefined,
+    promptVersionId: message.role === "user" && typeof message.promptVersionId === "string" ? message.promptVersionId : undefined,
+    promptAlternatives: message.role === "user" && Array.isArray(message.promptAlternatives)
+      ? message.promptAlternatives
+        .filter((version) => version && typeof version.id === "string" && typeof version.content === "string" && Number.isFinite(version.createdAt))
+        .map(({ id, content, createdAt, continuationOf, response }) => ({
+          id, content, createdAt, continuationOf: typeof continuationOf === "string" ? continuationOf : undefined,
+          response: response?.role === "assistant" && validMessage(response) ? restoreMessage(response) : undefined,
+        }))
+      : undefined,
+  };
 }
 
-export function loadTextThreads(): TextThreadWorkspace {
-  try {
-    const saved = JSON.parse(localStorage.getItem(KEY) ?? "null") as Partial<TextThreadWorkspace> | null;
+export function restoreFinishedTextReply(message: TextMessage | undefined): TextMessage | undefined {
+  if (!message || message.role !== "assistant" || !validMessage(message) || typeof message.id !== "string"
+    || (message.status !== "complete" && message.status !== "stopped" && message.status !== "failed")) return;
+  return restoreMessage(message, false);
+}
+
+export function restoreTextThreads(value: unknown): TextThreadWorkspace | undefined {
+    const saved = value as Partial<TextThreadWorkspace> | null;
     const folders = normalizeChatFolders(saved?.folders);
     const folderIds = new Set(folders.map(({ id }) => id));
     const threads = (Array.isArray(saved?.threads) ? saved.threads : []).filter(validThread).map((thread): TextThread => ({
@@ -364,17 +769,25 @@ export function loadTextThreads(): TextThreadWorkspace {
       draftImage: isChatImage(thread.draftImage) ? thread.draftImage : undefined,
       draftContextImage: isOutputImage(thread.draftContextImage) ? thread.draftContextImage : undefined,
       documents: normalizeChatDocuments(thread.documents),
+      draftContextImageThreadId: isOutputImage(thread.draftContextImage) && isTextThreadId(thread.draftContextImageThreadId) ? thread.draftContextImageThreadId : undefined,
+      promptEdit: typeof thread.promptEdit?.content === "string" && thread.messages.some((message) =>
+        message?.role === "user" && message.id === thread.promptEdit?.messageId)
+        ? { ...thread.promptEdit, content: thread.promptEdit.content.slice(0, 20_000) }
+        : undefined,
+      sourceThreadId: isTextThreadId(thread.sourceThreadId) && thread.sourceThreadId !== thread.id ? thread.sourceThreadId : undefined,
       mode: thread.mode === "reasoning" ? "reasoning" : "instant",
       imageModel: typeof thread.imageModel === "string" ? thread.imageModel : "auto",
       systemPrompt: typeof thread.systemPrompt === "string" ? thread.systemPrompt : "",
       modelId: typeof thread.modelId === "string" ? thread.modelId : null,
       pendingJobId: typeof thread.pendingJobId === "string" ? thread.pendingJobId : null,
+      pendingContext: typeof thread.pendingJobId === "string" ? normalizeRequestContext(thread.pendingContext) : undefined,
+      pendingPreview: typeof thread.pendingJobId === "string" ? restoreTextReplyPreview(thread.pendingPreview) : undefined,
       device: (["AUTO", "GPU", "CPU"].includes(thread.device) ? thread.device : "AUTO") as TextDevice,
       ...modelDefaultsFromThread(thread),
-      messages: normalizeTextMessages(thread.messages),
+      messages: thread.messages.filter(validMessage).map((message) => restoreMessage(message)),
       versions: Array.isArray(thread.versions) ? thread.versions.filter((version) => version && typeof version.id === "string"
         && typeof version.label === "string" && Array.isArray(version.messages)).map((version) => ({
-          id: version.id, label: version.label, messages: normalizeTextMessages(version.messages),
+          id: version.id, label: version.label, messages: version.messages.filter(validMessage).map((message) => restoreMessage(message)),
         })).filter((version) => version.messages.length > 0) : undefined,
     }));
     if (threads.length) {
@@ -395,13 +808,9 @@ export function loadTextThreads(): TextThreadWorkspace {
           : undefined,
       };
     }
-  } catch {
-    // Ignore unreadable browser storage and open a clean conversation.
-  }
-  const thread = createTextThread();
-  return { activeId: thread.id, threads: [thread] };
 }
 
-export function saveTextThreads(workspace: TextThreadWorkspace): void {
-  localStorage.setItem(KEY, JSON.stringify(workspace));
+export function createTextWorkspace(): TextThreadWorkspace {
+  const thread = createTextThread();
+  return { activeId: thread.id, threads: [thread] };
 }

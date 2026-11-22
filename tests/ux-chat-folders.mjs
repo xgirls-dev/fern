@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { fixture } from "./ui-fixture.mjs";
+import { expect } from "@playwright/test";
+import { fixture, savedTextWorkspace } from "./ui-fixture.mjs";
 
 const { page, errors, close } = await fixture({ imageCount: 0, threadCount: 0, viewport: { width: 1440, height: 920 } });
 const sidebar = page.getByRole("complementary", { name: "Fern navigation" });
@@ -16,16 +17,16 @@ const saveFolder = async (dialogName, name, submit = "Create folder") => {
   await button(submit, dialog).click();
   await folder(name).waitFor();
 };
-const expectLocation = (name, parent, kind) => page.waitForFunction(({ name, parent, kind }) => {
-  const workspace = JSON.parse(localStorage.getItem("fern-text-threads:v1") ?? "null");
+const expectLocation = (name, parent, kind) => expect.poll(async () => {
+  const workspace = await savedTextWorkspace(page);
   const folders = workspace?.folders ?? [];
   const expected = parent ? folders.find(({ name }) => name === parent)?.id : undefined;
   if (parent && !expected) return false;
   const row = kind === "folder"
     ? folders.find((folder) => folder.name === name)
     : workspace?.threads.find((thread) => thread.title === name);
-  return row && (kind === "folder" ? row.parentId : row.folderId) === expected;
-}, { name, parent, kind });
+  return !!row && (kind === "folder" ? row.parentId : row.folderId) === expected;
+}).toBe(true);
 
 try {
   await sidebar.locator(".sidebar-new-button").click();
@@ -66,8 +67,7 @@ try {
   await expectLocation("Sources", "Studio plans", "folder");
   await folder("Studio plans").click();
   await chat.waitFor({ state: "hidden" });
-  await page.waitForFunction(() => JSON.parse(localStorage.getItem("fern-text-threads:v1")).folders
-    .find(({ name }) => name === "Studio plans")?.collapsed);
+  await expect.poll(async () => (await savedTextWorkspace(page))?.folders?.find(({ name }) => name === "Studio plans")?.collapsed).toBe(true);
   await page.reload();
   await folder("Studio plans").waitFor();
   assert.equal(await folder("Studio plans").getAttribute("aria-expanded"), "false");

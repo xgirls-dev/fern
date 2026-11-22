@@ -54,8 +54,10 @@ def stage_backend() -> Path:
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(path, destination)
     shutil.copy2(root / 'LICENSE', licenses / 'fern.txt')
-    for name in ('react', 'react-dom', 'scheduler', 'lucide-react'):
+    for name in ('react', 'react-dom', 'scheduler', 'lucide-react', 'remend', 'highlight.js'):
         shutil.copy2(root / 'node_modules' / name / 'LICENSE', licenses / f'{name}.txt')
+    for name in ('lowlight', 'devlop'):
+        shutil.copy2(root / 'node_modules' / name / 'license', licenses / f'{name}.txt')
     return backend
 
 

@@ -73,7 +73,7 @@ export function ChatWorkspace(props: WorkspaceProps) {
       }}>
       <div className="chat-pane" data-chat-pane="primary" data-focused={activePane === "primary"}
         onPointerDownCapture={() => studio.focusPane("primary")} onFocusCapture={() => studio.focusPane("primary")}>
-        <TextWorkspace {...props} key={primaryThread.id} thread={primaryThread} pane="primary" focused={activePane === "primary"} split={split}
+        <TextWorkspace {...props} thread={primaryThread} pane="primary" focused={activePane === "primary"} split={split}
           onChooseChat={() => setPicker(split ? "primary" : "secondary")}
           onClosePane={() => { studio.closePane("primary"); focusComposer("primary"); }} />
       </div>
@@ -105,7 +105,7 @@ export function ChatWorkspace(props: WorkspaceProps) {
           }} />
         <div className="chat-pane" data-chat-pane="secondary" data-focused={activePane === "secondary"}
           onPointerDownCapture={() => studio.focusPane("secondary")} onFocusCapture={() => studio.focusPane("secondary")}>
-          <TextWorkspace {...props} key={secondaryThread.id} thread={secondaryThread} pane="secondary" focused={activePane === "secondary"} split
+          <TextWorkspace {...props} thread={secondaryThread} pane="secondary" focused={activePane === "secondary"} split
             onChooseChat={() => setPicker("secondary")}
             onClosePane={() => { studio.closePane("secondary"); focusComposer("primary"); }} />
         </div>

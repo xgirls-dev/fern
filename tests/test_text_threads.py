@@ -210,7 +210,7 @@ for line in sys.stdin:
                 with (
                     patch.object(self.registry, "snapshot", return_value=[gguf_model]),
                     patch.object(api, "gguf_runtime_supported", return_value=True),
-                    patch.object(api, "start_text_job") as start,
+                    patch.object(api, "start_text_job", return_value=None) as start,
                 ):
                     self.assertEqual(post(history * 160 + [long_turn], "long-gguf", contextSize=24_789, maxNewTokens=15_100), 202)
                     payload = start.call_args.args[0]
@@ -221,6 +221,7 @@ for line in sys.stdin:
                     self.assertEqual(post([long_turn], "oversized-output", contextSize=24_789, maxNewTokens=24_790), 400)
                 self.assertEqual(post([{'role': role, 'content': 'hi'} for role in ['user', 'user', 'assistant']], 'invalid'), 400)
                 self.assertEqual(post([{'role':'user','content':'hi'}], 'bad-seed', seed=-1), 400)
+                self.assertEqual(post([{'role': 'user', 'content': 'hi'}], 'expired', admitBefore=1), 400)
                 self.assertEqual(api.TEXT_JOB['status'], 'idle')
                 with ThreadPoolExecutor(2) as pool:
                     results = list(pool.map(lambda i: post([{'role': 'user', 'content': 'hello'}], str(i)), range(2)))
@@ -257,7 +258,9 @@ for line in sys.stdin:
 
         def submit(request_id, name, owner=thread_id, source=None):
             payload = {"requestId": request_id, "threadId": owner, "modelId": model["id"],
-                       "messages": [{"role": "user", "content": "Describe the picture.", "includedImage": name, "imageThreadId": source}]}
+                       "messages": [{"role": "user", "content": "Describe the picture.", "includedImage": name}]}
+            if source:
+                payload["messages"][0]["imageThreadId"] = source
             request = urllib.request.Request(
                 f"http://127.0.0.1:{server.server_port}/api/text/generate",
                 data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"},
@@ -281,6 +284,75 @@ for line in sys.stdin:
                 with submit("valid", path.name, "text-thread-fork", thread_id) as response:
                     self.assertEqual(response.status, 202)
                 self.assertEqual(generate.call_args.args[0]["messages"][0]["imagePath"], str(path.resolve()))
+                api.TEXT_JOB["status"] = "idle"
+                with submit("copy", path.name, "text-thread-copy", source=thread_id) as response:
+                    self.assertEqual(response.status, 202)
+                self.assertEqual(generate.call_args.args[0]["messages"][0]["imagePath"], str(path.resolve()))
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_job_only_status_and_targeted_stop(self):
+        server = ThreadingHTTPServer(("127.0.0.1", 0), api.Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        base = f"http://127.0.0.1:{server.server_port}/api/text"
+        cancel = threading.Event()
+
+        def stop(request_id, **extra):
+            payload = {"requestId": request_id, "jobOnly": True, **extra}
+            request = urllib.request.Request(f"{base}/stop", data=json.dumps(payload).encode())
+            with urllib.request.urlopen(request) as response:
+                return json.load(response)["textJob"]
+
+        try:
+            with patch.dict(api.TEXT_JOB, {"id": "running", "threadId": "text-thread-running", "status": "running", "partialText": "Partial"}, clear=True), \
+                 patch.object(api, "TEXT_CANCEL_EVENT", cancel), \
+                 patch.object(api.TEXT_GENERATION_WORKER, "interrupt") as interrupt, \
+                 patch.object(api.INTEL_MEDIA, "interrupt"), \
+                 patch.object(api, "text_runtime_snapshot", side_effect=AssertionError("Job polling must skip the catalog")):
+                with urllib.request.urlopen(f"{base}/job") as response:
+                    self.assertEqual(json.load(response)["partialText"], "Partial")
+                self.assertEqual(stop("stale")["id"], "running")
+                self.assertFalse(cancel.is_set())
+                interrupt.assert_not_called()
+                self.assertEqual(stop("running", threadId="text-thread-running")["phase"], "Stopping generation…")
+                self.assertTrue(cancel.is_set())
+                interrupt.assert_called_once()
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_stop_before_admission_does_not_start_or_interrupt_a_job(self):
+        server = ThreadingHTTPServer(("127.0.0.1", 0), api.Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        base = f"http://127.0.0.1:{server.server_port}/api/text"
+        identity = {"requestId": "pending", "threadId": "text-thread-pending", "jobOnly": True}
+        other_job = {"id": "pending", "threadId": "text-thread-other", "status": "running", "partialText": "Keep this reply"}
+
+        def post(path, payload):
+            request = urllib.request.Request(f"{base}/{path}", data=json.dumps(payload).encode())
+            with urllib.request.urlopen(request, timeout=3) as response:
+                self.assertEqual(response.status, 202)
+                return json.load(response)
+
+        try:
+            with patch.dict(api.TEXT_JOB, other_job, clear=True), \
+                 patch.dict(api.TEXT_PENDING_STOPS, clear=True), \
+                 patch.object(api, "TEXT_MODEL_REGISTRY", self.registry), \
+                 patch.object(api, "run_text_generation") as generate, \
+                 patch.object(api.TEXT_GENERATION_WORKER, "interrupt") as interrupt, \
+                 patch.object(api.INTEL_MEDIA, "interrupt") as interrupt_media:
+                with api.JOB_ADMISSION_LOCK:
+                    self.assertEqual(post("stop", identity), {"cancelledBeforeStart": True})
+                payload = {**identity, "modelId": self.model["id"], "messages": [{"role": "user", "content": "Cancelled."}]}
+                for _ in range(2):
+                    stopped = post("generate", payload)["textJob"]
+                    self.assertEqual((stopped["id"], stopped["threadId"], stopped["status"]),
+                                     (identity["requestId"], identity["threadId"], "stopped"))
+                self.assertEqual(api.text_job_snapshot(), other_job)
+                generate.assert_not_called()
+                interrupt.assert_not_called()
+                interrupt_media.assert_not_called()
         finally:
             server.shutdown()
             server.server_close()

@@ -44,6 +44,7 @@ export function shortcutLabel(shortcut: Shortcut): string {
 }
 
 export function matchesShortcut(event: KeyboardEvent, shortcut: Shortcut): boolean {
+  const key = event.altKey && /^Key[A-Z]$/.test(event.code) ? event.code.slice(-1).toLowerCase() : event.key.toLowerCase();
   return (event.metaKey || event.ctrlKey) && !event.isComposing &&
-    event.key.toLowerCase() === shortcut.key && event.shiftKey === shortcut.shift && event.altKey === shortcut.alt;
+    key === shortcut.key && event.shiftKey === shortcut.shift && event.altKey === shortcut.alt;
 }

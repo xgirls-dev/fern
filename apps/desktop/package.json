@@ -20,11 +20,17 @@
     "package:macos": "npm run build && electron-builder --mac zip --arm64 --publish never -c.directories.output=release-macos"
   },
   "dependencies": {
+    "highlight.js": "~11.11.0",
+    "lowlight": "^3.3.0",
     "lucide-react": "^1.25.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-markdown": "^10.1.0",
-    "remark-gfm": "^4.0.1"
+    "remark-gfm": "^4.0.1",
+    "remark-parse": "^11.0.0",
+    "remark-rehype": "^11.1.2",
+    "remend": "1.5.0",
+    "unified": "^11.0.5"
   },
   "devDependencies": {
     "@playwright/test": "^1.64.1",

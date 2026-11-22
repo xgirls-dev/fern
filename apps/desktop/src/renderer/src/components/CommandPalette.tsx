@@ -1,6 +1,8 @@
 import Clapperboard from "lucide-react/dist/esm/icons/clapperboard.mjs";
 import ArrowDownUp from "lucide-react/dist/esm/icons/arrow-down-up.mjs";
 import Command from "lucide-react/dist/esm/icons/command.mjs";
+import Copy from "lucide-react/dist/esm/icons/copy.mjs";
+import Download from "lucide-react/dist/esm/icons/download.mjs";
 import HardDrive from "lucide-react/dist/esm/icons/hard-drive.mjs";
 import Images from "lucide-react/dist/esm/icons/images.mjs";
 import PanelLeft from "lucide-react/dist/esm/icons/panel-left.mjs";
@@ -15,6 +17,7 @@ import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useModalFocus } from "../hooks/useModalFocus";
 import { IconButton, Input } from "./ui/controls";
 import { shortcutLabel, shortcuts } from "../lib/workspaceNavigation";
+import type { TranscriptDestination } from "../lib/textTranscript";
 
 interface CommandPaletteProps {
   open: boolean;
@@ -34,6 +37,7 @@ interface CommandPaletteProps {
   onNewText: () => void;
   onOpenAudio: () => void;
   onOpenText: () => void;
+  onExportChat?: (destination: TranscriptDestination) => void;
   onOpenLibrary: () => void;
   onOpenData: () => void;
   onOpenPreferences: () => void;
@@ -71,6 +75,7 @@ export function CommandPalette({
   onNewText,
   onOpenAudio,
   onOpenText,
+  onExportChat,
   onOpenLibrary,
   onOpenData,
   onOpenPreferences,
@@ -107,6 +112,10 @@ export function CommandPalette({
       { id: "open-audio", label: "Open audio workspace", description: "Return to the selected audio thread", icon: <AudioLines size={16} aria-hidden="true" />, onSelect: onOpenAudio },
       { id: "new-text", label: shortcuts.chat.label, description: "Start a local conversation", shortcut: shortcutLabel(shortcuts.chat), icon: <MessageSquare size={16} aria-hidden="true" />, onSelect: onNewText },
       { id: "open-text", label: "Open current chat", description: "Return to the selected chat", icon: <MessageSquare size={16} aria-hidden="true" />, onSelect: onOpenText },
+      ...(onExportChat ? [
+        { id: "copy-chat", label: "Copy chat transcript", description: "Copy this conversation as Markdown", icon: <Copy size={16} aria-hidden="true" />, onSelect: () => onExportChat("clipboard") },
+        { id: "save-chat", label: "Save chat as Markdown", description: "Write this conversation to a local file", icon: <Download size={16} aria-hidden="true" />, onSelect: () => onExportChat("file") },
+      ] : []),
       {
         id: "library",
         label: shortcuts.images.label,
@@ -174,6 +183,7 @@ export function CommandPalette({
       onStopAudio,
       onNewText,
       onOpenText,
+      onExportChat,
       onStopText,
       running,
       audioRunning,

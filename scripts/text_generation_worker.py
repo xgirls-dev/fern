@@ -160,11 +160,14 @@ def run(model_path: str, device: str, projector_path: str = "") -> int:
 
             # A one-element batch returns DecodedResults (single strings return
             # only text in supported release runtimes), retaining true metrics.
+            emit({"type": "phase", "text": "Waiting for the first token…"})
             result = pipeline.generate([prompt], config, stream)
             elapsed = max(time.perf_counter() - started, 0.001)
             output = result.texts[0] if result.texts else "".join(parts)
             input_tokens = result.perf_metrics.get_num_input_tokens()
             output_tokens = result.perf_metrics.get_num_generated_tokens()
+            reasons = getattr(result, "finish_reasons", ())
+            finish_reason = reasons[0].name.lower() if reasons else None
             emit({
                 "type": "result",
                 "device": device,
@@ -172,6 +175,7 @@ def run(model_path: str, device: str, projector_path: str = "") -> int:
                 **({"documentSources": sources} if sources else {}),
                 "inputTokens": input_tokens,
                 "outputTokens": output_tokens,
+                "finishReason": finish_reason,
                 "generationSeconds": elapsed,
                 "tokensPerSecond": output_tokens / elapsed,
             })

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { expect } from "@playwright/test";
 import { fixture } from "./ui-fixture.mjs";
 
 const model = { id: "gemma", name: "Gemma", installed: true, format: "gguf", maxContextSize: 65536, supportsVision: true, supportsTools: true };
@@ -113,9 +114,9 @@ try {
   if (!(await page.getByLabel("Saved preset").isVisible())) await presets.click();
   await page.getByLabel("Saved preset").selectOption({ label: "Concise answers" });
   await button("Apply preset").click();
-  assert.equal(await systemPrompt.inputValue(), "Keep the answer concise.");
-  assert.equal(await context.inputValue(), "28000");
-  assert.equal(await output.inputValue(), "15100");
+  await expect(systemPrompt).toHaveValue("Keep the answer concise.");
+  await expect(context).toHaveValue("28000");
+  await expect(output).toHaveValue("15100");
   assert.deepEqual(errors, []);
   console.log("Chat accepts, submits, and persists custom GGUF context and output lengths.");
 } finally {

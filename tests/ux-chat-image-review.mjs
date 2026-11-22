@@ -1,28 +1,13 @@
 import assert from "node:assert/strict";
 import { fixture } from "./ui-fixture.mjs";
 
-const { page, state, errors, dir, close } = await fixture({
-  viewport: { width: 1440, height: 920 },
-  textStatus: {
-    models: [{ id: "gemma", name: "Gemma", installed: true, format: "gguf", supportsVision: true }],
-    ggufAvailable: true, runtimeAvailable: true, job: { id: null, status: "idle" },
-  },
-});
-try {
-  const posters = [
-    { name: "red-poster.png", prompt: "Red circle poster", color: "#b83e2c" },
-    { name: "blue-poster.png", prompt: "Blue circle poster", color: "#3a6480" },
-    { name: "green-poster.png", prompt: "Green circle poster", color: "#48624f" },
-  ];
-  let redMissing = false;
-  for (const { name, color } of posters) {
-    await page.route(`**/outputs/${name}*`, (route) => redMissing && name === posters[0].name
-      ? route.fulfill({ status: 404 })
-      : route.fulfill({ contentType: "image/svg+xml", body: `<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512"><rect width="512" height="512" fill="#efdfc0"/><circle cx="256" cy="256" r="140" fill="${color}"/></svg>` }));
-  }
-  await page.addInitScript((posters) => {
-    const id = "text-thread-review";
-    localStorage.setItem("fern-text-threads:v1", JSON.stringify({ activeId: id, threads: [{
+const posters = [
+  { name: "red-poster.png", prompt: "Red circle poster", color: "#b83e2c" },
+  { name: "blue-poster.png", prompt: "Blue circle poster", color: "#3a6480" },
+  { name: "green-poster.png", prompt: "Green circle poster", color: "#48624f" },
+];
+const id = "text-thread-review";
+const legacyTextWorkspace = { activeId: id, threads: [{
       id, title: "Poster", draft: "Keep this draft.", updatedAt: Date.now(),
       messages: posters.flatMap(({ name, prompt }, i) => [
         { id: `u-${i}`, role: "user", content: prompt, createdAt: Date.now() },
@@ -34,8 +19,23 @@ try {
             ...(i === 2 ? { context: { size: 4096, compactedMessages: 2, images: 2, imageNames: posters.slice(1).map(({ name }) => name) } } : {}),
           } },
       ]),
-    }] }));
-  }, posters);
+}] };
+
+const { page, state, errors, dir, close } = await fixture({
+  viewport: { width: 1440, height: 920 },
+  legacyTextWorkspace,
+  textStatus: {
+    models: [{ id: "gemma", name: "Gemma", installed: true, format: "gguf", supportsVision: true }],
+    ggufAvailable: true, runtimeAvailable: true, job: { id: null, status: "idle" },
+  },
+});
+try {
+  let redMissing = false;
+  for (const { name, color } of posters) {
+    await page.route(`**/outputs/${name}*`, (route) => redMissing && name === posters[0].name
+      ? route.fulfill({ status: 404 })
+      : route.fulfill({ contentType: "image/svg+xml", body: `<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512"><rect width="512" height="512" fill="#efdfc0"/><circle cx="256" cy="256" r="140" fill="${color}"/></svg>` }));
+  }
   await page.reload();
   await page.getByRole("button", { name: "Text thread: Poster", exact: true }).click();
   const open = page.getByRole("button", { name: "Review image 1: Red circle poster", exact: true });

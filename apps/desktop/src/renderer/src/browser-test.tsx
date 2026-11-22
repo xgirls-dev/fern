@@ -84,6 +84,7 @@ const browserStudio: StudioApi = {
   pickCustomImageModelFolder: async () => selectedCustomImageFolder,
   saveImageAs: async () => null,
   writeImageFile: async () => "",
+  saveChatTranscript: async () => false,
   copyText: async (text) => {
     await navigator.clipboard.writeText(text);
   },

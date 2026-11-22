@@ -28,6 +28,7 @@ export default defineConfig({
   },
   renderer: {
     root: resolve(__dirname, "src/renderer"),
+    optimizeDeps: { entries: ["index.html", "src/components/TextMarkdown.tsx", "src/lib/textCodeHighlight.ts"] },
     build: {
       rollupOptions: {
         input: {

@@ -1,11 +1,12 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import AudioLines from "lucide-react/dist/esm/icons/audio-lines.mjs";
-import { Button, ErrorMessage, ModelCard, ModelCardActions, ModelCardHeading, ModelStatus, PageHeader, SegmentedControl } from "./ui/controls";
+import { Button, ErrorMessage, ModelCard, ModelCardActions, ModelCardHeading, ModelStatus, PageHeader, SegmentedControl, Select } from "./ui/controls";
 import type { useTextChat } from "../hooks/useTextChat";
 import type { useQwen3Tts } from "../hooks/useQwen3Tts";
 import { ModelLibrary, type InstalledModel } from "./ModelLibrary";
 import { TextModelLibrary } from "./TextModelLibrary";
 import type { ModelSetup, SetupSelection } from "../lib/modelSetup";
+import { textRuntimeIssue } from "../lib/textThreads";
 
 export type ModelCategory = "image" | "text" | "audio" | "video";
 export function ModelsView({ category: tab, onCategoryChange, text, audio, setup, onReturnToDraft, imageGpuAvailable }: {
@@ -19,12 +20,18 @@ export function ModelsView({ category: tab, onCategoryChange, text, audio, setup
   const heading = useRef<HTMLHeadingElement>(null);
   const body = useRef<HTMLDivElement>(null);
   const [imageCatalog, setImageCatalog] = useState<InstalledModel[]>([]);
+  const [textSelection, setTextSelection] = useState<{ setup: ModelSetup; modelId: string }>();
   const needsVision = setup?.task === "chat-image";
   const needsText = setup?.task !== "image";
   const needsImage = setup?.task !== "chat";
-  const installedText = text.status.models.find((model) => model.installed &&
-    (model.format === "gguf" ? text.status.ggufAvailable === true : text.status.runtimeAvailable) &&
+  const compatibleText = text.status.models.filter((model) => model.installed && !textRuntimeIssue(text.status, model) &&
     (!needsVision || (model.supportsVision && model.supportsTools)));
+  const setupThread = setup && text.threads.find((thread) => thread.id === setup.threadId);
+  const chosenTextId = textSelection?.setup === setup ? textSelection?.modelId : undefined;
+  const installedText = compatibleText.find((model) => model.id === chosenTextId)
+    ?? compatibleText.find((model) => model.id === setupThread?.modelId)
+    ?? compatibleText.find((model) => model.id === text.status.defaultModelId)
+    ?? compatibleText[0];
   const recommendedText = text.status.recommendedModels?.find((model) =>
     needsVision ? model.format === "gguf" && text.status.ggufAvailable === true : model.id === text.status.defaultModelId);
   const installedTool = text.status.imageToolModels?.[0];
@@ -55,9 +62,12 @@ export function ModelsView({ category: tab, onCategoryChange, text, audio, setup
         <strong>{needsVision ? "Images in chat" : needsText ? "Chat model" : "Image generation"}</strong>
         {needsText && <div className="model-setup-requirement">
           {needsVision && <span className="model-setup-role">Chat and vision</span>}
-          <span>{installedText ? `${installedText.name} · Installed` :
+          {installedText && compatibleText.length > 1 ? <Select aria-label="Chat model" className="model-setup-text-choice" value={installedText.id}
+            onChange={(event) => setTextSelection({ setup, modelId: event.currentTarget.value })}>
+            {compatibleText.map((model) => <option key={model.id} value={model.id}>{model.name}</option>)}
+          </Select> : <span>{installedText ? `${installedText.name} · Installed` :
             recommendedText ? `${recommendedText.name} · ${(recommendedText.bytes / 1e9).toFixed(2)} GB download` :
-            text.statusLoaded ? "Choose a compatible chat model." : "Checking chat models…"}</span>
+            text.statusLoaded ? "Choose a compatible chat model." : "Checking chat models…"}</span>}
         </div>}
         {needsImage && <div className="model-setup-requirement">
           {needsVision && <span className="model-setup-role">Image creation</span>}

@@ -22,6 +22,7 @@ import { Button, IconButton, Input, MenuItem, NavigationButton } from "./ui/cont
 import type { ImageThread } from "../lib/threads";
 import type { AudioThread } from "../lib/ttsThreads";
 import type { TextThread } from "../lib/textThreads";
+import type { TranscriptDestination } from "../lib/textTranscript";
 import { canMoveChatFolder, CHAT_NAV_DRAG, chatFolderPath, chatFolderRows, type ChatFolder, type ChatOrganizationAction } from "../lib/chatFolders";
 import { ChatFolderDialog, type ChatFolderDialogRequest } from "./ChatFolderDialog";
 
@@ -34,6 +35,8 @@ function ThreadActions({
   archiveDisabled = false,
   deleteDisabled = false,
   onRename,
+  onDuplicate,
+  onExport,
   onArchive,
   onDelete,
   onMove,
@@ -46,6 +49,8 @@ function ThreadActions({
   archiveDisabled?: boolean;
   deleteDisabled?: boolean;
   onRename: () => void;
+  onDuplicate?: () => void;
+  onExport?: (destination: TranscriptDestination) => void;
   onArchive?: () => void;
   onDelete: () => void;
   onMove?: () => void;
@@ -100,9 +105,9 @@ function ThreadActions({
     };
   }, [open]);
 
-  const run = (action: () => void) => {
+  const run = (action: () => void, returnFocus = false) => {
     setOpen(false);
-    triggerRef.current?.focus();
+    triggerRef.current?.focus({ preventScroll: returnFocus });
     action();
   };
 
@@ -132,6 +137,11 @@ function ThreadActions({
               <MenuItem ref={firstItemRef} onClick={() => run(onRename)}>
                 Rename
               </MenuItem>
+              {onDuplicate && <MenuItem onClick={() => run(onDuplicate)}>Duplicate</MenuItem>}
+              {onExport && <>
+                <MenuItem onClick={() => run(() => onExport("clipboard"), true)}>Copy transcript</MenuItem>
+                <MenuItem onClick={() => run(() => onExport("file"), true)}>Save Markdown…</MenuItem>
+              </>}
               {onNewChat && <MenuItem onClick={() => run(onNewChat)}>New chat here</MenuItem>}
               {onNewFolder && <MenuItem onClick={() => run(onNewFolder)}>New subfolder</MenuItem>}
               {onMove && <MenuItem onClick={() => run(onMove)}>Move to folder…</MenuItem>}
@@ -178,6 +188,8 @@ interface StudioSidebarProps {
   onSelectTextThread: (id: string) => void;
   onNewTextThread: (folderId?: string) => void;
   onRenameTextThread: (id: string, title: string) => void;
+  onDuplicateTextThread: (id: string) => void;
+  onExportTextThread: (id: string, destination: TranscriptDestination) => void;
   onArchiveTextThread: (id: string) => void;
   onDeleteTextThread: (id: string) => void;
   onRenameAudioThread: (id: string, title: string) => void;
@@ -220,6 +232,8 @@ export const StudioSidebar = memo(function StudioSidebar({
   onSelectTextThread,
   onNewTextThread,
   onRenameTextThread,
+  onDuplicateTextThread,
+  onExportTextThread,
   onArchiveTextThread,
   onDeleteTextThread,
   onRenameAudioThread,
@@ -651,6 +665,8 @@ export const StudioSidebar = memo(function StudioSidebar({
                 }}
                 onArchive={() => onArchiveTextThread(thread.id)}
                 onMove={chatFolders.length ? () => setFolderDialog({ type: "move-chat", id: thread.id, name: thread.title, parentId: thread.folderId }) : undefined}
+                onDuplicate={() => navigate(() => onDuplicateTextThread(thread.id))}
+                onExport={thread.messages.length ? (destination) => onExportTextThread(thread.id, destination) : undefined}
                 onDelete={() => {
                   setTextDeleteError(null);
                   setTextDeleteId(textDeleteId === thread.id ? null : thread.id);

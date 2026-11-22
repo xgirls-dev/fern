@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { fixture } from './ui-fixture.mjs';
+import { chooseMessageAction, fixture, savedTextWorkspace } from './ui-fixture.mjs';
 const textStatus = {
   models: [{ id: 'model-a', name: 'Qwen INT4', path: 'C:/models/qwen', installed: true }, { id: 'model-b', name: 'Second model', path: 'C:/models/second', installed: true }],
   runtimeAvailable: true, runtimeError: null, devices: ['AUTO', 'GPU', 'CPU'],
@@ -7,7 +7,7 @@ const textStatus = {
 };
 const { page, state, errors, dir, close } = await fixture({ textStatus });
 const messages = () => page.locator('.text-message');
-const saved = () => page.evaluate(() => JSON.parse(localStorage.getItem('fern-text-threads:v1')));
+const saved = () => savedTextWorkspace(page);
 async function until(test, label) {
   for (let i = 0; i < 100; i++) { if (await test()) return; await new Promise(r => setTimeout(r, 100)); }
   throw new Error(`Timed out: ${label}`);
@@ -41,6 +41,7 @@ try {
   await page.getByText('Remembered partial answer', { exact: true }).waitFor();
   await page.getByRole('button', { name: 'Stop generation', exact: true }).click();
   await page.getByText('Stopped · Partial response', { exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Continue response', exact: true }).waitFor();
   assert.equal(await messages().count(), 4);
   await page.getByRole('button', { name: 'Retry response', exact: true }).click();
   await until(() => state.textRequests.length === 3, 'retry request');
@@ -54,7 +55,7 @@ try {
   assert.equal(await messages().count(), 4, 'completion duplicated after reload');
   await page.getByRole('button', { name: /^Text model:/ }).click();
   await page.getByRole('menuitemradio', { name: 'Second model', exact: true }).click();
-  await page.getByRole('button', { name: 'Response details', exact: true }).first().click();
+  await chooseMessageAction(page.locator('.text-message--assistant').first(), 'Response details');
   assert.equal(await page.locator('.text-message--assistant .text-message-label').first().textContent(), 'Qwen INT4');
   state.rejectText = 'Another image job is running.';
   await page.getByLabel('Message', { exact: true }).fill('A request that will be rejected.');
@@ -81,12 +82,12 @@ try {
   await driverLink.waitFor();
   assert.equal(await driverLink.getAttribute('href'), 'https://www.intel.com/content/www/us/en/support/detect.html');
   // Simulate a saved in-flight job followed by a backend restart.
-  await page.addInitScript(({ activeId }) => {
-    const w = JSON.parse(localStorage.getItem('fern-text-threads:v1'));
-    const t = w.threads.find(t => t.id === activeId);
-    t.messages = t.messages.slice(0, -1); t.pendingJobId = 'lost-on-restart';
-    localStorage.setItem('fern-text-threads:v1', JSON.stringify(w));
-  }, { activeId });
+  await until(async () => (await saved()).threads.find((thread) => thread.id === activeId)?.messages.at(-1)?.errorCode === 'intel-vulkan-driver', 'saved driver failure');
+  const workspace = await saved();
+  const thread = workspace.threads.find((item) => item.id === activeId);
+  thread.messages = thread.messages.slice(0, -1);
+  thread.pendingJobId = 'lost-on-restart';
+  await savedTextWorkspace(page, workspace);
   state.textStatus.job = { id: null, status: 'idle' };
   await page.reload();
   await page.getByRole('button', { name: 'Text thread: Remember the word fern.', exact: true }).click();

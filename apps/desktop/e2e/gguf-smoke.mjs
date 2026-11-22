@@ -114,7 +114,7 @@ try {
     console.log(`Sending ${test.modality} ${test.mode}…`);
     await page.getByRole("button", { name: "Send message", exact: true }).click();
     const message = page.locator(".text-message--assistant").last();
-    await expect(message.getByRole("button", { name: "Response details", exact: true })).toBeVisible({ timeout: 360_000 });
+    await expect(message.getByRole("button", { name: "More message actions", exact: true })).toBeVisible({ timeout: 360_000 });
     const response = await status();
     assert.equal(response.job.status, "complete", JSON.stringify(response.job));
     assert.equal(response.job.modelId, installed.id);

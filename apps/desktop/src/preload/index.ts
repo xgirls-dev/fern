@@ -123,6 +123,7 @@ const studioApi: StudioApi = {
     ipcRenderer.invoke("studio:save-image-as", defaultName),
   writeImageFile: (targetPath, sourceUrl) =>
     ipcRenderer.invoke("studio:write-image-file", targetPath, sourceUrl),
+  saveChatTranscript: (title, markdown) => ipcRenderer.invoke("studio:save-chat-transcript", title, markdown),
   copyText: (text) => ipcRenderer.invoke("studio:copy-text", text),
   readFileAsDataUrl: (filePath) =>
     ipcRenderer.invoke("studio:read-file-as-data-url", filePath),

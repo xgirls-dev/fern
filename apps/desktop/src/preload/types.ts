@@ -30,6 +30,7 @@ export interface StudioApi {
   pickCustomImageModelFolder: () => Promise<string | null>;
   saveImageAs: (defaultName: string) => Promise<string | null>;
   writeImageFile: (targetPath: string, sourceUrl: string) => Promise<string>;
+  saveChatTranscript: (title: string, markdown: string) => Promise<boolean>;
   copyText: (text: string) => Promise<void>;
   readFileAsDataUrl: (filePath: string) => Promise<string>;
   clearWebCache: () => Promise<void>;
