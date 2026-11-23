@@ -1,10 +1,6 @@
-import { useEffect, useState } from "react";
-import ChevronDown from "lucide-react/dist/esm/icons/chevron-down.mjs";
-import Check from "lucide-react/dist/esm/icons/check.mjs";
 import type { StudioSettings } from "../lib/types";
 import { APPLE_IMAGE_MODEL, kleinLoraLabel } from "../lib/imageModels";
-import { Button } from "./ui/controls";
-import { Dropdown, DropdownItem, DropdownRadioGroup, DropdownRadioItem, DropdownSeparator } from "./ui/Dropdown";
+import { ModelMenu } from "./ui/ModelMenu";
 
 export interface ComposerModel {
   id: string;
@@ -54,10 +50,9 @@ export function ComposerModelMenu({
   onOpen: () => void;
   onManageModels: () => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const availability = models.map(({ id, installed }) => `${id}:${installed !== false}`).join("|");
   const selectedId = value && (MODEL_CHOICES.includes(value) || value.startsWith("custom-")) ? value : MODEL_CHOICES[0];
-  const current = models.find((model) => model.id === selectedId);
+  const byId = new Map(models.map((model) => [model.id, model]));
+  const current = byId.get(selectedId);
   const choices = [...MODEL_CHOICES, ...models.map((model) => model.id).filter((modelId) => modelId.startsWith("custom-"))];
   if (selectedId.startsWith("custom-") && !choices.includes(selectedId)) choices.push(selectedId);
   const triggerLabel = loading
@@ -70,37 +65,17 @@ export function ComposerModelMenu({
         ? `${MODEL_LABELS[selectedId] ?? "Custom model"} · Missing`
         : "No models";
 
-  useEffect(() => {
-    setOpen(false);
-  }, [availability, disabled]);
+  const options = choices.map((modelId) => {
+    const model = byId.get(modelId);
+    const installed = Boolean(model && model.installed !== false);
+    return {
+      value: modelId, label: model?.label ?? MODEL_LABELS[modelId] ?? "Custom image model",
+      disabled: !installed, description: installed ? undefined : "Not installed",
+    };
+  });
 
   return <div className="composer-model-anchor">
-    <Dropdown label="Image model" className="composer-model-menu" side="top" align="end"
-      open={open && !disabled}
-      onOpenChange={(next) => {
-        if (next) onOpen();
-        setOpen(next);
-      }}
-      trigger={<Button variant="ghost" className="composer-model-trigger" aria-label={`Image model: ${triggerLabel}`} disabled={disabled}>
-        <span>{triggerLabel}</span>
-        <ChevronDown size={13} aria-hidden="true" />
-      </Button>}
-    >
-      <DropdownRadioGroup value={selectedId} onValueChange={onChange}>
-        {choices.map((modelId) => {
-          const model = models.find((candidate) => candidate.id === modelId);
-          const installed = Boolean(model && model.installed !== false);
-          const label = model?.label ?? MODEL_LABELS[modelId] ?? "Custom image model";
-          return <DropdownRadioItem key={modelId} value={modelId} label={label}
-            disabled={!installed} title={`${label}${installed ? "" : " · Not installed"}`}>
-            <span className="composer-model-label">{label}</span>
-            {installed && selectedId === modelId ? <Check size={14} aria-hidden="true" />
-              : !installed ? <span className="composer-model-unavailable">Not installed</span> : null}
-          </DropdownRadioItem>;
-        })}
-      </DropdownRadioGroup>
-      <DropdownSeparator />
-      <DropdownItem onClick={onManageModels}>Manage models</DropdownItem>
-    </Dropdown>
+    <ModelMenu label="Image model" className="composer-model-menu" value={selectedId} triggerLabel={triggerLabel}
+      options={options} disabled={disabled} onChange={onChange} onOpen={onOpen} onManageModels={onManageModels} />
   </div>;
 }

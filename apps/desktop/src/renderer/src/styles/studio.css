@@ -2571,7 +2571,6 @@ code {
 .composer-model-trigger:hover, .composer-model-trigger[aria-expanded="true"] { background:color-mix(in srgb, var(--foreground) 7%, transparent); color:var(--foreground); }
 .composer-model-trigger:disabled { opacity:.55; cursor:not-allowed; }
 .composer-model-trigger:focus-visible { outline:var(--ui-focus-ring); outline-offset:2px; }
-.composer-model-unavailable { color:var(--muted); font-size:10px; }
 
 /* Text uses the same docked inspector structure as image generation. */
 .text-layout { position: relative; display: grid; grid-template-columns: minmax(0, 1fr); flex: 1; min-height: 0; overflow: hidden; }
@@ -2649,11 +2648,7 @@ code {
 .sidebar-new-options .ui-menu-item:hover, .sidebar-new-options .ui-menu-item:focus-visible { background: var(--sidebar-active); }
 .studio-sidebar.is-collapsed .sidebar-new-chevron { display: none; }
 
-/* Every model is one row, including long user-provided repository names. */
-.composer-model-menu { width: 340px; max-height: min(440px, var(--available-height)); }
-.composer-model-menu .ui-menu-item { gap: 12px; padding-inline: 9px; white-space: nowrap; }
-.composer-model-label { display: block; min-width: 0; flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; line-height: 20px; }
-.composer-model-unavailable { flex: 0 0 auto; white-space: nowrap; }
+.composer-model-menu { width: 340px; }
 .composer-model-trigger { max-width: 220px; }
 
 .models-view { --models-inset: max(32px, calc((100% - 1136px) / 2)); }

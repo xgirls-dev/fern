@@ -5,7 +5,13 @@ import { fixture } from "./ui-fixture.mjs";
 const { page, state, errors, dir, close } = await fixture({
   firstRun: true,
   textStatus: {
-    models: [{ id: "local", name: "Local model", installed: true, format: "gguf", supportsReasoning: true }],
+    models: [
+      { id: "local", name: "Local model", installed: true, format: "gguf", supportsReasoning: true },
+      { id: "missing", name: "Missing model", installed: false, format: "gguf" },
+      ...Array.from({ length: 20 }, (_, index) => ({
+        id: `installed-${index}`, name: `Installed model ${index + 1}`, installed: true, format: "gguf",
+      })),
+    ],
     ggufAvailable: true, job: { id: null, status: "idle" },
   },
 });
@@ -40,6 +46,24 @@ try {
   const modelButton = button("Text model: Local model");
   await modelButton.hover();
   await expect(page.getByRole("tooltip").filter({ hasText: /^Local model$/ })).toBeVisible();
+  await modelButton.press("ArrowDown");
+  const modelMenu = page.getByRole("menu", { name: "Text model", exact: true });
+  const availableModels = modelMenu.getByRole("group", { name: "Available", exact: true });
+  const unavailableModels = modelMenu.getByRole("group", { name: "Unavailable", exact: true });
+  await expect(availableModels.getByRole("menuitemradio", { name: "Local model", exact: true })).toBeFocused();
+  const missingModel = unavailableModels.getByRole("menuitemradio", { name: "Missing model", exact: true });
+  await expect(missingModel).toBeDisabled();
+  await expect(missingModel).toHaveAccessibleDescription("Unavailable");
+  const scroller = modelMenu.locator(".ui-model-menu-options");
+  const manageModels = modelMenu.getByRole("menuitem", { name: "Manage models", exact: true });
+  const footerBefore = await manageModels.boundingBox();
+  await scroller.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+  await expect.poll(() => scroller.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  const footerAfter = await manageModels.boundingBox();
+  assert(footerBefore && footerAfter && Math.abs(footerBefore.y - footerAfter.y) < 1);
+  await page.keyboard.press("Escape");
+  await expect(modelMenu).toHaveCount(0);
+  await expect(modelButton).toBeFocused();
   await button("New chat").hover();
   await expect(page.locator(".ui-tooltip")).toHaveText("New chat");
   await expect(page.locator(".ui-tooltip")).toBeVisible();

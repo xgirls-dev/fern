@@ -24,7 +24,7 @@ import { Button, IconButton, SegmentedControl, Select, Textarea } from "./ui/con
 import { Slider } from "./ui/Slider";
 import { NumberField } from "./ui/NumberField";
 import { Disclosure } from "./ui/Disclosure";
-import { DropdownItem } from "./ui/Dropdown";
+import { ModelMenu } from "./ui/ModelMenu";
 import { Tooltip, TooltipIconButton } from "./ui/Tooltip";
 import { WorkspaceThreadTitle } from "./WorkspaceThreadTitle";
 import { ImageBatchField, ImageCanvasFields, ImageSamplingFields } from "./ImageGenerationFields";
@@ -34,7 +34,6 @@ import { ImageLoraFields } from "./ImageLoraFields";
 import { ChatImageReferenceFields } from "./ChatImageReferenceFields";
 import { ChatDocumentAttachments } from "./ChatDocuments";
 
-import { TextMenu } from "./TextMenu";
 import X from "lucide-react/dist/esm/icons/x.mjs";
 import Settings2 from "lucide-react/dist/esm/icons/settings-2.mjs";
 import Square from "lucide-react/dist/esm/icons/square.mjs";
@@ -928,9 +927,9 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
                 onChange={(mode) => studio.updateThread(activeThread.id, { mode, ...(mode === "reasoning" && activeThread.maxNewTokens === 512 ? { maxNewTokens: 1024 } : {}) })} />}
             </div>
             <div className="composer-send-tools">
-              <TextMenu label="Text model" value={selectedModel} disabled={busy} options={modelOptions} onSelect={(id) => studio.selectModel(activeThread.id, id)}>
-                <DropdownItem onClick={openModels}>Manage models</DropdownItem>
-              </TextMenu>
+              <ModelMenu label="Text model" className="text-model-dropdown" triggerClassName="text-menu-trigger"
+                value={selectedModel} disabled={busy} options={modelOptions} onManageModels={openModels}
+                onChange={(id) => studio.selectModel(activeThread.id, id)} />
               {responseHere ? <TooltipIconButton key="stop" ref={bindStopControl} variant="danger" shape="circle"
                 className="composer-submit is-stop" disabled={stopping} onClick={stopFromComposer} aria-label="Stop generation"
                 tooltip={stopping ? "Stopping generation…" : "Stop generation · Esc in composer"}>

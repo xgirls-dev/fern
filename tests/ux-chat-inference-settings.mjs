@@ -119,9 +119,11 @@ try {
     ...state.textStatus.job, status: "complete", partialText: "Done.",
     result: { inputTokens: 5, outputTokens: 1, generationSeconds: 1, tokensPerSecond: 1 },
   };
-  await page.getByText("Done.", { exact: true }).waitFor();
+  const previousReply = page.getByText("Done.", { exact: true });
+  await expect(previousReply).toBeVisible();
   await page.locator(".sidebar-new-button").click();
   await page.getByRole("menuitem", { name: "Chat", exact: true }).click();
+  await expect(previousReply).toHaveCount(0);
   if (!(await context.isVisible())) {
     const inspector = page.getByRole("complementary", { name: "Chat settings panel" });
     if (await inspector.isVisible()) await button("Model").click();

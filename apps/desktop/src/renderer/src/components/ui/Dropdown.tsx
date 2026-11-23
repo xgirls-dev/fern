@@ -93,6 +93,13 @@ export function DropdownRadioGroup(props: ComponentProps<typeof Menu.RadioGroup>
   return <Menu.RadioGroup {...props} />;
 }
 
+export function DropdownGroup({ label, children }: { label: string; children: ReactNode }) {
+  return <Menu.Group>
+    <Menu.GroupLabel className="ui-menu-group-label">{label}</Menu.GroupLabel>
+    {children}
+  </Menu.Group>;
+}
+
 export function DropdownRadioItem(props: Omit<ComponentProps<typeof Menu.RadioItem>, "className">) {
   return <Menu.RadioItem className="ui-menu-item ui-popup-item" closeOnClick {...props} />;
 }
