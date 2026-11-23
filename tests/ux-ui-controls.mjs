@@ -117,13 +117,14 @@ try {
   await button("Duplicate chat").hover();
   await expect(page.getByRole("tooltip").filter({ hasText: /^Duplicate chat$/ })).toBeVisible();
   await button("Collapse sidebar").click();
-  const threadSwitcher = page.getByRole("combobox", { name: "Open text thread", exact: true });
+  const threadSwitcher = button("Open text thread");
   await threadSwitcher.hover();
   await expect(page.getByRole("tooltip").filter({ hasText: /^Open text thread$/ })).toBeVisible();
   await threadSwitcher.press("ArrowDown");
-  await expect(options).toBeVisible();
+  const threadPicker = page.getByRole("dialog", { name: "Search chats", exact: true });
+  await expect(threadPicker.getByRole("searchbox", { name: "Find a chat", exact: true })).toBeFocused();
   await page.keyboard.press("Escape");
-  await expect(options).toHaveCount(0);
+  await expect(threadPicker).toHaveCount(0);
   await expect(threadSwitcher).toBeFocused();
   await button("Expand sidebar").click();
   await button("Chat settings").press("Enter");

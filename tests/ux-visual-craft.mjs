@@ -1,5 +1,5 @@
-import { chooseSelectOption } from "./select-option.mjs";
 import assert from "node:assert/strict";
+import { expect } from "@playwright/test";
 import { fixture } from "./ui-fixture.mjs";
 
 const { page, dir, errors, close } = await fixture({
@@ -92,11 +92,17 @@ try {
     if (viewport.width === 864) await loadedPage.screenshot({ path: `${loaded.dir}/design-compact-image-with-output.png` });
   }
   await loadedPage.setViewportSize({ width: 864, height: 547 });
-  const switcher = loadedPage.getByLabel("Open thread", { exact: true });
+  const switcher = loadedPage.getByRole("button", { name: "Open thread", exact: true });
   await loadedPage.getByRole("heading", { name: "Stable title", exact: true }).waitFor();
-  await chooseSelectOption(switcher, "Study number 1");
+  await switcher.press("Enter");
+  const imageSearch = loadedPage.getByRole("dialog", { name: "Search image threads", exact: true });
+  const imageQuery = imageSearch.getByRole("searchbox", { name: "Find an image thread", exact: true });
+  await expect(imageQuery).toBeFocused();
+  await imageQuery.fill("Study number 1");
+  await imageQuery.press("Enter");
   const switchedTitle = loadedPage.getByRole("heading", { name: "Study number 1", exact: true });
   await switchedTitle.waitFor();
+  await expect(switcher).toBeFocused();
   assert((await switchedTitle.boundingBox()).height >= 16, "The compact workspace must retain its visible title");
   assert.equal((await switcher.boundingBox()).width, 32);
   assert.deepEqual(loaded.errors, []);

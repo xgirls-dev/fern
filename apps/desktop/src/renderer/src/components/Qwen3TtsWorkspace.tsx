@@ -27,7 +27,7 @@ const languages = ["Auto", "Chinese", "English", "Japanese", "Korean", "French",
 const speakers = ["Vivian", "Serena", "Uncle_fu", "Dylan", "Eric", "Ryan", "Aiden", "Ono_anna", "Sohee"];
 const outputLabel = (output: AudioOutput) => models.find((item) => item.id === output.model)?.label ?? "Qwen3-TTS";
 
-export function Qwen3TtsWorkspace({ studio, sidebarCollapsed }: { studio: ReturnType<typeof useQwen3Tts>; sidebarCollapsed: boolean }) {
+export function Qwen3TtsWorkspace({ studio, sidebarCollapsed, onOpenThreadSearch }: { studio: ReturnType<typeof useQwen3Tts>; sidebarCollapsed: boolean; onOpenThreadSearch: () => void }) {
   const { activeThread, status, busy, error, updateThread } = studio;
   const [fileError, setFileError] = useState<string | null>(null);
   const [referenceReady, setReferenceReady] = useState(false);
@@ -105,11 +105,10 @@ export function Qwen3TtsWorkspace({ studio, sidebarCollapsed }: { studio: Return
       <div className="workspace-heading">
         <WorkspaceThreadTitle
           id="tts-heading"
-          thread={activeThread}
-          threads={studio.threads}
+          title={activeThread.title}
           switchLabel="Open audio thread"
           sidebarCollapsed={sidebarCollapsed}
-          onSwitch={studio.selectThread}
+          onOpen={onOpenThreadSearch}
         />
         <span className="workspace-heading-divider" aria-hidden="true">/</span><span>Qwen3-TTS {model.size}</span>
       </div>

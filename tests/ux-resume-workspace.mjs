@@ -21,7 +21,9 @@ try {
   const now = Date.now();
   await savedTextWorkspace(page, {
       activeId: "text-thread-newest", threads: [
-        { id: "text-thread-newest", title: "Poster", draft: "Newer draft", messages: [], updatedAt: now },
+        { id: "text-thread-newest", title: "Poster", draft: "Newer draft", messages: [
+          { id: "response-poster", role: "assistant", content: "Hold the Atlas rehearsal on Friday.", createdAt: now },
+        ], updatedAt: now },
         { id: "text-thread-earlier", title: "Poster", draft: "Earlier draft", messages: [], updatedAt: now - 120_000 },
         { id: "text-thread-archived", title: "Poster", archived: true, messages: [], updatedAt: now - 60_000 },
         { id: "text-thread-renamed", title: "Named empty draft", renamed: true, messages: [], updatedAt: now },
@@ -95,6 +97,31 @@ try {
   await page.keyboard.press("Escape");
   await expand.waitFor();
   assert(await composer.evaluate((element) => document.activeElement === element));
+
+  const switchChat = page.getByRole("button", { name: "Open text thread", exact: true });
+  await switchChat.press("Enter");
+  const chatSearch = page.getByRole("dialog", { name: "Search chats", exact: true });
+  const chatQuery = chatSearch.getByRole("searchbox", { name: "Find a chat", exact: true });
+  await expect(chatQuery).toBeFocused();
+  await chatQuery.fill("Poster");
+  const chatMatches = chatSearch.locator(".thread-browser-open");
+  await expect(chatMatches).toHaveCount(2);
+  await expect(chatSearch.locator('[aria-current="true"]')).toContainText("Earlier draft");
+  await chatSearch.getByLabel("Archived only").check();
+  await expect(chatMatches).toHaveCount(1);
+  await expect(chatMatches.first()).toContainText("Archived");
+  await chatSearch.getByLabel("Archived only").uncheck();
+  await chatQuery.fill("Atlas rehearsal");
+  await chatQuery.press("Enter");
+  await expect(composer).toHaveValue("Newer draft");
+  const findInChat = page.getByRole("searchbox", { name: "Search this chat", exact: true });
+  await expect(findInChat).toHaveValue("Atlas rehearsal");
+  await expect(findInChat).toBeFocused();
+  await findInChat.press("Escape");
+  await switchChat.press("Enter");
+  await chatQuery.fill("Earlier draft");
+  await chatQuery.press("Enter");
+  await expect(composer).toHaveValue("Earlier draft");
 
   await expand.click();
   await sidebar.getByRole("button", { name: "Search threads", exact: true }).click();

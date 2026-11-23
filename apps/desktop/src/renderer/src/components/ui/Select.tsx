@@ -12,7 +12,7 @@ type SelectProps<T extends SelectValue> = Omit<ComponentProps<"button">, "onChan
   options: readonly SelectOption<T>[];
   onChange: (value: T) => void;
   placeholder?: string;
-  appearance?: "field" | "toolbar" | "icon";
+  appearance?: "field" | "toolbar";
   triggerTooltip?: string;
   triggerTooltipSide?: ComponentProps<typeof Tooltip>["side"];
   finalFocus?: ComponentProps<typeof BaseSelect.Popup>["finalFocus"];
@@ -25,10 +25,10 @@ export function Select<T extends SelectValue>({
 }: SelectProps<T>) {
   const emptyOptionLabel = value === "" ? options.find((option) => option.value === value)?.label : undefined;
   const selectTrigger = <BaseSelect.Trigger
-    className={`${appearance === "icon" ? "ui-icon-button ui-select-icon" : `ui-field ui-select ui-select--${appearance}`} ${className}`}
+    className={`ui-field ui-select ui-select--${appearance} ${className}`}
     {...trigger}
   >
-    {appearance !== "icon" && <BaseSelect.Value className="ui-select-value" placeholder={placeholder}>{emptyOptionLabel}</BaseSelect.Value>}
+    <BaseSelect.Value className="ui-select-value" placeholder={placeholder}>{emptyOptionLabel}</BaseSelect.Value>
     <BaseSelect.Icon className="ui-select-chevron"><ChevronDown size={14} aria-hidden="true" /></BaseSelect.Icon>
   </BaseSelect.Trigger>;
   return <BaseSelect.Root<T> value={value} items={options} name={name} form={form} disabled={disabled}

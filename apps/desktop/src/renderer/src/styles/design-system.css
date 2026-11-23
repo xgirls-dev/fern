@@ -138,7 +138,7 @@ body:has(.ui-resize-handle[data-resizing][aria-orientation="horizontal"]) { curs
 .ui-field:disabled { opacity: .5; cursor: not-allowed; }
 .ui-select { display: inline-flex; min-width: 0; align-items: center; justify-content: space-between; gap: var(--ui-space-2); text-align: start; cursor: pointer; }
 .ui-select--toolbar { border-color: transparent; background: transparent; color: var(--muted); }
-.ui-select:not(:disabled):is(:hover, [data-popup-open]), .ui-select-icon[data-popup-open] { background: var(--secondary-hover); }
+.ui-select:not(:disabled):is(:hover, [data-popup-open]) { background: var(--secondary-hover); }
 .ui-select-value, .ui-popup-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ui-select-value[data-placeholder], .ui-select-chevron { color: var(--muted); }
 .ui-select-chevron, .ui-popup-indicator { display: inline-flex; flex: 0 0 auto; }

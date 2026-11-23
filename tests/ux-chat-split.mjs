@@ -152,6 +152,8 @@ try {
   await button("Right chat", switcher).click();
   await left.waitFor({ state: "hidden" });
   await right.getByText("Right answer.", { exact: true }).waitFor();
+  await expect(button("Choose another chat for this pane", right)).toBeVisible();
+  await expect(button("Open text thread", right)).toHaveCount(0);
   await button("Left chat", switcher).click();
   await right.waitFor({ state: "hidden" });
   await left.getByText("Left answer.", { exact: true }).waitFor();

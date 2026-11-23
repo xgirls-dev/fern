@@ -55,7 +55,16 @@ try {
   const play = first.getByRole("button", { name: "Play Station intro", exact: true });
   await page.setViewportSize({ width: 864, height: 576 });
   assert((await page.getByRole("heading", { name: "Studio reads", exact: true }).boundingBox()).height >= 16);
-  await page.getByLabel("Open audio thread", { exact: true }).waitFor();
+  const switchAudio = page.getByRole("button", { name: "Open audio thread", exact: true });
+  await switchAudio.press("Enter");
+  const audioSearch = page.getByRole("dialog", { name: "Search audio threads", exact: true });
+  const query = audioSearch.getByRole("searchbox", { name: "Find an audio thread", exact: true });
+  await expect(query).toBeFocused();
+  await query.fill("Draft for the next take");
+  await expect(audioSearch.locator('[aria-current="true"]')).toContainText("Studio reads");
+  await query.press("Escape");
+  await expect(audioSearch).toHaveCount(0);
+  await expect(switchAudio).toBeFocused();
   await page.getByRole("button", { name: "Latest take", exact: true }).click();
   await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Play Station intro");
   assert(await play.isVisible());

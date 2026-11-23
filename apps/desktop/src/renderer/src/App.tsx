@@ -24,6 +24,7 @@ import { RuntimeLoadingDialog } from "./components/RuntimeLoadingDialog";
 import { StudioSidebar } from "./components/StudioSidebar";
 import { TitleBar } from "./components/TitleBar";
 import { WorkspaceThreadTitle } from "./components/WorkspaceThreadTitle";
+import type { ThreadBrowserScope } from "./components/ThreadBrowser";
 import { Button, IconButton, PageHeader } from "./components/ui/controls";
 import { ProgressLabel } from "./components/ui/ProgressLabel";
 
@@ -51,7 +52,7 @@ export function App() {
   const imageGpuAvailable = studio.status?.model.adapters?.find((adapter) => adapter.id === imageGpu)?.available;
   const tts = useQwen3Tts(studio.ready, compute.device);
   const text = useTextChat(studio.ready, compute.device, imageGpuAvailable);
-  const [threadSearchQuery, setThreadSearchQuery] = useState<string | null>(null);
+  const [threadSearch, setThreadSearch] = useState<{ query: string; scope?: ThreadBrowserScope } | null>(null);
   const [inspectorView, setInspectorView] = useState<
     "settings" | "info" | null
   >(null);
@@ -101,16 +102,20 @@ export function App() {
     if (modelSetup) saveModelSetup({ ...modelSetup, viewing: activeSection === "models" });
   }, [activeSection, modelSetup]);
   const chatFolderIndex = useMemo(() => new Map(text.folders.map((folder) => [folder.id, folder])), [text.folders]);
-  const searchingThreads = threadSearchQuery !== null;
-  const searchableThreads = commandPaletteOpen || searchingThreads ? [
-    ...studio.searchThreads(),
-    ...tts.threads.map((thread) => ({ ...thread, excerpt: thread.text })),
-    ...text.threads.map((thread) => ({
-      ...thread,
-      excerpt: thread.messages.find((message) => message.role === "user")?.content || thread.draft,
-      folderPath: chatFolderPath(chatFolderIndex, thread.folderId),
-    })),
-  ] : [];
+  const searchingThreads = threadSearch !== null;
+  const searchKind = commandPaletteOpen ? undefined : threadSearch?.scope?.kind;
+  const searchableThreads = useMemo(() => {
+    if (!commandPaletteOpen && !searchingThreads) return [];
+    return [
+      ...(!searchKind || searchKind === "Image" ? studio.searchThreads() : []),
+      ...(!searchKind || searchKind === "Speech" ? tts.threads.map((thread) => ({ ...thread, excerpt: thread.text })) : []),
+      ...(!searchKind || searchKind === "Chat" ? text.threads.map((thread) => ({
+        ...thread,
+        excerpt: thread.messages.find((message) => message.role === "user")?.content || thread.draft,
+        folderPath: chatFolderPath(chatFolderIndex, thread.folderId),
+      })) : []),
+    ];
+  }, [chatFolderIndex, commandPaletteOpen, searchKind, searchingThreads, studio.searchThreads, text.threads, tts.threads]);
   const imageSetupNeeded = studio.status?.installedModels !== undefined && !studio.modelInstalled &&
     !studio.status.installedModels.some((model) => model.installed !== false);
   useEffect(() => {
@@ -153,7 +158,17 @@ export function App() {
       ?.focus();
   }, [activeSection, computeFocusRequest]);
 
-  const openThreadSearch = useCallback(() => setThreadSearchQuery(""), []);
+  const searchThreadsByQuery = useCallback((query: string) => setThreadSearch({ query }), []);
+  const openThreadSearch = useCallback(() => setThreadSearch({ query: "" }), []);
+  const openChatThreadSearch = useCallback(() => {
+    setThreadSearch({ query: "", scope: { kind: "Chat", currentId: text.activeThread.id } });
+  }, [text.activeThread.id]);
+  const openImageThreadSearch = useCallback(() => {
+    setThreadSearch({ query: "", scope: { kind: "Image", currentId: studio.activeThread.id } });
+  }, [studio.activeThread.id]);
+  const openAudioThreadSearch = useCallback(() => {
+    setThreadSearch({ query: "", scope: { kind: "Speech", currentId: tts.activeThread.id } });
+  }, [tts.activeThread.id]);
   const openStorage = useCallback(() => setActiveSection("storage"), []);
   const openVideo = useCallback(() => setActiveSection("video"), []);
   const openVideoModels = useCallback(() => { setModelCategory("video"); setActiveSection("models"); }, []);
@@ -591,7 +606,7 @@ export function App() {
           {activeSection === "models" || activeSection === "preferences" ||
           activeSection === "storage" ? null : activeSection === "text" ? (
             text.storageReady
-              ? <Suspense fallback={<div className="dashboard-loading" role="status"><ProgressLabel>Opening chat…</ProgressLabel></div>}><ChatWorkspace studio={text} sidebarCollapsed={sidebarIsCollapsed} onSetupModels={openModelSetup} focusRequest={chatFocusRequest} findRequest={chatFindRequest} onFindRequestHandled={clearChatFindRequest} imageGpuAvailable={imageGpuAvailable} onOpenImage={openImage} onNewChat={newTextThread} onCreateImage={newThread} onCreateSpeech={newAudioThread} onOpenCompute={openComputePreferences} /></Suspense>
+              ? <Suspense fallback={<div className="dashboard-loading" role="status"><ProgressLabel>Opening chat…</ProgressLabel></div>}><ChatWorkspace studio={text} sidebarCollapsed={sidebarIsCollapsed} onOpenThreadSearch={openChatThreadSearch} onSetupModels={openModelSetup} focusRequest={chatFocusRequest} findRequest={chatFindRequest} onFindRequestHandled={clearChatFindRequest} imageGpuAvailable={imageGpuAvailable} onOpenImage={openImage} onNewChat={newTextThread} onCreateImage={newThread} onCreateSpeech={newAudioThread} onOpenCompute={openComputePreferences} /></Suspense>
               : <div className="dashboard-loading">
                 {text.storageError ? <><span role="alert">{text.storageError}</span><Button variant="secondary" onClick={text.retryStorage}>Retry opening chats</Button></> : <span role="status"><ProgressLabel>Opening chats…</ProgressLabel></span>}
               </div>
@@ -601,7 +616,7 @@ export function App() {
                 openModels={openVideoModels} openCompute={openComputePreferences} />
             </Suspense>
           ) : activeSection === "tts" ? (
-            <Suspense fallback={<div className="dashboard-loading" role="status">Opening audio workspace…</div>}><Qwen3TtsWorkspace studio={tts} sidebarCollapsed={sidebarIsCollapsed} /></Suspense>
+            <Suspense fallback={<div className="dashboard-loading" role="status">Opening audio workspace…</div>}><Qwen3TtsWorkspace studio={tts} sidebarCollapsed={sidebarIsCollapsed} onOpenThreadSearch={openAudioThreadSearch} /></Suspense>
           ) : activeSection === "create" ? (
             <section
               className={`create-view${inspectorView ? " has-inspector" : ""}`}
@@ -611,11 +626,10 @@ export function App() {
                 <div className="workspace-heading">
                   <WorkspaceThreadTitle
                     id="create-heading"
-                    thread={studio.activeThread}
-                    threads={studio.threads}
+                    title={studio.activeThread.title}
                     switchLabel="Open thread"
                     sidebarCollapsed={sidebarIsCollapsed}
-                    onSwitch={openThread}
+                    onOpen={openImageThreadSearch}
                   />
                   <span
                     className="workspace-heading-divider"
@@ -936,16 +950,17 @@ export function App() {
         />
       )}
       <Notifications />
-      {threadSearchQuery !== null ? <Suspense fallback={null}>
+      {threadSearch ? <Suspense fallback={null}>
         <ThreadBrowser
           threads={searchableThreads}
-          initialQuery={threadSearchQuery}
+          initialQuery={threadSearch.query}
+          scope={threadSearch.scope}
           onOpen={(id, query) => {
             onSidebarNavigate();
             openThread(id);
             setChatFindRequest(query && id.startsWith("text-thread-") ? { threadId: id, query } : null);
           }}
-          onClose={() => setThreadSearchQuery(null)}
+          onClose={() => setThreadSearch(null)}
         />
       </Suspense> : null}
       {runtimeDismissed && !studio.running && (connectionError || showImageRuntimeStatus) ? (
@@ -998,7 +1013,7 @@ export function App() {
         open={commandPaletteOpen}
         threads={searchableThreads}
         onOpenThread={openThread}
-        onOpenThreadSearch={setThreadSearchQuery}
+        onOpenThreadSearch={searchThreadsByQuery}
         running={studio.running}
         audioRunning={tts.status.status === "running" || tts.status.status === "setting_up" || tts.status.status === "stopping"}
         textRunning={text.status.job.status === "running" || text.threads.some((thread) => !!thread.pendingJobId)}

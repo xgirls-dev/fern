@@ -1130,10 +1130,10 @@ export function useStudio(computeDevice: "GPU" | "CPU" = "GPU") {
     return sorted;
   }, [workspace.threads]);
 
-  const searchThreads = () => {
+  const searchThreads = useCallback(() => {
     const excerpts = new Map(workspace.threads.map((thread) => [thread.id, thread.settings.prompt.trim().slice(0, 160)]));
     return threads.map((thread) => ({ ...thread, excerpt: excerpts.get(thread.id) }));
-  };
+  }, [threads, workspace.threads]);
 
   return {
     threads,

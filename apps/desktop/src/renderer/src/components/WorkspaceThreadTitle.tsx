@@ -1,24 +1,28 @@
 import { memo } from "react";
-import { Select } from "./ui/Select";
+import ChevronDown from "lucide-react/dist/esm/icons/chevron-down.mjs";
+import { TooltipIconButton } from "./ui/Tooltip";
 
 interface WorkspaceThreadTitleProps {
   id?: string;
-  thread: { id: string; title: string };
-  threads: readonly { id: string; title: string; archived?: boolean }[];
+  title: string;
   switchLabel: string;
   sidebarCollapsed: boolean;
-  onSwitch: (id: string) => void;
+  onOpen?: () => void;
 }
 
 export const WorkspaceThreadTitle = memo(function WorkspaceThreadTitle({
-  id, thread, threads, switchLabel, sidebarCollapsed, onSwitch,
+  id, title, switchLabel, sidebarCollapsed, onOpen,
 }: WorkspaceThreadTitleProps) {
   return (
     <div className="workspace-thread-title">
-      <h2 id={id} title={thread.title}>{thread.title}</h2>
-      <Select appearance="icon" className={`workspace-thread-switcher${sidebarCollapsed ? " is-visible" : ""}`}
-        aria-label={switchLabel} triggerTooltip={switchLabel} triggerTooltipSide="bottom" value={thread.id} onChange={onSwitch}
-        options={threads.filter((item) => !item.archived || item.id === thread.id).map(({ id, title }) => ({ value: id, label: title }))} />
+      <h2 id={id} title={title}>{title}</h2>
+      {onOpen && <TooltipIconButton className={`workspace-thread-switcher${sidebarCollapsed ? " is-visible" : ""}`}
+        aria-label={switchLabel} aria-haspopup="dialog" tooltip={switchLabel} tooltipSide="bottom" onClick={onOpen}
+        onKeyDown={(event) => {
+          if (event.key === "ArrowDown") { event.preventDefault(); onOpen(); }
+        }}>
+        <ChevronDown size={14} aria-hidden="true" />
+      </TooltipIconButton>}
     </div>
   );
 });

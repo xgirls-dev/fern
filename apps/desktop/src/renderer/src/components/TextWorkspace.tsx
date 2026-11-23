@@ -189,6 +189,7 @@ export interface TextWorkspaceProps {
   focused: boolean;
   split: boolean;
   onChooseChat: () => void;
+  onOpenThreadSearch: () => void;
   onClosePane: () => void;
   sidebarCollapsed?: boolean;
   onSetupModels: (task: SetupTask, threadId: string) => void;
@@ -203,7 +204,7 @@ export interface TextWorkspaceProps {
   onOpenCompute: () => void;
 }
 
-export function TextWorkspace({ studio, thread: activeThread, pane, focused, split, onChooseChat, onClosePane,
+export function TextWorkspace({ studio, thread: activeThread, pane, focused, split, onChooseChat, onOpenThreadSearch, onClosePane,
   sidebarCollapsed = false, onSetupModels, focusRequest = 0, findRequest, onFindRequestHandled, imageGpuAvailable,
   onOpenImage, onNewChat, onCreateImage, onCreateSpeech, onOpenCompute }: TextWorkspaceProps) {
   const { status, statusError, actionError, busy } = studio;
@@ -759,11 +760,10 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
       <header className="workspace-header text-header">
         <div className="workspace-heading">
           <WorkspaceThreadTitle
-            thread={activeThread}
-            threads={studio.threads}
+            title={activeThread.title}
             switchLabel="Open text thread"
             sidebarCollapsed={sidebarCollapsed && !split}
-            onSwitch={studio.selectThread}
+            onOpen={split ? undefined : onOpenThreadSearch}
           />
           {sourceChat && <Tooltip content={`Open original chat · ${sourceChat.title}`} side="bottom"><Button variant="ghost" className="text-branch-source" aria-label="Open original chat" onClick={() => {
             focusBranchId.current = sourceChat.id;
