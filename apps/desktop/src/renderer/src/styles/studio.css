@@ -162,8 +162,6 @@ body {
 .text-message-content h1, .text-message-content h2, .text-message-content h3 { margin: 24px 0 12px; font-size: 18px; line-height: 1.4; font-weight: 600; }
 .text-message-content ul, .text-message-content ol { padding-left: 24px; margin: 12px 0 20px; }
 .text-message-content li { padding-left: 3px; margin: 6px 0; }
-/* Streamed additions should not invalidate layout and paint inside earlier blocks. */
-.text-message-content :is(.text-code-block, .text-table-block) { contain: layout paint; }
 .text-code-block {
   --chat-code-keyword: #672b93;
   --chat-code-string: #196648;
