@@ -45,17 +45,22 @@ try {
   respond(answer);
   await expect(reply.locator("p")).toHaveText(answer);
   const frames = await page.evaluate(() => window.replyFrames);
-  assert(frames.length > 1, "Prose should arrive in multiple rendered frames when motion is enabled");
+  assert.equal(frames.length, 2, "A prose burst should appear as a prefix and then finish on the next frame");
   assertCompleteCharacters(frames, answer);
 
   const extended = `${answer} नमस्ते दुनिया!`;
   respond(extended);
   await expect(reply.locator("p")).toHaveText(extended);
-  assertCompleteCharacters(await page.evaluate(() => window.replyFrames), extended);
-  const rich = `${extended} Keep &copy; and **the accent** intact.`;
+  const extendedFrames = await page.evaluate(() => window.replyFrames);
+  assertCompleteCharacters(extendedFrames, extended);
+  const smallUpdate = `${extended} 👋`;
+  respond(smallUpdate);
+  await expect(reply.locator("p")).toHaveText(smallUpdate);
+  assert.deepEqual((await page.evaluate(() => window.replyFrames)).slice(extendedFrames.length), [smallUpdate]);
+  const rich = `${smallUpdate} Keep &copy; and **the accent** intact.`;
   respond(rich);
   await expect(reply.locator("strong")).toHaveText("the accent");
-  await expect(reply.locator("p")).toHaveText(`${extended} Keep © and the accent intact.`);
+  await expect(reply.locator("p")).toHaveText(`${smallUpdate} Keep © and the accent intact.`);
   respond(rich, "complete");
   await expect(stream).toHaveCount(0);
 
@@ -67,7 +72,7 @@ try {
   respond(answer, "complete");
   await expect(stream).toHaveCount(0);
   assert.deepEqual(errors, []);
-  console.log("Animated prose preserves Unicode character boundaries across updates, and reduced motion renders each update at once.");
+  console.log("Prose bursts catch up on the next frame, short updates render together, and Unicode and reduced motion stay intact.");
 } finally {
   await close();
 }

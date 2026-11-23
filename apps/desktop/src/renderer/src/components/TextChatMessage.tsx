@@ -27,49 +27,47 @@ function describeContextCount(count: number, subject: string, action: string) {
   return `${count.toLocaleString()} ${subject}${count === 1 ? " was" : "s were"} ${action}.`;
 }
 
-// Animate plain prose. Structured batches go straight to the Markdown renderer
-// so a single update cannot replay intermediate formatting.
+const reducedTextMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+const SMALL_PROSE_UPDATE = 8;
+
 function useStreamedText(text: string, streaming: boolean) {
   const displayed = useRef(text);
   const [visible, setVisible] = useState(text);
   const frame = useRef<number | undefined>(undefined);
-  const target = useRef<{ text: string; step: number; graphemes: Intl.Segments } | undefined>(undefined);
-  const animate = streaming && text.length <= 16_000 && !hasStreamingMarkdown(text) &&
-    !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  useEffect(() => () => {
+  const latest = useRef(text);
+  const animate = streaming && !reducedTextMotion.matches && text.length <= 16_000 && !hasStreamingMarkdown(text);
+  useLayoutEffect(() => () => {
     if (frame.current !== undefined) window.cancelAnimationFrame(frame.current);
     frame.current = undefined;
   }, []);
-  useEffect(() => {
-    if (!animate || !text.startsWith(displayed.current)) {
+  useLayoutEffect(() => {
+    latest.current = text;
+    const show = (next: string) => {
+      if (next === displayed.current) return;
+      displayed.current = next;
+      setVisible(next);
+    };
+
+    const appended = text.length - displayed.current.length;
+    if (!animate || appended <= SMALL_PROSE_UPDATE || !text.startsWith(displayed.current)) {
       if (frame.current !== undefined) window.cancelAnimationFrame(frame.current);
       frame.current = undefined;
-      target.current = undefined;
-      displayed.current = text;
-      setVisible(text);
+      show(text);
       return;
     }
-    if (text === displayed.current) {
-      target.current = undefined;
-      return;
-    }
-    target.current = { text, step: Math.max(3, Math.ceil((text.length - displayed.current.length) / 3)),
-      graphemes: segmentGraphemes(text) };
     if (frame.current !== undefined) return;
 
-    // Keep an already scheduled frame alive when another batch arrives.
-    function reveal() {
+    // Start revealing a burst immediately. The next frame clears its entire
+    // remaining backlog, including chunks that arrive before that frame.
+    const midpoint = displayed.current.length + Math.ceil(appended / 2);
+    const grapheme = segmentGraphemes(text).containing(midpoint - 1);
+    const firstPart = grapheme ? text.slice(0, grapheme.index + grapheme.segment.length) : text;
+    show(firstPart);
+    if (firstPart === text) return;
+    frame.current = window.requestAnimationFrame(() => {
       frame.current = undefined;
-      const next = target.current;
-      if (!next || next.text === displayed.current) return;
-      const end = Math.min(next.text.length, displayed.current.length + next.step);
-      const last = next.graphemes.containing(end - 1);
-      displayed.current = last ? next.text.slice(0, last.index + last.segment.length) : next.text;
-      setVisible(displayed.current);
-      if (displayed.current !== next.text) frame.current = window.requestAnimationFrame(reveal);
-    }
-    if (displayed.current) frame.current = window.requestAnimationFrame(reveal);
-    else reveal();
+      show(latest.current);
+    });
   }, [animate, text]);
   return animate && text.startsWith(visible) ? visible : text;
 }
