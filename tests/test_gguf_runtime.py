@@ -17,6 +17,35 @@ from gguf_runtime import GGUFServer, VulkanDriverError, ensure_runtime, runtime_
 
 
 class GGUFCompletionTests(unittest.TestCase):
+    def test_runtime_readiness_polls_quickly_then_backs_off(self) -> None:
+        server = GGUFServer.__new__(GGUFServer)
+        server.process = Mock()
+        server.process.poll.return_value = None
+        server.http = Mock()
+        server._request = Mock(return_value="/health")
+        now = 0.0
+        waits = []
+
+        def sleep(seconds: float) -> None:
+            nonlocal now
+            waits.append(seconds)
+            now += seconds
+
+        def health(*_args, **_kwargs):
+            nonlocal now
+            if not waits:
+                raise OSError("The server has not opened its listening socket.")
+            if len(waits) == 1:
+                now = 5.0
+                return io.BytesIO(b'{"status":"loading model"}')
+            return io.BytesIO(b'{"status":"ok"}')
+
+        server.http.open.side_effect = health
+        with patch("gguf_runtime.time.monotonic", side_effect=lambda: now), patch("gguf_runtime.time.sleep", side_effect=sleep):
+            server._wait_ready()
+        self.assertEqual(waits, [0.05, 0.4])
+        self.assertEqual(server.http.open.call_count, 3)
+
     def test_stream_result_retains_the_reported_finish_reason(self) -> None:
         server = GGUFServer.__new__(GGUFServer)
         server.context_size = 4096

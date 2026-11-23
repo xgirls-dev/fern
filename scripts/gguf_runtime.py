@@ -260,7 +260,8 @@ class GGUFServer:
 
     def _wait_ready(self) -> None:
         assert self.process is not None
-        deadline = time.monotonic() + 180
+        started_at = time.monotonic()
+        deadline = started_at + 180
         while time.monotonic() < deadline:
             if self.process.poll() is not None:
                 with self.log_path.open("rb") as log:
@@ -272,7 +273,12 @@ class GGUFServer:
                     if json.load(response).get("status") == "ok":
                         return
             except OSError:
-                time.sleep(0.4)
+                pass
+            now = time.monotonic()
+            if now < deadline:
+                # Small models often load before the next long polling interval.
+                delay = 0.05 if now - started_at < 5 else 0.4
+                time.sleep(min(delay, deadline - now))
         raise RuntimeError("The GGUF model did not start within three minutes.")
 
     def _request(self, route: str, data: dict | None = None) -> urllib.request.Request:
