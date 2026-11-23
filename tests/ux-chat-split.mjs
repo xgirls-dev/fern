@@ -34,8 +34,11 @@ const complete = async (answer, pane) => {
 };
 const settings = (pane) => pane.getByRole("complementary", { name: "Chat settings panel", exact: true });
 const searchFor = async (name) => {
-  await choose.getByRole("searchbox", { name: "Find a chat" }).fill(name);
-  await choose.getByRole("button", { name: new RegExp(name) }).click();
+  const query = choose.getByRole("searchbox", { name: "Find a chat" });
+  await query.fill(name);
+  await query.press("ArrowDown");
+  await expect(choose.getByRole("button", { name: new RegExp(name) })).toBeFocused();
+  await page.keyboard.press("Enter");
 };
 
 try {

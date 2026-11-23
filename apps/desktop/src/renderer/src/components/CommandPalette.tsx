@@ -12,10 +12,9 @@ import Sparkles from "lucide-react/dist/esm/icons/sparkles.mjs";
 import AudioLines from "lucide-react/dist/esm/icons/audio-lines.mjs";
 import MessageSquare from "lucide-react/dist/esm/icons/message-square.mjs";
 import Square from "lucide-react/dist/esm/icons/square.mjs";
-import X from "lucide-react/dist/esm/icons/x.mjs";
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Dialog, DialogClose, DialogTitle } from "./ui/Dialog";
-import { IconButton, Input } from "./ui/controls";
+import { Dialog, DialogTitle } from "./ui/Dialog";
+import { SearchDialogField } from "./ui/SearchDialogField";
 import { shortcutLabel, shortcuts } from "../lib/workspaceNavigation";
 import type { TranscriptDestination } from "../lib/textTranscript";
 
@@ -272,11 +271,9 @@ export function CommandPalette({
   return (
     <Dialog variant="search" onClose={onClose} initialFocus={searchRef}>
       <DialogTitle className="sr-only">Commands</DialogTitle>
-      <div className="command-palette-search">
-        <Search size={17} aria-hidden="true" />
-        <Input
+      <SearchDialogField
+          closeLabel="Close commands"
           ref={searchRef}
-          className="command-palette-input"
           value={query}
           onChange={(event) => {
             keyboardNavigation.current = false;
@@ -295,12 +292,7 @@ export function CommandPalette({
               ? `command-${filteredActions[selectedIndex].id}`
               : undefined
           }
-          autoComplete="off"
-        />
-        <DialogClose render={<IconButton aria-label="Close commands">
-          <X size={15} aria-hidden="true" />
-        </IconButton>} />
-      </div>
+      />
 
       <div
         ref={listRef}

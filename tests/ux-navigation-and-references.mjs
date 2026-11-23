@@ -23,6 +23,34 @@ try {
   await expect(button("Preferences")).toBeInViewport();
   await page.locator(".sidebar-scroll-area").evaluate((element) => { element.scrollTop = 0; });
 
+  const searchThreads = button("Search threads");
+  await searchThreads.click();
+  const threadSearch = page.getByRole("dialog", { name: "Search threads", exact: true });
+  const threadQuery = threadSearch.getByRole("searchbox", { name: "Find a thread", exact: true });
+  const threadResults = threadSearch.locator(".thread-browser-open");
+  await expect(threadQuery).toBeFocused();
+  await expect(threadResults).toHaveCount(60);
+  await page.keyboard.press("ArrowDown");
+  await expect(threadResults.first()).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(threadResults.nth(1)).toBeFocused();
+  await page.keyboard.press("End");
+  await expect(threadResults.nth(59)).toBeFocused();
+  await page.keyboard.press("Home");
+  await expect(threadResults.first()).toBeFocused();
+  await page.keyboard.press("ArrowUp");
+  await expect(threadQuery).toBeFocused();
+  await page.keyboard.press("ArrowUp");
+  await expect(threadResults.nth(59)).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(threadSearch.getByRole("button", { name: "Show more threads", exact: true })).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(threadResults.nth(60)).toBeFocused();
+  await expect(threadResults.nth(60)).toBeInViewport();
+  await page.keyboard.press("Escape");
+  await expect(threadSearch).toHaveCount(0);
+  await expect(searchThreads).toBeFocused();
+
   await button("Models").click();
   await page.getByRole("heading", { name: "Models", exact: true }).waitFor();
   await page.getByRole("heading", { name: "Image models", exact: true }).waitFor();
