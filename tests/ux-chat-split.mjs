@@ -23,6 +23,10 @@ const { page, state, errors, dir, close } = await fixture({
 const region = (name) => page.getByRole("region", { name, exact: true });
 const button = (name, root = page) => root.getByRole("button", { name, exact: true });
 const message = (root) => root.getByRole("textbox", { name: "Message", exact: true });
+const findField = (root) => root.getByRole("searchbox", { name: "Search this chat", exact: true });
+const highlights = () => page.evaluate(() => Array.from(CSS.highlights.get("fern-chat-find") ?? [], (range) => [
+  range.startContainer.parentElement.closest("[data-chat-pane]")?.getAttribute("data-chat-pane"), range.toString(),
+]).sort());
 const left = region("Left chat");
 const right = region("Right chat");
 const divider = page.getByRole("separator", { name: "Resize chat panes", exact: true });
@@ -134,6 +138,31 @@ try {
   assert.equal(leftRequest.documentIds, undefined);
   await complete("Left answer.", left);
 
+  await button("Find in chat", left).click();
+  await findField(left).fill("Left answer");
+  await expect.poll(highlights).toEqual([["primary", "Left answer"]]);
+  await button("Find in chat", right).click();
+  await findField(right).fill("Right answer");
+  await expect.poll(highlights).toEqual([["primary", "Left answer"], ["secondary", "Right answer"]]);
+
+  await message(right).press("Control+f");
+  await expect(findField(right)).toBeFocused();
+  assert.deepEqual(await findField(right).evaluate((element) => [element.selectionStart, element.selectionEnd]), [0, 12]);
+  await page.setViewportSize({ width: 864, height: 620 });
+  await left.waitFor({ state: "hidden" });
+  await expect.poll(highlights).toEqual([["secondary", "Right answer"]]);
+  const paneSwitcher = page.getByRole("group", { name: "Chat panes", exact: true });
+  await button("Left chat", paneSwitcher).click();
+  await expect(findField(left)).toHaveValue("Left answer");
+  await expect.poll(highlights).toEqual([["primary", "Left answer"]]);
+  await page.setViewportSize({ width: 1500, height: 900 });
+  await expect.poll(highlights).toEqual([["primary", "Left answer"], ["secondary", "Right answer"]]);
+  await findField(right).press("Escape");
+  await expect(button("Find in chat", right)).toBeFocused();
+  await expect.poll(highlights).toEqual([["primary", "Left answer"]]);
+  await button("Close find", left).click();
+  await expect.poll(highlights).toEqual([]);
+
   await chooseMessageAction(left.getByRole("article", { name: "Model response" }), "Delete reply");
   await button("Delete", left.getByRole("group", { name: "Confirm message deletion" })).click();
   await chooseMessageAction(right.getByRole("article", { name: "Your message" }), "Delete message");
@@ -174,7 +203,7 @@ try {
   await button("Close pane", left).click();
   await region("Text conversation").getByRole("heading", { name: "New text thread", exact: true }).waitFor();
   assert.deepEqual(errors, []);
-  console.log("Split chats preserve independent drafts, image settings, models, documents, responses, pane sizes, and narrow navigation.");
+  console.log("Split chats preserve independent Find results, drafts, image settings, models, documents, responses, pane sizes, and narrow navigation.");
 } finally {
   await close();
 }

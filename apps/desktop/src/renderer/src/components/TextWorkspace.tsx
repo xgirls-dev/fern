@@ -38,7 +38,7 @@ import X from "lucide-react/dist/esm/icons/x.mjs";
 import Settings2 from "lucide-react/dist/esm/icons/settings-2.mjs";
 import LoaderCircle from "lucide-react/dist/esm/icons/loader-circle.mjs";
 import type { useTextChat } from "../hooks/useTextChat";
-import { clearTextFindHighlight, useTextScroll } from "../hooks/useTextScroll";
+import { useTextScroll } from "../hooks/useTextScroll";
 import { useTextDraftField } from "../hooks/useTextDraftField";
 import { resolveAssetUrl } from "../lib/api";
 import type { ChatSearchMatch } from "../lib/chatSearch";
@@ -223,20 +223,21 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   const panelRef = useRef<HTMLElement>(null);
   const panelTrigger = useRef<HTMLButtonElement>(null);
   const findTrigger = useRef<HTMLButtonElement>(null);
+  const findInput = useRef<HTMLInputElement>(null);
   const [findThreadId, setFindThreadId] = useState<string | null>(null);
   const [findInitialQuery, setFindInitialQuery] = useState("");
   const [findRevision, setFindRevision] = useState(0);
   const [findMatch, setFindMatch] = useState<ChatSearchMatch | null>(null);
   const [replyPreviews, setReplyPreviews] = useState<Record<string, string>>({});
   const findOpen = findThreadId === activeThread.id;
-  const activeMatch = findOpen && focused ? findMatch : null;
+  const activeMatch = findOpen ? findMatch : null;
   const previousFind = useRef<ChatSearchMatch | null>(null);
   const previousFindPreview = useRef<{ threadId: string; messageId: string } | undefined>(undefined);
   const closeFind = useCallback(() => {
     setFindThreadId(null);
     findTrigger.current?.focus({ preventScroll: true });
   }, []);
-  const { feedRef, transcriptRef, followingLatest, showScrollButton, restoreAnchorId, restoreReasoningId, jumpToLatest, revealMessage,
+  const { feedRef, transcriptRef, historyVisible, followingLatest, showScrollButton, restoreAnchorId, restoreReasoningId, jumpToLatest, revealMessage,
     onScroll, onFocus: onHistoryFocus, onKeyDown: onHistoryKeyDown } = useTextScroll(activeThread.id);
   const { fieldRef: inputRef, bindField: bindDraftField } = useTextDraftField(`composer:${activeThread.id}`, activeThread.draft, 200);
   const modelActionControl = useRef<HTMLButtonElement | null>(null);
@@ -288,7 +289,8 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
         || document.querySelector('[aria-modal="true"]')) return;
       event.preventDefault();
       if (findOpen) {
-        document.querySelector<HTMLInputElement>('.text-find-bar input')?.select();
+        findInput.current?.focus({ preventScroll: true });
+        findInput.current?.select();
       } else {
         setPanel(null);
         setFindInitialQuery("");
@@ -489,6 +491,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   useLayoutEffect(() => {
     const previous = previousFindPreview.current;
     const find = !focusedMessageId && !requestedEdit ? activeMatch : null;
+    if (find && (!historyVisible || !feedRef.current?.clientHeight)) return;
     const shouldScroll = !find || previousFind.current !== find;
     previousFind.current = find;
     const preview = find && (find.savedPromptId || find.versionId !== find.messageId || find.section !== "body" || promptEdit?.messageId === find.messageId);
@@ -499,8 +502,8 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
       feedRef.current?.querySelector<HTMLElement>(`[data-chat-message="${CSS.escape(focusedMessageId)}"]`)?.focus({ preventScroll: true });
       setFocusJump(null);
     }
-    return find ? () => { stopWatching?.(); clearTextFindHighlight(); } : undefined;
-  }, [activeMatch, activeThread.id, feedRef, focusedMessageId, promptEdit?.messageId, requestedEdit, requestedFocus?.block, revealId, revealIndex, revealKey, revealMessage, windowed]);
+    return stopWatching;
+  }, [activeMatch, activeThread.id, feedRef, focusedMessageId, historyVisible, promptEdit?.messageId, requestedEdit, requestedFocus?.block, revealId, revealIndex, revealKey, revealMessage, windowed]);
 
   useLayoutEffect(() => {
     if (!deletion || focusUndoFor.current !== activeThread.id) return;
@@ -801,7 +804,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
 
       <div className={`text-layout${panel ? " text-layout--inspecting" : ""}`}>
       <div className="text-main">
-      {findOpen && <TextFindBar key={`${activeThread.id}:${findRevision}`} initialQuery={findInitialQuery}
+      {findOpen && <TextFindBar key={`${activeThread.id}:${findRevision}`} input={findInput} initialQuery={findInitialQuery}
         messages={activeThread.messages} liveMessage={streamingMessage} onMatch={setFindMatch} onClose={closeFind} />}
       <div className="text-conversation" ref={feedRef} onScroll={onScroll} onFocusCapture={onHistoryFocus} onKeyDown={onHistoryKeyDown} data-following={followingLatest || undefined} tabIndex={0} role="log" aria-label="Conversation" aria-live="off">
         <div className="text-transcript" ref={transcriptRef}>

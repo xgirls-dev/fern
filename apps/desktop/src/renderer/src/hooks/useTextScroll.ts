@@ -56,13 +56,14 @@ function renderedMatch(scope: Element, find: Pick<ChatSearchMatch, "query" | "oc
   return range;
 }
 
-export function clearTextFindHighlight() {
-  CSS.highlights?.delete(findHighlight);
-}
-
-function showFindHighlight(range: Range | undefined) {
-  if (range && typeof Highlight === "function") CSS.highlights?.set(findHighlight, new Highlight(range));
-  else clearTextFindHighlight();
+function replaceFindHighlight(previous: Range | undefined, next: Range | undefined) {
+  if (!CSS.highlights || typeof Highlight !== "function") return;
+  const ranges = CSS.highlights.get(findHighlight);
+  if (previous) ranges?.delete(previous);
+  if (next) {
+    if (ranges) ranges.add(next);
+    else CSS.highlights.set(findHighlight, new Highlight(next));
+  } else if (ranges?.size === 0) CSS.highlights.delete(findHighlight);
 }
 
 function revealFindRange(feed: HTMLElement, range: Range) {
@@ -161,6 +162,7 @@ export function useTextScroll(threadId: string) {
   const following = useRef(true);
   const lastTop = useRef(0);
   const layout = useRef({ width: 0, hidden: false });
+  const [historyVisible, setHistoryVisible] = useState(true);
   const [followingLatest, setFollowingLatest] = useState(true);
   const [canScroll, setCanScroll] = useState(false);
   const [restoredThread, setRestoredThread] = useState<string>();
@@ -224,8 +226,8 @@ export function useTextScroll(threadId: string) {
     const row = feed?.querySelector(`[data-chat-message="${CSS.escape(id)}"]`);
     if (!feed || !row) return;
     let target = find && row.querySelector("[data-find-target]");
-    const range = find && target ? renderedMatch(target, find) : undefined;
-    if (find) showFindHighlight(range);
+    let range = find && target ? renderedMatch(target, find) : undefined;
+    if (find) replaceFindHighlight(undefined, range);
     if (scroll) {
       cancelRestore();
       following.current = false;
@@ -243,7 +245,8 @@ export function useTextScroll(threadId: string) {
       if (target === nextTarget && !changes.some(({ target: changed }) => nextTarget?.contains(changed))) return;
       target = nextTarget;
       const updated = target ? renderedMatch(target, find) : undefined;
-      showFindHighlight(updated);
+      replaceFindHighlight(range, updated);
+      range = updated;
       if (updated && pendingReveal) {
         pendingReveal = false;
         revealFindRange(feed, updated);
@@ -251,7 +254,10 @@ export function useTextScroll(threadId: string) {
       }
     });
     observer.observe(row, { subtree: true, childList: true, characterData: true });
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      replaceFindHighlight(range, undefined);
+    };
   }, [cancelRestore, savePosition]);
 
   const onKeyDown = useCallback((event: KeyboardEvent<HTMLDivElement>) => {
@@ -299,6 +305,7 @@ export function useTextScroll(threadId: string) {
     });
     following.current = saved?.following ?? true;
     layout.current = { width: transcript.clientWidth, hidden: !feed.clientHeight };
+    setHistoryVisible(!layout.current.hidden);
     if (!layout.current.hidden) {
       if (!following.current && saved) restore(saved);
       else {
@@ -312,6 +319,7 @@ export function useTextScroll(threadId: string) {
     updateOverflow();
     const observer = new ResizeObserver(() => {
       if (!feed.clientHeight) {
+        if (!layout.current.hidden) setHistoryVisible(false);
         layout.current.hidden = true;
         return;
       }
@@ -319,6 +327,7 @@ export function useTextScroll(threadId: string) {
       const wasHidden = layout.current.hidden;
       const reflowed = wasHidden || width !== layout.current.width;
       layout.current = { width, hidden: false };
+      if (wasHidden) setHistoryVisible(true);
       updateOverflow();
       if (!following.current) {
         const position = pendingRestore.current ?? (reflowed && positions.get(threadId));
@@ -353,7 +362,7 @@ export function useTextScroll(threadId: string) {
     };
   }, [onScroll, pauseFollowing, savePosition, threadId]);
 
-  return { feedRef, transcriptRef, followingLatest, showScrollButton: canScroll && !followingLatest,
+  return { feedRef, transcriptRef, historyVisible, followingLatest, showScrollButton: canScroll && !followingLatest,
     restoreAnchorId: restoreAnchor?.id, restoreReasoningId: restoreAnchor?.line?.section === "reasoning" ? restoreAnchor.id : undefined,
     jumpToLatest, revealMessage, onScroll, onFocus, onKeyDown };
 }

@@ -1,4 +1,4 @@
-import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useState, type RefObject } from "react";
 import ChevronUp from "lucide-react/dist/esm/icons/chevron-up.mjs";
 import ChevronDown from "lucide-react/dist/esm/icons/chevron-down.mjs";
 import X from "lucide-react/dist/esm/icons/x.mjs";
@@ -7,14 +7,14 @@ import { Tooltip } from "./ui/Tooltip";
 import { chatSearchEntries, liveChatSearchEntry, matchingChatOccurrences, type ChatSearchMatch } from "../lib/chatSearch";
 import type { TextMessage } from "../lib/textThreads";
 
-export function TextFindBar({ messages, liveMessage, initialQuery, onMatch, onClose }: {
+export function TextFindBar({ input, messages, liveMessage, initialQuery, onMatch, onClose }: {
+  input: RefObject<HTMLInputElement | null>;
   messages: TextMessage[];
   liveMessage: TextMessage | null;
   initialQuery: string;
   onMatch: (match: ChatSearchMatch | null) => void;
   onClose: () => void;
 }) {
-  const input = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState(initialQuery);
   const [selected, setSelected] = useState<ChatSearchMatch>();
   const needle = query.trim();
