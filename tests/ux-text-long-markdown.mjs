@@ -154,6 +154,31 @@ try {
   assert(comparison.savedBlocks > 24, "Stable blocks should not be transferred repeatedly.");
   assert(comparison.recovered, "An unacknowledged prefix should produce a complete result.");
 
+  await composer.fill("Start with plain paragraphs, then add a formatted section.");
+  await send.click();
+  await expect(reply).toHaveClass(/text-message--streaming/);
+  const plain = Array.from({ length: 18 }, (_, index) => (
+    `Plain paragraph ${index + 1} begins here.\n${"Keep reading while the next words arrive. ".repeat(6).trimEnd()}`
+  )).join("\n\n");
+  const workerRepliesBeforeProse = await page.evaluate(() => window.parsedMarkdownReplies);
+  state.textStatus.job = { ...state.textStatus.job, partialText: plain };
+  const paragraphs = reply.locator(".text-message-content > p");
+  await expect(paragraphs).toHaveCount(18);
+  await expect(paragraphs.last()).toHaveText(plain.split("\n\n").at(-1));
+  await paragraphs.first().evaluate((element) => { element.dataset.prosePrefix = "true"; });
+  assert.equal(await page.evaluate(() => window.parsedMarkdownReplies), workerRepliesBeforeProse,
+    "A long plain reply should render without sending its paragraphs to the Markdown worker.");
+
+  const formatted = plain + "\n\nFormatted section\n---\n\nVisit https://example.com/fern and keep &copy; intact.";
+  state.textStatus.job = { ...state.textStatus.job, partialText: formatted };
+  await expect(reply.getByRole("heading", { name: "Formatted section" })).toBeVisible();
+  await expect(reply.getByRole("link", { name: "https://example.com/fern" })).toHaveAttribute("href", "https://example.com/fern");
+  await expect(reply).toContainText("keep © intact.");
+  await expect(paragraphs.first()).toHaveAttribute("data-prose-prefix", "true");
+  state.textStatus.job = { ...state.textStatus.job, status: "complete", finishedAt: Date.now() / 1000 };
+  await expect(reply).not.toHaveClass(/text-message--streaming/);
+  await expect(paragraphs.first()).toHaveAttribute("data-prose-prefix", "true");
+
   await expect.poll(async () => (await savedTextWorkspace(page)).threads
     .flatMap((thread) => thread.messages).some((message) => message.content.endsWith("literal markers."))).toBe(true);
   await page.addInitScript(() => {

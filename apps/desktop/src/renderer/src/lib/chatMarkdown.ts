@@ -16,15 +16,25 @@ function renderableNode(node: RootContent): RootContent {
   return node;
 }
 
-export function parseChatMarkdown(content: string, streaming: boolean): Root {
-  // A single line without Markdown syntax or autolinks renders as a plain
-  // paragraph during animation and after the reply has settled.
-  if (!/[\0\r\n\t\uFEFF*_`~#[\]<>|\\&:/@]|www\./i.test(content) &&
-      !/^(?: {4}| {0,3}(?:[-+](?: |$)|\d+[.)](?: |$)|-+ *$))/.test(content)) {
-    const value = content.replace(/^ +| +$/g, "");
-    return { type: "root", children: value ? [{ type: "element", tagName: "p", properties: {},
-      children: [{ type: "text", value }] }] : [] };
+export function parsePlainChatMarkdown(content: string): Root | null {
+  // Leave ambiguous lines, hard breaks, and possible GFM autolinks to the parser.
+  if (/[\0\r\t\uFEFF*_`~#[\]<>|\\&:/@]|www\./i.test(content) ||
+      /(?:^|\n)(?: {4}| {0,3}(?:[-+](?= |\n|$)|\d+[.)](?= |\n|$)|[-=]+ *(?=\n|$)))| \n|\n /.test(content)) {
+    return null;
   }
+  const value = content.replace(/^[ \n]+|[ \n]+$/g, "");
+  if (!value) return { type: "root", children: [] };
+  const children: RootContent[] = [];
+  for (const paragraph of value.split(/\n{2,}/)) {
+    if (children.length) children.push({ type: "text", value: "\n" });
+    children.push({ type: "element", tagName: "p", properties: {}, children: [{ type: "text", value: paragraph }] });
+  }
+  return { type: "root", children };
+}
+
+export function parseChatMarkdown(content: string, streaming: boolean): Root {
+  const plain = parsePlainChatMarkdown(content);
+  if (plain) return plain;
   const preview = streaming && hasStreamingMarkdown(content);
   return parsePreparedChatMarkdown(preview ? previewMarkdown(content) : content, preview).root;
 }

@@ -1,8 +1,9 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { RootContent } from "hast";
-import { canReuseChatMarkdownPrefix, parseChatMarkdown, type ChatMarkdownRequest, type ChatMarkdownResponse } from "../lib/chatMarkdown";
+import { canReuseChatMarkdownPrefix, parseChatMarkdown, parsePlainChatMarkdown, type ChatMarkdownRequest, type ChatMarkdownResponse } from "../lib/chatMarkdown";
 
-const WORKER_THRESHOLD = 4_000;
+const WORKER_THRESHOLD = 2_000;
+const SYNC_PROSE_LIMIT = 16_000;
 const FINAL_TAIL_LIMIT = 1_024;
 const SETTLED_MARKDOWN_CACHE_SIZE = 96;
 type MarkdownQueue = "live" | "history";
@@ -109,9 +110,15 @@ export function useChatMarkdown(content: string, streaming: boolean, receivingRe
   const inFlight = useRef<{ queue: MarkdownQueue; cancel: () => void } | null>(null);
   const waiting = useRef<MarkdownInput | null>(null);
   const wasReceivingReply = useRef(receivingReply);
-  const shouldOffload = !workerFailed && content.length >= WORKER_THRESHOLD;
-  const smallResult = useMemo(() => shouldOffload ? null : parseSmallReply(content, streaming, receivingReply),
-    [content, receivingReply, shouldOffload, streaming]);
+  const workerCandidate = !workerFailed && content.length >= WORKER_THRESHOLD;
+  const plainResult = useMemo<ParsedMarkdown | null>(() => {
+    if (!workerCandidate || content.length > SYNC_PROSE_LIMIT) return null;
+    const root = parsePlainChatMarkdown(content);
+    return root && { content, nodes: root.children };
+  }, [content, workerCandidate]);
+  const shouldOffload = workerCandidate && !plainResult;
+  const smallResult = useMemo(() => shouldOffload ? null : plainResult ?? parseSmallReply(content, streaming, receivingReply),
+    [content, plainResult, receivingReply, shouldOffload, streaming]);
   const finalNodes = useMemo(() => shouldOffload && !streaming ? finishParsedReply(largeResult, content) : null,
     [content, largeResult, shouldOffload, streaming]);
   const needsWorker = shouldOffload && !finalNodes && (largeResult?.content !== content || largeResult.streaming !== streaming);
