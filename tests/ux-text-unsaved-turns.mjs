@@ -53,7 +53,7 @@ try {
   const stale = await page.evaluate((key) => localStorage.getItem(key), id);
   state.textStatus.job = { ...first, partialText: "", phase: "Waiting for the first token…" };
   await page.reload();
-  await expect(page.getByText(firstPrompt, { exact: true })).toBeVisible();
+  await expect(page.getByRole("article", { name: "Your message" }).getByText(firstPrompt, { exact: true })).toBeVisible();
   await expect(stream).toContainText(partialText);
   await expect(composer).toHaveValue("An unsent follow-up in the new chat.");
   await expect.poll(async () => (await database(first.threadId))?.pendingJobId).toBe(first.id);

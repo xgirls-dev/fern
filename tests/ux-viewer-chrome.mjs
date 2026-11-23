@@ -118,6 +118,13 @@ try {
     }
     await page.screenshot({ path: `${dir}/viewer-chrome-${width}.png` });
   }
+  const closePreview = viewer.getByRole("button", { name: "Close preview", exact: true });
+  await closePreview.hover();
+  await expect(page.getByRole("tooltip").filter({ hasText: /^Close preview$/ })).toBeVisible();
+  await closePreview.focus();
+  await page.keyboard.press("Escape");
+  await expect(viewer).toHaveCount(0);
+  await expect(firstImage).toBeFocused();
   assert.deepEqual(errors, []);
   console.log(
     "PASS: viewer stays below the native title bar; dropdown first visible frame is stable and within the viewport on open/reopen at three sizes.",

@@ -11,7 +11,8 @@ import type { ImageRecord } from "../lib/types";
 import { resolveAssetUrl } from "../lib/api";
 import { ImageActions } from "./ImageActions";
 import { PreviewMetadataHud } from "./PreviewMetadataHud";
-import { Button, IconButton, SegmentedControl } from "./ui/controls";
+import { Button, SegmentedControl } from "./ui/controls";
+import { TooltipIconButton, TooltipScope } from "./ui/Tooltip";
 export function Lightbox({
   image,
   images,
@@ -72,76 +73,76 @@ export function Lightbox({
           }
         }}
       >
-        <div className="viewer-toolbar" role="group" aria-label="Image review controls">
+        <TooltipScope><div className="viewer-toolbar" role="group" aria-label="Image review controls">
           <div className="viewer-navigation">
-            <IconButton
+            <TooltipIconButton
               className="viewer-icon"
-              title="Previous image"
+              tooltip="Previous image"
               aria-label="Previous"
               disabled={index <= 0}
               onClick={() => move(-1)}
             >
               <ChevronLeft size={18} />
-            </IconButton>
+            </TooltipIconButton>
             <span className="viewer-count">
               {Math.max(1, index + 1)} / {images.length || 1}
             </span>
-            <IconButton
+            <TooltipIconButton
               className="viewer-icon"
-              title="Next image"
+              tooltip="Next image"
               aria-label="Next"
               disabled={index < 0 || index >= images.length - 1}
               onClick={() => move(1)}
             >
               <ChevronRight size={18} />
-            </IconButton>
+            </TooltipIconButton>
           </div>
           <div className="viewer-zoom">
             <SegmentedControl label="Image zoom" value={zoom === 0 ? "fit" : zoom === 1 ? "100" : "custom"} options={[{ value: "fit", label: "Fit" }, { value: "100", label: "100%" }]} onChange={(value) => setZoom(value === "fit" ? 0 : 1)} />
-            <IconButton
+            <TooltipIconButton
               className="viewer-icon"
               aria-label="Zoom out"
-              title="Zoom out"
+              tooltip="Zoom out"
               disabled={zoom === 0.25}
               onClick={() => setZoom((v) => Math.max(0.25, (v || 1) - 0.25))}
             >
               <ZoomOut size={17} />
-            </IconButton>
+            </TooltipIconButton>
             {zoom > 0 && zoom !== 1 ? (
               <span className="viewer-zoom-value">
                 {Math.round(zoom * 100)}%
               </span>
             ) : null}
-            <IconButton
+            <TooltipIconButton
               className="viewer-icon"
               aria-label="Zoom in"
-              title="Zoom in"
+              tooltip="Zoom in"
               disabled={zoom === 4}
               onClick={() => setZoom((v) => Math.min(4, (v || 1) + 0.25))}
             >
               <ZoomIn size={17} />
-            </IconButton>
+            </TooltipIconButton>
           </div>
           <div className="viewer-utilities">
-            <IconButton
+            <TooltipIconButton
               className="viewer-icon"
               aria-label="Render info"
-              title="Render info"
+              tooltip="Render info"
               aria-expanded={infoOpen}
               onClick={() => setInfoOpen((v) => !v)}
             >
               <Info size={18} />
-            </IconButton>
-            <IconButton
+            </TooltipIconButton>
+            <TooltipIconButton
               className="viewer-icon"
               aria-label="Close preview"
-              title="Close preview"
+              tooltip="Close preview"
               onClick={onClose}
             >
               <X size={20} />
-            </IconButton>
+            </TooltipIconButton>
           </div>
-        </div>
+        </div></TooltipScope>
         <div className={`viewer-body${infoOpen ? " has-info" : ""}`}>
           <div
             className={`viewer-canvas${zoom ? " is-zoomed" : ""}`}

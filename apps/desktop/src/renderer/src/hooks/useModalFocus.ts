@@ -1,4 +1,4 @@
-import { useEffect, useRef, type RefObject } from "react";
+import { useLayoutEffect, useRef, type RefObject } from "react";
 
 const FOCUSABLE_SELECTOR = [
   "a[href]",
@@ -11,6 +11,9 @@ const FOCUSABLE_SELECTOR = [
   '[contenteditable="true"]',
   '[tabindex]:not([tabindex="-1"])',
 ].join(",");
+
+const OPEN_POPUP = '[role="menu"][data-open], [role="listbox"][data-open]';
+const POPUP_TARGET = '[role="menu"], [role="listbox"], [aria-haspopup="menu"][aria-expanded="true"], [aria-haspopup="listbox"][aria-expanded="true"]';
 
 function tabbableElements(dialog: HTMLElement): HTMLElement[] {
   return Array.from(dialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR))
@@ -25,9 +28,11 @@ export function useModalFocus(
 ): void {
   const openerRef = useRef<HTMLElement | null>(null);
   const onCloseRef = useRef(onClose);
+  const openRef = useRef(open);
   onCloseRef.current = onClose;
+  openRef.current = open;
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!open) return;
 
     const dialog = dialogRef.current;
@@ -40,25 +45,31 @@ export function useModalFocus(
     }
 
     const focusInitialElement = () => {
+      if (dialog.contains(document.activeElement)) return;
       const firstFocusable =
         dialog.querySelector<HTMLElement>("[data-autofocus]") ??
         tabbableElements(dialog)[0];
       (firstFocusable ?? dialog).focus();
     };
 
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented) return;
+    const isTopModal = () => {
       const modals = document.querySelectorAll('[aria-modal="true"]');
-      if (modals[modals.length - 1] !== dialog) return;
-      if (event.key === "Escape") {
-        if (!onCloseRef.current) return;
-        event.preventDefault();
-        event.stopPropagation();
-        onCloseRef.current();
-        return;
-      }
+      return modals[modals.length - 1] === dialog;
+    };
 
-      if (event.key !== "Tab") return;
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented || event.isComposing || !onCloseRef.current || !isTopModal()) return;
+      const target = event.target;
+      // Menus and selects own Escape while open. A passive tooltip should
+      // never take an extra keypress to get out of the dialog.
+      if (dialog.querySelector(OPEN_POPUP) || (target instanceof Element && dialog.contains(target) && target.closest(POPUP_TARGET))) return;
+      event.preventDefault();
+      event.stopPropagation();
+      onCloseRef.current();
+    };
+
+    const onTab = (event: KeyboardEvent) => {
+      if (event.key !== "Tab" || event.defaultPrevented || !isTopModal()) return;
 
       const focusable = tabbableElements(dialog);
       if (focusable.length === 0) {
@@ -85,12 +96,15 @@ export function useModalFocus(
 
     focusInitialElement();
     const focusFrame = requestAnimationFrame(focusInitialElement);
-    document.addEventListener("keydown", onKeyDown);
+    document.addEventListener("keydown", onEscape, true);
+    document.addEventListener("keydown", onTab);
 
     return () => {
       cancelAnimationFrame(focusFrame);
-      document.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener("keydown", onEscape, true);
+      document.removeEventListener("keydown", onTab);
       requestAnimationFrame(() => {
+        if (openRef.current && dialogRef.current === dialog) return;
         const focused = document.activeElement;
         if (!focused || focused === document.body || dialog.contains(focused)) {
           openerRef.current?.focus();
