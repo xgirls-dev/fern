@@ -1,5 +1,5 @@
 import { Menu } from "@base-ui/react/menu";
-import { useEffect, useRef, useState, type ComponentProps, type ReactElement, type ReactNode, type RefObject } from "react";
+import { useEffect, useMemo, useRef, useState, type ComponentProps, type ReactElement, type ReactNode, type RefObject } from "react";
 import { Tooltip } from "./Tooltip";
 
 export function useDropdownActions({ dismissOnResize = false, trigger: externalTrigger }: {
@@ -72,9 +72,12 @@ export function Dropdown({
   portalContainer?: ComponentProps<typeof Menu.Portal>["container"];
   collisionPadding?: ComponentProps<typeof Menu.Positioner>["collisionPadding"];
 }) {
-  const menuTrigger = <Menu.Trigger render={trigger} />;
+  const menuTrigger = useMemo(() => {
+    const button = <Menu.Trigger render={trigger} />;
+    return triggerTooltip ? <Tooltip content={triggerTooltip} side={triggerTooltipSide ?? side}>{button}</Tooltip> : button;
+  }, [side, trigger, triggerTooltip, triggerTooltipSide]);
   return <Menu.Root modal={false} open={open} onOpenChange={onOpenChange} onOpenChangeComplete={onOpenChangeComplete}>
-    {triggerTooltip ? <Tooltip content={triggerTooltip} side={triggerTooltipSide ?? side}>{menuTrigger}</Tooltip> : menuTrigger}
+    {menuTrigger}
     <Menu.Portal container={portalContainer}>
       <Menu.Positioner className="ui-popup-positioner" align={align} side={side} sideOffset={5}
         collisionPadding={collisionPadding}>

@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { notify } from "../lib/notifications";
 
 export function useClipboardCopy(source: unknown, errorMessage: string, version?: string) {
@@ -12,7 +12,7 @@ export function useClipboardCopy(source: unknown, errorMessage: string, version?
     window.clearTimeout(timer.current);
   }, [scope]);
 
-  const copy = async (text: string) => {
+  const copy = useCallback(async (text: string) => {
     const current = Symbol();
     request.current = current;
     try {
@@ -27,7 +27,7 @@ export function useClipboardCopy(source: unknown, errorMessage: string, version?
       setCopiedScope(undefined);
       notify(errorMessage, "error");
     }
-  };
+  }, [errorMessage, scope]);
 
   return { copied: copiedScope === scope, copy };
 }

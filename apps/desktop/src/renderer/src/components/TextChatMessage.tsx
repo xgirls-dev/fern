@@ -1,4 +1,4 @@
-import { memo, useId, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { memo, useId, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import Check from "lucide-react/dist/esm/icons/check.mjs";
 import Copy from "lucide-react/dist/esm/icons/copy.mjs";
 import GitBranch from "lucide-react/dist/esm/icons/git-branch.mjs";
@@ -217,6 +217,17 @@ export const TextChatMessage = memo(function TextChatMessage({ message, selectio
   ].filter(Boolean).join(" ") : "";
   const { copied, copy } = useClipboardCopy(streaming || editing ? undefined : message.content,
     "Could not copy the message. You can select and copy its text.", message.id);
+  const rawContent = message.content;
+  // A reply's arrival changes history permissions without changing these controls.
+  const copyControl = useMemo(() => !streaming && !editing && rawContent.trim() ?
+    <TooltipIconButton className="text-icon-button" aria-label={copied ? "Copied" : "Copy message"}
+      tooltip={copied ? "Copied" : "Copy message"} tooltipSide="bottom" onClick={() => void copy(rawContent)}>
+      {copied ? <Check size={15} aria-hidden="true" /> : <Copy size={15} aria-hidden="true" />}
+    </TooltipIconButton> : null, [copied, copy, editing, rawContent, streaming]);
+  const editControl = useMemo(() => onEdit ? <TooltipIconButton ref={editButton} className="text-icon-button" aria-label="Edit message"
+    tooltip={editingAnother ? "Finish or cancel the open prompt edit first" : "Edit message"} tooltipSide="bottom"
+    disabled={editingAnother} onClick={() => onEdit(message)}><Pencil size={15} aria-hidden="true" /></TooltipIconButton>
+    : null, [editingAnother, message, onEdit]);
   const targetId = contextVersionId ?? message.id;
   useLayoutEffect(() => {
     if (wasEditing.current && !editing) editButton.current?.focus({ preventScroll: true });
@@ -295,13 +306,8 @@ export const TextChatMessage = memo(function TextChatMessage({ message, selectio
       </InlineNotice>}
       {!streaming && !editing && <div className="text-message-tools">
         <div className="text-message-actions">
-          {message.content.trim() && <TooltipIconButton className="text-icon-button" aria-label={copied ? "Copied" : "Copy message"}
-            tooltip={copied ? "Copied" : "Copy message"} tooltipSide="bottom" onClick={() => void copy(message.content)}>
-            {copied ? <Check size={15} aria-hidden="true" /> : <Copy size={15} aria-hidden="true" />}
-          </TooltipIconButton>}
-          {onEdit && <TooltipIconButton ref={editButton} className="text-icon-button" aria-label="Edit message"
-            tooltip={editingAnother ? "Finish or cancel the open prompt edit first" : "Edit message"} tooltipSide="bottom"
-            disabled={editingAnother} onClick={() => onEdit(message)}><Pencil size={15} aria-hidden="true" /></TooltipIconButton>}
+          {copyControl}
+          {editControl}
           {onFork && <TooltipIconButton className="text-icon-button" aria-label="Fork chat here"
             tooltip="Fork chat here" tooltipSide="bottom" disabled={!canFork} onClick={() => onFork(message)}><GitBranch size={15} aria-hidden="true" /></TooltipIconButton>}
           {onRetry && !showRetry && <TooltipIconButton className="text-icon-button" aria-label="Regenerate response"
