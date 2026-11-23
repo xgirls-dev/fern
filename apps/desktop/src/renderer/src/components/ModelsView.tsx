@@ -63,9 +63,8 @@ export function ModelsView({ category: tab, onCategoryChange, text, audio, setup
         {needsText && <div className="model-setup-requirement">
           {needsVision && <span className="model-setup-role">Chat and vision</span>}
           {installedText && compatibleText.length > 1 ? <Select aria-label="Chat model" className="model-setup-text-choice" value={installedText.id}
-            onChange={(event) => setTextSelection({ setup, modelId: event.currentTarget.value })}>
-            {compatibleText.map((model) => <option key={model.id} value={model.id}>{model.name}</option>)}
-          </Select> : <span>{installedText ? `${installedText.name} · Installed` :
+            onChange={(modelId) => setTextSelection({ setup, modelId })}
+            options={compatibleText.map(({ id, name }) => ({ value: id, label: name }))} /> : <span>{installedText ? `${installedText.name} · Installed` :
             recommendedText ? `${recommendedText.name} · ${(recommendedText.bytes / 1e9).toFixed(2)} GB download` :
             text.statusLoaded ? "Choose a compatible chat model." : "Checking chat models…"}</span>}
         </div>}

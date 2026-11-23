@@ -357,6 +357,50 @@ for line in sys.stdin:
             server.shutdown()
             server.server_close()
 
+    def test_job_event_stream_delivers_deltas_and_the_authoritative_final_reply(self):
+        server = ThreadingHTTPServer(("127.0.0.1", 0), api.Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        base = f"http://127.0.0.1:{server.server_port}/api/text"
+        def read_frame(response):
+            line = response.readline()
+            self.assertTrue(line.startswith(b"data: "), line)
+            self.assertEqual(response.readline(), b"\n")
+            return json.loads(line[6:])
+
+        job = {"id": "reply", "threadId": "text-thread-reply", "status": "running",
+               "partialText": "Start ☕", "partialReasoning": "", "phase": "Loading model…"}
+        result = {"device": "GPU", "text": "The final reply.", "inputTokens": 5, "outputTokens": 4, "generationSeconds": 0.2}
+        payload = {"modelId": self.model["id"], "device": "AUTO", "seed": 1, "temperature": 0, "topP": 1, "maxNewTokens": 30}
+        endpoint = f"{base}/job/events?jobId=reply&threadId="
+        try:
+            with patch.dict(api.TEXT_JOB, job, clear=True), \
+                 patch.object(api, "TEXT_MODEL_REGISTRY", self.registry), \
+                 patch.object(api.TEXT_GENERATION_WORKER, "generate", return_value=result), \
+                 patch.object(api.INTEL_MEDIA, "close"), patch.object(api.flux2, "release_pipeline"), \
+                 patch.object(api, "TEXT_JOB_STREAM_HEARTBEAT", 0.2):
+                with urllib.request.urlopen(endpoint + "text-thread-other", timeout=2) as other:
+                    self.assertEqual(read_frame(other), {"job": None})
+                    self.assertEqual(other.read(), b"")
+                with urllib.request.urlopen(endpoint + job["threadId"], timeout=2) as events:
+                    self.assertEqual(events.headers.get_content_type(), "text/event-stream")
+                    self.assertEqual(read_frame(events), {"job": job})
+                    self.assertEqual(read_frame(events), {"heartbeat": True})
+                    api.append_text_event(job["id"], phase="Generating…", token=" café", reasoning="Review")
+                    self.assertEqual(read_frame(events), {"append": {
+                        "phase": "Generating…", "text": " café", "reasoning": "Review",
+                    }})
+                    with urllib.request.urlopen(f"{base}/job", timeout=2) as polled:
+                        self.assertEqual(json.load(polled)["partialText"], "Start ☕ café")
+                    api.run_text_generation(payload, job["id"], threading.Event())
+                    completed = read_frame(events)["job"]
+                    self.assertEqual((completed["status"], completed["partialText"]), ("complete", result["text"]))
+                    self.assertEqual(events.read(), b"")
+                with urllib.request.urlopen(endpoint + job["threadId"], timeout=2) as finished:
+                    self.assertEqual(read_frame(finished)["job"], completed)
+        finally:
+            server.shutdown()
+            server.server_close()
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -43,8 +43,8 @@ try {
   await button("Images").click();
   const firstCard = page.locator(".thumb-wrap").filter({ has: button(/^Review.*audit-1\.png$/) });
   await firstCard.hover();
-  await firstCard.locator('.image-menu summary[aria-label="Image actions for audit-1.png"]').click();
-  await firstCard.getByRole("button", { name: "Remix", exact: true }).click();
+  await firstCard.getByRole("button", { name: "Image actions for audit-1.png", exact: true }).click();
+  await page.getByRole("menu", { name: "Image actions", exact: true }).getByRole("menuitem", { name: "Remix", exact: true }).click();
   await page.waitForTimeout(300);
   const workspace = await page.evaluate(() =>
     JSON.parse(localStorage.getItem("fern-threads:v1")),
@@ -79,9 +79,9 @@ try {
     await page.locator(".viewer-details .render-metadata").count(),
     0,
   );
-  await page.locator(".image-viewer summary").click();
+  await page.locator(".image-viewer").getByRole("button", { name: /^Image actions for / }).click();
   await page.locator(".viewer-info h3").click();
-  assert.equal(await page.locator(".image-viewer details[open]").count(), 0);
+  await page.getByRole("menu", { name: "Image actions", exact: true }).waitFor({ state: "detached" });
   await page.screenshot({ path: `${dir}/viewer-polish.png` });
   await button("100%").click();
   assert.equal(

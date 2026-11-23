@@ -74,6 +74,19 @@ try {
   await expect(row.locator(":scope > .text-message-content")).toHaveText("Current prompt 20");
   await expect(composer).toHaveValue("Keep the notebook draft");
 
+  const versions = row.getByRole("button", { name: "Prompt versions", exact: true });
+  await versions.press("Enter");
+  const earlierVersion = panel.getByRole("combobox", { name: "Earlier prompt version" });
+  await earlierVersion.press("ArrowDown");
+  await expect(page.getByRole("listbox")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("listbox")).toHaveCount(0);
+  await expect(panel).toBeVisible();
+  await expect(earlierVersion).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(panel).toHaveCount(0);
+  await expect(versions).toBeFocused();
+
   await row.getByRole("button", { name: "Edit message", exact: true }).click();
   const editor = page.getByRole("textbox", { name: "Edited prompt" });
   await editor.fill("An unsent prompt edit");

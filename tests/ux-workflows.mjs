@@ -1,3 +1,4 @@
+import { chooseSelectOption, openSelect } from "./select-option.mjs";
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
 import { fixture } from "./ui-fixture.mjs";
@@ -28,11 +29,11 @@ try {
   assert.equal(await page.locator("#create-heading").innerText(), "New draft");
   await page.locator(".workspace-header").getByRole("button", { name: "Image settings", exact: true }).click();
   assert.equal(await page.locator("#device").count(), 0);
-  await page.locator("#size-preset").selectOption("custom");
-  assert.equal(await page.locator("#size-preset").inputValue(), "custom");
-  await page.locator("#size-preset").selectOption("720x1280");
+  await chooseSelectOption(page.locator("#size-preset"), "Custom");
+  assert.equal(await page.locator("#size-preset").innerText(), "Custom");
+  await chooseSelectOption(page.locator("#size-preset"), "720 × 1280 · Portrait 9:16");
   assert.equal(await page.locator("#width").inputValue(), "720");
-  await page.locator("#size-preset").selectOption("1920x1088");
+  await chooseSelectOption(page.locator("#size-preset"), "1920 × 1088 · Wide");
   assert.equal(await page.locator("#height").inputValue(), "1088");
   await page.locator("#width").fill("1080");
   await button("Close image settings").click();
@@ -47,9 +48,7 @@ try {
   assert(await page.locator("#width-error").isVisible());
   await page.locator("#width").fill("1920");
   await page.locator("summary").filter({ hasText: "Style & recipes" }).click();
-  await page
-    .getByRole("combobox", { name: "Prompt recipe" })
-    .selectOption("editorial-portrait");
+  await chooseSelectOption(page.getByRole("combobox", { name: "Prompt recipe" }), "Editorial portrait · Fern");
   await button("Undo").click();
   assert.equal(
     await page.locator("#prompt").inputValue(),
@@ -60,15 +59,13 @@ try {
   assert.equal(await page.locator(".render-metadata").count(), 1);
   assert.equal(await page.locator(".preview-metadata-hud").count(), 0);
   await button("Close render info").click();
-  await page.locator(".output-bar summary").click();
-  await button("Open output folder").click();
-  assert(
-    await page.getByText("Opened output folder.", { exact: true }).isVisible(),
-  );
+  await page.locator(".output-bar").getByRole("button", { name: /^Image actions for / }).click();
+  await page.getByRole("menu", { name: "Image actions", exact: true }).getByRole("menuitem", { name: "Open output folder", exact: true }).click();
+  await page.getByText("Opened output folder.", { exact: true }).waitFor();
   assert.equal(await page.locator(".output-action-message").count(), 0);
   await button("Dismiss notification").click();
-  await page.locator(".output-bar summary").click();
-  await button("Remix in new thread").click();
+  await page.locator(".output-bar").getByRole("button", { name: /^Image actions for / }).click();
+  await page.getByRole("menu", { name: "Image actions", exact: true }).getByRole("menuitem", { name: "Remix in new thread", exact: true }).click();
   await page.waitForTimeout(400);
   const workspace = await page.evaluate(() =>
     JSON.parse(localStorage.getItem("fern-threads:v1")),
@@ -102,13 +99,15 @@ try {
   );
   await button("Fit").click();
   await page.screenshot({ path: `${dir}/viewer.png` });
-  await page.locator(".image-viewer summary").click();
-  await button("Delete image").click();
+  await page.locator(".image-viewer").getByRole("button", { name: /^Image actions for / }).click();
+  await page.getByRole("menu", { name: "Image actions", exact: true }).getByRole("menuitem", { name: "Delete image", exact: true }).click();
+  await page.getByRole("alertdialog").waitFor();
   await page.keyboard.press("Escape");
-  assert.equal(await page.getByRole("alertdialog").count(), 0);
+  await page.getByRole("alertdialog").waitFor({ state: "detached" });
   assert.equal(await page.locator(".image-viewer").count(), 1);
-  await page.locator(".image-viewer summary").click();
-  await button("Delete image").click();
+  await page.locator(".image-viewer").getByRole("button", { name: /^Image actions for / }).click();
+  await page.getByRole("menu", { name: "Image actions", exact: true }).getByRole("menuitem", { name: "Delete image", exact: true }).click();
+  await page.getByRole("alertdialog").waitFor();
   await page
     .getByRole("alertdialog")
     .getByRole("button", { name: "Delete image", exact: true })
@@ -118,12 +117,13 @@ try {
   assert.equal(await page.locator(".image-viewer").count(), 0);
   await button("Preferences").click();
   const devicePreference = page.getByLabel("Generation device");
-  assert.equal(await devicePreference.inputValue(), "GPU");
-  assert.deepEqual(await devicePreference.locator("option").allTextContents(), ["Available GPU", "CPU"]);
-  await devicePreference.selectOption("CPU");
+  assert.equal(await devicePreference.innerText(), "Available GPU");
+  assert.deepEqual(await (await openSelect(devicePreference)).getByRole("option").allTextContents(), ["Available GPU", "CPU"]);
+  await devicePreference.press("Escape");
+  await chooseSelectOption(devicePreference, "CPU");
   await page.getByText("Image creation in chat is unavailable with CPU selected.", { exact: true }).waitFor();
-  await devicePreference.selectOption("GPU");
-  assert.equal(await devicePreference.inputValue(), "GPU");
+  await chooseSelectOption(devicePreference, "Available GPU");
+  assert.equal(await devicePreference.innerText(), "Available GPU");
   assert.equal(await page.locator("#device").count(), 0);
   await button("Images").click();
   assert.equal(
@@ -138,8 +138,9 @@ try {
   assert.equal(await imageSearch.inputValue(), "");
   assert.equal(await imageSearch.evaluate((element) => element === document.activeElement), true, "clearing a search returns focus to the search field");
   // A gallery-card deletion must be a full viewport dialog, not clipped inside its card.
-  await page.locator(".thumb-wrap").first().locator("summary").click();
-  await button("Delete image").click();
+  await page.locator(".thumb-wrap").first().getByRole("button", { name: /^Image actions for / }).click();
+  await page.getByRole("menu", { name: "Image actions", exact: true }).getByRole("menuitem", { name: "Delete image", exact: true }).click();
+  await page.getByRole("alertdialog").waitFor();
   const dialog = await page.getByRole("alertdialog").boundingBox();
   assert(dialog.width > 300);
   await button("Cancel").click();

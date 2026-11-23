@@ -91,12 +91,34 @@ try {
   await expect.poll(() => visiblePosition(finalReply)).toBe(true);
   assert((await rows.count()) <= 96);
 
+  const latestReply = feed.getByRole("article", { name: "Model response" }).last();
+  await latestReply.evaluate((element) => { element.dataset.regeneratedNode = "true"; });
+  await button("Regenerate response").click();
+  await expect(stream).toHaveAttribute("data-regenerated-node", "true");
+  await expect(stream).toContainText("The new reply is complete.");
+  await expect.poll(() => state.textStatus.job.status).toBe("running");
+  const followUp = "An unsent follow-up while the reply regenerates.";
+  await composer.fill(followUp);
+  await composer.evaluate((field) => field.setSelectionRange(3, 9));
+  state.textStatus.job = { ...state.textStatus.job, partialText: "A revised answer is streaming." };
+  await expect(stream).toContainText("A revised answer is streaming.");
+  await expect(composer).toBeFocused();
+  assert.deepEqual(await composer.evaluate((field) => [field.selectionStart, field.selectionEnd]), [3, 9]);
+  state.textStatus.job = { ...state.textStatus.job, status: "complete", partialText: "The revised answer is complete.", finishedAt: Date.now() / 1000 };
+  await expect(stream).toHaveCount(0);
+  await expect(feed.locator("[data-regenerated-node]")).toContainText("The revised answer is complete.");
+  await expect(composer).toHaveValue(followUp);
+
   await find("Prompt 16");
   await page.keyboard.press("Escape");
   await row("row-16").getByRole("button", { name: "Edit message" }).click();
   const edit = page.getByRole("textbox", { name: "Edited prompt" });
   await edit.fill("An unfinished edit in the earlier history");
   await edit.evaluate((field) => field.setSelectionRange(3, 12, "backward"));
+  await composer.focus();
+  await button("Resume prompt edit").click();
+  await expect(edit).toBeFocused();
+  assert.deepEqual(await edit.evaluate((field) => [field.selectionStart, field.selectionEnd, field.selectionDirection]), [3, 12, "backward"]);
   await button("Jump to latest message").click();
   await expect(edit).toHaveCount(0);
   await button("Resume prompt edit").click();

@@ -1,3 +1,4 @@
+import { chooseSelectOption } from "./select-option.mjs";
 import assert from "node:assert/strict";
 import { expect } from "@playwright/test";
 import { fixture } from "./ui-fixture.mjs";
@@ -87,8 +88,8 @@ try {
   await button("Text model: River 3B").click();
   await page.getByRole("menuitem", { name: "Manage models", exact: true }).click();
   const selection = setup.getByRole("combobox", { name: "Chat model" });
-  await expect(selection).toHaveValue(river.id);
-  await selection.selectOption(spruce.id);
+  await expect(selection).toHaveText(river.name);
+  await chooseSelectOption(selection, spruce.name);
   await button("Use model in draft").click();
   await expect(message).toHaveValue(draft);
   await expect(message).toBeFocused();
@@ -101,7 +102,7 @@ try {
   await expect(modelReadiness).toContainText("Alpine 7B is unavailable.");
   await expect(modelReadiness).toContainText("Model files moved outside Fern.");
   await button("Choose another model").click();
-  await expect(selection).toHaveValue(river.id);
+  await expect(selection).toHaveText(river.name);
   await button("Use model in draft").click();
   await expect(message).toHaveValue("Keep this follow-up.");
   await expect(button("Text model: River 3B")).toBeVisible();

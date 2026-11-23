@@ -1,10 +1,11 @@
-import { useRef, useState, type CSSProperties, type DragEvent } from "react";
-import { createPortal } from "react-dom";
+import { useId, useRef, useState, type CSSProperties, type DragEvent } from "react";
 import { CHAT_NAV_DRAG, chatFolderPath } from "../lib/chatFolders";
-import { normalizeChatSplit, type ChatPane } from "../lib/textThreads";
+import type { ChatPane } from "../lib/textThreads";
 import { TextWorkspace, type TextWorkspaceProps } from "./TextWorkspace";
 import { ThreadBrowser } from "./ThreadBrowser";
 import { SegmentedControl } from "./ui/controls";
+import { ResizeHandle } from "./ui/ResizeHandle";
+import { TooltipScope } from "./ui/Tooltip";
 
 type WorkspaceProps = Omit<TextWorkspaceProps, "thread" | "pane" | "focused" | "split" | "onChooseChat" | "onClosePane">;
 
@@ -14,7 +15,7 @@ export function ChatWorkspace(props: WorkspaceProps) {
   const split = Boolean(secondaryThread);
   const layout = useRef<HTMLDivElement>(null);
   const divider = useRef<HTMLDivElement>(null);
-  const resizePointer = useRef<number | null>(null);
+  const primaryPaneId = useId();
   const [picker, setPicker] = useState<ChatPane | null>(null);
   const [dragSize, setDragSize] = useState<number | null>(null);
   const [dropPane, setDropPane] = useState<ChatPane | null>(null);
@@ -46,7 +47,7 @@ export function ChatWorkspace(props: WorkspaceProps) {
   };
   const handlesChat = (event: DragEvent) => event.dataTransfer.types.includes(CHAT_NAV_DRAG);
 
-  return <div className="chat-split-shell">
+  return <TooltipScope><div className="chat-split-shell">
     {split && <div className="chat-pane-switcher">
       <SegmentedControl label="Chat panes" value={activePane} options={[
         { value: "primary", label: "Left chat" },
@@ -71,38 +72,18 @@ export function ChatWorkspace(props: WorkspaceProps) {
         setDropPane(null);
         if (studio.threads.some((thread) => thread.id === id)) select(id, destination(event));
       }}>
-      <div className="chat-pane" data-chat-pane="primary" data-focused={activePane === "primary"}
+      <div id={primaryPaneId} className="chat-pane" data-chat-pane="primary" data-focused={activePane === "primary"}
         onPointerDownCapture={() => studio.focusPane("primary")} onFocusCapture={() => studio.focusPane("primary")}>
         <TextWorkspace {...props} thread={primaryThread} pane="primary" focused={activePane === "primary"} split={split}
           onChooseChat={() => setPicker(split ? "primary" : "secondary")}
           onClosePane={() => { studio.closePane("primary"); focusComposer("primary"); }} />
       </div>
       {secondaryThread && <>
-        <div className="chat-split-divider" ref={divider} role="separator" aria-label="Resize chat panes"
-          aria-orientation="vertical" aria-valuemin={35} aria-valuemax={65} aria-valuenow={ratio} tabIndex={0}
-          onPointerDown={(event) => {
-            if (event.button !== 0) return;
-            resizePointer.current = event.pointerId;
-            event.currentTarget.setPointerCapture(event.pointerId);
-            setDragSize(normalizeChatSplit(percentAt(event.clientX)));
-          }}
-          onPointerMove={(event) => {
-            if (resizePointer.current === event.pointerId) setDragSize(normalizeChatSplit(percentAt(event.clientX)));
-          }}
-          onPointerUp={(event) => {
-            if (resizePointer.current !== event.pointerId) return;
-            resizePointer.current = null;
-            studio.resizePanes(percentAt(event.clientX));
-            setDragSize(null);
-          }}
-          onLostPointerCapture={() => { resizePointer.current = null; setDragSize(null); }}
-          onDoubleClick={() => studio.resizePanes(50)}
-          onKeyDown={(event) => {
-            if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
-            event.preventDefault();
-            const next = event.key === "Home" ? 35 : event.key === "End" ? 65 : ratio + (event.key === "ArrowLeft" ? -5 : 5);
-            studio.resizePanes(next);
-          }} />
+        <ResizeHandle className="chat-split-divider" ref={divider} label="Resize chat panes" controls={primaryPaneId}
+          orientation="vertical" value={studio.splitPercent} min={35} max={65} step={5} resetValue={50}
+          measurePixelsPerUnit={() => (layout.current?.getBoundingClientRect().width ?? 0) / 100}
+          formatValue={(size) => `${size}%`} onPreview={setDragSize} onCancel={() => setDragSize(null)}
+          onCommit={(size) => { studio.resizePanes(size); setDragSize(null); }} />
         <div className="chat-pane" data-chat-pane="secondary" data-focused={activePane === "secondary"}
           onPointerDownCapture={() => studio.focusPane("secondary")} onFocusCapture={() => studio.focusPane("secondary")}>
           <TextWorkspace {...props} thread={secondaryThread} pane="secondary" focused={activePane === "secondary"} split
@@ -112,10 +93,10 @@ export function ChatWorkspace(props: WorkspaceProps) {
       </>}
       {dropPane && <div className="chat-drop-preview" data-pane={dropPane} aria-hidden="true" />}
     </div>
-    {picker && createPortal(<ThreadBrowser threads={pickerThreads} initialQuery="" onClose={() => setPicker(null)}
+    {picker && <ThreadBrowser threads={pickerThreads} initialQuery="" onClose={() => setPicker(null)}
       onOpen={(id) => select(id, picker)} onNewChat={() => {
         studio.newThread(undefined, picker);
         focusComposer(picker);
-      }} />, document.body)}
-  </div>;
+      }} />}
+  </div></TooltipScope>;
 }

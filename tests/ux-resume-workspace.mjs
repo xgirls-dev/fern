@@ -103,11 +103,26 @@ try {
   await page.keyboard.press("Escape");
   await threadSearch.waitFor({ state: "hidden" });
   assert(await earlierRow.isVisible(), "Dismissing the nested search must leave the drawer open");
-  await earlierRow.locator("..").getByRole("button", { name: "Actions for text thread Poster" }).click();
-  const actions = page.getByRole("group", { name: "Actions for Poster", exact: true });
-  await actions.waitFor();
+  await sidebar.getByRole("button", { name: "New thread", exact: true }).click();
+  const newThreadMenu = page.getByRole("menu", { name: "New thread type", exact: true });
+  await newThreadMenu.waitFor();
+  await page.keyboard.press("Escape");
+  await newThreadMenu.waitFor({ state: "hidden" });
+  assert(await collapse.isVisible(), "Escape in the new thread menu should close only the menu");
+  const threadActions = earlierRow.locator("..").getByRole("button", { name: "Actions for text thread Poster" });
+  await threadActions.press("ArrowDown");
+  const actions = page.getByRole("menu", { name: "Actions for Poster", exact: true });
+  await expect(actions.getByRole("menuitem", { name: "Rename", exact: true })).toBeFocused();
+  await page.keyboard.press("End");
+  await expect(actions.getByRole("menuitem", { name: "Delete", exact: true })).toBeFocused();
+  assert(await actions.evaluate((element) => {
+    const bounds = element.getBoundingClientRect();
+    return bounds.left >= 0 && bounds.top >= 0 && bounds.right <= innerWidth && bounds.bottom <= innerHeight;
+  }), "The thread menu should fit within the compact window");
+  await page.screenshot({ path: `${dir}/compact-sidebar-thread-actions.png` });
   await page.keyboard.press("Escape");
   await actions.waitFor({ state: "hidden" });
+  await expect(threadActions).toBeFocused();
   assert(await collapse.isVisible(), "Escape in thread actions should close only the menu");
 
   await newerRow.press("Enter");
@@ -125,7 +140,7 @@ try {
   await expand.waitFor();
   assert(await expand.evaluate((element) => document.activeElement === element));
   await sidebar.getByRole("button", { name: "New thread", exact: true }).press("ArrowDown");
-  const newImageAction = sidebar.getByRole("menuitem", { name: "Create image", exact: true });
+  const newImageAction = newThreadMenu.getByRole("menuitem", { name: "Create image", exact: true });
   await newImageAction.waitFor();
   assert(await newImageAction.getByText("Create image", { exact: true }).isVisible(), "The compact New menu should show its action labels");
   await page.keyboard.press("Escape");

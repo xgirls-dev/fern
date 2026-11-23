@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type SetStateAction } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type SetStateAction } from "react";
 import {
   addTextModel,
   fetchTextJob,
+  subscribeToTextJob,
   fetchTextStatus,
   inspectChatImage,
   installTextModel,
@@ -71,6 +72,14 @@ type DraftAttachment =
   | { status: "saving"; filename: string }
   | { status: "failed"; message: string; retryFile?: File };
 
+export type TextSidebarRow = Pick<TextThread, "id" | "title" | "folderId"> & {
+  archived: boolean;
+  hasWork: boolean;
+  hasTranscript: boolean;
+};
+
+const EMPTY_SIDEBAR_ROWS: readonly TextSidebarRow[] = [];
+
 function confirmsSubmission(job: TextJob | null | undefined, submission: TextSubmission) {
   return job?.id === submission.id && job.threadId === submission.threadId && job.status !== "idle";
 }
@@ -81,8 +90,15 @@ function sameTextJob(current: TextJob, next: TextJob) {
     && current.image?.name === next.image?.name && current.images?.length === next.images?.length && current.finishedAt === next.finishedAt;
 }
 
+function isTerminalTextJob(job: TextJob) {
+  return job.status === "complete" || job.status === "failed" || job.status === "stopped";
+}
+
 function reconcileRunningTextJob(current: TextJob, next: TextJob): TextJob {
-  if (next.status !== "running" || current.status !== "running" || next.id !== current.id || next.threadId !== current.threadId) return next;
+  if (next.status !== "running" || next.id !== current.id || next.threadId !== current.threadId) return next;
+  // Status polling may have captured the job before the stream delivered its final update.
+  if (isTerminalTextJob(current)) return current;
+  if (current.status !== "running") return next;
   return {
     ...next,
     partialText: keepStreamedText(current.partialText, next.partialText) ?? "",
@@ -90,6 +106,49 @@ function reconcileRunningTextJob(current: TextJob, next: TextJob): TextJob {
     image: next.image ?? current.image,
     images: next.images ?? current.images,
   };
+}
+
+function settleTextJob(workspace: TextThreadWorkspace, job: TextJob, lastRunningJob: TextJob,
+  models: TextRuntimeStatus["models"], observedAt: number): TextThreadWorkspace {
+  const { id: jobId, threadId, status: outcome } = job;
+  if (!jobId || !threadId || (outcome !== "complete" && outcome !== "failed" && outcome !== "stopped")) return workspace;
+  const thread = workspace.threads.find((item) => item.id === threadId && item.pendingJobId === jobId);
+  if (!thread) return workspace;
+
+  const preview = pendingTextReply(thread, lastRunningJob);
+  const image = job.image ?? job.images?.[0] ?? preview?.generatedImage;
+  const finalText = job.partialText?.trim() ? job.partialText : "";
+  const empty = outcome === "complete" && !finalText && !image;
+  const content = outcome === "complete" && finalText ? finalText : keepStreamedText(preview?.content, finalText) ?? "";
+  const emptyError = job.result?.finishReason === "length"
+    ? "The model reached the output limit before finishing an answer. Increase Maximum output in Chat settings or try a shorter prompt."
+    : content ? "The model finished without a final answer. The partial response was kept."
+    : "The model returned no answer. Retry, edit your message, or send a new one.";
+  const assistant: TextMessage = {
+    id: `response-${jobId}`, jobId, role: "assistant", content,
+    status: empty ? "failed" : outcome,
+    error: empty ? emptyError : job.error, errorCode: job.errorCode,
+    reasoning: outcome === "complete" && job.partialReasoning?.trim() ? job.partialReasoning
+      : keepStreamedText(preview?.reasoning, job.partialReasoning),
+    generatedImage: image,
+    generatedImages: job.images ?? preview?.generatedImages,
+    modelName: job.result?.modelName ?? models.find((model) => model.id === job.modelId)?.name ?? "Unavailable model",
+    createdAt: job.finishedAt ? job.finishedAt * 1000 : observedAt,
+    metrics: textResponseMetrics(job.result),
+    requestContext: thread.pendingContext,
+  };
+  const inspectionTarget = thread.messages.find((message) => message.inspectionJobId === jobId);
+  const messages = inspectionTarget
+    ? thread.messages.map((message) => message === inspectionTarget ? {
+      ...message, inspectionJobId: undefined,
+      content: job.result?.visionChecked ? assistant.content : message.content,
+      metrics: job.result?.visionChecked ? assistant.metrics : message.metrics,
+      status: assistant.status, error: assistant.error, errorCode: assistant.errorCode,
+    } : message)
+    : thread.messages.some((message) => message.jobId === jobId) ? thread.messages : finishTextReply(thread, assistant);
+  return { ...workspace, threads: workspace.threads.map((item) => item === thread
+    ? { ...thread, pendingJobId: null, pendingPreview: undefined, pendingContext: undefined, messages, updatedAt: observedAt }
+    : item) };
 }
 
 function useTextReplyPause(job: TextJob | null) {
@@ -153,9 +212,11 @@ function addEditedChat(workspace: TextThreadWorkspace, sourceId: string, branch:
 }
 
 export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU", imageGpuAvailable?: boolean) {
-  const [{ workspace, messageDeletions }, setChatState] = useState(() => ({
+  const [{ workspace, messageDeletions, status, lastRunningJob }, setChatState] = useState(() => ({
     workspace: createTextWorkspace(),
     messageDeletions: new Map<string, TextMessageDeletion[]>(),
+    status: idleStatus,
+    lastRunningJob: idleStatus.job,
   }));
   const setWorkspace = useCallback((update: SetStateAction<TextThreadWorkspace>) => {
     setChatState((current) => {
@@ -163,18 +224,32 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
       return workspace === current.workspace ? current : { ...current, workspace };
     });
   }, []);
+  const setStatus = useCallback((update: SetStateAction<TextRuntimeStatus>) => {
+    const observedAt = Date.now();
+    setChatState((current) => {
+      const status = typeof update === "function" ? update(current.status) : update;
+      if (status === current.status) return current;
+      const job = status.job;
+      // Commit the terminal status and transcript together so a completed reply
+      // never renders once more as a pending response.
+      const workspace = job === current.status.job ? current.workspace
+        : settleTextJob(current.workspace, job, current.lastRunningJob, status.models, observedAt);
+      return { ...current, status, workspace, lastRunningJob: job.status === "running" ? job : current.lastRunningJob };
+    });
+  }, []);
   const [conversationStore] = useState(createTextThreadStorage);
   const [storageReady, setStorageReady] = useState(false);
   const [storageAttempt, setStorageAttempt] = useState(0);
   const workspaceRef = useRef(workspace);
   workspaceRef.current = workspace;
+  const statusRef = useRef(status);
+  useLayoutEffect(() => { statusRef.current = status; }, [status]);
   const savingTranscript = useRef(false);
   const scheduledWorkspace = useRef<TextThreadWorkspace>(workspace);
   const queuedNewChat = useRef(false);
   const resettingStorage = useRef(false);
-  const [status, setStatus] = useState(idleStatus);
-  const liveJobRef = useRef(status.job);
-  if (status.job.status === "running") liveJobRef.current = status.job;
+  const liveJobRef = useRef(lastRunningJob);
+  liveJobRef.current = lastRunningJob;
   const [statusLoaded, setStatusLoaded] = useState(false);
   const [modelAction, setModelAction] = useState<string | null>(null);
   const [attachmentStates, setAttachmentStates] = useState(() => new Map<string, DraftAttachment>());
@@ -183,7 +258,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
   const documentUpload = useRef(false);
   const modelActionRef = useRef(false);
   const [statusError, setStatusError] = useState<string | null>(null);
-  const replyPaused = useTextReplyPause(statusError ? null : status.job);
+  const replyPaused = useTextReplyPause(status.job);
   const [actionError, setError] = useState<{ message: string; threadId?: string } | null>(null);
   const setActionError = useCallback((message: string | null, threadId?: string) => {
     setError(message ? { message, threadId } : null);
@@ -194,6 +269,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
   const [refreshKey, setRefreshKey] = useState(0);
   const submission = useRef<TextSubmission | null>(null);
   const activePoll = useRef<symbol | null>(null);
+  const receivingJobEvents = useRef(false);
   const recovering = useRef(new Set<string>());
   const [submitting, setSubmitting] = useState(false);
   const invalidatePoll = useCallback(() => {
@@ -218,7 +294,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     invalidatePoll();
     setStatus((current) => "textJob" in accepted ? { ...current, job: accepted.textJob } : accepted.job);
     setStatusError(null);
-  }, [invalidatePoll]);
+  }, [invalidatePoll, setStatus]);
   const submissionIsMissing = useCallback(async (pending: TextSubmission) => {
     if (submission.current !== pending) return false;
     try {
@@ -233,7 +309,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
       if (submission.current === pending) setStatusError("Lost the connection to the text runtime.");
       return false;
     }
-  }, [invalidatePoll]);
+  }, [invalidatePoll, setStatus]);
   const primaryThread = useMemo(
     () => workspace.threads.find((thread) => thread.id === workspace.activeId) ?? workspace.threads[0]!,
     [workspace],
@@ -243,9 +319,32 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
   const activeThread = activePane === "secondary" && secondaryThread ? secondaryThread : primaryThread;
   const getThread = useCallback((id: string) => workspaceRef.current.threads.find((thread) => thread.id === id), []);
   const threads = workspace.threads;
+  // Draft edits and reply checkpoints do not change a navigation row.
+  const sidebarCache = useRef(EMPTY_SIDEBAR_ROWS);
+  const sidebarThreads = useMemo(() => {
+    if (!storageReady) return EMPTY_SIDEBAR_ROWS;
+    const previous = sidebarCache.current;
+    const rows = threads.map((thread, index) => {
+      const { id, title, folderId } = thread;
+      const archived = thread.archived === true;
+      const hasTranscript = thread.messages.length > 0;
+      const hasWork = hasTranscript || title !== "New text thread" || !!(thread.renamed || thread.draft.trim()
+        || thread.draftImage || thread.draftContextImage || thread.systemPrompt || folderId || thread.documents?.length);
+      const row = previous[index];
+      if (row?.id === id && row.title === title && row.folderId === folderId && row.archived === archived
+        && row.hasWork === hasWork && row.hasTranscript === hasTranscript) return row;
+      return { id, title, folderId, archived, hasWork, hasTranscript };
+    });
+    if (rows.length === previous.length && rows.every((row, index) => row === previous[index])) return previous;
+    sidebarCache.current = rows;
+    return rows;
+  }, [storageReady, threads]);
   const hasPendingReply = threads.some((thread) => !!thread.pendingJobId);
   const responding = status.job.status === "running" || hasPendingReply;
-  const useJobPoll = responding && status.supportsJobPolling === true;
+  const supportsJobPolling = status.supportsJobPolling === true;
+  const useJobPoll = responding && supportsJobPolling;
+  const watchedJobId = status.supportsJobEvents && status.job.status === "running" ? status.job.id : null;
+  const watchedThreadId = watchedJobId ? status.job.threadId : null;
   const attachmentReady = ready && storageReady;
   const savingAttachment = [...attachmentStates.values()].some((attachment) => attachment.status === "saving");
   const busy = !!modelAction || attachingDocument || submitting || responding || ["downloading", "preparing"].includes(status.modelInstall?.status ?? "");
@@ -257,7 +356,9 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
       scheduledWorkspace.current = saved;
       const next = queuedNewChat.current ? openNewChat(saved) : saved;
       queuedNewChat.current = false;
-      setWorkspace(next);
+      const observedAt = Date.now();
+      setChatState((current) => ({ ...current, workspace:
+        settleTextJob(next, current.status.job, current.lastRunningJob, current.status.models, observedAt) }));
       setStorageReady(true);
       setStorageError(null);
     }).catch(() => {
@@ -347,63 +448,54 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     } finally {
       if (activePoll.current === poll) activePoll.current = null;
     }
-  }, [finishSubmission, ready]);
+  }, [finishSubmission, ready, setStatus]);
 
   const refresh = useCallback(() => pollStatus(useJobPoll), [pollStatus, useJobPoll]);
   useEffect(() => { void pollStatus(false); }, [pollStatus, refreshKey]);
   useEffect(() => {
     if (!ready) return;
-    const timer = window.setInterval(() => { void refresh(); }, useJobPoll ? 150 : busy ? 500 : 4000);
+    const timer = window.setInterval(() => {
+      if (!useJobPoll || !receivingJobEvents.current) void refresh();
+    }, useJobPoll ? 150 : busy ? 500 : 4000);
     return () => window.clearInterval(timer);
   }, [ready, busy, refresh, useJobPoll]);
 
-  const settleReply = useCallback((job: TextJob) => {
-    if (!storageReady) return;
-    const { id: jobId, threadId, status: outcome } = job;
-    if (!jobId || !threadId || (outcome !== "complete" && outcome !== "failed" && outcome !== "stopped")) return;
-    const lastLiveJob = liveJobRef.current;
-    setWorkspace((current) => {
-      if (!current.threads.some((thread) => thread.id === threadId && thread.pendingJobId === jobId)) return current;
-      return { ...current,
-      threads: current.threads.map((thread) => {
-        if (thread.id !== threadId || thread.pendingJobId !== jobId) return thread;
-        const preview = pendingTextReply(thread, lastLiveJob);
-        const image = job.image ?? job.images?.[0] ?? preview?.generatedImage;
-        const finalText = job.partialText?.trim() ? job.partialText : "";
-        const empty = outcome === "complete" && !finalText && !image;
-        const content = outcome === "complete" && finalText ? finalText : keepStreamedText(preview?.content, finalText) ?? "";
-        const emptyError = job.result?.finishReason === "length"
-          ? "The model reached the output limit before finishing an answer. Increase Maximum output in Chat settings or try a shorter prompt."
-          : content ? "The model finished without a final answer. The partial response was kept."
-          : "The model returned no answer. Retry, edit your message, or send a new one.";
-        const assistant: TextMessage = {
-          id: `response-${jobId}`, jobId, role: "assistant", content,
-          status: empty ? "failed" : outcome,
-          error: empty ? emptyError : job.error, errorCode: job.errorCode,
-          reasoning: outcome === "complete" && job.partialReasoning?.trim() ? job.partialReasoning
-            : keepStreamedText(preview?.reasoning, job.partialReasoning),
-          generatedImage: image,
-          generatedImages: job.images ?? preview?.generatedImages,
-          modelName: job.result?.modelName ?? status.models.find((model) => model.id === job.modelId)?.name ?? "Unavailable model",
-          createdAt: job.finishedAt ? job.finishedAt * 1000 : Date.now(),
-          metrics: textResponseMetrics(job.result),
-          requestContext: thread.pendingContext,
-        };
-        const inspectionTarget = thread.messages.find((message) => message.inspectionJobId === jobId);
-        const messages = inspectionTarget
-          ? thread.messages.map((message) => message === inspectionTarget ? {
-            ...message, inspectionJobId: undefined,
-            content: job.result?.visionChecked ? assistant.content : message.content,
-            metrics: job.result?.visionChecked ? assistant.metrics : message.metrics,
-            status: assistant.status, error: assistant.error, errorCode: assistant.errorCode,
-          } : message)
-          : thread.messages.some((message) => message.jobId === jobId) ? thread.messages : finishTextReply(thread, assistant);
-        return { ...thread, pendingJobId: null, pendingPreview: undefined, pendingContext: undefined, messages, updatedAt: Date.now() };
-      }),
-    }; });
-  }, [setWorkspace, status.models, storageReady]);
-
-  useEffect(() => { settleReply(status.job); }, [settleReply, status.job]);
+  useEffect(() => {
+    if (!ready || !watchedThreadId || !watchedJobId) return;
+    const retryInterval = 500;
+    let retryDelay = retryInterval;
+    let retryTimer: number | undefined;
+    let close: (() => void) | undefined;
+    const onJob = (job: TextJob) => {
+      const pending = submission.current;
+      if (pending && !confirmsSubmission(job, pending)) return;
+      if (pending) finishSubmission(pending);
+      retryDelay = retryInterval;
+      if (!receivingJobEvents.current || isTerminalTextJob(job)) invalidatePoll();
+      receivingJobEvents.current = true;
+      setStatus((current) => {
+        if (current.job.id !== watchedJobId || current.job.threadId !== watchedThreadId || current.job.status !== "running") return current;
+        const next = reconcileRunningTextJob(current.job, job);
+        return sameTextJob(current.job, next) ? current : { ...current, job: next };
+      });
+      setStatusError(null);
+    };
+    const onLost = () => {
+      receivingJobEvents.current = false;
+      void pollStatus(supportsJobPolling);
+      retryTimer = window.setTimeout(connect, retryDelay);
+      retryDelay = Math.min(retryDelay * 2, 4000);
+    };
+    const connect = () => {
+      close = subscribeToTextJob(watchedThreadId, watchedJobId, onJob, onLost);
+    };
+    connect();
+    return () => {
+      window.clearTimeout(retryTimer);
+      close?.();
+      receivingJobEvents.current = false;
+    };
+  }, [finishSubmission, invalidatePoll, pollStatus, ready, setStatus, supportsJobPolling, watchedJobId, watchedThreadId]);
 
   useEffect(() => {
     if (!stoppingId) return;
@@ -422,15 +514,20 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
       if (!receipt?.cancelledBeforeStart || !awaitingStart || stopDispatched.current !== stoppingId) return;
       const sending = submission.current;
       if (sending?.id === stoppingId) finishSubmission(sending);
-      settleReply({ ...idleStatus.job, id: stoppingId, threadId: awaitingStart.id, modelId: awaitingStart.modelId,
-        status: "stopped", finishedAt: Date.now() / 1000 });
+      const observedAt = Date.now();
+      const job: TextJob = { ...idleStatus.job, id: stoppingId, threadId: awaitingStart.id, modelId: awaitingStart.modelId,
+        status: "stopped", finishedAt: observedAt / 1000 };
+      setChatState((current) => {
+        const workspace = settleTextJob(current.workspace, job, current.lastRunningJob, current.status.models, observedAt);
+        return workspace === current.workspace ? current : { ...current, workspace };
+      });
     }).catch((error: unknown) => {
       if (stopDispatched.current !== stoppingId) return;
       stopDispatched.current = null;
       setStoppingId((current) => current === stoppingId ? null : current);
       setActionError(error instanceof Error ? error.message : "Could not stop text generation.");
     });
-  }, [finishSubmission, settleReply, status.job, status.supportsPendingStop, statusError, stoppingId, threads]);
+  }, [finishSubmission, status.job, status.supportsPendingStop, statusError, stoppingId, threads]);
 
   // The model process may be gone while its last render is already on disk.
   useEffect(() => {
@@ -581,6 +678,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
       if (!removed) return current;
       const deletions = current.messageDeletions.get(threadId) ?? [];
       return {
+        ...current,
         workspace: { ...current.workspace, threads: threads.map((item) => item === thread ? removed.thread : item) },
         messageDeletions: new Map(current.messageDeletions).set(threadId, [...deletions, removed.deletion]),
       };
@@ -600,6 +698,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
       if (deletions.length > 1) messageDeletions.set(threadId, deletions.slice(0, -1));
       else messageDeletions.delete(threadId);
       return {
+        ...current,
         workspace: { ...current.workspace, threads: threads.map((item) => item === thread ? restored : item) },
         messageDeletions,
       };
@@ -643,13 +742,12 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
       conversationStore.clearLegacy();
       workspaceRef.current = fresh;
       scheduledWorkspace.current = fresh;
-      setChatState({ workspace: fresh, messageDeletions: new Map() });
+      setChatState({ workspace: fresh, messageDeletions: new Map(), status: idleStatus, lastRunningJob: idleStatus.job });
       setStorageReady(true);
       setStorageError(null);
     } finally { resettingStorage.current = false; }
     if (submission.current) finishSubmission(submission.current);
     invalidatePoll();
-    setStatus(idleStatus);
     setStatusLoaded(false);
     setRefreshKey((value) => value + 1);
     setActionError(null);
@@ -662,10 +760,20 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     if (clean) updateThread(id, { title: clean, renamed: true });
   }, [updateThread]);
 
-  const archiveThread = useCallback((id: string) => updateThread(id, { archived: !threads.find((thread) => thread.id === id)?.archived }), [threads, updateThread]);
+  const archiveThread = useCallback((id: string) => {
+    const updatedAt = Date.now();
+    setWorkspace((current) => {
+      const index = current.threads.findIndex((thread) => thread.id === id);
+      if (index < 0) return current;
+      const thread = current.threads[index];
+      const threads = [...current.threads];
+      threads[index] = { ...thread, archived: !thread.archived, updatedAt };
+      return { ...current, threads };
+    });
+  }, [setWorkspace]);
 
   const deleteThread = useCallback((id: string) => {
-    if (workspace.threads.some((thread) => thread.id === id && thread.pendingJobId) || (busy && status.job.threadId === id)) {
+    if (getThread(id)?.pendingJobId || (busy && status.job.threadId === id)) {
       setActionError("Stop the response before deleting this text thread.", id);
       return;
     }
@@ -681,7 +789,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     });
     dismissMessageDeletion(id);
     clearAttachment(id);
-  }, [busy, clearAttachment, dismissMessageDeletion, setWorkspace, status.job.threadId, workspace.threads]);
+  }, [busy, clearAttachment, dismissMessageDeletion, getThread, setActionError, setWorkspace, status.job.threadId]);
 
   const importModel = useCallback(async (format: "openvino" | "gguf" = "openvino") => {
     if (modelActionRef.current) return;
@@ -700,7 +808,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
       modelActionRef.current = false;
       setModelAction(null);
     }
-  }, []);
+  }, [setStatus]);
 
   const attachImages = useCallback(async (threadId: string, files: File[]) => {
     const activeThread = getThread(threadId);
@@ -794,7 +902,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
       modelActionRef.current = false;
       setModelAction(null);
     }
-  }, []);
+  }, [setStatus]);
 
   const installRecommendedModel = useCallback(async (id: string) => {
     if (modelActionRef.current) return;
@@ -812,12 +920,13 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
       modelActionRef.current = false;
       setModelAction(null);
     }
-  }, []);
+  }, [setStatus]);
 
   const generateReply = useCallback(async (thread: TextThread, input: string, { retry = false, sourceId, revision, continueFrom, rewriteId }: {
     retry?: boolean; sourceId?: string; revision?: { messageId: string; version: TextPromptVersion }; continueFrom?: string; rewriteId?: string;
   } = {}) => {
     if (busy || submission.current || (!retry && !revision && !continueFrom && attachmentRequests.current.has(thread.id))) return;
+    const status = statusRef.current;
     if (continueFrom) {
       const last = thread.messages.at(-1);
       if (last?.id !== continueFrom || !canContinueTextReply(last)) return;
@@ -928,7 +1037,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     } finally {
       finishSubmission(receipt);
     }
-  }, [acceptJob, beginSubmission, busy, computeDevice, finishSubmission, imageGpuAvailable, setWorkspace, status, submissionIsMissing, updateThread]);
+  }, [acceptJob, beginSubmission, busy, computeDevice, finishSubmission, imageGpuAvailable, setWorkspace, submissionIsMissing, updateThread]);
 
   const send = useCallback((threadId: string, input: string, rewriteId?: string) => {
     const thread = getThread(threadId);
@@ -987,8 +1096,9 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     setActionError(null);
   }, [getThread, busy, updateThread, setActionError]);
 
-  const retryInspection = async (threadId: string, messageId: string) => {
+  const retryInspection = useCallback(async (threadId: string, messageId: string) => {
     if (busy || submission.current) return;
+    const status = statusRef.current;
     const thread = getThread(threadId);
     const message = thread?.messages.find((item) => item.id === messageId);
     const model = status.models.find((item) => item.id === thread?.modelId && item.installed);
@@ -1021,7 +1131,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     } finally {
       finishSubmission(receipt);
     }
-  };
+  }, [acceptJob, beginSubmission, busy, computeDevice, finishSubmission, getThread, setWorkspace, submissionIsMissing, updateThread]);
 
   const stop = useCallback((threadId: string) => {
     const requestId = getThread(threadId)?.pendingJobId ??
@@ -1103,6 +1213,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
   }, [status.models]);
 
   return {
+    sidebarThreads,
     threads: storageReady ? threads : [], activeThread, status, statusLoaded, modelAction, submitting, draftAttachments: attachmentStates, attachingDocument, attachmentReady, savingAttachment, statusError, actionError, storageReady, storageError, retryStorage, busy, computeDevice,
     pendingReplyOutput: (thread: TextThread) => pendingTextReply(thread, liveJobRef.current),
     primaryThread, secondaryThread, activePane, splitPercent: workspace.splitPercent ?? 50, compareThread, closePane, resizePanes, focusPane,

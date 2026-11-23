@@ -55,10 +55,11 @@ try {
     .locator(".thumb-wrap")
     .filter({ has: button(/^Review.*audit-2\.png$/) });
   await card.hover();
-  await card.locator('.image-menu summary[aria-label="Image actions for audit-2.png"]').click();
-  await card.getByRole("button", { name: "Copy prompt", exact: true }).click();
-  await card.locator('.image-menu summary[aria-label="Image actions for audit-2.png"]').click();
-  await card.getByRole("button", { name: "Remix", exact: true }).click();
+  await card.getByRole("button", { name: "Image actions for audit-2.png", exact: true }).click();
+  await page.getByRole("menu", { name: "Image actions", exact: true }).getByRole("menuitem", { name: "Copy prompt", exact: true }).click();
+  await card.getByRole("button", { name: "Image actions for audit-2.png", exact: true }).click();
+  await page.getByRole("menu", { name: "Image actions", exact: true }).getByRole("menuitem", { name: "Remix", exact: true }).click();
+  await page.locator("#prompt").waitFor();
   assert.equal(
     await page.locator("#prompt").inputValue(),
     "Original image prompt 2",
@@ -93,7 +94,7 @@ try {
   await page.screenshot({ path: `${dir}/selected-image-seed.png` });
   const title = await page.locator("#create-heading").innerText();
   await button(`Actions for image thread ${title}`).click();
-  await page.getByRole("group", { name: `Actions for ${title}` }).getByRole("button", { name: "Delete", exact: true }).click();
+  await page.getByRole("menu", { name: `Actions for ${title}` }).getByRole("menuitem", { name: "Delete", exact: true }).click();
   assert.match(
     await page.locator(".thread-delete-confirm").innerText(),
     /permanently deleted/,

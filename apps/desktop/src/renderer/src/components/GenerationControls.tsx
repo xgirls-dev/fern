@@ -410,16 +410,11 @@ export function GenerationControls({
                 <Select
                   aria-label="Prompt recipe"
                   value={selectedRecipeId}
-                  onChange={(event) => applyPromptRecipe(event.target.value)}
-                >
-                  <option value="">Choose a starting point…</option>
-                  {promptRecipes.map((recipe) => (
-                    <option key={recipe.id} value={recipe.id}>
-                      {recipe.name}
-                      {recipe.builtIn ? " · Fern" : " · Saved"}
-                    </option>
-                  ))}
-                </Select>
+                  onChange={applyPromptRecipe}
+                  options={[{ value: "", label: "Choose a starting point…" }, ...promptRecipes.map((recipe) => ({
+                    value: recipe.id, label: `${recipe.name} · ${recipe.builtIn ? "Fern" : "Saved"}`,
+                  }))]}
+                />
                 {selectedRecipeId.startsWith("custom-") ? (
                   <Button
                     variant="secondary"

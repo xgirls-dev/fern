@@ -12,6 +12,7 @@ import { fixedImagePreset, isKleinLoraModel, maxReferenceImages } from "../lib/i
 import { readReference, type ReferenceAttachment } from "../lib/reference";
 import type { StudioSettings } from "../lib/types";
 import { Button, IconButton, Input, Textarea } from "./ui/controls";
+import { Popover } from "./ui/Popover";
 
 interface PromptComposerProps {
   onReferenceBusy: (busy: boolean) => void;
@@ -50,27 +51,12 @@ export function PromptComposer({
   const preSpecialSettings = useRef<Pick<StudioSettings, "width" | "height" | "steps" | "guidance" | "batchSize" | "device"> | null>(null);
   const [seedDraft, setSeedDraft] = useState(String(settings.seed));
   const [seedPopoverOpen, setSeedPopoverOpen] = useState(false);
-  const seedPopover = useRef<HTMLDivElement>(null);
+  const composerToolbar = useRef<HTMLDivElement>(null);
+  const seedInput = useRef<HTMLInputElement>(null);
   const referenceImage = referenceImages[0]?.dataUrl;
   const maxReferences = maxReferenceImages(settings.model);
   const referencesInvalid = referenceImages.length > maxReferences;
   useEffect(() => setSeedDraft(String(settings.seed)), [settings.seed]);
-  useEffect(() => {
-    if (!seedPopoverOpen) return;
-    const close = (event: PointerEvent) => {
-      if (!seedPopover.current?.contains(event.target as Node))
-        setSeedPopoverOpen(false);
-    };
-    const escape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setSeedPopoverOpen(false);
-    };
-    document.addEventListener("pointerdown", close);
-    document.addEventListener("keydown", escape);
-    return () => {
-      document.removeEventListener("pointerdown", close);
-      document.removeEventListener("keydown", escape);
-    };
-  }, [seedPopoverOpen]);
   const [loadingReference, setLoadingReference] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [referenceError, setReferenceError] = useState("");
@@ -182,7 +168,7 @@ export function PromptComposer({
           onChange={(event) => onSettingsChange({ prompt: event.target.value })}
         />
         {loadingReference ? <p role="status">Loading reference…</p> : null}
-        <div className="composer-toolbar">
+        <div className="composer-toolbar" ref={composerToolbar}>
           <div className="composer-options">
             {maxReferences ? (
               <>
@@ -219,69 +205,60 @@ export function PromptComposer({
             >
               <SlidersHorizontal size={14} aria-hidden="true" />
             </IconButton>
-            <div className="seed-popover-anchor" ref={seedPopover}>
-              <IconButton
-                className="composer-settings"
-                aria-expanded={seedPopoverOpen}
-                onClick={() => setSeedPopoverOpen((open) => !open)}
-                title={`Seed settings · ${settings.seedLocked ? settings.seed : "Random"}`}
-                aria-label="Seed settings"
+            <div className="seed-popover-anchor">
+              <Popover label="Seed settings" className="seed-popover" side="top" anchor={composerToolbar}
+                open={seedPopoverOpen} onOpenChange={setSeedPopoverOpen} initialFocus={seedInput}
+                trigger={<IconButton className="composer-settings" aria-label="Seed settings">
+                  <Dices size={17} aria-hidden="true" />
+                </IconButton>}
               >
-                <Dices size={17} aria-hidden="true" />
-              </IconButton>
-              {seedPopoverOpen ? (
-                <div
-                  className="seed-popover"
-                  role="dialog"
-                  aria-label="Seed settings"
+                <Button
+                  variant="secondary"
+                  className="seed-mode"
+                  aria-pressed={settings.seedLocked}
+                  onClick={() =>
+                    onSettingsChange({ seedLocked: !settings.seedLocked })
+                  }
                 >
-                  <Button
-                    variant="secondary"
-                    className="seed-mode"
-                    aria-pressed={settings.seedLocked}
-                    onClick={() =>
-                      onSettingsChange({ seedLocked: !settings.seedLocked })
-                    }
-                  >
-                    {settings.seedLocked ? "Fixed seed" : "Random seed"}
-                  </Button>
-                  <label className="seed-popover-input">
-                    <span>Seed</span>
-                    <Input
-                      className="seed-input"
-                      aria-label="Seed"
-                      inputMode="numeric"
-                      type="text"
-                      value={seedDraft}
-                      onChange={(event) => {
-                        const value = event.target.value;
-                        setSeedDraft(value);
-                        if (
-                          /^\d+$/.test(value) &&
-                          Number.isSafeInteger(Number(value))
-                        )
-                          onSettingsChange({
-                            seed: Number(value),
-                            seedLocked: true,
-                          });
-                      }}
-                      onBlur={() => setSeedDraft(String(settings.seed))}
-                    />
-                  </label>
-                  <IconButton
-                    title="Randomize seed"
-                    aria-label="Randomize seed"
-                    onClick={() =>
-                      onSettingsChange({
-                        seed: Math.floor(Math.random() * 1_000_000_000),
-                        seedLocked: true,
-                      })
-                    }
-                  >
-                    <Dices size={15} aria-hidden="true" />
-                  </IconButton>
-                </div>
-              ) : null}
+                  {settings.seedLocked ? "Fixed seed" : "Random seed"}
+                </Button>
+                <label className="seed-popover-input">
+                  <span>Seed</span>
+                  <Input
+                    ref={seedInput}
+                    className="seed-input"
+                    aria-label="Seed"
+                    inputMode="numeric"
+                    type="text"
+                    value={seedDraft}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      setSeedDraft(value);
+                      if (
+                        /^\d+$/.test(value) &&
+                        Number.isSafeInteger(Number(value))
+                      )
+                        onSettingsChange({
+                          seed: Number(value),
+                          seedLocked: true,
+                        });
+                    }}
+                    onBlur={() => setSeedDraft(String(settings.seed))}
+                  />
+                </label>
+                <IconButton
+                  title="Randomize seed"
+                  aria-label="Randomize seed"
+                  onClick={() =>
+                    onSettingsChange({
+                      seed: Math.floor(Math.random() * 1_000_000_000),
+                      seedLocked: true,
+                    })
+                  }
+                >
+                  <Dices size={15} aria-hidden="true" />
+                </IconButton>
+              </Popover>
             </div>
           </div>
 

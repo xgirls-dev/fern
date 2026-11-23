@@ -5,7 +5,7 @@ import type {
   StorageStatus,
   DeviceId,
 } from "./types";
-import { repairMojibakeDeep } from "./text";
+import { repairMojibake, repairMojibakeDeep } from "./text";
 import type { GeneratedChatImage, GgufLoadOptions, TextJob, TextModel, TextPromptMessage, TextRuntimeStatus, TextSamplingOverrides } from "./textThreads";
 import type { ChatImageOverrides } from "./chatImageSettings";
 import type { ChatDocument } from "./chatDocuments";
@@ -144,6 +144,95 @@ export function fetchTextStatus(): Promise<TextRuntimeStatus> {
 
 export function fetchTextJob(): Promise<TextJob> {
   return requestJson<TextJob>("/api/text/job", { signal: AbortSignal.timeout(4_000) });
+}
+
+type TextJobFrame = { job: TextJob | null } | { heartbeat: true } | {
+  append: Pick<TextJob, "phase" | "image" | "images"> & { text: string; reasoning: string };
+};
+
+export function subscribeToTextJob(threadId: string, jobId: string, onJob: (job: TextJob) => void, onLost: () => void) {
+  const query = new URLSearchParams({ threadId, jobId });
+  const events = new EventSource(`${apiBaseUrl}/api/text/job/events?${query}`);
+  let latest: TextJob | null = null;
+  let timeout: number;
+  let appendFrame: number | undefined;
+  let appendFallback: number | undefined;
+  let lastAppendAt = -Infinity;
+  let closed = false;
+  function clearAppend() {
+    if (appendFrame !== undefined) window.cancelAnimationFrame(appendFrame);
+    window.clearTimeout(appendFallback);
+    appendFrame = undefined;
+    appendFallback = undefined;
+  }
+  function publishAppend() {
+    clearAppend();
+    if (latest?.status !== "running") return;
+    onJob({
+      ...latest,
+      partialText: repairMojibake(latest.partialText),
+      partialReasoning: repairMojibake(latest.partialReasoning ?? ""),
+    });
+    lastAppendAt = performance.now();
+  }
+  function close() {
+    if (closed) return;
+    closed = true;
+    events.close();
+    window.clearTimeout(timeout);
+    clearAppend();
+  }
+  function lost() {
+    if (closed) return;
+    if (appendFrame !== undefined) publishAppend();
+    close();
+    onLost();
+  }
+  function expectFrame() {
+    window.clearTimeout(timeout);
+    timeout = window.setTimeout(lost, 15_000);
+  }
+  expectFrame();
+  events.onerror = lost;
+  events.onmessage = ({ data }) => {
+    if (closed) return;
+    expectFrame();
+    try {
+      const frame: TextJobFrame = JSON.parse(data);
+      if ("heartbeat" in frame) return;
+      if ("job" in frame && frame.job?.id === jobId && frame.job.threadId === threadId && frame.job.status !== "idle") {
+        if (appendFrame !== undefined) publishAppend();
+        latest = frame.job;
+        if (latest.status !== "running") close();
+        onJob(repairMojibakeDeep(latest));
+        return;
+      }
+      if ("append" in frame && latest?.status === "running") {
+        const { text, reasoning, phase, images, image } = frame.append;
+        const immediate = phase !== latest.phase || images !== undefined ||
+          (!!text && !latest.partialText) || (!!reasoning && !latest.partialReasoning);
+        if (!immediate && !text && !reasoning) return;
+        latest = {
+          ...latest, phase,
+          partialText: latest.partialText + text,
+          partialReasoning: (latest.partialReasoning ?? "") + reasoning,
+          ...(images ? { image, images } : {}),
+        };
+        // A paced update needn't wait for a frame. Batch only deltas that
+        // follow another publication within a frame's worth of time.
+        if (immediate || (appendFrame === undefined && performance.now() - lastAppendAt >= 16)) publishAppend();
+        else if (appendFrame === undefined) {
+          // Several deltas can arrive together after the UI was busy. Publish
+          // the accumulated text once and keep background checkpoints moving.
+          appendFrame = window.requestAnimationFrame(publishAppend);
+          appendFallback = window.setTimeout(publishAppend, 50);
+        }
+        return;
+      }
+    } catch { /* Polling can recover if the stream fails to decode. */ }
+    lost();
+  };
+  return close;
 }
 
 export function recoverChatImage(threadId: string, jobId: string): Promise<{ image: GeneratedChatImage | null; images?: GeneratedChatImage[] }> {

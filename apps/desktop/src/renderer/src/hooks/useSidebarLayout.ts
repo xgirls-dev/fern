@@ -72,16 +72,17 @@ export function useSidebarLayout() {
 
   useEffect(() => {
     if (!sidebarOverlayOpen) return;
+    const nestedOverlay = '[aria-modal="true"], .sidebar-thread-actions-menu, .sidebar-new-options[role="menu"]';
     const onFocusIn = (event: FocusEvent) => {
       const target = event.target;
-      if (!(target instanceof Element) || sidebarRef.current?.contains(target) ||
+      if (!(target instanceof Element) || target === document.body || sidebarRef.current?.contains(target) ||
         sidebarToggleRef.current?.contains(target) ||
-        target.closest('.sidebar-thread-actions-menu, [aria-modal="true"]')) return;
+        target.closest('[data-base-ui-focus-guard]') || document.querySelector(nestedOverlay)) return;
       closeSidebarOverlay("current");
     };
     const onEscape = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || event.defaultPrevented || event.isComposing ||
-        document.querySelector('[aria-modal="true"], .sidebar-thread-actions-menu')) return;
+        document.querySelector(nestedOverlay)) return;
       event.preventDefault();
       event.stopPropagation();
       closeSidebarOverlay("opener");

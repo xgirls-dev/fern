@@ -42,9 +42,8 @@ export function TextPromptVersions({ alternatives, onRestore, searchMatch, onClo
         else close();
       }
     }}>
-      {versions.length > 1 && !match && <Select aria-label="Earlier prompt version" value={selected.id} onChange={(event) => setSelection(event.currentTarget.value)}>
-        {versions.map((version) => <option key={version.id} value={version.id}>{version.content.trim().replace(/\s+/g, " ").slice(0, 80) || "Image prompt"}</option>)}
-      </Select>}
+      {versions.length > 1 && !match && <Select aria-label="Earlier prompt version" value={selected.id} onChange={setSelection}
+        options={versions.map(({ id, content }) => ({ value: id, label: content.trim().replace(/\s+/g, " ").slice(0, 80) || "Image prompt" }))} />}
       <div><span className="text-prompt-version-label">Saved prompt</span>
         <p data-find-target={promptMatched || undefined} className="text-prompt-version-content">{selected.content}</p>
       </div>

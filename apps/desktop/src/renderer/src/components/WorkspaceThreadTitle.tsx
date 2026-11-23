@@ -1,4 +1,4 @@
-import ChevronDown from "lucide-react/dist/esm/icons/chevron-down.mjs";
+import { Select } from "./ui/Select";
 
 interface WorkspaceThreadTitleProps {
   id?: string;
@@ -13,14 +13,9 @@ export function WorkspaceThreadTitle({ id, thread, threads, switchLabel, sidebar
   return (
     <div className="workspace-thread-title">
       <h2 id={id} title={thread.title}>{thread.title}</h2>
-      <label className={`ui-icon-button workspace-thread-switcher${sidebarCollapsed ? " is-visible" : ""}`}>
-        <ChevronDown size={15} aria-hidden="true" />
-        <select aria-label={switchLabel} title={switchLabel} value={thread.id} onChange={(event) => onSwitch(event.target.value)}>
-          {threads.filter((item) => !item.archived || item.id === thread.id).map((item) => (
-            <option key={item.id} value={item.id}>{item.title}</option>
-          ))}
-        </select>
-      </label>
+      <Select appearance="icon" className={`workspace-thread-switcher${sidebarCollapsed ? " is-visible" : ""}`}
+        aria-label={switchLabel} title={switchLabel} value={thread.id} onChange={onSwitch}
+        options={threads.filter((item) => !item.archived || item.id === thread.id).map(({ id, title }) => ({ value: id, label: title }))} />
     </div>
   );
 }

@@ -47,6 +47,7 @@ export function useModalFocus(
     };
 
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
       const modals = document.querySelectorAll('[aria-modal="true"]');
       if (modals[modals.length - 1] !== dialog) return;
       if (event.key === "Escape") {

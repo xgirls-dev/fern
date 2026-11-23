@@ -1,8 +1,7 @@
 import { useId, useRef, useState } from "react";
-import { createPortal } from "react-dom";
-import { useModalFocus } from "../hooks/useModalFocus";
 import { canMoveChatFolder, chatFolderPath, type ChatFolder, type ChatOrganizationAction } from "../lib/chatFolders";
 import { Button, Input, Select } from "./ui/controls";
+import { Dialog, DialogClose, DialogDescription, DialogTitle } from "./ui/Dialog";
 
 export type ChatFolderDialogRequest =
   | { type: "create"; parentId?: string }
@@ -16,10 +15,8 @@ export function ChatFolderDialog({ request, folders, onSubmit, onClose }: {
   onSubmit: (action: ChatOrganizationAction) => void;
   onClose: () => void;
 }) {
-  const titleId = useId();
   const fieldId = useId();
   const form = useRef<HTMLFormElement>(null);
-  useModalFocus(true, form, onClose);
   const [name, setName] = useState(request.type === "rename" ? request.name : "");
   const [target, setTarget] = useState("parentId" in request ? request.parentId ?? "" : "");
   const moving = request.type === "move-chat" || request.type === "move-folder";
@@ -35,9 +32,8 @@ export function ChatFolderDialog({ request, folders, onSubmit, onClose }: {
   const confirm = request.type === "create" ? "Create folder" : request.type === "rename" ? "Save name"
     : request.type === "delete" ? "Delete folder" : "Move";
   const blocked = (naming && !name.trim()) || (moving && (target || undefined) === request.parentId);
-  return createPortal(<div className="command-palette-backdrop" onMouseDown={onClose}>
-    <form className="chat-folder-dialog command-palette" ref={form} role="dialog" aria-modal="true"
-      aria-labelledby={titleId} tabIndex={-1} onMouseDown={(event) => event.stopPropagation()}
+  return <Dialog className="chat-folder-dialog" onClose={onClose}>
+    <form ref={form}
       onSubmit={(event) => {
         event.preventDefault();
         if (blocked) return;
@@ -47,26 +43,24 @@ export function ChatFolderDialog({ request, folders, onSubmit, onClose }: {
         else onSubmit({ type: request.type, id: request.id, parentId: target || undefined });
         onClose();
       }}>
-      <h2 id={titleId}>{title}</h2>
+      <DialogTitle>{title}</DialogTitle>
       {naming && <div className="field">
         <label htmlFor={fieldId}>Folder name</label>
-        <Input id={fieldId} data-autofocus autoComplete="off" maxLength={80} value={name}
+        <Input id={fieldId} autoComplete="off" maxLength={80} value={name}
           onChange={(event) => setName(event.target.value)} onFocus={(event) => {
             if (request.type === "rename") event.currentTarget.select();
           }} />
       </div>}
       {moving && <div className="field">
         <label htmlFor={fieldId}>Destination for {request.name}</label>
-        <Select id={fieldId} data-autofocus value={target} onChange={(event) => setTarget(event.target.value)}>
-          <option value="">Chats (top level)</option>
-          {destinations.map((folder) => <option key={folder.id} value={folder.id}>{folder.path}</option>)}
-        </Select>
+        <Select id={fieldId} popupContainer={form} value={target} onChange={setTarget}
+          options={[{ value: "", label: "Chats (top level)" }, ...destinations.map(({ id, path }) => ({ value: id, label: path }))]} />
       </div>}
-      {request.type === "delete" && <p>Chats and subfolders in “{request.name}” will move up one level.</p>}
+      {request.type === "delete" && <DialogDescription>Chats and subfolders in “{request.name}” will move up one level.</DialogDescription>}
       <div className="chat-folder-dialog-actions">
-        <Button variant="secondary" onClick={onClose}>Cancel</Button>
+        <DialogClose render={<Button variant="secondary">Cancel</Button>} />
         <Button variant={request.type === "delete" ? "danger" : "primary"} type="submit" disabled={blocked}>{confirm}</Button>
       </div>
     </form>
-  </div>, document.body);
+  </Dialog>;
 }

@@ -1,6 +1,4 @@
 import { memo, useEffect, useId, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
-import ChevronLeft from "lucide-react/dist/esm/icons/chevron-left.mjs";
-import ChevronRight from "lucide-react/dist/esm/icons/chevron-right.mjs";
 import Copy from "lucide-react/dist/esm/icons/copy.mjs";
 import GitBranch from "lucide-react/dist/esm/icons/git-branch.mjs";
 import Info from "lucide-react/dist/esm/icons/info.mjs";
@@ -18,7 +16,10 @@ import { replyVersions, type TextMessage } from "../lib/textThreads";
 import { ChatDocumentSources } from "./ChatDocuments";
 import { TextMarkdown } from "./TextMarkdown";
 import { TextMessageMenu, type MessageAction } from "./TextMessageMenu";
-import { Button, IconButton } from "./ui/controls";
+import { TooltipIconButton } from "./ui/Tooltip";
+import { Disclosure } from "./ui/Disclosure";
+import { VersionStepper } from "./ui/VersionStepper";
+import { Button, InlineConfirmation } from "./ui/controls";
 
 export type TextReplyProgress = { kind: "status" | "reasoning" | "answer" | "image-check"; label: string; waiting?: boolean };
 
@@ -31,42 +32,61 @@ function describeContextCount(count: number, subject: string, action: string) {
 function useStreamedText(text: string, streaming: boolean) {
   const displayed = useRef(text);
   const [visible, setVisible] = useState(text);
+  const frame = useRef<number | undefined>(undefined);
+  const target = useRef<{ text: string; step: number; graphemes: Intl.Segments } | undefined>(undefined);
   const animate = streaming && text.length <= 16_000 && !hasStreamingMarkdown(text) &&
     !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  useEffect(() => () => {
+    if (frame.current !== undefined) window.cancelAnimationFrame(frame.current);
+    frame.current = undefined;
+  }, []);
   useEffect(() => {
     if (!animate || !text.startsWith(displayed.current)) {
+      if (frame.current !== undefined) window.cancelAnimationFrame(frame.current);
+      frame.current = undefined;
+      target.current = undefined;
       displayed.current = text;
       setVisible(text);
       return;
     }
-    const step = Math.max(3, Math.ceil((text.length - displayed.current.length) / 4));
-    if (text === displayed.current) return;
-    const graphemes = segmentGraphemes(text);
-    const timer = window.setInterval(() => {
-      const next = Math.min(text.length, displayed.current.length + step);
-      // A character can include several code points, such as a joined emoji or accented letter.
-      const last = graphemes.containing(next - 1);
-      displayed.current = last ? text.slice(0, last.index + last.segment.length) : text;
+    if (text === displayed.current) {
+      target.current = undefined;
+      return;
+    }
+    target.current = { text, step: Math.max(3, Math.ceil((text.length - displayed.current.length) / 3)),
+      graphemes: segmentGraphemes(text) };
+    if (frame.current !== undefined) return;
+
+    // Keep an already scheduled frame alive when another batch arrives.
+    function reveal() {
+      frame.current = undefined;
+      const next = target.current;
+      if (!next || next.text === displayed.current) return;
+      const end = Math.min(next.text.length, displayed.current.length + next.step);
+      const last = next.graphemes.containing(end - 1);
+      displayed.current = last ? next.text.slice(0, last.index + last.segment.length) : next.text;
       setVisible(displayed.current);
-      if (displayed.current === text) window.clearInterval(timer);
-    }, 22);
-    return () => window.clearInterval(timer);
+      if (displayed.current !== next.text) frame.current = window.requestAnimationFrame(reveal);
+    }
+    if (displayed.current) frame.current = window.requestAnimationFrame(reveal);
+    else reveal();
   }, [animate, text]);
   return animate && text.startsWith(visible) ? visible : text;
 }
 
-function useReplySelection(id: string, content: string, reasoning: string | undefined, streaming: boolean) {
+function useReplySelection(id: string, content: string, reasoning: string | undefined, streaming: boolean, preview: boolean) {
   const bodyRef = useRef<HTMLDivElement>(null);
   const reasoningRef = useRef<HTMLDivElement>(null);
   const pointer = useRef<{ replyId: string; pointerId: number } | null>(null);
-  const committed = useRef({ content, reasoning, streaming });
+  const renderAsStream = streaming && !preview;
+  const committed = useRef({ content, reasoning, streaming: renderAsStream });
   const [heldReply, setHeldReply] = useState<string>();
   const holding = heldReply === id;
 
   // Native selection offsets refer to the rendered Markdown, including its text nodes.
   useLayoutEffect(() => {
-    if (!holding) committed.current = { content, reasoning, streaming };
-  }, [content, holding, reasoning, streaming]);
+    if (!holding) committed.current = { content, reasoning, streaming: renderAsStream };
+  }, [content, holding, reasoning, renderAsStream]);
 
   useLayoutEffect(() => {
     if (!streaming && !holding) return;
@@ -100,15 +120,23 @@ function useReplySelection(id: string, content: string, reasoning: string | unde
     pointer.current = { replyId: id, pointerId: event.pointerId };
     setHeldReply(id);
   };
-  return { bodyRef, reasoningRef, onPointerDown, shown: holding ? committed.current : { content, reasoning, streaming } };
+  const releaseSelection = () => {
+    pointer.current = null;
+    if (chatSelectionIntersects(bodyRef.current, reasoningRef.current)) window.getSelection()?.removeAllRanges();
+    setHeldReply(undefined);
+  };
+  return { bodyRef, reasoningRef, onPointerDown, releaseSelection,
+    shown: holding ? committed.current : { content, reasoning, streaming: renderAsStream } };
 }
 
-export const TextChatMessage = memo(function TextChatMessage({ message, initialReasoningOpen, contextVersionId, findMatch, progress, generatedImage, includedImageLabel, contextChanged, editor, promptVersions, editingAnother, onEdit, onBranch, onFork, onDelete, onDeleteRequested, confirmDelete, deleteTurn, onRetry, canRetry, onContinue, canContinue, onSelectVersion, busy }: {
+export const TextChatMessage = memo(function TextChatMessage({ message, selectionId, initialReasoningOpen, contextVersionId, findMatch, progress, previewWhileStreaming = false, generatedImage, includedImageLabel, contextChanged, editor, promptVersions, editingAnother, onEdit, onBranch, onFork, canFork, onDelete, onDeleteRequested, canDelete, confirmDelete, deleteTurn, onRetry, canRetry, onContinue, canContinue, onSelectVersion, busy }: {
   message: TextMessage;
+  selectionId?: string;
   initialReasoningOpen?: boolean;
   contextVersionId?: string;
   findMatch?: ChatSearchMatch;
   progress?: TextReplyProgress;
+  previewWhileStreaming?: boolean;
   generatedImage?: ReactNode;
   includedImageLabel?: string;
   contextChanged?: boolean;
@@ -116,10 +144,12 @@ export const TextChatMessage = memo(function TextChatMessage({ message, initialR
   promptVersions?: ReactNode;
   editingAnother?: boolean;
   onEdit?: (message: TextMessage) => void;
-  onFork?: () => void;
+  onFork?: (message: TextMessage) => void;
+  canFork: boolean;
   onBranch?: (message: TextMessage) => void;
   onDelete?: (id: string) => void;
   onDeleteRequested?: (id: string | null) => void;
+  canDelete: boolean;
   confirmDelete?: boolean;
   deleteTurn?: boolean;
   onRetry?: () => void;
@@ -135,7 +165,6 @@ export const TextChatMessage = memo(function TextChatMessage({ message, initialR
   const copyTimer = useRef<number | undefined>(undefined);
   const menuButton = useRef<HTMLButtonElement>(null);
   const editButton = useRef<HTMLButtonElement>(null);
-  const confirmationDescription = useId();
   const detailsId = useId();
   const wasEditing = useRef(false);
   const editing = !!editor;
@@ -144,12 +173,13 @@ export const TextChatMessage = memo(function TextChatMessage({ message, initialR
   const reasoningExpanded = revealReasoning || reasoningOpen;
   const streaming = !!progress;
   const assistant = message.role === "assistant";
-  const animatedContent = useStreamedText(message.content, progress?.kind === "answer");
-  const { bodyRef, reasoningRef, onPointerDown, shown } = useReplySelection(message.id, animatedContent, message.reasoning, streaming);
+  const animatedContent = useStreamedText(message.content, progress?.kind === "answer" && !previewWhileStreaming);
+  const { bodyRef, reasoningRef, onPointerDown, releaseSelection, shown } = useReplySelection(selectionId ?? message.id, animatedContent, message.reasoning, streaming, previewWhileStreaming);
   const { content, reasoning } = shown;
   const hasAnswer = !!content.trim();
-  const showCursor = progress?.kind === "answer" && hasAnswer;
-  const reasoningInProgress = progress?.kind === "reasoning" && !!message.reasoning;
+  const showCursor = progress?.kind === "answer" && hasAnswer && shown.streaming;
+  const cursorState = progress?.kind === "answer" && progress.waiting ? "waiting" : "active";
+  const reasoningInProgress = progress?.kind === "reasoning" && !!message.reasoning && !previewWhileStreaming;
   const checkingImageInCaption = progress?.kind === "image-check" && !!generatedImage;
   const indicator = progress && <span className="text-thinking"><LoaderCircle className="spinner" size={15} aria-hidden="true" />{progress.label}</span>;
   const stoppedNote = hasAnswer ? "Stopped · Partial response" : message.generatedImage ? "Stopped · Image saved"
@@ -160,7 +190,7 @@ export const TextChatMessage = memo(function TextChatMessage({ message, initialR
   const versions = onSelectVersion && message.alternatives?.length ? replyVersions(message) : [];
   const version = versions.findIndex((item) => item.id === message.id);
   const contextVersion = versions.findIndex((item) => item.id === contextVersionId);
-  const showDetails = detailsFor?.id === message.id;
+  const showDetails = !streaming && detailsFor?.id === message.id;
   const showContextDetails = showDetails && detailsFor?.placement === "context";
   const requestContext = message.requestContext;
   const runtimeContext = message.metrics?.context;
@@ -198,7 +228,7 @@ export const TextChatMessage = memo(function TextChatMessage({ message, initialR
   if (assistant) actions.push({ label: showDetails ? "Hide response details" : "Response details", icon: Info,
     run: () => setDetailsFor(showDetails ? undefined : { id: message.id, placement: "actions" }) });
   if (onDelete && onDeleteRequested) actions.push({ label: assistant ? "Delete reply" : "Delete message", icon: Trash2,
-    run: () => onDeleteRequested(targetId), destructive: true });
+    run: () => onDeleteRequested(targetId), destructive: true, disabled: !canDelete });
 
   const detailPanel = showDetails ? <div className={`text-response-details${showContextDetails ? " text-response-details--context" : ""}`} id={detailsId} role="region" aria-label="Response details">
     <span className="text-message-label">{modelName ?? "Local model"}</span>
@@ -219,7 +249,7 @@ export const TextChatMessage = memo(function TextChatMessage({ message, initialR
   return (
     <article className={`text-message text-message--${message.role}${streaming ? " text-message--streaming" : ""}${editing ? " text-message--editing" : ""}`} tabIndex={-1} aria-live={streaming || editing ? "off" : undefined} data-chat-message={targetId} data-find-match={!!findMatch || undefined}
       aria-label={streaming ? "Response in progress" : assistant ? "Model response" : "Your message"}>
-      {assistant && <div className="text-response-author">{modelName ?? "Assistant"}</div>}
+      {assistant && <div className="text-response-author">{previewWhileStreaming ? "Previous reply" : modelName ?? "Assistant"}</div>}
       {contextNotice && <div className="text-context-note text-reply-context-note">
         <span>{contextNotice}</span>
         <Button variant="ghost" aria-expanded={showContextDetails} aria-controls={showContextDetails ? detailsId : undefined}
@@ -229,48 +259,53 @@ export const TextChatMessage = memo(function TextChatMessage({ message, initialR
       {message.image && <img className="text-message-image" src={resolveAssetUrl(`/references/${message.image}`)} alt="Attached chat image" />}
       {message.includedImage && <p className="text-context-note">Selected image: {includedImageLabel ?? message.includedImage}</p>}
       {generatedImage}
-      {reasoning && <details className="text-reasoning" open={reasoningExpanded} onToggle={(event) => {
-        if (!revealReasoning && event.currentTarget.open !== reasoningExpanded) setReasoningOpen(event.currentTarget.open);
-      }}>
-        <summary onClick={revealReasoning ? (event) => event.preventDefault() : undefined}>{reasoningInProgress ? indicator : "Reasoning"}</summary>
+      {reasoning && <Disclosure className="text-reasoning" label={reasoningInProgress ? indicator : "Reasoning"}
+        open={reasoningOpen} lockOpen={revealReasoning} onOpenChange={setReasoningOpen}>
         {reasoningExpanded && <div ref={reasoningRef} onPointerDown={onPointerDown} data-find-target={revealReasoning || undefined}><TextMarkdown content={reasoning} streaming={shown.streaming} /></div>}
-      </details>}
+      </Disclosure>}
       {editing && findSection === "body" && <div className="text-find-original"><span>Current prompt</span><p data-find-target>{message.content}</p></div>}
       {editing ? editor : <div ref={bodyRef} onPointerDown={onPointerDown} className="text-message-content" data-find-target={findSection === "body" || undefined}>
-        {assistant ? content && <TextMarkdown content={content} streaming={shown.streaming} /> : content}
-        {showCursor ? <span className="text-stream-cursor" data-waiting={progress.waiting || undefined} aria-hidden="true" /> : !reasoningInProgress && !checkingImageInCaption && indicator}
+        {assistant ? (streaming || content) && <TextMarkdown content={content} streaming={shown.streaming} receivingReply={streaming}
+          cursor={showCursor ? cursorState : undefined} /> : content}
+        {!showCursor && !reasoningInProgress && !checkingImageInCaption && indicator}
       </div>}
       {!!message.metrics?.documentSources?.length && <ChatDocumentSources sources={message.metrics.documentSources} />}
-      {message.status === "failed" && <div className="text-error">
+      {!streaming && message.status === "failed" && <div className="text-error">
         {message.error ?? "Generation failed. Retry the response."}
         {message.errorCode === "intel-vulkan-driver" && window.studio.platform === "win32" && <a href="https://www.intel.com/content/www/us/en/support/detect.html" target="_blank" rel="noreferrer">Get Intel graphics drivers</a>}
       </div>}
-      {(recoveryNote || onContinue) && <div className="text-reply-recovery">
+      {!streaming && (recoveryNote || onContinue) && <div className="text-reply-recovery">
         {recoveryNote && <span>{recoveryNote}</span>}
         {onContinue && <Button variant="secondary" disabled={!canContinue} onClick={() => onContinue(message.id)}>Continue response</Button>}
       </div>}
       {!streaming && !editing && <div className="text-message-tools">
-        {message.content.trim() && <IconButton className="text-icon-button" aria-label={copied ? "Copied" : "Copy message"} title={copied ? "Copied" : "Copy message"} onClick={() => void copy()}><Copy size={15} aria-hidden="true" /></IconButton>}
-        {onEdit && <IconButton ref={editButton} className="text-icon-button" aria-label="Edit message" title={editingAnother ? "Finish or cancel the open prompt edit first" : "Edit message"} disabled={editingAnother} onClick={() => onEdit(message)}><Pencil size={15} aria-hidden="true" /></IconButton>}
-        {onFork && <IconButton className="text-icon-button" aria-label="Fork chat here" title="Fork chat here" onClick={onFork}><GitBranch size={15} aria-hidden="true" /></IconButton>}
-        {onRetry && <IconButton className="text-icon-button" aria-label={retryLabel} title={canRetry ? retryLabel : "Select a model that can use the last prompt to retry"} disabled={!canRetry} onClick={onRetry}><RotateCcw size={15} aria-hidden="true" /></IconButton>}
-        {actions.length > 0 && <TextMessageMenu actions={actions} trigger={menuButton} />}
+        {message.content.trim() && <TooltipIconButton className="text-icon-button" aria-label={copied ? "Copied" : "Copy message"}
+          tooltip={copied ? "Copied" : "Copy message"} tooltipSide="bottom" onClick={() => void copy()}><Copy size={15} aria-hidden="true" /></TooltipIconButton>}
+        {onEdit && <TooltipIconButton ref={editButton} className="text-icon-button" aria-label="Edit message"
+          tooltip={editingAnother ? "Finish or cancel the open prompt edit first" : "Edit message"} tooltipSide="bottom"
+          disabled={editingAnother} onClick={() => onEdit(message)}><Pencil size={15} aria-hidden="true" /></TooltipIconButton>}
+        {onFork && <TooltipIconButton className="text-icon-button" aria-label="Fork chat here"
+          tooltip="Fork chat here" tooltipSide="bottom" disabled={!canFork} onClick={() => onFork(message)}><GitBranch size={15} aria-hidden="true" /></TooltipIconButton>}
+        {onRetry && <TooltipIconButton className="text-icon-button" aria-label={retryLabel}
+          tooltip={canRetry ? retryLabel : "Select a model that can use the last prompt to retry"} tooltipSide="bottom"
+          disabled={!canRetry} onClick={onRetry}><RotateCcw size={15} aria-hidden="true" /></TooltipIconButton>}
+        {actions.length > 0 && <TextMessageMenu actions={actions} trigger={menuButton} align={assistant ? "start" : "end"} />}
         {message.metrics && <span className="text-response-speed">{message.metrics.tokensPerSecond.toFixed(1)} tok/s</span>}
-        {versions.length > 1 && <div className="text-response-versions" aria-label="Response versions" role="group">
-          <IconButton aria-label="Previous response version" title="Previous response version" disabled={busy || version === 0} onClick={() => onSelectVersion?.(contextVersionId ?? message.id, versions[version - 1].id)}><ChevronLeft size={14} aria-hidden="true" /></IconButton>
-          <span aria-live="polite">{version + 1} / {versions.length}</span>
-          <IconButton aria-label="Next response version" title="Next response version" disabled={busy || version === versions.length - 1} onClick={() => onSelectVersion?.(contextVersionId ?? message.id, versions[version + 1].id)}><ChevronRight size={14} aria-hidden="true" /></IconButton>
-        </div>}
+        {versions.length > 1 && <VersionStepper label="Response versions" previousLabel="Previous response version"
+          nextLabel="Next response version" index={version} count={versions.length} disabled={busy}
+          onChange={(index) => {
+            releaseSelection();
+            onSelectVersion?.(contextVersionId ?? message.id, versions[index].id);
+          }} />}
         {contextVersion >= 0 && contextVersion !== version && <span className="text-response-preview" role="status">Chat uses version {contextVersion + 1}</span>}
         {copied && <span className="sr-only" role="status">Copied</span>}
       </div>}
       {promptVersions}
-      {!editing && confirmDelete && onDelete && <div className="text-message-delete" role="group" aria-label="Confirm message deletion" aria-describedby={confirmationDescription} onKeyDown={(event) => {
-        if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); cancelDelete(); }
-      }}>
-        <p id={confirmationDescription}>{deleteTurn ? "Delete this message and its reply?" : assistant && message.alternatives?.length ? "Delete this reply and its other versions?" : assistant ? "Delete this reply?" : "Delete this message?"}</p>
-        <div><Button variant="secondary" autoFocus onClick={cancelDelete}>Cancel</Button><Button variant="danger" onClick={() => onDelete(targetId)}>Delete</Button></div>
-      </div>}
+      {!editing && confirmDelete && onDelete && <InlineConfirmation className="text-message-delete"
+        label="Confirm message deletion" confirmLabel="Delete" onCancel={cancelDelete} onConfirm={() => onDelete(targetId)}>
+        {deleteTurn ? "Delete this message and its reply?" : assistant && message.alternatives?.length
+          ? "Delete this reply and its other versions?" : assistant ? "Delete this reply?" : "Delete this message?"}
+      </InlineConfirmation>}
       {!showContextDetails && detailPanel}
     </article>
   );

@@ -206,6 +206,7 @@ export interface TextRuntimeStatus {
   ggufAvailable?: boolean;
   ggufUnavailableReason?: string | null;
   supportsJobPolling?: boolean;
+  supportsJobEvents?: boolean;
   supportsPendingStop?: boolean;
   devices: TextDevice[];
   job: TextJob;
@@ -449,7 +450,7 @@ export function replaceLatestPromptVersion(thread: TextThread, messageId: string
   ];
 }
 
-export function findChatImage(thread: TextThread, name: string | undefined): GeneratedChatImage | undefined {
+export function findChatImage(thread: Pick<TextThread, "messages">, name: string | undefined): GeneratedChatImage | undefined {
   if (!name) return;
   const imageFrom = (message: TextMessage | undefined) => message?.generatedImage?.name === name
     ? message.generatedImage : message?.generatedImages?.find((image) => image.name === name) ?? message?.alternatives?.find((item) => item.generatedImage?.name === name)?.generatedImage;

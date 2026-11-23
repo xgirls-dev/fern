@@ -1,3 +1,4 @@
+import { chooseSelectOption } from "./select-option.mjs";
 import assert from "node:assert/strict";
 import { expect } from "@playwright/test";
 import { fixture } from "./ui-fixture.mjs";
@@ -28,10 +29,10 @@ try {
   await page.getByLabel("Temperature value", { exact: true }).fill("0.137");
   await page.getByLabel("Top P value", { exact: true }).fill("0.035");
   await page.getByText("Advanced model loading", { exact: true }).click();
-  await page.getByLabel("Flash Attention", { exact: true }).selectOption("on");
+  await chooseSelectOption(page.getByLabel("Flash Attention", { exact: true }), "On");
   await page.getByLabel("Prompt batch size", { exact: true }).fill("1024");
   await page.getByLabel("Microbatch size", { exact: true }).fill("256");
-  await page.getByLabel("KV key precision", { exact: true }).selectOption("q8_0");
+  await chooseSelectOption(page.getByLabel("KV key precision", { exact: true }), "q8_0");
   await page.getByText("Advanced sampling", { exact: true }).click();
   await page.getByLabel("Top K", { exact: true }).fill("32");
   await page.getByLabel("Min P", { exact: true }).fill("0.07");
@@ -44,7 +45,7 @@ try {
   await button("Save as preset").click();
   await button("Save model defaults").click();
   await button("Image").click();
-  await page.getByRole("combobox", { name: "Resolution", exact: true }).selectOption("1024x768");
+  await chooseSelectOption(page.getByRole("combobox", { name: "Resolution", exact: true }), "1024 × 768 · Landscape 4:3");
   assert.equal(await page.getByLabel("Width", { exact: true }).inputValue(), "1024");
   await page.getByLabel("Width", { exact: true }).fill("2064");
   await page.getByLabel("Step count", { exact: true }).fill("60");
@@ -55,17 +56,17 @@ try {
   await button("Cinematic").click();
   await button("Anime").click();
   await button("Anime").click();
-  await page.getByLabel("Image generation model", { exact: true }).selectOption("4b");
+  await chooseSelectOption(page.getByLabel("Image generation model", { exact: true }), "Klein 4B");
   assert.equal(await page.getByLabel("Width", { exact: true }).inputValue(), "512");
-  await page.getByLabel("Image generation model", { exact: true }).selectOption("qwen21-turbo");
+  await chooseSelectOption(page.getByLabel("Image generation model", { exact: true }), "Qwen Turbo");
   assert.equal(await page.getByLabel("Width", { exact: true }).getAttribute("step"), "32");
   assert.equal(await page.getByLabel("Step count", { exact: true }).isVisible(), false);
   assert.equal(await page.getByLabel("Images per render", { exact: true }).isDisabled(), true);
-  await page.getByLabel("Image generation model", { exact: true }).selectOption("custom-example");
+  await chooseSelectOption(page.getByLabel("Image generation model", { exact: true }), "My SDXL");
   assert.equal(await page.getByLabel("Width", { exact: true }).inputValue(), "896");
   assert.equal(await page.getByLabel("Width", { exact: true }).getAttribute("step"), "8");
   assert.equal(await page.getByLabel("Step count", { exact: true }).inputValue(), "28");
-  await page.getByLabel("Image generation model", { exact: true }).selectOption("kromoss-opd-dmd2");
+  await chooseSelectOption(page.getByLabel("Image generation model", { exact: true }), "Kromoss");
   assert.equal(await page.getByLabel("Width", { exact: true }).inputValue(), "2064");
   await page.getByRole("textbox", { name: "Message", exact: true }).fill("Use these chat settings.");
   await button("Send message").click();
@@ -86,7 +87,7 @@ try {
   assert.equal(await page.getByLabel("Temperature value", { exact: true }).inputValue(), "0.137");
   assert.equal(await page.getByLabel("Top P value", { exact: true }).inputValue(), "0.035");
   await page.getByText("Advanced model loading", { exact: true }).click();
-  assert.equal(await page.getByLabel("KV key precision", { exact: true }).inputValue(), "q8_0");
+  assert.equal(await page.getByLabel("KV key precision", { exact: true }).innerText(), "q8_0");
   await page.getByText("Advanced sampling", { exact: true }).click();
   assert.equal(await page.getByLabel("Top K", { exact: true }).inputValue(), "32");
   await button("Image").click();
@@ -112,7 +113,7 @@ try {
   await output.fill("1000");
   const presets = page.getByText("Chat presets", { exact: true });
   if (!(await page.getByLabel("Saved preset").isVisible())) await presets.click();
-  await page.getByLabel("Saved preset").selectOption({ label: "Concise answers" });
+  await chooseSelectOption(page.getByLabel("Saved preset"), "Concise answers");
   await button("Apply preset").click();
   await expect(systemPrompt).toHaveValue("Keep the answer concise.");
   await expect(context).toHaveValue("28000");

@@ -1,3 +1,4 @@
+import { chooseSelectOption, openSelect } from "../../../tests/select-option.mjs";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -106,6 +107,7 @@ try {
   }
   const bridge = await page.evaluate(async () => ({
     url: await window.studio.getApiBaseUrl(),
+    platform: window.studio.platform,
     isolated: typeof window.studio === "object" && typeof process === "undefined" && typeof require === "undefined",
   }));
   assert.equal(bridge.url, apiBaseUrl, "The preload bridge should keep the assigned API URL");
@@ -115,6 +117,54 @@ try {
   await expect(page.getByRole("textbox", { name: "Message", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Create image", exact: true }).click();
   await captureWindow(page, path.join(scratchRoot, "electron-create.png"));
+  let coverage;
+  if (bridge.platform === "darwin") {
+    await verifyMacControls(page);
+    coverage = "MLX canvas settings, seed popover, Models navigation, and chat creation";
+  } else {
+    await verifyOpenVinoControls(page, modelIndexPath, customModelPath);
+    coverage = "multi-reference persistence, Models navigation, family and repository controls, dialog IPC, local model add/remove, composer model selection, cancellation, and source preservation";
+  }
+  assert.deepEqual(pageErrors, [], `Renderer errors: ${pageErrors.join(" | ")}`);
+  assert.deepEqual(consoleErrors, [], `Console errors: ${consoleErrors.join(" | ")}`);
+
+  console.log(`Electron smoke passed: ${visible ? "visible" : "hidden"} main window, real preload/API bridge, ${coverage}.`);
+  console.log(`Isolated profile: ${profilePath}`);
+  succeeded = true;
+} finally {
+  if (electronApp) await electronApp.close().catch(() => {});
+  if (succeeded) await rm(scratchRoot, { recursive: true, force: true, maxRetries: 40, retryDelay: 250 });
+  else console.error(`Electron smoke artifacts retained for debugging: ${scratchRoot}`);
+}
+
+
+async function verifyMacControls(page) {
+  const button = (name) => page.getByRole("button", { name, exact: true });
+  await expect(page.getByRole("textbox", { name: "Image prompt", exact: true })).toBeVisible();
+  await expect(page.getByLabel("Reference image file")).toHaveCount(0);
+  await page.locator(".workspace-header").getByRole("button", { name: "Image settings", exact: true }).click();
+  await expect(page.getByRole("combobox", { name: "Resolution", exact: true })).toHaveText("512 × 512");
+  await button("Close image settings").click();
+  const seedTrigger = button("Seed settings");
+  const seedPanel = page.getByRole("dialog", { name: "Seed settings", exact: true });
+  const seed = seedPanel.getByRole("textbox", { name: "Seed", exact: true });
+  await seedTrigger.press("Enter");
+  await expect(seed).toBeFocused();
+  await seed.fill("8726");
+  await seed.press("Escape");
+  await expect(seedPanel).toHaveCount(0);
+  await expect(seedTrigger).toBeFocused();
+  await seedTrigger.click();
+  await expect(seed).toHaveValue("8726");
+  await button("Models").click();
+  await expect(page.getByRole("heading", { name: "Image models", exact: true })).toBeVisible();
+  await expect(page.getByText("Add custom model", { exact: true })).toHaveCount(0);
+  await page.locator(".sidebar-new-menu").getByRole("button", { name: "New thread", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Chat", exact: true }).click();
+  await expect(page.getByRole("textbox", { name: "Message", exact: true })).toBeFocused();
+}
+
+async function verifyOpenVinoControls(page, modelIndexPath, customModelPath) {
   const referencePng = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=", "base64");
   await page.getByLabel("Reference image file").setInputFiles([{ name: "reference-one.png", mimeType: "image/png", buffer: referencePng }, { name: "reference-two.png", mimeType: "image/png", buffer: referencePng }]);
   await expect(page.locator(".composer-reference")).toHaveCount(2);
@@ -133,10 +183,11 @@ try {
   await page.getByText("Add custom model", { exact: true }).click();
 
   const familyPicker = page.getByRole("combobox", { name: "Custom image model family" });
-  await expect(familyPicker).toHaveValue("sdxl");
-  await expect(familyPicker.locator("option")).toHaveCount(6);
-  await familyPicker.selectOption("flux2-klein");
-  await familyPicker.selectOption("sdxl");
+  await expect(familyPicker).toHaveText("Stable Diffusion XL");
+  await expect((await openSelect(familyPicker)).getByRole("option")).toHaveCount(6);
+  await familyPicker.press("Escape");
+  await chooseSelectOption(familyPicker, "FLUX.2 Klein");
+  await chooseSelectOption(familyPicker, "Stable Diffusion XL");
   const repoInput = page.getByRole("textbox", { name: "Hugging Face repository" });
   await expect(page.getByRole("button", { name: "Download", exact: true })).toBeDisabled();
   await repoInput.fill("https://example.com/owner/model");
@@ -215,14 +266,4 @@ try {
   if (await expandSidebar.isVisible()) await expandSidebar.click();
   await imageThreads.locator(`.sidebar-thread-button[data-thread-id="${selectedImageThreadId}"]`).click();
   await expect(page.getByRole("button", { name: "Image model: Custom model · Missing" })).toBeVisible();
-  assert.deepEqual(pageErrors, [], `Renderer errors: ${pageErrors.join(" | ")}`);
-  assert.deepEqual(consoleErrors, [], `Console errors: ${consoleErrors.join(" | ")}`);
-
-  console.log(`Electron smoke passed: ${visible ? "visible" : "hidden"} main window, real preload/API bridge, multi-reference persistence, Models navigation, family/repository controls, dialog IPC, local model add/remove, composer model selection, cancellation, and source preservation.`);
-  console.log(`Isolated profile: ${profilePath}`);
-  succeeded = true;
-} finally {
-  if (electronApp) await electronApp.close().catch(() => {});
-  if (succeeded) await rm(scratchRoot, { recursive: true, force: true, maxRetries: 40, retryDelay: 250 });
-  else console.error(`Electron smoke artifacts retained for debugging: ${scratchRoot}`);
 }

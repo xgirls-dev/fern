@@ -1,3 +1,4 @@
+import { chooseSelectOption } from "../../../tests/select-option.mjs";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -105,7 +106,7 @@ try {
     await page.getByRole("button", { name: "Chat settings" }).click();
     await page.getByLabel("Temperature", { exact: true }).press("Home");
     await page.getByRole("button", { name: "Close chat settings" }).click();
-    await page.getByLabel("Response mode", { exact: true }).selectOption(test.mode);
+    await chooseSelectOption(page.getByLabel("Response mode", { exact: true }), test.mode === "reasoning" ? "Reasoning" : "Instant");
     if (test.color) {
       await page.getByLabel("Chat image file").setInputFiles(await makeImage(page, test.color));
       await expect(page.getByAltText("Image to send")).toBeVisible();

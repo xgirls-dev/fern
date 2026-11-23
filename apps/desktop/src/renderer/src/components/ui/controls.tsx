@@ -1,4 +1,5 @@
-import type { ComponentProps, ReactNode, Ref } from "react";
+import { useId, type ComponentProps, type ReactNode, type Ref } from "react";
+export { Select } from "./Select";
 
 type ButtonProps = ComponentProps<"button"> & {
   variant?: "primary" | "secondary" | "ghost" | "danger";
@@ -29,12 +30,8 @@ export function Input({ className = "", ...props }: ComponentProps<"input">) {
   return <input className={`ui-field ${className}`} {...props} />;
 }
 
-export function Textarea({ className = "", ...props }: ComponentProps<"textarea">) {
-  return <textarea className={`ui-textarea ${className}`} {...props} />;
-}
-
-export function Select({ className = "", ...props }: ComponentProps<"select">) {
-  return <select className={`ui-field ui-select ${className}`} {...props} />;
+export function Textarea({ autosize = false, className = "", ...props }: ComponentProps<"textarea"> & { autosize?: boolean }) {
+  return <textarea className={`ui-textarea${autosize ? " ui-textarea--autosize" : ""} ${className}`} {...props} />;
 }
 
 export function ChoiceCard({ selected, className = "", ...props }: ComponentProps<"button"> & { selected: boolean }) {
@@ -99,18 +96,23 @@ export function ModelCardActions({ children }: { children: ReactNode }) {
   return <div className="ui-model-actions model-library-actions">{children}</div>;
 }
 
-export function InlineConfirmation({ children, confirmLabel, disabled = false, cancelDisabled = false, onCancel, onConfirm }: {
+export function InlineConfirmation({ children, confirmLabel, label = "Confirm removal", className = "",
+  disabled = false, cancelDisabled = false, onCancel, onConfirm }: {
   children: ReactNode;
   confirmLabel: string;
+  label?: string;
+  className?: string;
   disabled?: boolean;
   cancelDisabled?: boolean;
   onCancel: () => void;
   onConfirm: () => void;
 }) {
-  return <div className="ui-inline-confirmation" role="group" aria-label="Confirm removal" onKeyDown={(event) => {
-    if (event.key === "Escape" && !cancelDisabled) { event.stopPropagation(); onCancel(); }
-  }}>
-    <p>{children}</p>
+  const descriptionId = useId();
+  return <div className={`ui-inline-confirmation ${className}`} role="group" aria-label={label} aria-describedby={descriptionId}
+    onKeyDown={(event) => {
+      if (event.key === "Escape" && !cancelDisabled) { event.preventDefault(); event.stopPropagation(); onCancel(); }
+    }}>
+    <p id={descriptionId}>{children}</p>
     <div className="ui-inline-confirmation-actions">
       <Button autoFocus disabled={cancelDisabled} onClick={onCancel}>Cancel</Button>
       <Button variant="danger" disabled={disabled} onClick={onConfirm}>{confirmLabel}</Button>

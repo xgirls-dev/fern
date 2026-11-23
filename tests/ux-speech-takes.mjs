@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { expect } from "@playwright/test";
 import { fixture } from "./ui-fixture.mjs";
 
 const { page, dir, errors, close } = await fixture({ viewport: { width: 1080, height: 720 } });
@@ -28,8 +29,15 @@ try {
       ] }],
     }));
     window.savedTake = null;
+    window.copiedTake = null;
+    window.deletedTakes = [];
     queueMicrotask(() => {
       window.studio.saveOutputAudio = async (name) => { window.savedTake = name; return "/tmp/saved-take.wav"; };
+      window.studio.copyText = async (text) => { window.copiedTake = text; };
+      window.studio.deleteOutputAudio = async (name) => {
+        window.deletedTakes.push(name);
+        if (window.deletedTakes.length === 1) throw new Error("The WAV is in use.");
+      };
     });
   });
   await page.reload({ waitUntil: "domcontentloaded", timeout: 30_000 });
@@ -61,25 +69,96 @@ try {
   assert.equal(await page.evaluate(() => window.savedTake), "one.wav");
   await second.getByRole("button", { name: "Use setup", exact: true }).click();
   assert.equal(await page.getByLabel("Text to speak").inputValue(), "Thanks for listening.");
-  assert.equal(await page.getByLabel("Preset speaker").inputValue(), "Ryan");
-  const overflow = first.getByLabel("More actions for Station intro");
-  const reuseScript = first.getByRole("button", { name: "Use script only" });
-  await overflow.focus();
-  await page.keyboard.press("Enter");
-  await reuseScript.waitFor();
-  await reuseScript.focus();
+  const speaker = page.getByRole("combobox", { name: /^Preset speaker/ });
+  await expect(speaker).toHaveText("Ryan");
+  const rename = first.getByRole("button", { name: "Rename Station intro", exact: true });
+  await rename.click();
+  const takeName = first.getByRole("textbox", { name: "Take name", exact: true });
+  await expect(takeName).toBeFocused();
+  await takeName.press("Escape");
+  await expect(rename).toBeFocused();
+  const takeDetails = first.locator("summary").filter({ hasText: "Script and voice settings" });
+  await takeDetails.press("Enter");
+  await expect(first.getByText("You are listening to Fern.")).toBeVisible();
+  await takeDetails.press("Space");
+  await expect(first.getByText("You are listening to Fern.")).toBeHidden();
+
+  const overflow = first.getByRole("button", { name: "More actions for Station intro", exact: true });
+  const menu = page.getByRole("menu", { name: "Actions for Station intro", exact: true });
+  const reuseScript = menu.getByRole("menuitem", { name: "Use script only", exact: true });
+  await overflow.press("ArrowDown");
+  await expect(reuseScript).toBeFocused();
   await page.keyboard.press("Escape");
-  await reuseScript.waitFor({ state: "hidden" });
-  assert(await overflow.evaluate((element) => document.activeElement === element));
-  await page.keyboard.press("Space");
-  await reuseScript.click();
-  assert.equal(await page.getByLabel("Text to speak").inputValue(), "You are listening to Fern.");
-  assert.equal(await page.getByLabel("Preset speaker").inputValue(), "Ryan");
+  await expect(menu).toHaveCount(0);
+  await expect(overflow).toBeFocused();
+  await overflow.press("Space");
+  await expect(reuseScript).toBeFocused();
+  await page.keyboard.press("c");
+  await expect(menu.getByRole("menuitem", { name: "Copy script", exact: true })).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect.poll(() => page.evaluate(() => window.copiedTake)).toBe("You are listening to Fern.");
+  await expect(overflow).toBeFocused();
+  await overflow.press("ArrowDown");
+  await reuseScript.press("Enter");
+  const script = page.getByLabel("Text to speak");
+  await expect(script).toHaveValue("You are listening to Fern.");
+  await expect(script).toBeFocused();
+  await expect(speaker).toHaveText("Ryan");
+
+  await page.setViewportSize({ width: 864, height: 510 });
+  await overflow.scrollIntoViewIfNeeded();
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await overflow.click();
+  await expect(menu).toBeVisible();
+  const scrollport = await overflow.evaluateHandle((trigger) => {
+    for (let ancestor = trigger.parentElement; ancestor; ancestor = ancestor.parentElement) {
+      if (/auto|scroll/.test(getComputedStyle(ancestor).overflowY) && ancestor.scrollHeight > ancestor.clientHeight) return ancestor;
+    }
+    throw new Error("The compact take needs a scrollable ancestor");
+  });
+  const beforeScroll = await scrollport.evaluate((element) => element.scrollTop);
+  const afterScroll = await scrollport.evaluate((element) => {
+    element.scrollTop += element.scrollTop >= 32 ? -32 : 32;
+    return element.scrollTop;
+  });
+  assert.notEqual(afterScroll, beforeScroll);
+  await expect(menu).toHaveCount(0);
+  assert.equal(await scrollport.evaluate((element) => element.scrollTop), afterScroll, "Closing the menu preserves the new scroll position");
+  await scrollport.dispose();
+  await page.setViewportSize({ width: 1080, height: 720 });
+
+  await overflow.click();
   await page.screenshot({ path: `${dir}/speech-takes-win32-fixture-light-1080x720.png` });
   await page.evaluate(() => document.documentElement.dataset.theme = "dark");
   await page.screenshot({ path: `${dir}/speech-takes-win32-fixture-dark-1080x720.png` });
+  await menu.getByRole("menuitem", { name: "Delete take", exact: true }).click();
+  const confirmation = page.getByRole("alertdialog", { name: "Move this take to Recycle Bin?", exact: true });
+  const cancel = confirmation.getByRole("button", { name: "Cancel", exact: true });
+  const moveToTrash = confirmation.getByRole("button", { name: "Move to Recycle Bin", exact: true });
+  await expect(cancel).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(confirmation).toHaveCount(0);
+  await expect(overflow).toBeFocused();
+  assert.deepEqual(await page.evaluate(() => window.deletedTakes), []);
+  await overflow.click();
+  await menu.getByRole("menuitem", { name: "Delete take", exact: true }).click();
+  await moveToTrash.click();
+  await expect(confirmation.getByRole("alert")).toHaveText("The WAV is in use.");
+  const firstCard = page.locator('[data-output-name="one.wav"]');
+  await expect(firstCard).toBeAttached();
+  await moveToTrash.click();
+  await expect(confirmation).toHaveCount(0);
+  await expect(firstCard).toHaveCount(0);
+  await expect(second.getByRole("button", { name: "Play Station sign-off", exact: true })).toBeFocused();
+  await second.getByRole("button", { name: "More actions for Station sign-off", exact: true }).click();
+  await page.getByRole("menu", { name: "Actions for Station sign-off", exact: true })
+    .getByRole("menuitem", { name: "Delete take", exact: true }).click();
+  await moveToTrash.click();
+  await expect(confirmation).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Takes 0", exact: true })).toBeFocused();
+  assert.deepEqual(await page.evaluate(() => window.deletedTakes), ["one.wav", "one.wav", "two.wav"]);
   assert.deepEqual(errors, []);
-  console.log("Speech playback, favorites, export bridge and both reuse actions passed.");
+  console.log("Speech playback, favorites, export, reuse, keyboard menus, and safe take deletion passed.");
 } finally {
   await close();
 }

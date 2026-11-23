@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {expect} from '@playwright/test';
 import {fixture} from './ui-fixture.mjs';
 const {page,state,errors,dir,close}=await fixture();
 const choose=()=>page.locator('.composer-model-trigger');
@@ -9,13 +10,13 @@ async function oneRow(){
  const rect=await page.locator('.prompt-composer').boundingBox();for(const b of boxes)assert(b.x>=rect.x && b.x+b.width<=rect.x+rect.width,'Controls stay inside composer');
 }
 async function contained(selector,edge){
- const {panel,composer,toolbar}=await page.evaluate(selector=>({
-  panel:document.querySelector(selector).getBoundingClientRect().toJSON(),
-  composer:document.querySelector('.prompt-composer').getBoundingClientRect().toJSON(),
-  toolbar:document.querySelector(selector === '.composer-model-menu' ? '.composer-model-anchor' : '.composer-toolbar').getBoundingClientRect().toJSON(),
- }),selector);
- assert(panel.x>=composer.x && panel.x+panel.width<=composer.x+composer.width,'Popover stays within composer edges');
- assert(Math.abs(edge==='left'?panel.x-toolbar.x:panel.x+panel.width-toolbar.x-toolbar.width)<1,'Popover aligns with toolbar inset');
+ await expect.poll(() => page.evaluate(({selector, edge}) => {
+  const panel=document.querySelector(selector)?.getBoundingClientRect();
+  const composer=document.querySelector('.prompt-composer').getBoundingClientRect();
+  const toolbar=document.querySelector(selector === '.composer-model-menu' ? '.composer-model-anchor' : '.composer-toolbar').getBoundingClientRect();
+  return !!panel && panel.left>=composer.left && panel.right<=composer.right &&
+   Math.abs(edge==='left'?panel.left-toolbar.left:panel.right-toolbar.right)<1;
+ },{selector,edge}),{message:'Popover must stay inside the composer and align with its trigger'}).toBe(true);
 }
 try {
  await page.setViewportSize({width:1080,height:720});
@@ -32,8 +33,30 @@ try {
  await page.screenshot({path:`${dir}/composer-model-popover.png`});
  await page.keyboard.press('Escape');assert.equal(await menu.count(),0);assert(await choose().evaluate(el=>el===document.activeElement));
  await choose().click();await page.locator('#prompt').click({ position: { x: 8, y: 8 } });assert.equal(await menu.count(),0);
- await choose().focus();await page.keyboard.press('ArrowDown');await page.keyboard.press('ArrowDown');await page.keyboard.press('Enter');assert.equal(await menu.count(),0);assert((await choose().innerText()).includes('4B'));
- await page.getByRole('button',{name:'Seed settings',exact:true}).click();await contained('.seed-popover','left');await page.screenshot({path:`${dir}/composer-seed-popover.png`});await page.getByRole('textbox',{name:'Seed',exact:true}).fill('1234567890123');await choose().click();assert.equal(await page.getByRole('dialog',{name:'Seed settings',exact:true}).count(),0);
+ await choose().focus();await page.keyboard.press('ArrowDown');
+ await expect(menu.getByRole('menuitemradio',{name:'Klein 9B',exact:true})).toBeFocused();
+ await page.keyboard.press('ArrowDown');
+ await expect(menu.getByRole('menuitemradio',{name:'Klein 4B',exact:true})).toBeFocused();
+ await page.keyboard.press('Enter');
+ await expect(menu).toHaveCount(0);
+ await expect(choose()).toContainText('4B');
+ const seedTrigger=page.getByRole('button',{name:'Seed settings',exact:true});
+ const seedPanel=page.getByRole('dialog',{name:'Seed settings',exact:true});
+ const seed=seedPanel.getByRole('textbox',{name:'Seed',exact:true});
+ await seedTrigger.press('Enter');
+ await expect(seed).toBeFocused();
+ await contained('.seed-popover','left');
+ await page.screenshot({path:`${dir}/composer-seed-popover.png`});
+ await seed.fill('1234567890123');
+ await seed.press('Enter');
+ assert.equal(state.payloads.length,0);
+ await seed.press('Escape');
+ await expect(seedPanel).toHaveCount(0);
+ await expect(seedTrigger).toBeFocused();
+ await seedTrigger.click();
+ await expect(seed).toHaveValue('1234567890123');
+ await choose().click();
+ await expect(seedPanel).toHaveCount(0);
  for(const width of [1440,1080]){
   await page.setViewportSize({width,height:720});await contained('.composer-model-menu','right');
  }
@@ -44,7 +67,7 @@ try {
  const actions=await page.locator('.titlebar-actions').boundingBox();assert(banner.x+banner.width<=actions.x,'Alert leaves header controls accessible');
  await page.screenshot({path:`${dir}/composer-loading-header.png`});
  await choose().click();state.installedModels=[{id:'9b',label:'Klein 9B'}];await refreshed();assert.equal(await choose().count(),1);assert.equal(await menu.count(),0);await choose().click();await menu.waitFor();assert.equal(await menu.getByRole('menuitemradio',{name:/^Klein 4B(?! · LoRA)/}).isDisabled(),true);await page.keyboard.press('Escape');
- state.installedModels=[];await refreshed();assert.equal(await choose().count(),1);assert((await choose().innerText()).includes('No models'));await oneRow();await choose().click();await menu.waitFor();assert.equal(await menu.locator('[role="menuitemradio"]:not(:disabled)').count(),0);await page.keyboard.press('Escape');
+ state.installedModels=[];await refreshed();assert.equal(await choose().count(),1);assert((await choose().innerText()).includes('No models'));await oneRow();await choose().click();await menu.waitFor();assert.equal(await menu.locator('[role="menuitemradio"]:not([aria-disabled="true"])').count(),0);await page.keyboard.press('Escape');
  state.modelReady=false;state.runtime={status:'idle',message:'',logs:[]};await refreshed();
  assert.equal(await page.locator('.runtime-install-hint').count(),0);await oneRow();
  await page.screenshot({path:`${dir}/composer-unavailable-model.png`});

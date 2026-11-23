@@ -1,3 +1,4 @@
+import { chooseSelectOption } from "./select-option.mjs";
 import assert from "node:assert/strict";
 import { fixture } from "./ui-fixture.mjs";
 
@@ -93,7 +94,7 @@ try {
   await loadedPage.setViewportSize({ width: 864, height: 547 });
   const switcher = loadedPage.getByLabel("Open thread", { exact: true });
   await loadedPage.getByRole("heading", { name: "Stable title", exact: true }).waitFor();
-  await switcher.selectOption("thread-1");
+  await chooseSelectOption(switcher, "Study number 1");
   const switchedTitle = loadedPage.getByRole("heading", { name: "Study number 1", exact: true });
   await switchedTitle.waitFor();
   assert((await switchedTitle.boundingBox()).height >= 16, "The compact workspace must retain its visible title");

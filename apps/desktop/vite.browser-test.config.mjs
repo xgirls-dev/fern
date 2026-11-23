@@ -1,12 +1,13 @@
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import react from "@vitejs/plugin-react";
-import { defineConfig } from "vite";
+import { defaultClientConditions, defineConfig } from "vite";
 
 const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)));
 
 export default defineConfig({
   root: resolve(desktopRoot, "src/renderer"),
+  resolve: { conditions: ["worker", ...defaultClientConditions] },
   plugins: [react()],
   build: {
     outDir: resolve(desktopRoot, "../../.cache/fern-browser-test-dist"),

@@ -60,7 +60,7 @@ export function PreferencesView({
   onToggleTheme,
   onToggleSidebar,
 }: PreferencesViewProps) {
-  const device = useRef<HTMLSelectElement>(null);
+  const device = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (active && computeFocusRequest) device.current?.focus();
   }, [active, computeFocusRequest]);
@@ -160,10 +160,9 @@ export function PreferencesView({
           </div>
           <label className="field preference-compute-device">
             <span>Generation device</span>
-            <Select ref={device} aria-label="Generation device" value={computeDevice} onChange={(event) => onComputeDeviceChange(event.target.value as ComputePreference)}>
-              <option value="GPU">Available GPU</option>
-              <option value="CPU">CPU</option>
-            </Select>
+            <Select<ComputePreference> ref={device} aria-label="Generation device" value={computeDevice}
+              options={[{ value: "GPU", label: "Available GPU" }, { value: "CPU", label: "CPU" }]}
+              onChange={onComputeDeviceChange} />
           </label>
           {computeDevice === "CPU" ? <p className="model-library-note">Image creation in chat is unavailable with CPU selected.</p> : null}
           {onReturnToChat && <Button variant="ghost" onClick={onReturnToChat}>Return to chat</Button>}

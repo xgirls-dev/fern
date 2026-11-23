@@ -36,8 +36,11 @@ try {
   await button("Send message").click();
   await expect(reply).toHaveClass(/text-message--streaming/);
   state.textStatus.job = { ...state.textStatus.job, phase: "Waiting for the first token…", partialText: markdown };
+  await expect(block).toHaveCSS("margin-bottom", "0px");
   await expect(fit).toHaveAttribute("aria-pressed", "false");
   await expect(reply.getByRole("region", { name: "Scrollable table" })).toBeVisible();
+  await expect(table.getByRole("columnheader", { name: "Plan" })).toHaveCSS("border-inline-start-width", "0px");
+  await expect(table.getByRole("columnheader", { name: "Date" })).toHaveCSS("border-inline-start-width", "1px");
   await expect(table.getByRole("cell", { name: "-3.5" })).toHaveCSS("text-align", "right");
   await expect.poll(overflow).toBeGreaterThan(80);
   await table.evaluate((element) => { element.dataset.originalTable = "true"; });
@@ -59,6 +62,8 @@ try {
   assert.equal(heading.lines, 1, JSON.stringify(heading));
   state.textStatus.job = { ...state.textStatus.job, partialText: updates };
   await expect(table.getByRole("cell", { name: "Follow-up" })).toBeVisible();
+  await expect(table.getByRole("cell", { name: "Follow-up" })).toHaveCSS("border-inline-start-width", "0px");
+  await expect(table.getByRole("cell", { name: "2026-10-08" })).toHaveCSS("border-inline-start-width", "1px");
   await expect(fit).toHaveAttribute("aria-pressed", "true");
   await expect(table).toHaveAttribute("data-original-table", "true");
   await button("Copy table").click();
@@ -66,11 +71,14 @@ try {
   await expect(button("Table copied")).toBeVisible();
 
   const secondary = [row(headers.map((header) => header.repeat(10))), row(headers.map(() => "---")), row(headers)].join("\n");
-  state.textStatus.job = { ...state.textStatus.job, partialText: `${updates}\n\n${secondary}`, status: "complete", finishedAt: Date.now() / 1000 };
+  const dense = reply.locator(".text-table-block").nth(1);
+  state.textStatus.job = { ...state.textStatus.job, partialText: `${updates}\n\n${secondary}` };
+  await expect(dense).toHaveCSS("margin-bottom", "0px");
+  await expect(block).toHaveCSS("margin-bottom", "16px");
+  state.textStatus.job = { ...state.textStatus.job, status: "complete", finishedAt: Date.now() / 1000 };
   await expect(reply).not.toHaveClass(/text-message--streaming/);
   await expect(fit).toHaveAttribute("aria-pressed", "true");
   await expect(table).toHaveAttribute("data-original-table", "true");
-  const dense = reply.locator(".text-table-block").nth(1);
   await dense.getByRole("button", { name: "Fit table to chat", exact: true }).click();
   await expect.poll(() => dense.locator(".text-table-scroll").evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
   await fit.press("Space");

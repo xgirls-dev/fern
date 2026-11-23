@@ -1,9 +1,10 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import ChevronDown from "lucide-react/dist/esm/icons/chevron-down.mjs";
 import Check from "lucide-react/dist/esm/icons/check.mjs";
 import type { StudioSettings } from "../lib/types";
 import { APPLE_IMAGE_MODEL, kleinLoraLabel } from "../lib/imageModels";
-import { Button, MenuItem } from "./ui/controls";
+import { Button } from "./ui/controls";
+import { Dropdown, DropdownItem, DropdownRadioGroup, DropdownRadioItem, DropdownSeparator } from "./ui/Dropdown";
 
 export interface ComposerModel {
   id: string;
@@ -54,10 +55,7 @@ export function ComposerModelMenu({
   onManageModels: () => void;
 }) {
   const [open, setOpen] = useState(false);
-  const root = useRef<HTMLDivElement>(null);
-  const trigger = useRef<HTMLButtonElement>(null);
-  const menu = useRef<HTMLDivElement>(null);
-  const id = useId();
+  const availability = models.map(({ id, installed }) => `${id}:${installed !== false}`).join("|");
   const selectedId = value && (MODEL_CHOICES.includes(value) || value.startsWith("custom-")) ? value : MODEL_CHOICES[0];
   const current = models.find((model) => model.id === selectedId);
   const choices = [...MODEL_CHOICES, ...models.map((model) => model.id).filter((modelId) => modelId.startsWith("custom-"))];
@@ -73,123 +71,36 @@ export function ComposerModelMenu({
         : "No models";
 
   useEffect(() => {
-    if (disabled) setOpen(false);
-  }, [disabled]);
+    setOpen(false);
+  }, [availability, disabled]);
 
-  useEffect(() => {
-    if (!open) return;
-    const outside = (event: PointerEvent) => {
-      if (!root.current?.contains(event.target as Node)) setOpen(false);
-    };
-    document.addEventListener("pointerdown", outside);
-    const first =
-      menu.current?.querySelector<HTMLButtonElement>('[aria-checked="true"]:not(:disabled)') ??
-      menu.current?.querySelector<HTMLButtonElement>("button:not(:disabled)");
-    if (first) first.focus();
-    else menu.current?.focus();
-    return () => document.removeEventListener("pointerdown", outside);
-  }, [open]);
-
-  return (
-    <div className="composer-model-anchor" ref={root}>
-      <Button
-        variant="ghost"
-        ref={trigger}
-        type="button"
-        className="composer-model-trigger"
-        aria-label={`Image model: ${triggerLabel}`}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        aria-controls={open ? id : undefined}
-        disabled={disabled}
-        onClick={() => {
-          if (!open) onOpen();
-          setOpen(!open);
-        }}
-        onKeyDown={(event) => {
-          if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-            event.preventDefault();
-            onOpen();
-            setOpen(true);
-          }
-        }}
-      >
+  return <div className="composer-model-anchor">
+    <Dropdown label="Image model" className="composer-model-menu" side="top" align="end"
+      open={open && !disabled}
+      onOpenChange={(next) => {
+        if (next) onOpen();
+        setOpen(next);
+      }}
+      trigger={<Button variant="ghost" className="composer-model-trigger" aria-label={`Image model: ${triggerLabel}`} disabled={disabled}>
         <span>{triggerLabel}</span>
         <ChevronDown size={13} aria-hidden="true" />
-      </Button>
-      {open ? (
-        <div
-          id={id}
-          ref={menu}
-          className="composer-model-menu"
-          role="menu"
-          aria-label="Image model"
-          tabIndex={-1}
-          onBlur={(event) => {
-            if (!root.current?.contains(event.relatedTarget as Node))
-              setOpen(false);
-          }}
-          onKeyDown={(event) => {
-            if (event.key === "Tab") {
-              setOpen(false);
-              trigger.current?.focus();
-            }
-            if (event.key === "Escape") {
-              event.preventDefault();
-              event.stopPropagation();
-              setOpen(false);
-              trigger.current?.focus();
-            }
-            if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
-              const items = Array.from(
-                event.currentTarget.querySelectorAll<HTMLButtonElement>(
-                  "button:not(:disabled)",
-                ),
-              );
-              if (!items.length) return;
-              event.preventDefault();
-              const index = items.indexOf(
-                document.activeElement as HTMLButtonElement,
-              );
-              const next =
-                event.key === "Home"
-                  ? 0
-                  : event.key === "End"
-                    ? items.length - 1
-                    : (index + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
-              items[next]?.focus();
-            }
-          }}
-        >
-          {choices.map((modelId) => {
-            const model = models.find((candidate) => candidate.id === modelId);
-            const installed = Boolean(model && model.installed !== false);
-            return (
-              <MenuItem
-                tabIndex={-1}
-                key={modelId}
-                role="menuitemradio"
-                aria-checked={selectedId === modelId}
-                disabled={!installed}
-                title={`${model?.label ?? MODEL_LABELS[modelId] ?? "Custom image model"}${installed ? "" : " · Not installed"}`}
-                onClick={() => {
-                  onChange(modelId);
-                  setOpen(false);
-                  trigger.current?.focus();
-                }}
-              >
-                <span className="composer-model-label">{model?.label ?? MODEL_LABELS[modelId] ?? "Custom image model"}</span>
-                {installed && selectedId === modelId ? (
-                  <Check size={14} aria-hidden="true" />
-                ) : !installed ? (
-                  <span className="composer-model-unavailable">Not installed</span>
-                ) : null}
-              </MenuItem>
-            );
-          })}
-          <div className="composer-model-menu-footer"><MenuItem role="menuitem" onClick={() => { setOpen(false); onManageModels(); }}>Manage models</MenuItem></div>
-        </div>
-      ) : null}
-    </div>
-  );
+      </Button>}
+    >
+      <DropdownRadioGroup value={selectedId} onValueChange={onChange}>
+        {choices.map((modelId) => {
+          const model = models.find((candidate) => candidate.id === modelId);
+          const installed = Boolean(model && model.installed !== false);
+          const label = model?.label ?? MODEL_LABELS[modelId] ?? "Custom image model";
+          return <DropdownRadioItem key={modelId} value={modelId} label={label}
+            disabled={!installed} title={`${label}${installed ? "" : " · Not installed"}`}>
+            <span className="composer-model-label">{label}</span>
+            {installed && selectedId === modelId ? <Check size={14} aria-hidden="true" />
+              : !installed ? <span className="composer-model-unavailable">Not installed</span> : null}
+          </DropdownRadioItem>;
+        })}
+      </DropdownRadioGroup>
+      <DropdownSeparator />
+      <DropdownItem onClick={onManageModels}>Manage models</DropdownItem>
+    </Dropdown>
+  </div>;
 }

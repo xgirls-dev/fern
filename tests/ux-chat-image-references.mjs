@@ -1,4 +1,6 @@
+import { chooseSelectOption } from "./select-option.mjs";
 import assert from "node:assert/strict";
+import { expect } from "@playwright/test";
 import { fixture } from "./ui-fixture.mjs";
 
 const model = { id: "gemma", name: "Gemma", installed: true, format: "gguf", supportsVision: true, supportsTools: true };
@@ -28,7 +30,7 @@ try {
   ]);
   await button("Move reference 2 up").click();
   await page.getByLabel("Use the image attached to the message", { exact: true }).check();
-  await page.getByLabel("Images per render", { exact: true }).selectOption("2");
+  await chooseSelectOption(page.getByLabel("Images per render", { exact: true }), "2 images");
   await page.getByRole("textbox", { name: "Message", exact: true }).fill("Make a new image using the references.");
   await button("Send message").click();
   assert.deepEqual(state.textRequests[0].imageSettings, {
@@ -42,6 +44,19 @@ try {
   await page.getByText("Two images are ready.", { exact: true }).waitFor();
   assert.equal(await page.locator(".text-generated-artifact").count(), 2);
   assert.equal(await page.getByText("Image checked", { exact: true }).count(), 1);
+  const preview = button("Review image 1: Reference image");
+  await preview.click();
+  const viewer = page.getByRole("dialog", { name: /^Review image 1 of 2:/ });
+  const imageActions = viewer.getByRole("button", { name: "Image actions for batch-1.png", exact: true });
+  await imageActions.press("ArrowDown");
+  const actions = viewer.getByRole("menu", { name: "Image actions", exact: true });
+  await expect(actions.getByRole("menuitem", { name: "Copy prompt", exact: true })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(actions).toHaveCount(0);
+  await expect(imageActions).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(viewer).toHaveCount(0);
+  await expect(preview).toBeFocused();
   await page.reload();
   await page.getByText("Two images are ready.", { exact: true }).waitFor();
   assert.equal(await page.locator(".text-generated-artifact").count(), 2);

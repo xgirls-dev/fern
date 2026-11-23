@@ -1,3 +1,4 @@
+import { chooseSelectOption } from "./select-option.mjs";
 import assert from "node:assert/strict";
 import { fixture } from "./ui-fixture.mjs";
 
@@ -32,7 +33,7 @@ try {
   assert.equal(await message.inputValue(), "Keep this draft");
   assert.equal(await page.getByText("Original answer.", { exact: true }).count(), 0);
   await page.reload();
-  await page.getByLabel("Conversation versions", { exact: true }).selectOption({ label: "Original follow-up" });
+  await chooseSelectOption(page.getByLabel("Conversation versions", { exact: true }), "Original follow-up");
   await page.getByText("Original answer.", { exact: true }).waitFor();
   assert.equal(state.textRequests.length, 3);
   await page.locator("article.text-message").filter({ hasText: "First response." })
@@ -47,7 +48,7 @@ try {
   await page.getByText("First response.", { exact: true }).waitFor();
   await page.getByRole("button", { name: "Text thread: First prompt", exact: true }).click();
   assert.equal(await message.inputValue(), "Keep this draft");
-  await page.getByLabel("Conversation versions", { exact: true }).selectOption({ label: "Revised opening" });
+  await chooseSelectOption(page.getByLabel("Conversation versions", { exact: true }), "Revised opening");
   await page.getByText("Revised response.", { exact: true }).waitFor();
   assert.deepEqual(errors, []);
   console.log("Conversation versions, forks, and duplicates persist independently across reloads.");

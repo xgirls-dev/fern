@@ -1,8 +1,9 @@
 import ChevronDown from "lucide-react/dist/esm/icons/chevron-down.mjs";
 import ChevronUp from "lucide-react/dist/esm/icons/chevron-up.mjs";
 import Terminal from "lucide-react/dist/esm/icons/terminal.mjs";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Button } from "./ui/controls";
+import { ResizeHandle } from "./ui/ResizeHandle";
 
 interface ActivityTerminalProps {
   logs: string[];
@@ -50,10 +51,7 @@ export function ActivityTerminal({ logs, running }: ActivityTerminalProps) {
   const [following, setFollowing] = useState(true);
   const bodyRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLElement>(null);
-  const pointerIdRef = useRef<number | null>(null);
-  const startYRef = useRef(0);
-  const startHeightRef = useRef(height);
-  const liveHeightRef = useRef(height);
+  const panelId = useId();
 
   useEffect(() => {
     localStorage.setItem(EXPANDED_KEY, String(expanded));
@@ -68,100 +66,34 @@ export function ActivityTerminal({ logs, running }: ActivityTerminalProps) {
     bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
   }, [expanded, logs, running, following]);
 
-  const onResizeMove = useCallback(
-    (event: React.PointerEvent<HTMLDivElement>) => {
-      if (pointerIdRef.current !== event.pointerId) return;
-      const delta = startYRef.current - event.clientY;
-      const next = Math.min(
-        MAX_HEIGHT,
-        Math.max(MIN_HEIGHT, startHeightRef.current + delta),
-      );
-      liveHeightRef.current = next;
-      if (panelRef.current) panelRef.current.style.height = `${next}px`;
-    },
-    [],
-  );
-
-  const onResizeEnd = useCallback(
-    (event?: React.PointerEvent<HTMLDivElement>) => {
-      if (event && pointerIdRef.current !== event.pointerId) return;
-      pointerIdRef.current = null;
-      panelRef.current?.classList.remove("is-resizing");
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-      setHeight(liveHeightRef.current);
-    },
-    [],
-  );
-
-  const onResizeStart = useCallback(
-    (event: React.PointerEvent<HTMLDivElement>) => {
-      if (!expanded) return;
-      event.preventDefault();
-      event.currentTarget.setPointerCapture(event.pointerId);
-      pointerIdRef.current = event.pointerId;
-      startYRef.current = event.clientY;
-      startHeightRef.current = height;
-      liveHeightRef.current = height;
-      panelRef.current?.classList.add("is-resizing");
-      document.body.style.cursor = "row-resize";
-      document.body.style.userSelect = "none";
-    },
-    [expanded, height],
-  );
-
-  const onResizeKeyDown = useCallback(
-    (event: React.KeyboardEvent<HTMLDivElement>) => {
-      const nextHeight =
-        event.key === "Home"
-          ? MIN_HEIGHT
-          : event.key === "End"
-            ? MAX_HEIGHT
-            : event.key === "ArrowUp"
-              ? height + 12
-              : event.key === "ArrowDown"
-                ? height - 12
-                : null;
-      if (nextHeight == null) return;
-      event.preventDefault();
-      setHeight(Math.min(MAX_HEIGHT, Math.max(MIN_HEIGHT, nextHeight)));
-    },
-    [height],
-  );
-
-  useEffect(
-    () => () => {
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-    },
-    [],
-  );
+  const previewHeight = (next: number) => panelRef.current?.style.setProperty("height", `${next}px`);
 
   const lineCount = logs.length;
   const panelHeight = expanded ? height : COLLAPSED_HEIGHT;
 
   return (
     <section
+      id={panelId}
       ref={panelRef}
       className={`activity-terminal-panel${expanded ? " is-expanded" : " is-collapsed"}`}
       style={{ height: panelHeight }}
       aria-label="Activity terminal"
     >
       {expanded && (
-        <div
+        <ResizeHandle
           className="activity-terminal-resize-handle"
-          onPointerDown={onResizeStart}
-          onPointerMove={onResizeMove}
-          onPointerUp={onResizeEnd}
-          onPointerCancel={onResizeEnd}
-          onKeyDown={onResizeKeyDown}
-          role="separator"
-          tabIndex={0}
-          aria-orientation="horizontal"
-          aria-label="Resize activity terminal"
-          aria-valuemin={MIN_HEIGHT}
-          aria-valuemax={MAX_HEIGHT}
-          aria-valuenow={height}
+          label="Resize activity terminal"
+          controls={panelId}
+          orientation="horizontal"
+          value={height}
+          min={MIN_HEIGHT}
+          max={MAX_HEIGHT}
+          step={12}
+          inverted
+          formatValue={(size) => `${size} pixels`}
+          onPreview={previewHeight}
+          onCommit={(size) => { previewHeight(size); setHeight(size); }}
+          onCancel={() => previewHeight(height)}
         />
       )}
 

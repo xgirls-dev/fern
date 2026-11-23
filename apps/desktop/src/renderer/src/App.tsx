@@ -301,10 +301,10 @@ export function App() {
       .then(focusPrompt)
       .catch((error) => notify(String(error), "error"));
   };
-  const openImage = (image: ImageRecord, images: ImageRecord[]) => {
+  const openImage = useCallback((image: ImageRecord, images: ImageRecord[]) => {
     setViewerImages(images);
     setLightboxImage(image);
-  };
+  }, []);
   const deleteImage = async (image: ImageRecord) => {
     await studio.deleteImage(image);
     const remaining = viewerImages.filter((item) => item.name !== image.name);
@@ -507,7 +507,7 @@ export function App() {
           onExpandForNew={compactLayout && !sidebarOverlayOpen ? toggleSidebar : undefined}
           threads={studio.threads}
           audioThreads={tts.threads}
-          textThreads={text.threads}
+          textThreads={text.sidebarThreads}
           chatFolders={text.folders}
           onOrganizeChats={text.organize}
           onArchiveThread={studio.archiveThread}

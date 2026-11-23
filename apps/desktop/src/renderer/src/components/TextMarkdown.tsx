@@ -1,14 +1,17 @@
-import { createContext, isValidElement, memo, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type ComponentPropsWithoutRef } from "react";
-import Markdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { cloneElement, createContext, Fragment, isValidElement, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentPropsWithoutRef } from "react";
+import { jsx, jsxs } from "react/jsx-runtime";
+import { toJsxRuntime } from "hast-util-to-jsx-runtime";
+import type { RootContent } from "hast";
 import Copy from "lucide-react/dist/esm/icons/copy.mjs";
 import MoveHorizontal from "lucide-react/dist/esm/icons/move-horizontal.mjs";
 import WrapText from "lucide-react/dist/esm/icons/wrap-text.mjs";
 import { notify } from "../lib/notifications";
-import { hasStreamingMarkdown, previewMarkdown, remarkStreamingPreview } from "../lib/streamingMarkdown";
+import { useChatMarkdown } from "../hooks/useChatMarkdown";
 import { Button } from "./ui/controls";
 
 const StreamingCode = createContext(false);
+type StreamCursor = "active" | "waiting";
+type StreamTailProps = { "data-stream-tail"?: StreamCursor };
 
 function useHorizontalOverflow<T extends HTMLElement>(content: unknown, fitted: boolean | null) {
   const ref = useRef<T>(null);
@@ -17,8 +20,19 @@ function useHorizontalOverflow<T extends HTMLElement>(content: unknown, fitted: 
     const element = ref.current;
     if (element?.clientWidth) setOverflowing(element.scrollWidth > element.clientWidth + 1);
   }, []);
-  useLayoutEffect(measureOverflow, [measureOverflow, content, fitted]);
-  useLayoutEffect(() => {
+  useEffect(() => {
+    // A new chunk can change scrollWidth while leaving both observed boxes the
+    // same size. Check after the frame so React commits do not force layout.
+    let timer: number | undefined;
+    const frame = window.requestAnimationFrame(() => {
+      timer = window.setTimeout(measureOverflow, 0);
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.clearTimeout(timer);
+    };
+  }, [measureOverflow, content, fitted]);
+  useEffect(() => {
     const element = ref.current;
     if (!element) return;
     const observer = new ResizeObserver(measureOverflow);
@@ -47,7 +61,7 @@ function useCopyFeedback(errorMessage: string) {
   return { copied, copy };
 }
 
-function CodeBlock({ children }: ComponentPropsWithoutRef<"pre">) {
+function CodeBlock({ children, "data-stream-tail": streamTail }: ComponentPropsWithoutRef<"pre"> & StreamTailProps) {
   const streaming = useContext(StreamingCode);
   const code = isValidElement<{ className?: string; children?: unknown }>(children) ? children.props : undefined;
   const language = code?.className?.match(/\blanguage-([\w+#.-]+)/)?.[1];
@@ -67,7 +81,7 @@ function CodeBlock({ children }: ComponentPropsWithoutRef<"pre">) {
     return () => { cancelled = true; clear?.(); };
   }, [language, ref, source, streaming]);
   const scrollable = overflowing && !wrap;
-  return <div className="text-code-block" data-wrapped={wrap || undefined}>
+  return <div className="text-code-block" data-wrapped={wrap || undefined} data-stream-tail={streamTail}>
     <div className="text-code-toolbar">
       <span>{language ?? "Code"}</span>
       <div className="text-code-actions">
@@ -92,7 +106,7 @@ function cellText(cell: HTMLTableCellElement) {
   return /^[=+@-]/.test(normalized) && !signedNumber ? `'${value}` : value;
 }
 
-function MarkdownTable({ children }: ComponentPropsWithoutRef<"table">) {
+function MarkdownTable({ children, "data-stream-tail": streamTail }: ComponentPropsWithoutRef<"table"> & StreamTailProps) {
   const table = useRef<HTMLTableElement>(null);
   const [fitted, setFitted] = useState<boolean | null>(null);
   const [tightFit, setTightFit] = useState(false);
@@ -114,7 +128,7 @@ function MarkdownTable({ children }: ComponentPropsWithoutRef<"table">) {
     const rows = Array.from(table.current.rows, (row) => Array.from(row.cells, cellText).join("\t"));
     void copy(rows.join("\n"));
   };
-  return <div className="text-table-block" data-fitted={fitted || undefined} data-tight-fit={fitted && tightFit || undefined}>
+  return <div className="text-table-block" data-fitted={fitted || undefined} data-tight-fit={fitted && tightFit || undefined} data-stream-tail={streamTail}>
     <div className="text-table-toolbar">
       {(overflowing || fitted !== null) && <Button variant="ghost" aria-label="Fit table to chat" aria-pressed={!!fitted} onClick={() => {
         if (!fitted && ref.current) ref.current.scrollLeft = 0;
@@ -142,13 +156,22 @@ const components = {
   a: ({ href, children }: ComponentPropsWithoutRef<"a">) => /^https?:\/\//i.test(href ?? "")
     ? <a href={href} target="_blank" rel="noopener noreferrer">{children}</a> : <span>{children}</span>,
 };
-const plugins = [remarkGfm];
-const streamingPlugins = [remarkGfm, remarkStreamingPreview];
-export const TextMarkdown = memo(function TextMarkdown({ content, streaming = false }: { content: string; streaming?: boolean }) {
-  const preview = streaming && hasStreamingMarkdown(content);
+const MarkdownBlock = memo(function MarkdownBlock({ node, cursor }: { node: RootContent; cursor?: StreamCursor }) {
+  const element = useMemo(() => node.type === "text" ? node.value : toJsxRuntime(node, {
+    components, Fragment, jsx, jsxs, ignoreInvalidStyle: true, passKeys: true,
+  }), [node]);
+  return cursor && isValidElement<StreamTailProps>(element) ? cloneElement(element, { "data-stream-tail": cursor }) : element;
+}, (previous, next) => previous.cursor === next.cursor && (previous.node === next.node || JSON.stringify(previous.node) === JSON.stringify(next.node)));
+
+export const TextMarkdown = memo(function TextMarkdown({ content, streaming = false, receivingReply = streaming, cursor }: {
+  content: string; streaming?: boolean; receivingReply?: boolean; cursor?: StreamCursor;
+}) {
+  const blocks = useChatMarkdown(content, streaming, receivingReply);
+  let tail = cursor && blocks ? blocks.length - 1 : -1;
+  while (tail >= 0 && blocks?.[tail].type !== "element") tail -= 1;
   return <StreamingCode.Provider value={streaming}>
-    <Markdown remarkPlugins={preview ? streamingPlugins : plugins} components={components}>
-      {preview ? previewMarkdown(content) : content}
-    </Markdown>
+    {blocks ? blocks.map((block, index) => <MarkdownBlock key={index} node={block} cursor={index === tail ? cursor : undefined} />)
+      : <p data-chat-markdown-pending="" data-stream-tail={cursor}>{content.slice(0, 512)}…</p>}
+    {cursor && <span className="text-stream-cursor" data-waiting={cursor === "waiting" || undefined} aria-hidden="true" />}
   </StreamingCode.Provider>;
 });

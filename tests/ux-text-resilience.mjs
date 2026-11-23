@@ -70,15 +70,48 @@ try {
   await expect(page.locator("[data-original-node]")).toContainText("Use a short descriptive title.");
 
   await button("Regenerate response").click();
-  await expect(conversation.getByText("Use a short descriptive title.")).toBeVisible();
-  await expect(stream).toBeVisible();
+  const sameReply = conversation.locator("[data-original-node]");
+  await expect(stream).toContainText("Use a short descriptive title.");
+  await expect(stream).toHaveAttribute("data-original-node", "true");
+  await expect(conversation.getByRole("article")).toHaveCount(2);
+  await expect(composer).toBeFocused();
   await expect.poll(() => state.textRequests.length).toBe(2);
+  generate("The live replacement is being drafted.");
+  await expect(sameReply).toContainText("The live replacement is being drafted.");
+  await expect(sameReply).not.toContainText("Use a short descriptive title.");
+  await page.keyboard.press("Control+f");
+  const retrySearch = page.getByRole("searchbox", { name: "Search this chat" });
+  await retrySearch.fill("descriptive title");
+  await expect(sameReply).toContainText("Use a short descriptive title.");
+  await expect(sameReply).toHaveAttribute("data-find-match", "true");
+  await retrySearch.fill("live replacement");
+  await expect(sameReply).toContainText("The live replacement is being drafted.");
+  await expect(sameReply).toHaveAttribute("data-find-match", "true");
+  await page.keyboard.press("Escape");
+  await sameReply.locator(".text-message-content p").evaluate((paragraph) => {
+    const range = document.createRange();
+    range.selectNodeContents(paragraph);
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+  });
   finish("The searchable alternative answer.");
-  await expect(button("Previous response version")).toBeEnabled();
-  await button("Previous response version").click();
-  await expect(conversation.getByText("Use a short descriptive title.")).toBeVisible();
-  await button("Next response version").click();
-  await expect(conversation.getByText("The searchable alternative answer.")).toBeVisible();
+  await expect(sameReply).not.toHaveClass(/text-message--streaming/);
+  await expect(sameReply).toContainText("The live replacement is being drafted.");
+  const previous = button("Previous response version");
+  const next = button("Next response version");
+  await expect(previous).toBeEnabled();
+  await previous.press("Enter");
+  await expect(sameReply).toContainText("Use a short descriptive title.");
+  await expect.poll(() => page.evaluate(() => window.getSelection()?.toString())).toBe("");
+  await expect(previous).toBeDisabled();
+  await expect(previous).toBeFocused();
+  await previous.press("Enter");
+  await expect(sameReply).toContainText("Use a short descriptive title.");
+  await next.press("Enter");
+  await expect(sameReply).toContainText("The searchable alternative answer.");
+  await expect(next).toBeDisabled();
+  await expect(next).toBeFocused();
 
   await page.keyboard.press("Control+f");
   await page.getByRole("searchbox", { name: "Search this chat" }).fill("alternative answer");
@@ -150,7 +183,7 @@ try {
   await expect(conversation.getByText("Partial response that survives a restart.")).toBeVisible();
 
   await button("Actions for text thread Keep my conversation organized").click();
-  await button("Duplicate").click();
+  await page.getByRole("menuitem", { name: "Duplicate", exact: true }).click();
   await expect(active()).toHaveText(/\(copy\)$/);
   await expect(composer).toHaveValue("A draft in the original thread");
   const recentTurn = conversation.getByRole("article", { name: "Your message" }).last();

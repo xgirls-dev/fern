@@ -1,6 +1,7 @@
 import { useId, useState } from "react";
 import type { ChatPreset } from "../lib/textThreads";
 import { Button, InlineConfirmation, Input, Select } from "./ui/controls";
+import { Disclosure } from "./ui/Disclosure";
 
 export function ChatPresets({ presets, disabled, onApply, onSave, onDelete }: {
   presets: readonly ChatPreset[];
@@ -18,19 +19,15 @@ export function ChatPresets({ presets, disabled, onApply, onSave, onDelete }: {
   const proposed = name.trim();
   const duplicate = presets.some((preset) => preset.name.toLowerCase() === proposed.toLowerCase());
 
-  return <details className="chat-advanced-settings">
-    <summary>Chat presets</summary>
+  return <Disclosure className="chat-advanced-settings" appearance="section" label="Chat presets">
     <div className="text-settings-grid">
       {presets.length > 0 && <>
         <div className="field">
           <label htmlFor={selectId}>Saved preset</label>
-          <Select id={selectId} disabled={disabled} value={selected?.id ?? ""} onChange={(event) => {
-            setSelectedId(event.currentTarget.value);
+          <Select id={selectId} disabled={disabled} value={selected?.id ?? ""} onChange={(id) => {
+            setSelectedId(id);
             setConfirmDelete(false);
-          }}>
-            <option value="">Choose a preset</option>
-            {presets.map(({ id, name: label }) => <option key={id} value={id}>{label}</option>)}
-          </Select>
+          }} options={[{ value: "", label: "Choose a preset" }, ...presets.map(({ id, name: label }) => ({ value: id, label }))]} />
         </div>
         {selected && <div className="chat-model-defaults">
           <Button variant="secondary" disabled={disabled} onClick={() => onApply(selected.id)}>Apply preset</Button>
@@ -59,5 +56,5 @@ export function ChatPresets({ presets, disabled, onApply, onSave, onDelete }: {
         <Button variant="secondary" type="submit" disabled={disabled || !proposed || duplicate}>Save as preset</Button>
       </form>
     </div>
-  </details>;
+  </Disclosure>;
 }

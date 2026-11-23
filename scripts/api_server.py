@@ -135,6 +135,11 @@ TTS_JOB: dict[str, Any] = {
     "output": None, "error": None, "diagnostics": [], "phase": None,
 }
 TEXT_JOB_LOCK = threading.Lock()
+TEXT_JOB_CHANGED = threading.Condition(TEXT_JOB_LOCK)
+TEXT_JOB_REVISION = 0
+TEXT_JOB_STREAMS = threading.BoundedSemaphore(4)
+TEXT_JOB_STREAM_INTERVAL = 0.05
+TEXT_JOB_STREAM_HEARTBEAT = 8
 TEXT_ADMISSION_LOCK = threading.Lock()
 TEXT_PENDING_STOPS: dict[tuple[str, str], float] = {}
 TEXT_PENDING_STOP_SECONDS = 300
@@ -659,6 +664,33 @@ def text_job_snapshot() -> dict[str, Any]:
         return dict(TEXT_JOB)
 
 
+def next_text_job_event(job_id: str, thread_id: str, revision: int, next_update: float) -> tuple[str, int, dict[str, Any] | None]:
+    deadline = time.monotonic() + TEXT_JOB_STREAM_HEARTBEAT
+    with TEXT_JOB_CHANGED:
+        while TEXT_JOB.get("id") == job_id and TEXT_JOB.get("threadId") == thread_id:
+            now = time.monotonic()
+            changed = TEXT_JOB_REVISION != revision
+            if TEXT_JOB["status"] != "running" or (changed and now >= next_update):
+                return "job", TEXT_JOB_REVISION, dict(TEXT_JOB)
+            if now >= deadline:
+                return "heartbeat", revision, None
+            wake_at = min(next_update, deadline) if changed else deadline
+            TEXT_JOB_CHANGED.wait(wake_at - now)
+    return "job", revision, None
+
+
+def text_job_changed() -> None:
+    # The caller holds TEXT_JOB_LOCK.
+    global TEXT_JOB_REVISION
+    TEXT_JOB_REVISION += 1
+    TEXT_JOB_CHANGED.notify_all()
+
+
+def finish_text_job(**fields: Any) -> None:
+    TEXT_JOB.update(**fields)
+    text_job_changed()
+
+
 def text_job_receipt(payload: dict[str, Any], job: dict[str, Any] | None = None) -> dict[str, Any]:
     if payload.get("jobOnly") is True:
         return {"textJob": job if job is not None else text_job_snapshot()}
@@ -709,6 +741,7 @@ def text_runtime_snapshot() -> dict[str, Any]:
     return {
         "job": job,
         "supportsJobPolling": True,
+        "supportsJobEvents": True,
         "supportsPendingStop": True,
         "models": models,
         "recommendedModels": recommended,
@@ -729,15 +762,20 @@ def append_text_event(job_id: str, *, phase: str | None = None, token: str | Non
         if (TEXT_JOB.get("id") != job_id or TEXT_JOB.get("status") != "running"
                 or TEXT_JOB.get("phase") == "Stopping generation…"):
             return
-        if phase is not None:
-            TEXT_JOB["phase"] = phase[:500]
+        updates = {}
+        if phase is not None and phase[:500] != TEXT_JOB.get("phase"):
+            updates["phase"] = phase[:500]
         if token:
             current = str(TEXT_JOB.get("partialText") or "")
             if len(current) < 100_000:
-                TEXT_JOB["partialText"] = current + token[:100_000 - len(current)]
+                updates["partialText"] = current + token[:100_000 - len(current)]
         if reasoning:
             current = str(TEXT_JOB.get("partialReasoning") or "")
-            TEXT_JOB["partialReasoning"] = (current + reasoning)[:100_000]
+            if len(current) < 100_000:
+                updates["partialReasoning"] = current + reasoning[:100_000 - len(current)]
+        if updates:
+            TEXT_JOB.update(updates)
+            text_job_changed()
 
 
 def text_job_running() -> bool:
@@ -800,6 +838,7 @@ def start_text_job(payload: dict[str, Any], request_id: Any, admit_before: Any =
             inspection=payload.get("inspectionImage") is not None,
             error=None, errorCode=None,
         )
+        text_job_changed()
     threading.Thread(target=run_text_generation, args=(payload, job_id, cancel_event), daemon=True).start()
     return None
 
@@ -896,10 +935,10 @@ def run_text_generation(payload: dict[str, Any], job_id: str, cancel_event: thre
             def show_image(artifact: dict[str, Any]) -> None:
                 with TEXT_JOB_LOCK:
                     if TEXT_JOB.get("id") == job_id:
-                        saved = TEXT_JOB.setdefault("images", [])
+                        saved = TEXT_JOB.get("images", [])
                         if not any(item["name"] == artifact["name"] for item in saved):
-                            saved.append(artifact)
-                        TEXT_JOB["image"] = saved[0]
+                            TEXT_JOB.update(images=[*saved, artifact], image=saved[0] if saved else artifact)
+                            text_job_changed()
 
             image = generate_chat_image(image_model, prompt, payload["threadId"], job_id, cancel_event, payload.get("imageSettings"),
                                         message_image=payload["messages"][-1].get("imagePath"), on_image=show_image)
@@ -949,7 +988,7 @@ def run_text_generation(payload: dict[str, Any], job_id: str, cancel_event: thre
                               seed=payload["seed"], temperature=payload["temperature"],
                               topP=payload["topP"], maxNewTokens=result.get("maxNewTokens", payload["maxNewTokens"]),
                               sampling=payload.get("sampling"))
-                TEXT_JOB.update(
+                finish_text_job(
                     status="complete", finishedAt=time.time(), phase="Response complete.",
                     partialText=result.get("text", ""), partialReasoning=result.get("reasoning", ""),
                     result=result, error=None,
@@ -957,12 +996,12 @@ def run_text_generation(payload: dict[str, Any], job_id: str, cancel_event: thre
     except InterruptedError:
         with TEXT_JOB_LOCK:
             if TEXT_JOB.get("id") == job_id:
-                TEXT_JOB.update(status="stopped", finishedAt=time.time(), phase="Generation stopped.", error=None)
+                finish_text_job(status="stopped", finishedAt=time.time(), phase="Generation stopped.", error=None)
     except Exception as error:
         with TEXT_JOB_LOCK:
             if TEXT_JOB.get("id") == job_id:
                 stopped = cancel_event.is_set()
-                TEXT_JOB.update(status="stopped" if stopped else "failed", finishedAt=time.time(),
+                finish_text_job(status="stopped" if stopped else "failed", finishedAt=time.time(),
                                 phase="Generation stopped." if stopped else "Generation failed.",
                                 error=None if stopped else (str(error) or type(error).__name__)[-1000:],
                                 errorCode=error.code if not stopped and isinstance(error, TextWorkerError) else None)
@@ -2387,6 +2426,40 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def stream_text_job(self, job_id: str, thread_id: str) -> None:
+        # Bound the time spent writing to a stalled or abandoned renderer.
+        self.connection.settimeout(4)
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_cors_headers()
+        self.end_headers()
+        revision, next_update = -1, 0.0
+        previous = None
+        while True:
+            event, revision, job = next_text_job_event(job_id, thread_id, revision, next_update)
+            terminal = event == "job" and (job is None or job["status"] != "running")
+            if event == "heartbeat":
+                frame = {"heartbeat": True}
+            elif not terminal and previous is not None and job is not None:
+                frame = {"append": {
+                    "phase": job.get("phase"),
+                    "text": job.get("partialText", "")[len(previous.get("partialText", "")):],
+                    "reasoning": job.get("partialReasoning", "")[len(previous.get("partialReasoning", "")):],
+                }}
+                if job.get("images") is not previous.get("images"):
+                    frame["append"].update(image=job.get("image"), images=job.get("images", []))
+            else:
+                frame = {"job": job}
+            body = json.dumps(frame, separators=(",", ":")).encode("utf-8")
+            self.wfile.write(b"data: " + body + b"\n\n")
+            self.wfile.flush()
+            if terminal:
+                return
+            if job is not None:
+                previous = job
+                next_update = time.monotonic() + TEXT_JOB_STREAM_INTERVAL
+
     def read_json_body(self, *, too_large: str = "Request is too large. Attach up to 4 images smaller than 10 MB each.") -> dict[str, Any]:
         length = int(self.headers.get("Content-Length", "0"))
         if length > 60 * 1024 * 1024:
@@ -2412,6 +2485,24 @@ class Handler(BaseHTTPRequestHandler):
 
         if parsed.path == "/api/text/job":
             self.send_json(200, text_job_snapshot())
+            return
+
+        if parsed.path == "/api/text/job/events":
+            query = urllib.parse.parse_qs(parsed.query)
+            job_id = query.get("jobId", [""])[0]
+            thread_id = query.get("threadId", [""])[0]
+            if not 1 <= len(job_id) <= 100 or not thread_id.startswith("text-thread-") or len(thread_id) > 100:
+                self.send_json(400, {"error": "The chat request could not be identified."})
+                return
+            if not TEXT_JOB_STREAMS.acquire(blocking=False):
+                self.send_json(429, {"error": "Too many active chat streams."})
+                return
+            try:
+                self.stream_text_job(job_id, thread_id)
+            except (BrokenPipeError, ConnectionResetError, TimeoutError):
+                pass
+            finally:
+                TEXT_JOB_STREAMS.release()
             return
 
         if parsed.path == "/api/text/recover-image":
@@ -2571,6 +2662,7 @@ class Handler(BaseHTTPRequestHandler):
                            and (thread_id is None or thread_id == TEXT_JOB.get("threadId")))
                 if running:
                     TEXT_JOB["phase"] = "Stopping generation…"
+                    text_job_changed()
                     if TEXT_CANCEL_EVENT is not None:
                         TEXT_CANCEL_EVENT.set()
             if running:
@@ -3040,6 +3132,7 @@ class Handler(BaseHTTPRequestHandler):
                 TEXT_GENERATION_WORKER.close()
                 with TEXT_JOB_LOCK:
                     TEXT_JOB.update(id=None, threadId=None, status="idle", partialText="", partialReasoning="", result=None, image=None, error=None, errorCode=None)
+                    text_job_changed()
                 INTEL_MEDIA.close()
                 flux2.release_pipeline()
                 cache_result = storage_manager.cleanup_cache(ROOT, CACHE_DIR, force=True)

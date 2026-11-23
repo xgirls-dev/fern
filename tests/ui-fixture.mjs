@@ -1,19 +1,30 @@
-import { createServer, preview } from "vite";
+import { createServer, defaultClientConditions, preview } from "vite";
 import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-export async function fixture({ builtRenderer = false, firstRun = false, imageCount = 3, threadCount = 1, textStatus = null, legacyTextWorkspace = null, imageGenerationTime = 65, platform = "win32", viewport = { width: 1440, height: 900 }, installedModels = [{ id: "9b", label: "Klein 9B" }] } = {}) {
+export async function fixture({ builtRenderer = false, firstRun = false, imageCount = 3, threadCount = 1, textStatus = null, textJobEvents, legacyTextWorkspace = null, imageGenerationTime = 65, platform = "win32", viewport = { width: 1440, height: 900 }, installedModels = [{ id: "9b", label: "Klein 9B" }] } = {}) {
   builtRenderer ||= process.env.FERN_UI_BUILT === "1";
   const address = { host: "127.0.0.1", port: 0 };
+  const serveJobEvents = ({ middlewares }) => {
+    middlewares.use("/api/text/job/events", textJobEvents);
+  };
+  const plugins = textJobEvents ? [{
+    name: "fern-text-job-events",
+    configureServer: serveJobEvents,
+    configurePreviewServer: serveJobEvents,
+  }] : [];
   const server = builtRenderer
     ? await preview({
         configFile: false,
+        plugins,
         root: fileURLToPath(new URL("..", import.meta.url)),
         build: { outDir: "apps/desktop/out/renderer" },
         preview: address,
       })
     : await createServer({
         configFile: false,
+        plugins,
         root: fileURLToPath(new URL("../apps/desktop/src/renderer", import.meta.url)),
+        resolve: { conditions: ["worker", ...defaultClientConditions] },
         server: address,
         optimizeDeps: {
           entries: ["index.html", "src/components/TextMarkdown.tsx", "src/lib/textCodeHighlight.ts"],
@@ -236,7 +247,8 @@ export async function fixture({ builtRenderer = false, firstRun = false, imageCo
 
 export async function chooseMessageAction(message, name) {
   await message.getByRole("button", { name: "More message actions", exact: true }).click();
-  await message.getByRole("menuitem", { name, exact: true }).click();
+  await message.page().getByRole("menu", { name: "Message actions", exact: true })
+    .getByRole("menuitem", { name, exact: true }).click();
 }
 
 export function savedTextWorkspace(page, replacement = null) {

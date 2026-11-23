@@ -251,9 +251,8 @@ export function ModelLibrary({ recommendedId, category = "image", onCatalogChang
         <p>Choose the family that matches your OpenVINO export, then download it or link a folder on this device.</p>
         <label>
           <span>Model family</span>
-          <Select aria-label="Custom image model family" value={customFamily} disabled={addingCustom || startingDownload || downloading || busy} onChange={(event) => setCustomFamily(event.target.value)}>
-            {CUSTOM_IMAGE_FAMILIES.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
-          </Select>
+          <Select aria-label="Custom image model family" value={customFamily} disabled={addingCustom || startingDownload || downloading || busy}
+            options={CUSTOM_IMAGE_FAMILIES.map(([value, label]) => ({ value, label }))} onChange={setCustomFamily} />
         </label>
         <div className="model-library-hub-repo">
           <label htmlFor="custom-model-repository">Hugging Face repository</label>

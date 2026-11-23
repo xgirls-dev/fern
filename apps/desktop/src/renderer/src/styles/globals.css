@@ -89,7 +89,6 @@ body {
 
 button,
 input,
-select,
 textarea {
   font: inherit;
 }
@@ -662,7 +661,6 @@ textarea {
 }
 
 input,
-select,
 textarea {
   width: 100%;
   border-radius: 5px;
@@ -671,8 +669,7 @@ textarea {
   background: var(--input-bg);
 }
 
-input,
-select {
+input {
   height: 30px;
   padding: 0 8px;
   font-size: 12px;
@@ -688,7 +685,6 @@ textarea {
 }
 
 input:focus,
-select:focus,
 textarea:focus {
   outline: none;
   border-color: var(--foreground);
@@ -1196,8 +1192,6 @@ textarea:focus {
   left: 0;
   right: 0;
   height: 10px;
-  cursor: row-resize;
-  touch-action: none;
   z-index: 4;
 }
 
@@ -1211,14 +1205,11 @@ textarea:focus {
   background: transparent;
 }
 
-.activity-terminal-resize-handle:hover::after,
-.activity-terminal-resize-handle:focus-visible::after,
-.activity-terminal-panel.is-resizing .activity-terminal-resize-handle::after {
-  background: color-mix(in srgb, var(--foreground) 12%, transparent);
+.activity-terminal-resize-handle:is(:hover, :focus-visible, [data-resizing])::after {
+  background: var(--ui-focus);
 }
 
-.activity-terminal-panel.is-resizing .activity-terminal-header,
-.activity-terminal-panel.is-resizing .activity-terminal-body {
+.activity-terminal-panel:has(.activity-terminal-resize-handle[data-resizing]) :is(.activity-terminal-header, .activity-terminal-body) {
   pointer-events: none;
 }
 
@@ -1792,7 +1783,6 @@ textarea:focus {
 button:focus-visible,
 summary:focus-visible,
 input:focus-visible,
-select:focus-visible,
 textarea:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--foreground) 80%, var(--foreground));
   outline-offset: 2px;
@@ -1929,39 +1919,20 @@ textarea:focus-visible {
   justify-content: center;
 }
 
-.command-palette-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 160;
-  display: grid;
-  place-items: start center;
-  padding: 12vh 20px 20px;
-  background: color-mix(in srgb, var(--background) 72%, transparent);
-  backdrop-filter: blur(14px);
-}
-
-.command-palette {
-  width: min(560px, 100%);
-  overflow: hidden;
-  border: 1px solid var(--border-strong);
-  border-radius: 14px;
-  background: var(--card);
-  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.38);
-}
-
 .command-palette-search {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 9px 12px;
+  padding: 8px 11px;
   border-bottom: 1px solid var(--border);
   color: var(--muted-2);
 }
 
 .command-palette-search input {
+  flex: 1;
   height: 38px;
   min-width: 0;
-  padding: 0;
+  padding: 0 var(--ui-space-2);
   border: 0;
   outline: none;
   background: transparent;
@@ -1977,44 +1948,6 @@ textarea:focus-visible {
 
 .command-palette-search input::placeholder {
   color: var(--muted-2);
-}
-
-.command-palette-close {
-  display: grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  flex: 0 0 auto;
-  padding: 0;
-  border: 1px solid transparent;
-  border-radius: 7px;
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-}
-
-.command-palette-close:hover {
-  border-color: var(--border);
-  background: var(--secondary-hover);
-  color: var(--foreground);
-}
-
-.command-palette-heading {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 18px 18px 10px;
-}
-
-.command-palette-heading h2 {
-  margin: 0;
-  font-size: 15px;
-  letter-spacing: -0.025em;
-}
-
-.command-palette-hint {
-  flex: 0 0 auto;
 }
 
 .command-palette-group-label {
@@ -2296,10 +2229,6 @@ textarea:focus-visible {
 @media (max-width: 900px) {
   .app-body.is-sidebar-collapsed {
     grid-template-columns: 1fr;
-  }
-
-  .command-palette-backdrop {
-    padding-top: 7vh;
   }
 
   .gallery-panel-header {
@@ -2647,15 +2576,13 @@ body {
 }
 
 input,
-select,
 textarea {
   border-color: var(--border-strong);
   border-radius: 8px;
   background: var(--input-bg);
 }
 
-input,
-select {
+input {
   height: 36px;
   padding: 0 10px;
   font-size: 12px;
@@ -2668,13 +2595,11 @@ textarea {
 }
 
 input:hover,
-select:hover,
 textarea:hover {
   border-color: color-mix(in srgb, var(--border-strong) 82%, var(--foreground));
 }
 
 input:focus,
-select:focus,
 textarea:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
@@ -3161,7 +3086,6 @@ body {
 
 button,
 input,
-select,
 textarea {
   touch-action: manipulation;
 }
@@ -3169,7 +3093,6 @@ textarea {
 button:focus,
 summary:focus,
 input:focus,
-select:focus,
 textarea:focus {
   outline: none;
 }
@@ -3177,7 +3100,6 @@ textarea:focus {
 button:focus-visible,
 summary:focus-visible,
 input:focus-visible,
-select:focus-visible,
 textarea:focus-visible {
   outline: var(--ui-focus-ring);
   outline-offset: 2px;
@@ -3437,7 +3359,6 @@ textarea:focus-visible {
 }
 
 input,
-select,
 textarea {
   border: 1px solid var(--border-strong);
   border-radius: 7px;
@@ -3445,8 +3366,7 @@ textarea {
   color: var(--foreground);
 }
 
-input,
-select {
+input {
   height: 34px;
   padding: 0 9px;
   font-size: 11px;
@@ -3460,21 +3380,16 @@ textarea {
 }
 
 input:hover,
-select:hover,
 textarea:hover {
   border-color: color-mix(in srgb, var(--border-strong) 72%, var(--foreground));
 }
 
 input:focus,
-select:focus,
 textarea:focus {
   border-color: var(--brand);
   box-shadow: none;
 }
 
-select {
-  appearance: auto;
-}
 
 .prompt-tools {
   gap: 7px;
@@ -3666,20 +3581,12 @@ select {
   backdrop-filter: blur(12px);
 }
 
-.command-palette-backdrop {
-  background: var(--ui-search-scrim);
-  backdrop-filter: blur(3px);
-}
-
-.data-dialog,
-.command-palette {
+.data-dialog {
   border-color: var(--border-strong);
   border-radius: 12px;
   background: var(--card);
   box-shadow: var(--shadow-modal);
 }
-
-.command-palette { box-shadow: var(--ui-search-shadow); }
 
 .data-dialog-header {
   padding: 18px 20px 15px;
@@ -3722,15 +3629,6 @@ select {
   border-radius: 7px;
   background: var(--secondary-bg);
   color: var(--brand);
-}
-
-.command-palette {
-  width: min(580px, 100%);
-}
-
-.command-palette-search {
-  padding: 8px 11px;
-  border-bottom-color: var(--border);
 }
 
 .command-palette-action {
@@ -3804,7 +3702,7 @@ select {
   gap: 6px;
 }
 
-.prompt-recipe-row select,
+.prompt-recipe-row .ui-select,
 .prompt-recipe-save input {
   min-width: 0;
 }
@@ -3884,7 +3782,7 @@ select {
 .audio-feed-search { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 0 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--input-bg); color: var(--muted-2); }
 .audio-feed-search:focus-within { border-color: var(--accent); }
 .audio-feed-search input { min-width: 0; width: 100%; height: var(--ui-control-height); padding: 0; border: 0; outline: 0; background: transparent; color: var(--foreground); font-size: 12px; }
-.audio-feed-tools > select { height: var(--ui-control-height); padding: 0 28px 0 9px; font-size: 12px; }
+.audio-feed-tools > .ui-select { height: var(--ui-control-height); padding: 0 9px; font-size: 12px; }
 .audio-feed-filters { grid-column: 1 / -1; overflow-x: auto; padding-bottom: 2px; }
 .audio-feed-list { display: grid; gap: 14px; }
 .audio-take { min-width: 0; padding: 18px; border: 1px solid var(--border); border-radius: 12px; background: var(--card); box-shadow: var(--shadow-card); }
@@ -3910,16 +3808,9 @@ select {
 .audio-take-error { margin: 7px 0 0; color: var(--danger); font-size: 11px; }
 .audio-take-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin-top: 13px; }
 .audio-take-actions .ui-button { gap: 6px; padding-inline: 10px; text-decoration: none; }
-.audio-take-menu { position: relative; margin-left: auto; }
-.audio-take-menu summary { cursor: pointer; list-style: none; }
-.audio-take-menu summary::-webkit-details-marker { display: none; }
-.audio-take-menu[open] > summary { background: var(--secondary-hover); color: var(--foreground); }
-.audio-take-menu-items { position: absolute; z-index: 20; right: 0; top: calc(100% + 5px); display: grid; width: 185px; padding: 5px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--card); box-shadow: var(--ui-menu-shadow); }
-.audio-take-menu.is-up .audio-take-menu-items { top: auto; bottom: calc(100% + 5px); }
-.audio-take-menu-items .ui-menu-item { justify-content: flex-start; }
-.audio-take-menu-items button:hover { background: var(--secondary-bg); }
-.audio-take-menu-items .danger-text { color: var(--danger); }
-.audio-take-menu-items .ui-menu-item--danger { color: var(--danger); }
+.audio-take-menu-trigger { margin-inline-start: auto; }
+.audio-take-menu-trigger[data-popup-open] { background: var(--secondary-hover); color: var(--foreground); }
+.audio-take-menu .ui-menu-item { justify-content: flex-start; }
 .audio-feed-empty, .audio-feed-no-results { display: grid; justify-items: center; place-content: center; min-height: 300px; padding: 28px; border: 1px dashed var(--border-strong); border-radius: 12px; background: var(--card); text-align: center; }
 .audio-feed-empty > div { display: grid; width: 62px; height: 62px; place-items: center; margin-bottom: 13px; border-radius: 15px; background: var(--secondary-bg); color: var(--accent); }
 .audio-feed-empty strong, .audio-feed-no-results strong { font-size: 14px; }
@@ -3937,7 +3828,6 @@ select {
 .audio-take-pending-icon { display: grid; width: 39px; height: 39px; flex: 0 0 auto; place-items: center; border-radius: 9px; background: var(--secondary-bg); color: var(--accent); }
 .audio-take--pending strong { font-size: 12px; }
 .audio-take--pending p { margin: 5px 0 7px; color: var(--muted); font-size: 11px; line-height: 1.5; }
-.audio-take--pending summary { color: var(--foreground); cursor: pointer; font-size: 10px; }
 .audio-take--pending pre { max-height: 140px; overflow: auto; color: var(--muted-2); font: 10px/1.5 var(--font-mono); white-space: pre-wrap; }
 .tts-control-group { display: grid; gap: 12px; padding: 20px 0; border-bottom: 1px solid var(--border); }
 .tts-group-heading { display: grid; gap: 4px; }
@@ -3955,7 +3845,7 @@ select {
 .tts-size-option span { color: var(--muted); font-size: 10px; }
 .tts-size-option small { margin-top: 4px; color: var(--muted-2); font-size: 10px; }
 .tts-field { display: grid; gap: 6px; font-size: 11px; }
-.tts-field select, .tts-field .ui-textarea { min-width: 0; width: 100%; }
+.tts-field .ui-select, .tts-field .ui-textarea { min-width: 0; width: 100%; }
 .tts-field small { color: var(--muted-2); font-size: 10px; }
 .tts-character-count { justify-self: end; }
 .tts-optional { display: inline; color: var(--muted-2); font-size: 10px; font-weight: 400; }
@@ -4108,7 +3998,6 @@ select {
 .audio-take-player audio { display: none; }
 .audio-take .audio-take-player { border-top: 0; padding-top: 0; margin-top: 12px; }
 .audio-take-provenance { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 8px; }
-.audio-take-provenance summary { color: var(--muted); font-size: 12px; line-height: 24px; cursor: pointer; }
 .audio-take-transport { display: flex; align-items: center; gap: 11px; min-width: 0; }
 .audio-take-play { display: grid; flex: 0 0 auto; width: 34px; height: 34px; place-items: center; border: 0; border-radius: 50%; background: var(--accent); color: var(--accent-foreground); cursor: pointer; }
 .audio-take-play:hover { background: var(--accent-hover); }
@@ -4137,7 +4026,7 @@ select {
 .tts-group-heading small { font-size: 12px; }
 .tts-script-group .ui-textarea { min-height: 142px; padding: 12px; background: var(--input-bg); font-size: 13px; line-height: 1.6; }
 .tts-field { gap: 7px; font-size: 12px; font-weight: 600; }
-.tts-field .ui-textarea, .tts-field select { font-weight: 400; }
+.tts-field .ui-textarea, .tts-field .ui-select { font-weight: 400; }
 .tts-character-count { font-weight: 400; }
 .tts-mode-list { grid-template-columns: minmax(0, 1fr); gap: 6px; }
 .tts-mode-option { justify-content: flex-start; min-height: 54px; padding: 9px 11px; border-radius: 8px; text-align: left; }
@@ -4149,7 +4038,7 @@ select {
 .tts-mode-detail { font-size: 11px; line-height: 1.5; }
 .tts-voice-detail .tts-control-stack { gap: 11px; }
 .tts-output-fields { display: grid; grid-template-columns: minmax(0, 1fr); gap: 15px; align-items: start; }
-.tts-output-fields .tts-field select { height: var(--ui-control-height); }
+.tts-output-fields .tts-field .ui-select { height: var(--ui-control-height); }
 .tts-size-list { grid-template-columns: minmax(0, 1fr); gap: 6px; }
 .tts-size-option { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 53px; padding: 9px 11px; border-radius: 8px; text-align: left; }
 .tts-size-option strong { font-size: 12px; }

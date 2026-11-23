@@ -30,6 +30,7 @@ export function Lightbox({
   onDelete: (image: ImageRecord) => Promise<void>;
 }) {
   const dialog = useRef<HTMLDivElement>(null);
+  const menuLayer = useRef<HTMLDivElement>(null);
   const [infoOpen, setInfoOpen] = useState(false);
   const [zoom, setZoom] = useState(0);
   const [failed, setFailed] = useState(false);
@@ -57,7 +58,7 @@ export function Lightbox({
         onKeyDown={(event) => {
           if (
             (event.target as HTMLElement).closest(
-              'input,select,textarea,[role="alertdialog"]',
+              'input,select,textarea,[role="alertdialog"],[role="menu"],[aria-haspopup="menu"][aria-expanded="true"]',
             )
           )
             return;
@@ -192,12 +193,14 @@ export function Lightbox({
             {image.prompt?.trim() || image.name}
           </span>
           <ImageActions
+            menuContainer={menuLayer}
             image={image}
             onRemix={onRemix}
             onRemixInNewThread={onRemixInNewThread}
             onDelete={onDelete}
           />
         </footer>
+        <div ref={menuLayer} className="viewer-menu-layer" />
       </div>
     </div>,
     document.body,

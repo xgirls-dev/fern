@@ -35,6 +35,7 @@ const { page, state, errors, close } = await fixture({
 
 const button = (name) => page.getByRole("button", { name, exact: true });
 const menu = (name) => button(`Actions for text thread ${name}`);
+const item = (name) => page.getByRole("menuitem", { name, exact: true });
 const composer = page.getByRole("textbox", { name: "Message", exact: true });
 const saved = () => page.evaluate(() => window.transcriptSaves);
 const copied = () => page.evaluate(() => window.transcriptCopies);
@@ -53,14 +54,14 @@ try {
   });
 
   await menu("Current conversation").click();
-  await expect(button("Copy transcript")).toHaveCount(0);
+  await expect(item("Copy transcript")).toHaveCount(0);
   await page.keyboard.press("Escape");
   await menu(title).press("Enter");
-  await expect(button("Rename")).toBeFocused();
-  await page.keyboard.press("Tab");
-  await expect(button("Duplicate")).toBeFocused();
-  await page.keyboard.press("Tab");
-  await expect(button("Copy transcript")).toBeFocused();
+  await expect(item("Rename")).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(item("Duplicate")).toBeFocused();
+  await page.keyboard.press("c");
+  await expect(item("Copy transcript")).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(menu(title)).toBeFocused();
   await expect(page.getByText("Chat transcript copied.", { exact: true })).toBeVisible();
@@ -83,13 +84,13 @@ try {
   assert.equal(answer.children.at(-1).value, "const unfinished = true;");
 
   await menu(title).click();
-  await button("Save Markdown…").click();
+  await item("Save Markdown…").click();
   await expect.poll(async () => (await saved()).length).toBe(1);
   await expect(page.getByText("Chat transcript saved.", { exact: true })).toHaveCount(0);
   await expect(menu(title)).toBeFocused();
   await page.evaluate(() => { window.saveOutcome = true; });
   await menu(title).click();
-  await button("Save Markdown…").click();
+  await item("Save Markdown…").click();
   await expect(page.getByText("Chat transcript saved.", { exact: true })).toBeVisible();
   assert.deepEqual(await saved(), [{ name: title, markdown }, { name: title, markdown }]);
 
@@ -124,7 +125,7 @@ try {
   await search.getByRole("searchbox", { name: "Find a thread" }).fill("Archived conversation");
   await search.getByRole("button", { name: /Archived conversation/ }).click();
   await menu("Archived conversation").click();
-  await button("Copy transcript").click();
+  await item("Copy transcript").click();
   await expect.poll(async () => (await copied()).length).toBe(3);
   assert((await copied())[2].includes("Old archived question."));
   assert.deepEqual(errors, []);

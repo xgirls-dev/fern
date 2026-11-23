@@ -39,7 +39,13 @@ const searchFor = async (name) => {
 };
 
 try {
-  await button("Open split chat", region("Text conversation")).click();
+  const openSplit = button("Open split chat", region("Text conversation"));
+  await openSplit.click();
+  await expect(choose.getByRole("searchbox", { name: "Find a chat" })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(choose).toHaveCount(0);
+  await expect(openSplit).toBeFocused();
+  await openSplit.click();
   await searchFor("Research sources");
   await left.waitFor();
   await right.getByText(document.name, { exact: true }).waitFor();
@@ -49,10 +55,35 @@ try {
   assert(leftBox.x + leftBox.width <= rightBox.x, "The chats should appear in separate columns.");
   assert.equal(leftBox.y, rightBox.y);
 
+  const dividerOffset = (percent) => () => divider.evaluate((element, ratio) => {
+    const layout = element.parentElement.getBoundingClientRect();
+    return Math.abs(element.getBoundingClientRect().left - (layout.left + layout.width * ratio / 100));
+  }, percent);
+  await expect(divider).toHaveAttribute("aria-controls", await page.locator('[data-chat-pane="primary"]').getAttribute("id"));
+  await divider.press("Home");
+  await expect(divider).toHaveAttribute("aria-valuenow", "35");
+  await divider.press("End");
+  await expect(divider).toHaveAttribute("aria-valuenow", "65");
+  await expect.poll(dividerOffset(65)).toBeLessThan(1);
+  await divider.dblclick();
+  await expect(divider).toHaveAttribute("aria-valuenow", "50");
   await divider.press("ArrowRight");
-  assert.equal(await divider.getAttribute("aria-valuenow"), "55");
-  await divider.hover();
+  await expect(divider).toHaveAttribute("aria-valuetext", "55%");
+  await expect.poll(dividerOffset(55)).toBeLessThan(1);
   const bar = await divider.boundingBox();
+  const middleY = bar.y + bar.height / 2;
+  await page.mouse.move(bar.x + bar.width / 2, middleY);
+  await page.mouse.down();
+  await page.mouse.move(bar.x - 65, middleY, { steps: 5 });
+  await expect(divider).toHaveAttribute("data-resizing", "true");
+  await expect.poll(dividerOffset(55)).toBeGreaterThan(1);
+  await page.keyboard.press("Escape");
+  await page.mouse.up();
+  await expect(divider).toHaveAttribute("aria-valuenow", "55");
+  await expect(divider).not.toHaveAttribute("data-resizing");
+  await expect.poll(dividerOffset(55)).toBeLessThan(1);
+
+  await page.mouse.move(bar.x + bar.width / 2, bar.y + bar.height / 2);
   await page.mouse.down();
   await page.mouse.move(bar.x - 65, bar.y + bar.height / 2, { steps: 7 });
   await page.waitForFunction(() => Number(document.querySelector(".chat-split-divider")?.getAttribute("aria-valuenow")) < 55);

@@ -1,3 +1,4 @@
+import { chooseSelectOption } from "./select-option.mjs";
 import assert from "node:assert/strict";
 import { fixture } from "./ui-fixture.mjs";
 
@@ -41,7 +42,7 @@ try {
   await menuItem("Chat").click();
   await button("Chat settings").click();
   await button("Image").click();
-  await page.getByLabel("Image generation model", { exact: true }).selectOption(model.id);
+  await chooseSelectOption(page.getByLabel("Image generation model", { exact: true }), model.label);
   await button("Close chat settings").click();
   await page.getByRole("textbox", { name: "Message", exact: true }).fill("Make a picture of a fox");
   const requested = page.waitForRequest((request) => request.url().endsWith("/api/text/generate"));

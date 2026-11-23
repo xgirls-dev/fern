@@ -118,22 +118,25 @@ function restorePosition(feed: HTMLElement, position: ScrollPosition) {
   const row = anchor && feed.querySelector(`[data-chat-message="${CSS.escape(anchor.id)}"]`);
   if (!row || !anchor) {
     feed.scrollTop = position.top;
-    return;
+    return true;
   }
   const line = anchor.line;
   if (line) {
-    let text: Node | undefined = row.querySelector(readingSections[line.section]) ?? undefined;
+    const section = row.querySelector(readingSections[line.section]);
+    if (section?.querySelector("[data-chat-markdown-pending]")) return false;
+    let text: Node | undefined = section ?? undefined;
     for (const index of line.path) text = text?.childNodes[index];
     const sampleStart = Math.max(0, line.character - 8);
     if (text instanceof Text && line.character < text.length && text.data.slice(sampleStart, sampleStart + line.sample.length) === line.sample) {
       const bounds = characterBounds(text, line.character);
       if (bounds.height) {
         feed.scrollTop += bounds.top - viewport.top - line.offset;
-        return;
+        return true;
       }
     }
   }
   feed.scrollTop += row.getBoundingClientRect().top - viewport.top - anchor.offset;
+  return true;
 }
 
 function rememberPosition(threadId: string, feed: HTMLElement, following: boolean, preferred?: Element) {
@@ -161,7 +164,14 @@ export function useTextScroll(threadId: string) {
   const [followingLatest, setFollowingLatest] = useState(true);
   const [canScroll, setCanScroll] = useState(false);
   const [restoredThread, setRestoredThread] = useState<string>();
+  const pendingRestore = useRef<ScrollPosition | undefined>(undefined);
   const restoreAnchor = restoredThread === threadId ? undefined : positions.get(threadId)?.anchor;
+
+  const cancelRestore = useCallback(() => {
+    if (!pendingRestore.current) return;
+    pendingRestore.current = undefined;
+    setRestoredThread(threadId);
+  }, [threadId]);
 
   const savePosition = useCallback((feed: HTMLElement, preferred?: Element) => {
     lastTop.current = feed.scrollTop;
@@ -183,6 +193,7 @@ export function useTextScroll(threadId: string) {
     const feed = feedRef.current;
     if (!feed?.clientHeight || feed.scrollTop === lastTop.current || layout.current.hidden
       || transcriptRef.current?.clientWidth !== layout.current.width) return;
+    cancelRestore();
     const top = feed.scrollTop;
     const gap = distanceFromTail(feed);
     if (top < lastTop.current && gap > tailTolerance) following.current = false;
@@ -195,16 +206,17 @@ export function useTextScroll(threadId: string) {
       }
     }
     savePosition(feed);
-  }, [savePosition]);
+  }, [cancelRestore, savePosition]);
 
   const jumpToLatest = useCallback(() => {
     const feed = feedRef.current;
     if (!feed) return;
+    cancelRestore();
     if (chatSelectionIntersects(feed)) window.getSelection()?.removeAllRanges();
     following.current = true;
     feed.scrollTop = feed.scrollHeight;
     savePosition(feed);
-  }, [savePosition]);
+  }, [cancelRestore, savePosition]);
 
   const revealMessage = useCallback((id: string, find?: Pick<ChatSearchMatch, "query" | "occurrence">,
     block: ScrollLogicalPosition = "nearest", scroll = true) => {
@@ -215,6 +227,7 @@ export function useTextScroll(threadId: string) {
     const range = find && target ? renderedMatch(target, find) : undefined;
     if (find) showFindHighlight(range);
     if (scroll) {
+      cancelRestore();
       following.current = false;
       if (range) revealFindRange(feed, range);
       else (target ?? row).scrollIntoView({ block });
@@ -239,7 +252,7 @@ export function useTextScroll(threadId: string) {
     });
     observer.observe(row, { subtree: true, childList: true, characterData: true });
     return () => observer.disconnect();
-  }, [savePosition]);
+  }, [cancelRestore, savePosition]);
 
   const onKeyDown = useCallback((event: KeyboardEvent<HTMLDivElement>) => {
     if (event.target !== event.currentTarget || event.nativeEvent.isComposing || event.metaKey || event.ctrlKey || event.altKey) return;
@@ -263,12 +276,33 @@ export function useTextScroll(threadId: string) {
     const transcript = transcriptRef.current;
     if (!feed || !transcript) return;
     const saved = positions.get(threadId);
+    pendingRestore.current = undefined;
+    const restore = (position: ScrollPosition) => {
+      if (!restorePosition(feed, position)) {
+        pendingRestore.current = position;
+        lastTop.current = feed.scrollTop;
+        markdownObserver.observe(transcript, { childList: true, subtree: true });
+        return;
+      }
+      pendingRestore.current = undefined;
+      markdownObserver.disconnect();
+      lastTop.current = feed.scrollTop;
+      positions.set(threadId, { ...position, top: feed.scrollTop });
+      setRestoredThread(threadId);
+    };
+    const markdownObserver = new MutationObserver(() => {
+      const position = pendingRestore.current;
+      if (position && feed.clientHeight) restore(position);
+      else if (!position) markdownObserver.disconnect();
+    });
     following.current = saved?.following ?? true;
     layout.current = { width: transcript.clientWidth, hidden: !feed.clientHeight };
     if (!layout.current.hidden) {
-      if (following.current) feed.scrollTop = feed.scrollHeight;
-      else if (saved) restorePosition(feed, saved);
-      setRestoredThread(threadId);
+      if (!following.current && saved) restore(saved);
+      else {
+        feed.scrollTop = feed.scrollHeight;
+        setRestoredThread(threadId);
+      }
     } else setRestoredThread(undefined);
     lastTop.current = feed.scrollTop;
     setFollowingLatest(following.current);
@@ -283,20 +317,19 @@ export function useTextScroll(threadId: string) {
       const wasHidden = layout.current.hidden;
       const reflowed = wasHidden || width !== layout.current.width;
       layout.current = { width, hidden: false };
-      if (wasHidden) setRestoredThread(threadId);
       updateOverflow();
       if (!following.current) {
-        const position = reflowed && positions.get(threadId);
+        const position = pendingRestore.current ?? (reflowed && positions.get(threadId));
         if (position) {
-          restorePosition(feed, position);
-          lastTop.current = feed.scrollTop;
-          positions.set(threadId, { ...position, top: feed.scrollTop });
+          restore(position);
           return;
         }
+        if (wasHidden) setRestoredThread(threadId);
         // Reflow can clamp the viewport to the tail while the reader is paused.
         if (feed.scrollTop !== lastTop.current) savePosition(feed);
         return;
       }
+      if (wasHidden) setRestoredThread(threadId);
       // Honor upward movement that landed in the same frame as a new chunk.
       if (!reflowed && feed.scrollTop < lastTop.current && !atLatest(feed)) {
         onScroll();
@@ -313,6 +346,7 @@ export function useTextScroll(threadId: string) {
     document.addEventListener("selectionchange", onSelection);
     return () => {
       observer.disconnect();
+      markdownObserver.disconnect();
       document.removeEventListener("selectionchange", onSelection);
     };
   }, [onScroll, pauseFollowing, savePosition, threadId]);

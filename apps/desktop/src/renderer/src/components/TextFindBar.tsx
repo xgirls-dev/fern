@@ -3,6 +3,7 @@ import ChevronUp from "lucide-react/dist/esm/icons/chevron-up.mjs";
 import ChevronDown from "lucide-react/dist/esm/icons/chevron-down.mjs";
 import X from "lucide-react/dist/esm/icons/x.mjs";
 import { IconButton, Input } from "./ui/controls";
+import { Tooltip } from "./ui/Tooltip";
 import { chatSearchEntries, liveChatSearchEntry, matchingChatOccurrences, type ChatSearchMatch } from "../lib/chatSearch";
 import type { TextMessage } from "../lib/textThreads";
 
@@ -55,9 +56,15 @@ export function TextFindBar({ messages, liveMessage, initialQuery, onMatch, onCl
     }}>
       <Input ref={input} type="search" aria-label="Search this chat" placeholder="Find in chat…" value={query} onChange={(event) => { setQuery(event.target.value); setSelected(undefined); }} />
       <span role="status">{needle ? matches.length ? `${index + 1} of ${matches.length}${savedPromptId ? " · Saved version" : ""}` : "No matches" : ""}</span>
-      <IconButton aria-label="Previous match" title="Previous match (Shift + Enter)" disabled={!matches.length} onClick={() => step(-1)}><ChevronUp size={16} aria-hidden="true" /></IconButton>
-      <IconButton aria-label="Next match" title="Next match (Enter)" disabled={!matches.length} onClick={() => step(1)}><ChevronDown size={16} aria-hidden="true" /></IconButton>
-      <IconButton aria-label="Close find" title="Close find" onClick={onClose}><X size={16} aria-hidden="true" /></IconButton>
+      <Tooltip content="Previous match · Shift + Enter">
+        <IconButton aria-label="Previous match" disabled={!matches.length} onClick={() => step(-1)}><ChevronUp size={16} aria-hidden="true" /></IconButton>
+      </Tooltip>
+      <Tooltip content="Next match · Enter">
+        <IconButton aria-label="Next match" disabled={!matches.length} onClick={() => step(1)}><ChevronDown size={16} aria-hidden="true" /></IconButton>
+      </Tooltip>
+      <Tooltip content="Close find · Esc">
+        <IconButton aria-label="Close find" onClick={onClose}><X size={16} aria-hidden="true" /></IconButton>
+      </Tooltip>
     </form>
   );
 }

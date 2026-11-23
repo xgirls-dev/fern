@@ -1,3 +1,4 @@
+import { chooseSelectOption, openSelect } from "./select-option.mjs";
 import assert from "node:assert/strict";
 import { expect } from "@playwright/test";
 import { fixture, savedTextWorkspace } from "./ui-fixture.mjs";
@@ -5,14 +6,16 @@ import { fixture, savedTextWorkspace } from "./ui-fixture.mjs";
 const { page, errors, close } = await fixture({ imageCount: 0, threadCount: 0, viewport: { width: 1440, height: 920 } });
 const sidebar = page.getByRole("complementary", { name: "Fern navigation" });
 const button = (name, root = page) => root.getByRole("button", { name, exact: true });
+const item = (name, root) => root.getByRole("menuitem", { name, exact: true });
 const folder = (name) => button(name, sidebar);
 const folderMenu = async (name) => {
   await button(`Actions for folder ${name}`, sidebar).click();
-  return page.getByRole("group", { name: `Actions for ${name}`, exact: true });
+  return page.getByRole("menu", { name: `Actions for ${name}`, exact: true });
 };
 const saveFolder = async (dialogName, name, submit = "Create folder") => {
   const dialog = page.getByRole("dialog", { name: dialogName, exact: true });
   const input = dialog.getByRole("textbox", { name: "Folder name" });
+  await expect(input).toBeFocused();
   await input.fill(name);
   await button(submit, dialog).click();
   await folder(name).waitFor();
@@ -30,36 +33,49 @@ const expectLocation = (name, parent, kind) => expect.poll(async () => {
 
 try {
   await sidebar.locator(".sidebar-new-button").click();
-  await sidebar.getByRole("menuitem", { name: "Chat folder", exact: true }).click();
+  await page.getByRole("menu", { name: "New thread type", exact: true })
+    .getByRole("menuitem", { name: "Chat folder", exact: true }).click();
   await saveFolder("New chat folder", "Research");
-  await button("New chat folder", sidebar).click();
+  const newFolder = button("New chat folder", sidebar);
+  await newFolder.click();
+  const createDialog = page.getByRole("dialog", { name: "New chat folder", exact: true });
+  await expect(createDialog.getByRole("textbox", { name: "Folder name" })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(createDialog).toHaveCount(0);
+  await expect(newFolder).toBeFocused();
+  await newFolder.click();
   await saveFolder("New chat folder", "Writing");
-  await button("New subfolder", await folderMenu("Research")).click();
+  await item("New subfolder", await folderMenu("Research")).click();
   await saveFolder("New subfolder", "Sources");
   await expectLocation("Sources", "Research", "folder");
 
-  await button("New chat here", await folderMenu("Sources")).click();
+  await item("New chat here", await folderMenu("Sources")).click();
   const composer = page.getByRole("textbox", { name: "Message", exact: true });
   await composer.fill("Keep these local notes.");
   await button("Actions for text thread New text thread", sidebar).click();
-  await button("Rename", page.getByRole("group", { name: "Actions for New text thread", exact: true })).click();
+  await item("Rename", page.getByRole("menu", { name: "Actions for New text thread", exact: true })).click();
   const name = sidebar.getByRole("textbox", { name: "Text thread name" });
+  await expect(name).toBeFocused();
   await name.fill("Local notes");
   await name.press("Enter");
   const chat = button("Text thread: Local notes", sidebar);
   await expectLocation("Local notes", "Sources", "chat");
 
-  await button("Move to folder…", await folderMenu("Sources")).click();
+  await item("Move to folder…", await folderMenu("Sources")).click();
   const moveFolder = page.getByRole("dialog", { name: "Move folder", exact: true });
-  await moveFolder.getByRole("combobox", { name: "Destination for Sources" }).selectOption({ label: "Writing" });
+  await chooseSelectOption(moveFolder.getByRole("combobox", { name: "Destination for Sources" }), "Writing");
   await button("Move", moveFolder).click();
   await expectLocation("Sources", "Writing", "folder");
-  await button("Move to folder…", await folderMenu("Writing")).click();
+  await item("Move to folder…", await folderMenu("Writing")).click();
   const choices = moveFolder.getByRole("combobox", { name: "Destination for Writing" });
-  assert.deepEqual(await choices.locator("option").allTextContents(), ["Chats (top level)", "Research"]);
+  assert.deepEqual(await (await openSelect(choices)).getByRole("option").allTextContents(), ["Chats (top level)", "Research"]);
   await page.keyboard.press("Escape");
+  await expect(moveFolder).toBeVisible();
+  await expect(choices).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(button("Actions for folder Writing", sidebar)).toBeFocused();
 
-  await button("Rename", await folderMenu("Writing")).click();
+  await item("Rename", await folderMenu("Writing")).click();
   await saveFolder("Rename folder", "Studio plans", "Save name");
   await folder("Sources").dragTo(folder("Research"));
   await expectLocation("Sources", "Research", "folder");
@@ -94,16 +110,16 @@ try {
   assert.equal(await composer.inputValue(), "Keep these local notes.");
 
   await button("Actions for text thread Local notes", sidebar).click();
-  await button("Move to folder…", page.getByRole("group", { name: "Actions for Local notes", exact: true })).click();
+  await item("Move to folder…", page.getByRole("menu", { name: "Actions for Local notes", exact: true })).click();
   const moveChat = page.getByRole("dialog", { name: "Move chat", exact: true });
-  await moveChat.getByRole("combobox", { name: "Destination for Local notes" }).selectOption({ label: "Studio plans" });
+  await chooseSelectOption(moveChat.getByRole("combobox", { name: "Destination for Local notes" }), "Studio plans");
   await button("Move", moveChat).click();
   await expectLocation("Local notes", "Studio plans", "chat");
   const folderIcon = await folder("Sources").locator("svg").last().boundingBox();
   const chatIcon = await chat.locator("svg").first().boundingBox();
   assert(Math.abs(folderIcon.x - chatIcon.x) < 1, "Sibling folders and chats should align on the same icon column.");
 
-  await button("Delete folder", await folderMenu("Studio plans")).click();
+  await item("Delete folder", await folderMenu("Studio plans")).click();
   const remove = page.getByRole("dialog", { name: "Delete folder", exact: true });
   await button("Delete folder", remove).click();
   await folder("Studio plans").waitFor({ state: "hidden" });

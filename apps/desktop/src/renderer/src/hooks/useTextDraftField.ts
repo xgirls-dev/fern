@@ -10,6 +10,7 @@ interface DraftView {
 
 // A draft can temporarily unmount during workspace navigation or transcript scrolling.
 const draftViews = new Map<string, DraftView>();
+const nativeAutosize = typeof CSS !== "undefined" && CSS.supports("field-sizing", "content");
 
 function fitDraftField(field: HTMLTextAreaElement, maxHeight: number) {
   const scrollTop = field.scrollTop;
@@ -33,7 +34,7 @@ export function useTextDraftField(key: string, value: string, maxHeight: number)
   useLayoutEffect(() => {
     const field = fieldRef.current;
     if (!field) return;
-    fitDraftField(field, maxHeight);
+    if (!nativeAutosize) fitDraftField(field, maxHeight);
     if (initialized.current === field) return;
     initialized.current = field;
     const saved = draftViews.get(key);
@@ -46,7 +47,7 @@ export function useTextDraftField(key: string, value: string, maxHeight: number)
 
   useLayoutEffect(() => {
     const field = fieldRef.current;
-    if (!field) return;
+    if (!field || nativeAutosize) return;
     // Height changes trigger ResizeObserver too, so refit only when the width changes.
     let width = field.getBoundingClientRect().width;
     const observer = new ResizeObserver(() => {

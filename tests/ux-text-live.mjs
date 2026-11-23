@@ -1,4 +1,5 @@
 // Opt-in: uses a real local INT4 export, invisible Chromium and isolated API data.
+import { chooseSelectOption } from "./select-option.mjs";
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { mkdtemp, readFile } from 'node:fs/promises';
@@ -83,11 +84,11 @@ try {
   assert.equal(stopped.id, jobId);
   assert.equal(stopped.status, 'stopped');
   await page.getByRole('button', {name:'Preferences', exact:true}).click();
-  await page.getByLabel('Generation device', {exact:true}).selectOption('CPU');
-  assert.equal(await page.getByLabel('Generation device', {exact:true}).inputValue(), 'CPU');
+  await chooseSelectOption(page.getByLabel('Generation device', {exact:true}), "CPU");
+  assert.equal(await page.getByLabel('Generation device', {exact:true}).innerText(), 'CPU');
   // Verify the opt-in control without doing inference on CPU. GPU remains the
   // only device used by this real-model test.
-  await page.getByLabel('Generation device', {exact:true}).selectOption('GPU');
+  await chooseSelectOption(page.getByLabel('Generation device', {exact:true}), "Available GPU");
   await page.getByRole('button', {name:'Text', exact:true}).click();
   await page.getByRole('button', {name:'Chat settings', exact:true}).click();
   await page.getByRole('spinbutton', {name:'Maximum output (tokens)', exact:true}).fill('128');

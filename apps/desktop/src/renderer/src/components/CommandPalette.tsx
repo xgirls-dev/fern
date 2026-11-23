@@ -14,7 +14,7 @@ import MessageSquare from "lucide-react/dist/esm/icons/message-square.mjs";
 import Square from "lucide-react/dist/esm/icons/square.mjs";
 import X from "lucide-react/dist/esm/icons/x.mjs";
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
-import { useModalFocus } from "../hooks/useModalFocus";
+import { Dialog, DialogClose, DialogTitle } from "./ui/Dialog";
 import { IconButton, Input } from "./ui/controls";
 import { shortcutLabel, shortcuts } from "../lib/workspaceNavigation";
 import type { TranscriptDestination } from "../lib/textTranscript";
@@ -85,12 +85,11 @@ export function CommandPalette({
   onStopAudio,
   onStopText,
 }: CommandPaletteProps) {
-  const dialogRef = useRef<HTMLElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const keyboardNavigation = useRef(false);
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
-  useModalFocus(open, dialogRef, onClose);
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -251,6 +250,7 @@ export function CommandPalette({
   };
 
   const onSearchKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.nativeEvent.isComposing) return;
     if (event.key === "ArrowDown") {
       event.preventDefault();
       keyboardNavigation.current = true;
@@ -270,111 +270,97 @@ export function CommandPalette({
   if (!open) return null;
 
   return (
-    <div className="command-palette-backdrop" onMouseDown={onClose}>
-      <section
-        ref={dialogRef}
-        className="command-palette"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="command-palette-title"
+    <Dialog variant="search" onClose={onClose} initialFocus={searchRef}>
+      <DialogTitle className="sr-only">Commands</DialogTitle>
+      <div className="command-palette-search">
+        <Search size={17} aria-hidden="true" />
+        <Input
+          ref={searchRef}
+          className="command-palette-input"
+          value={query}
+          onChange={(event) => {
+            keyboardNavigation.current = false;
+            setQuery(event.target.value);
+            setActiveIndex(0);
+          }}
+          onKeyDown={onSearchKeyDown}
+          placeholder="Search commands or threads…"
+          aria-label="Search commands or threads"
+          role="combobox"
+          aria-expanded="true"
+          aria-controls="fern-command-options"
+          aria-autocomplete="list"
+          aria-activedescendant={
+            filteredActions[selectedIndex]
+              ? `command-${filteredActions[selectedIndex].id}`
+              : undefined
+          }
+          autoComplete="off"
+        />
+        <DialogClose render={<IconButton aria-label="Close commands">
+          <X size={15} aria-hidden="true" />
+        </IconButton>} />
+      </div>
+
+      <div
+        ref={listRef}
+        className="command-palette-list"
+        id="fern-command-options"
+        role="listbox"
+        aria-label="Commands and threads"
         tabIndex={-1}
-        onMouseDown={(event) => event.stopPropagation()}
       >
-        <div className="command-palette-search">
-          <Search size={17} aria-hidden="true" />
-          <Input
-            className="command-palette-input"
-            value={query}
-            onChange={(event) => {
-              keyboardNavigation.current = false;
-              setQuery(event.target.value);
-              setActiveIndex(0);
-            }}
-            onKeyDown={onSearchKeyDown}
-            placeholder="Search commands or threads…"
-            aria-label="Search commands or threads"
-            role="combobox"
-            aria-expanded="true"
-            aria-controls="fern-command-options"
-            aria-autocomplete="list"
-            aria-activedescendant={
-              filteredActions[selectedIndex]
-                ? `command-${filteredActions[selectedIndex].id}`
-                : undefined
-            }
-            autoComplete="off"
-          />
-          <IconButton
-            className="command-palette-close"
-            onClick={onClose}
-            aria-label="Close commands"
-          >
-            <X size={15} aria-hidden="true" />
-          </IconButton>
-        </div>
-
-        <h2 id="command-palette-title" className="sr-only">Commands</h2>
-
-        <div
-          ref={listRef}
-          className="command-palette-list"
-          id="fern-command-options"
-          role="listbox"
-          aria-label="Commands and threads"
-          tabIndex={-1}
-        >
-          {filteredActions.length > 0 ? (
-            groups.filter((group) => group.actions.length).map((group) => <div key={group.label} role="group" aria-label={group.label}>
-              <div className="command-palette-group-label" aria-hidden="true">{group.label}</div>
-              {group.actions.map((action) => {
-                const index = filteredActions.indexOf(action);
-                return (
-              <button
-                key={action.id}
-                id={`command-${action.id}`}
-                tabIndex={-1}
-                type="button"
-                className="command-palette-action"
-                role="option"
-                aria-selected={index === selectedIndex}
-                onMouseMove={() => { keyboardNavigation.current = false; setActiveIndex(index); }}
-                onClick={() => selectAction(action)}
-              >
-                <span className="command-palette-icon">{action.icon}</span>
-                <span className="command-palette-copy">
-                  <strong>{action.label}</strong>
-                  <small>{action.description}</small>
+        {filteredActions.length > 0 ? (
+          groups.filter((group) => group.actions.length).map((group) => <div key={group.label} role="group" aria-label={group.label}>
+            <div className="command-palette-group-label" aria-hidden="true">{group.label}</div>
+            {group.actions.map((action) => {
+              const index = filteredActions.indexOf(action);
+              return (
+            <button
+              key={action.id}
+              id={`command-${action.id}`}
+              tabIndex={-1}
+              type="button"
+              className="command-palette-action"
+              role="option"
+              aria-selected={index === selectedIndex}
+              onMouseMove={() => { keyboardNavigation.current = false; setActiveIndex(index); }}
+              onClick={() => selectAction(action)}
+            >
+              <span className="command-palette-icon">{action.icon}</span>
+              <span className="command-palette-copy">
+                <strong>{action.label}</strong>
+                <small>{action.description}</small>
+              </span>
+              {action.shortcut ? (
+                <span className="command-palette-shortcut">
+                  {action.shortcut}
                 </span>
-                {action.shortcut ? (
-                  <span className="command-palette-shortcut">
-                    {action.shortcut}
-                  </span>
-                ) : null}
-              </button>
-                );
-              })}
-            </div>)
-          ) : (
-            <div className="command-palette-empty">
-              <ArrowDownUp size={17} aria-hidden="true" />
-              <span>No matching commands or threads.</span>
-            </div>
-          )}
-        </div>
+              ) : null}
+            </button>
+              );
+            })}
+          </div>)
+        ) : (
+          <div className="command-palette-empty">
+            <ArrowDownUp size={17} aria-hidden="true" />
+            <span>No matching commands or threads.</span>
+          </div>
+        )}
+      </div>
 
-        <footer className="command-palette-footer">
-          <span>
-            <span className="kbd">↑</span>
-            <span className="kbd">↓</span> Navigate
-          </span>
-          <span>
-            <span className="kbd">↵</span> Open result
-          </span>
-          <span>
-            <span className="kbd">Esc</span> Close
-          </span>
-        </footer>
-      </section>
-    </div>
+      <footer className="command-palette-footer">
+        <span>
+          <span className="kbd">↑</span>
+          <span className="kbd">↓</span> Navigate
+        </span>
+        <span>
+          <span className="kbd">↵</span> Open result
+        </span>
+        <span>
+          <span className="kbd">Esc</span> Close
+        </span>
+      </footer>
+    </Dialog>
   );
 }

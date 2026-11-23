@@ -1,3 +1,4 @@
+import { chooseSelectOption } from "../../../tests/select-option.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
@@ -155,7 +156,7 @@ try {
     await page.getByRole("button", { name: "Preferences", exact: true }).click();
     const cpuPreference = page.getByRole("button", { name: /Allow CPU selection/ });
     if (await cpuPreference.count() && await cpuPreference.getAttribute("aria-pressed") !== "true") await cpuPreference.click();
-    await page.getByLabel("Generation device", { exact: true }).selectOption("CPU");
+    await chooseSelectOption(page.getByLabel("Generation device", { exact: true }), "CPU");
     await page.locator('.sidebar-threads[aria-label="Image threads"] .sidebar-thread-button').first().click();
   }
   await page.getByRole("button", { name: "Image settings" }).last().click();

@@ -63,7 +63,7 @@ export function TextPromptEditor({ draftKey, content, original, replaceLatest, f
         if (canSend && !event.repeat) onApply(true);
       }
     }}>
-      <Textarea key={draftKey} ref={bindField} aria-label="Edited prompt" maxLength={20_000} rows={2} value={content} onChange={(event) => onChange(event.target.value)} />
+      <Textarea key={draftKey} ref={bindField} autosize aria-label="Edited prompt" maxLength={20_000} rows={2} value={content} onChange={(event) => onChange(event.target.value)} />
       <div className="text-prompt-editor-actions">
         <Button variant="ghost" onClick={onCancel}>Cancel</Button>
         <Button variant="secondary" disabled={!canApply} onClick={() => onApply(false)}>Open branch draft</Button>

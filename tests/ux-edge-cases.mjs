@@ -1,7 +1,9 @@
+import { chooseSelectOption } from "./select-option.mjs";
 import assert from "node:assert/strict";
 import { mkdtemp, rm, truncate, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { expect } from "@playwright/test";
 import { fixture } from "./ui-fixture.mjs";
 const { page, state, errors, close } = await fixture();
 const uploadDir = await mkdtemp(join(tmpdir(), "fern-oversize-upload-"));
@@ -9,9 +11,7 @@ const button = (name) => page.getByRole("button", { name, exact: true });
 try {
   await page.locator(".workspace-header").getByRole("button", { name: "Image settings", exact: true }).click();
   await page.locator("summary").filter({ hasText: "Style & recipes" }).click();
-  await page
-    .getByRole("combobox", { name: "Prompt recipe" })
-    .selectOption("editorial-portrait");
+  await chooseSelectOption(page.getByRole("combobox", { name: "Prompt recipe" }), "Editorial portrait · Fern");
   await page.locator(".sidebar-new-menu > button").click();
   await page.getByRole("menuitem", { name: "Create image" }).click();
   await button("Undo").click();
@@ -82,8 +82,8 @@ try {
   await page.waitForResponse(response => response.url().includes("/api/flux2/status") && response.url().includes("images=1"));
   await button("Images").click();
   await button(/^Review.*audit-1\.png$/).click();
-  await page.locator(".image-viewer summary").click();
-  await button("Remix in new thread").click();
+  await page.locator(".image-viewer").getByRole("button", { name: /^Image actions for / }).click();
+  await page.getByRole("menu", { name: "Image actions", exact: true }).getByRole("menuitem", { name: "Remix in new thread", exact: true }).click();
   await page.locator(".composer-reference img").waitFor();
   assert.equal(
     await page.locator(".composer-reference img").getAttribute("src"),
@@ -103,16 +103,20 @@ try {
   const commands = button("Commands Ctrl K");
   await commands.click();
   const search = page.getByRole("combobox", { name: "Search commands or threads" });
-  await search.focus();
+  await expect(search).toBeFocused();
+  await search.evaluate((input) => input.dispatchEvent(new KeyboardEvent("keydown", {
+    key: "Enter", isComposing: true, bubbles: true,
+  })));
+  await expect(page.getByRole("dialog", { name: "Commands" })).toBeVisible();
   const closeCommands = button("Close commands");
   await page.keyboard.press("Tab");
-  assert(await closeCommands.evaluate((element) => document.activeElement === element));
+  await expect(closeCommands).toBeFocused();
   await page.keyboard.press("Tab");
-  assert(await search.evaluate((element) => document.activeElement === element));
+  await expect(search).toBeFocused();
   await page.keyboard.press("Shift+Tab");
-  assert(await closeCommands.evaluate((element) => document.activeElement === element));
+  await expect(closeCommands).toBeFocused();
   await page.keyboard.press("Shift+Tab");
-  assert(await search.evaluate((element) => document.activeElement === element));
+  await expect(search).toBeFocused();
   const before = await search.getAttribute("aria-activedescendant");
   await page.keyboard.press("ArrowDown");
   const after = await search.getAttribute("aria-activedescendant");
@@ -141,6 +145,26 @@ try {
     output: null,
   };
   await page.locator(".activity-terminal-header").click();
+  const terminal = page.getByRole("region", { name: "Activity terminal" });
+  const handle = terminal.getByRole("separator", { name: "Resize activity terminal" });
+  await expect(handle).toHaveAttribute("aria-controls", await terminal.getAttribute("id"));
+  await handle.press("Home");
+  await expect(handle).toHaveAttribute("aria-valuetext", "96 pixels");
+  await handle.press("ArrowUp");
+  await expect(handle).toHaveAttribute("aria-valuenow", "108");
+  await handle.press("End");
+  await handle.press("ArrowDown");
+  await expect(handle).toHaveAttribute("aria-valuenow", "408");
+  const resizeBounds = await handle.boundingBox();
+  const resizeX = resizeBounds.x + resizeBounds.width / 2;
+  const resizeY = resizeBounds.y + resizeBounds.height / 2;
+  await page.mouse.move(resizeX, resizeY);
+  await page.mouse.down();
+  await page.mouse.move(resizeX, resizeY + 36, { steps: 5 });
+  await expect(handle).toHaveAttribute("aria-valuetext", "372 pixels");
+  await expect(terminal).toHaveCSS("height", "372px");
+  await page.mouse.up();
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("fern-terminal-height"))).toBe("372");
   const logBody = page.locator(".activity-terminal-body");
   await logBody.locator(".activity-terminal-line").filter({ hasText: "Activity 79" }).waitFor();
   await logBody.evaluate((el) => { el.scrollTop = 0; });

@@ -1,3 +1,4 @@
+import { chooseSelectOption } from "./select-option.mjs";
 import assert from "node:assert/strict";
 import { fixture } from "./ui-fixture.mjs";
 
@@ -73,13 +74,13 @@ try {
   assert.equal(state.textRequests.length, 0);
   await button("Preferences").click();
   const device = page.getByLabel("Generation device", { exact: true });
-  await device.selectOption("CPU");
+  await chooseSelectOption(device, "CPU");
   await page.getByRole("button", { name: /Text thread: New text thread/ }).click();
   await button("Chat settings").click();
   await button("Image").click();
   await button("Open compute settings").click();
   await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Generation device");
-  await device.selectOption("GPU");
+  await chooseSelectOption(device, "Available GPU");
   await button("Return to chat").click();
   assert.equal(await message.inputValue(), draft);
   await button("Send message").click();

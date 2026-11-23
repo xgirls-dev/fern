@@ -89,6 +89,7 @@ try {
   await button("Toggle theme").click();
   await page.screenshot({ path: `${dir}/references-dark.png` });
   await newThread("Chat");
+  await expect(page.getByRole("textbox", { name: "Message", exact: true })).toBeFocused();
   await page.getByRole("button", { name: /^Text model:/ }).click();
   await page.getByRole("menuitem", { name: "Manage models" }).click();
   await page.getByRole("heading", { name: "Text models", exact: true }).waitFor();

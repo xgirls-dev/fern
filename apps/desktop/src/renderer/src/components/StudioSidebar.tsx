@@ -16,12 +16,13 @@ import ChevronRight from "lucide-react/dist/esm/icons/chevron-right.mjs";
 import Folder from "lucide-react/dist/esm/icons/folder.mjs";
 import FolderOpen from "lucide-react/dist/esm/icons/folder-open.mjs";
 import FolderPlus from "lucide-react/dist/esm/icons/folder-plus.mjs";
-import { memo, useEffect, useId, useRef, useState, type DragEvent, type RefObject } from "react";
-import { createPortal } from "react-dom";
-import { Button, IconButton, Input, MenuItem, NavigationButton } from "./ui/controls";
+import { memo, useRef, useState, type DragEvent, type RefObject } from "react";
+import { Button, IconButton, Input, NavigationButton } from "./ui/controls";
+import { Dropdown, DropdownItem, DropdownSeparator, useDropdownActions } from "./ui/Dropdown";
+import { TooltipIconButton, TooltipScope } from "./ui/Tooltip";
 import type { ImageThread } from "../lib/threads";
 import type { AudioThread } from "../lib/ttsThreads";
-import type { TextThread } from "../lib/textThreads";
+import type { TextSidebarRow } from "../hooks/useTextChat";
 import type { TranscriptDestination } from "../lib/textTranscript";
 import { canMoveChatFolder, CHAT_NAV_DRAG, chatFolderPath, chatFolderRows, type ChatFolder, type ChatOrganizationAction } from "../lib/chatFolders";
 import { ChatFolderDialog, type ChatFolderDialogRequest } from "./ChatFolderDialog";
@@ -57,113 +58,33 @@ function ThreadActions({
   onNewChat?: () => void;
   onNewFolder?: () => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const firstItemRef = useRef<HTMLButtonElement>(null);
-  const menuId = useId();
-  const [position, setPosition] = useState({ top: 0, right: 0 });
-
-  useEffect(() => {
-    if (!open) return;
-    const updatePosition = () => {
-      const rect = triggerRef.current?.getBoundingClientRect();
-      if (rect) {
-        setPosition({
-          top: Math.max(8, Math.min(rect.bottom + 4, window.innerHeight - (menuRef.current?.offsetHeight ?? 116) - 8)),
-          right: Math.max(12, window.innerWidth - rect.right),
-        });
-      }
-    };
-    updatePosition();
-    firstItemRef.current?.focus();
-    const onPointerDown = (event: PointerEvent) => {
-      const target = event.target as Node;
-      if (!rootRef.current?.contains(target) && !menuRef.current?.contains(target)) setOpen(false);
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        event.stopPropagation();
-        setOpen(false);
-        triggerRef.current?.focus();
-      }
-    };
-    const onScroll = (event: Event) => {
-      if (event.target instanceof Node && rootRef.current && event.target.contains(rootRef.current)) setOpen(false);
-    };
-    document.addEventListener("pointerdown", onPointerDown);
-    document.addEventListener("keydown", onKeyDown);
-    window.addEventListener("resize", updatePosition);
-    window.addEventListener("scroll", onScroll, true);
-    return () => {
-      document.removeEventListener("pointerdown", onPointerDown);
-      document.removeEventListener("keydown", onKeyDown);
-      window.removeEventListener("resize", updatePosition);
-      window.removeEventListener("scroll", onScroll, true);
-    };
-  }, [open]);
-
-  const run = (action: () => void, returnFocus = false) => {
-    setOpen(false);
-    triggerRef.current?.focus({ preventScroll: returnFocus });
-    action();
-  };
-
-  return (
-    <div className="sidebar-thread-actions" ref={rootRef}>
-      <IconButton
-        ref={triggerRef}
-        className="sidebar-thread-actions-trigger"
-        aria-label={kind === "folder" ? `Actions for folder ${title}` : `Actions for ${kind} thread ${title}`}
-        aria-expanded={open}
-        aria-controls={menuId}
-        title={kind === "folder" ? "Folder actions" : "Thread actions"}
-        onClick={() => setOpen((value) => !value)}
-      >
+  const { trigger, choose, menuProps } = useDropdownActions();
+  return <div className="sidebar-thread-actions">
+    <Dropdown label={`Actions for ${title}`} align="end" className="sidebar-thread-actions-menu"
+      triggerTooltip={kind === "folder" ? "Folder actions" : "Thread actions"}
+      {...menuProps}
+      trigger={<IconButton ref={trigger} className="sidebar-thread-actions-trigger"
+        aria-label={kind === "folder" ? `Actions for folder ${title}` : `Actions for ${kind} thread ${title}`}>
         <MoreHorizontal size={16} aria-hidden="true" />
-      </IconButton>
-      {open
-        ? createPortal(
-            <div
-              ref={menuRef}
-              className="sidebar-thread-actions-menu"
-              id={menuId}
-              role="group"
-              aria-label={`Actions for ${title}`}
-              style={{ top: position.top, right: position.right }}
-            >
-              <MenuItem ref={firstItemRef} onClick={() => run(onRename)}>
-                Rename
-              </MenuItem>
-              {onDuplicate && <MenuItem onClick={() => run(onDuplicate)}>Duplicate</MenuItem>}
-              {onExport && <>
-                <MenuItem onClick={() => run(() => onExport("clipboard"), true)}>Copy transcript</MenuItem>
-                <MenuItem onClick={() => run(() => onExport("file"), true)}>Save Markdown…</MenuItem>
-              </>}
-              {onNewChat && <MenuItem onClick={() => run(onNewChat)}>New chat here</MenuItem>}
-              {onNewFolder && <MenuItem onClick={() => run(onNewFolder)}>New subfolder</MenuItem>}
-              {onMove && <MenuItem onClick={() => run(onMove)}>Move to folder…</MenuItem>}
-              {onArchive && <MenuItem
-                disabled={archiveDisabled}
-                onClick={() => run(onArchive)}
-              >
-                {archived ? "Restore" : "Archive"}
-              </MenuItem>}
-              <MenuItem
-                destructive
-                disabled={deleteDisabled}
-                onClick={() => run(onDelete)}
-              >
-                {kind === "folder" ? "Delete folder" : "Delete"}
-              </MenuItem>
-            </div>,
-            document.body,
-          )
-        : null}
-    </div>
-  );
+      </IconButton>}>
+      <DropdownItem onClick={() => choose(onRename)}>Rename</DropdownItem>
+      {onDuplicate && <DropdownItem onClick={() => choose(onDuplicate)}>Duplicate</DropdownItem>}
+      {onExport && <>
+        <DropdownItem onClick={() => choose(() => onExport("clipboard"))}>Copy transcript</DropdownItem>
+        <DropdownItem onClick={() => choose(() => onExport("file"))}>Save Markdown…</DropdownItem>
+      </>}
+      {onNewChat && <DropdownItem onClick={() => choose(onNewChat)}>New chat here</DropdownItem>}
+      {onNewFolder && <DropdownItem onClick={() => choose(onNewFolder)}>New subfolder</DropdownItem>}
+      {onMove && <DropdownItem onClick={() => choose(onMove)}>Move to folder…</DropdownItem>}
+      <DropdownSeparator />
+      {onArchive && <DropdownItem disabled={archiveDisabled} onClick={() => choose(onArchive)}>
+        {archived ? "Restore" : "Archive"}
+      </DropdownItem>}
+      <DropdownItem destructive disabled={deleteDisabled} onClick={() => choose(onDelete)}>
+        {kind === "folder" ? "Delete folder" : "Delete"}
+      </DropdownItem>
+    </Dropdown>
+  </div>;
 }
 
 interface StudioSidebarProps {
@@ -172,7 +93,7 @@ interface StudioSidebarProps {
   onExpandForNew?: () => void;
   threads: Array<Pick<ImageThread, "id" | "title" | "archived"> & { hasWork: boolean }>;
   audioThreads: Array<Pick<AudioThread, "id" | "title" | "archived" | "outputs" | "text" | "renamed" | "designInstruction" | "instruction" | "referenceText">>;
-  textThreads: Array<Pick<TextThread, "id" | "title" | "archived" | "messages" | "renamed" | "draft" | "draftImage" | "draftContextImage" | "systemPrompt" | "folderId" | "documents">>;
+  textThreads: readonly TextSidebarRow[];
   chatFolders: readonly ChatFolder[];
   onOrganizeChats: (action: ChatOrganizationAction) => void;
   activeThreadId: string;
@@ -253,21 +174,8 @@ export const StudioSidebar = memo(function StudioSidebar({
   onOpenData,
   onOpenPreferences,
 }: StudioSidebarProps) {
-  const [newMenuOpen, setNewMenuOpen] = useState(false);
-  const newMenuRef = useRef<HTMLDivElement>(null);
-  const openNewMenu = () => {
-    onExpandForNew?.();
-    setNewMenuOpen(true);
-  };
-  useEffect(() => {
-    if (!newMenuOpen) return;
-    newMenuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus();
-    const outside = (event: PointerEvent) => {
-      if (!newMenuRef.current?.contains(event.target as Node)) setNewMenuOpen(false);
-    };
-    document.addEventListener("pointerdown", outside);
-    return () => document.removeEventListener("pointerdown", outside);
-  }, [newMenuOpen]);
+  const newThreadButton = useRef<HTMLButtonElement>(null);
+  const pendingCreation = useRef<(() => void) | null>(null);
   const [limit, setLimit] = useState(60);
   const [audioLimit, setAudioLimit] = useState(30);
   const [textLimit, setTextLimit] = useState(30);
@@ -288,10 +196,8 @@ export const StudioSidebar = memo(function StudioSidebar({
     ))
   );
   const visibleTextThreads = textThreads.filter((thread) =>
-    (activeSection === "text" && thread.id === activeTextThreadId) || (!thread.archived && (
-      thread.id === runningTextThreadId || thread.renamed || thread.title !== "New text thread" ||
-      thread.messages.length || thread.draft.trim() || thread.draftImage || thread.draftContextImage || thread.systemPrompt || thread.folderId || thread.documents?.length
-    ))
+    (activeSection === "text" && thread.id === activeTextThreadId)
+    || (!thread.archived && (thread.id === runningTextThreadId || thread.hasWork))
   );
   const chatRows = chatFolderRows(chatFolders, visibleTextThreads);
   const showMoreChats = chatRows.filter((row) => row.kind === "chat").length > textLimit;
@@ -353,7 +259,7 @@ export const StudioSidebar = memo(function StudioSidebar({
       target?.focus();
     });
   return (
-    <aside
+    <TooltipScope><aside
       id="studio-sidebar"
       ref={sidebarRef}
       className={`studio-sidebar${collapsed ? " is-collapsed" : ""}`}
@@ -387,43 +293,43 @@ export const StudioSidebar = memo(function StudioSidebar({
           <strong translate="no">Fern</strong>
             <span>Your local AI studio</span>
         </div>
-        <IconButton
+        <TooltipIconButton
           className="sidebar-search-button"
           aria-label="Search threads"
-          title="Search threads"
+          tooltip="Search threads"
           onClick={onOpenSearch}
         >
           <Search size={16} aria-hidden="true" />
-        </IconButton>
+        </TooltipIconButton>
       </div>
 
-      <div className="sidebar-new-menu" ref={newMenuRef} onBlur={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget)) setNewMenuOpen(false);
-      }} onKeyDown={(event) => {
-        if (newMenuOpen && event.key === "Escape") {
-          event.preventDefault(); event.stopPropagation(); setNewMenuOpen(false);
-          newMenuRef.current?.querySelector<HTMLButtonElement>(".sidebar-new-button")?.focus();
-        }
-        if (newMenuOpen && ["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
-          event.preventDefault();
-          const items = Array.from(newMenuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? []);
-          const index = items.indexOf(document.activeElement as HTMLButtonElement);
-          items[event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 : (index + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length]?.focus();
-        }
-      }}>
-        <Button variant="ghost" className="sidebar-new-button" aria-label="New thread" title="New thread" aria-haspopup="menu" aria-expanded={newMenuOpen} aria-controls={newMenuOpen ? "new-thread-menu" : undefined} onClick={() => newMenuOpen ? setNewMenuOpen(false) : openNewMenu()} onKeyDown={(event) => {
-          if (!newMenuOpen && ["ArrowDown", "ArrowUp"].includes(event.key)) { event.preventDefault(); openNewMenu(); }
-        }}>
-          <Plus size={16} aria-hidden="true" /><span>New thread</span><ChevronDown size={13} className="sidebar-new-chevron" aria-hidden="true" />
-        </Button>
-        {newMenuOpen ? <div id="new-thread-menu" className="sidebar-new-options" role="menu" aria-label="New thread type">
-          {[{ label: shortcuts.image.label, Icon: Images, create: onNewThread }, { label: shortcuts.chat.label, Icon: MessageSquare, create: onNewTextThread }, { label: shortcuts.speech.label, Icon: AudioLines, create: onNewAudioThread }].map(({ label, Icon, create }) => <MenuItem className="sidebar-new-option" role="menuitem" key={label} aria-label={label} title={collapsed ? label : undefined} onClick={() => { setNewMenuOpen(false); navigate(create); }}><Icon size={16} aria-hidden="true" /><span>{label}</span></MenuItem>)}
-          <MenuItem className="sidebar-new-option" role="menuitem" aria-label="Chat folder" title={collapsed ? "Chat folder" : undefined} onClick={() => {
-            newMenuRef.current?.querySelector<HTMLButtonElement>(".sidebar-new-button")?.focus();
-            setNewMenuOpen(false);
+      <div className="sidebar-new-menu">
+        <Dropdown label="New thread type" className="sidebar-new-options" triggerTooltip="New thread"
+          onOpenChange={(open) => { if (open) onExpandForNew?.(); }}
+          onOpenChangeComplete={(open) => {
+            if (open || !pendingCreation.current) return;
+            const create = pendingCreation.current;
+            pendingCreation.current = null;
+            // Let the menu return focus before the new workspace focuses its composer.
+            requestAnimationFrame(() => navigate(create));
+          }}
+          trigger={<Button ref={newThreadButton} variant="ghost" className="sidebar-new-button" aria-label="New thread">
+            <Plus size={16} aria-hidden="true" /><span>New thread</span>
+            <ChevronDown size={13} className="sidebar-new-chevron" aria-hidden="true" />
+          </Button>}
+        >
+          {[
+            { label: shortcuts.image.label, Icon: Images, create: onNewThread },
+            { label: shortcuts.chat.label, Icon: MessageSquare, create: onNewTextThread },
+            { label: shortcuts.speech.label, Icon: AudioLines, create: onNewAudioThread },
+          ].map(({ label, Icon, create }) => <DropdownItem key={label} onClick={() => { pendingCreation.current = create; }}>
+            <Icon size={16} aria-hidden="true" /><span>{label}</span>
+          </DropdownItem>)}
+          <DropdownItem onClick={() => {
+            newThreadButton.current?.focus();
             setFolderDialog({ type: "create" });
-          }}><FolderPlus size={16} aria-hidden="true" /><span>Chat folder</span></MenuItem>
-        </div> : null}
+          }}><FolderPlus size={16} aria-hidden="true" /><span>Chat folder</span></DropdownItem>
+        </Dropdown>
       </div>
 
       <div className="sidebar-new-divider" />
@@ -616,8 +522,8 @@ export const StudioSidebar = memo(function StudioSidebar({
       {(visibleTextThreads.length > 0 || chatFolders.length > 0) && <section className="sidebar-threads sidebar-text-threads" aria-label="Text threads">
         <div className="sidebar-threads-heading sidebar-chat-heading" {...dropHandlers()}>
           <span>Chats</span>
-          <IconButton className="sidebar-chat-add-folder" aria-label="New chat folder" title="New chat folder"
-            onClick={() => setFolderDialog({ type: "create" })}><FolderPlus size={14} aria-hidden="true" /></IconButton>
+          <TooltipIconButton className="sidebar-chat-add-folder" aria-label="New chat folder" tooltip="New chat folder"
+            onClick={() => setFolderDialog({ type: "create" })}><FolderPlus size={14} aria-hidden="true" /></TooltipIconButton>
         </div>
         {displayedChatRows.map((row) => {
           const style = row.depth > 0 ? { marginInlineStart: Math.min(row.depth, 7) * 12 } : undefined;
@@ -666,7 +572,7 @@ export const StudioSidebar = memo(function StudioSidebar({
                 onArchive={() => onArchiveTextThread(thread.id)}
                 onMove={chatFolders.length ? () => setFolderDialog({ type: "move-chat", id: thread.id, name: thread.title, parentId: thread.folderId }) : undefined}
                 onDuplicate={() => navigate(() => onDuplicateTextThread(thread.id))}
-                onExport={thread.messages.length ? (destination) => onExportTextThread(thread.id, destination) : undefined}
+                onExport={thread.hasTranscript ? (destination) => onExportTextThread(thread.id, destination) : undefined}
                 onDelete={() => {
                   setTextDeleteError(null);
                   setTextDeleteId(textDeleteId === thread.id ? null : thread.id);
@@ -745,6 +651,6 @@ export const StudioSidebar = memo(function StudioSidebar({
         </NavigationButton>
       </nav>
 
-    </aside>
+    </aside></TooltipScope>
   );
 });

@@ -1,44 +1,31 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import Check from "lucide-react/dist/esm/icons/check.mjs";
 import ChevronDown from "lucide-react/dist/esm/icons/chevron-down.mjs";
-import { Button, MenuItem } from "./ui/controls";
+import { Button } from "./ui/controls";
+import { Dropdown, DropdownRadioGroup, DropdownRadioItem, DropdownSeparator } from "./ui/Dropdown";
 
 export function TextMenu({ label, value, options, onSelect, disabled, children }: {
-  label: string; value: string; options: { value: string; label: string; description?: string; disabled?: boolean }[];
-  onSelect: (value: string) => void; disabled?: boolean; children?: ReactNode;
+  label: string;
+  value: string;
+  options: { value: string; label: string; description?: string; disabled?: boolean }[];
+  onSelect: (value: string) => void;
+  disabled?: boolean;
+  children?: ReactNode;
 }) {
-  const [open, setOpen] = useState(false);
-  const root = useRef<HTMLDivElement>(null);
-  const trigger = useRef<HTMLButtonElement>(null);
-  const id = useId();
   const displayedName = options.find((option) => option.value === value)?.label ?? "Select model";
-  useEffect(() => { if (disabled) setOpen(false); }, [disabled]);
-  useEffect(() => {
-    if (!open) return;
-    (root.current?.querySelector<HTMLElement>('[aria-checked="true"]:not(:disabled)')
-      ?? root.current?.querySelector<HTMLElement>('[role="menu"] button:not(:disabled)'))?.focus();
-    const outside = (event: PointerEvent) => { if (!root.current?.contains(event.target as Node)) setOpen(false); };
-    document.addEventListener("pointerdown", outside);
-    return () => document.removeEventListener("pointerdown", outside);
-  }, [open]);
-  return <div className="text-menu" ref={root} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false); }}>
-    <Button ref={trigger} variant="ghost" className="composer-model-trigger text-menu-trigger" aria-label={`${label}: ${displayedName}`} title={displayedName} aria-haspopup="menu" aria-expanded={open} aria-controls={open ? id : undefined} disabled={disabled}
-      onClick={() => setOpen(!open)} onKeyDown={(event) => { if (["ArrowDown", "ArrowUp"].includes(event.key)) { event.preventDefault(); setOpen(true); } }}>
+  return <Dropdown label={label} className="text-model-dropdown" side="top" align="end"
+    trigger={<Button variant="ghost" className="composer-model-trigger text-menu-trigger"
+      aria-label={`${label}: ${displayedName}`} title={displayedName} disabled={disabled}>
       <span>{displayedName}</span><ChevronDown size={13} aria-hidden="true" />
-    </Button>
-    {open && <div className="composer-model-menu text-menu-panel" id={id} role="menu" aria-label={label} onKeyDown={(event) => {
-      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setOpen(false); trigger.current?.focus(); }
-      const items = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'));
-      const index = items.indexOf(document.activeElement as HTMLButtonElement);
-      if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
-        event.preventDefault();
-        items[event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 : (index + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length]?.focus();
-      }
-    }}>
-      {options.map(option => <MenuItem key={option.value} role="menuitemradio" aria-checked={option.value === value} disabled={option.disabled} onClick={() => { onSelect(option.value); setOpen(false); trigger.current?.focus(); }}>
-        <span className="composer-model-label" title={option.label}>{option.label}</span>{option.description ? <span className="composer-model-unavailable">{option.description}</span> : option.value === value ? <Check size={15} aria-hidden="true" /> : null}
-      </MenuItem>)}
-      {children && <div className="text-menu-extra" onClick={() => { trigger.current?.focus(); setOpen(false); }}>{children}</div>}
-    </div>}
-  </div>;
+    </Button>}
+  >
+    <DropdownRadioGroup value={value} onValueChange={onSelect}>
+      {options.map((option) => <DropdownRadioItem key={option.value} value={option.value} disabled={option.disabled} label={option.label}>
+        <span className="ui-popup-label">{option.label}</span>
+        {option.description ? <span className="composer-model-unavailable">{option.description}</span>
+          : option.value === value ? <Check size={14} aria-hidden="true" /> : null}
+      </DropdownRadioItem>)}
+    </DropdownRadioGroup>
+    {children && <><DropdownSeparator />{children}</>}
+  </Dropdown>;
 }

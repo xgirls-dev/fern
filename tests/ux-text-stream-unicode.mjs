@@ -52,7 +52,11 @@ try {
   respond(extended);
   await expect(reply.locator("p")).toHaveText(extended);
   assertCompleteCharacters(await page.evaluate(() => window.replyFrames), extended);
-  respond(extended, "complete");
+  const rich = `${extended} Keep &copy; and **the accent** intact.`;
+  respond(rich);
+  await expect(reply.locator("strong")).toHaveText("the accent");
+  await expect(reply.locator("p")).toHaveText(`${extended} Keep © and the accent intact.`);
+  respond(rich, "complete");
   await expect(stream).toHaveCount(0);
 
   await page.emulateMedia({ reducedMotion: "reduce" });

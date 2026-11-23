@@ -69,7 +69,7 @@ for (const [imageCount, threadCount] of [
     await page.waitForFunction(() => window.rendererTimings.openLibraryMs !== undefined &&
       window.rendererTimings.openLibraryAcknowledgmentMs !== undefined);
     assert.equal(await page.locator(".thumb").count(), 48);
-    assert.equal(await page.locator(".history-grid .image-menu-content").count(), 0, "Closed card menus must stay unmounted");
+    assert.equal(await page.locator('[role="menu"][aria-label="Image actions"]').count(), 0, "Closed card menus must stay unmounted");
     await page.evaluate(() => {
       document.querySelector('[aria-label="Filter images"]').addEventListener("input", () => {
         const start = performance.now();
@@ -92,13 +92,13 @@ for (const [imageCount, threadCount] of [
     await page
       .getByRole("button", { name: "Search threads", exact: true })
       .click();
+    const threadSearch = page.getByRole("searchbox", { name: "Find a thread" });
+    await threadSearch.waitFor();
     assert.equal(
       await page.locator(".thread-browser-list article").count(),
       60,
     );
-    await page
-      .getByRole("searchbox", { name: "Find a thread" })
-      .fill(`number ${threadCount - 1}`);
+    await threadSearch.fill(`number ${threadCount - 1}`);
     assert.equal(await page.locator(".thread-browser-list article").count(), 1);
     await page
       .getByRole("button", { name: "Close thread search", exact: true })

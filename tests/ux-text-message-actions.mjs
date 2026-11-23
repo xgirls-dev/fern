@@ -83,6 +83,7 @@ try {
   await openMenu("reply-one");
   await item("Delete reply").click();
   await expect(confirmation).toContainText("Delete this reply?");
+  await expect(confirmation).toHaveAccessibleDescription("Delete this reply?");
   await expect(button("Cancel")).toBeFocused();
   await openMenu("prompt-two");
   await item("Delete message").click();
@@ -99,8 +100,28 @@ try {
   await button("Text thread: Message actions").click();
   await expect(confirmation).toHaveCount(0);
   await expect(row("reply-two")).toContainText("Here is a second idea.");
+
+  const historicalFork = row("reply-two").getByRole("button", { name: "Fork chat here", exact: true });
+  await historicalFork.evaluate((element) => { element.dataset.beforeGeneration = "true"; });
+  await more("prompt-two").evaluate((element) => { element.dataset.beforeGeneration = "true"; });
+  await composer.fill("One more idea, please.");
+  await button("Send message").click();
+  const stop = button("Stop generation");
+  await expect(stop).toBeEnabled();
+  await expect(historicalFork).toBeDisabled();
+  await expect(historicalFork).toHaveAttribute("data-before-generation", "true");
+  await expect(more("prompt-two")).toHaveAttribute("data-before-generation", "true");
+  await openMenu("prompt-two");
+  await expect(item("Delete message")).toBeDisabled();
+  await page.keyboard.press("Escape");
+  await expect(confirmation).toHaveCount(0);
+  await stop.click();
+  await expect(historicalFork).toBeEnabled();
+  await expect(historicalFork).toHaveAttribute("data-before-generation", "true");
+  await openMenu("prompt-two");
+  await expect(item("Delete message")).toBeEnabled();
   assert.deepEqual(errors, []);
-  console.log("Compact reply actions, anchored menus, keyboard focus, and one scoped deletion confirmation passed.");
+  console.log("Reply actions keep their identity across generation and preserve anchored menus, keyboard focus, and scoped deletion.");
 } finally {
   await close();
 }

@@ -1,13 +1,12 @@
 import { trashName } from "../lib/trash";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import Check from "lucide-react/dist/esm/icons/check.mjs";
 import { resolveAssetUrl } from "../lib/api";
 import type { ImageRecord } from "../lib/types";
 import { notify } from "../lib/notifications";
 import { ImageActions } from "./ImageActions";
-import { useModalFocus } from "../hooks/useModalFocus";
 import { Button, IconButton, Input, Select, SegmentedControl } from "./ui/controls";
+import { Dialog, DialogDescription, DialogTitle } from "./ui/Dialog";
 interface Props {
   mode: "create" | "library";
   stateKey?: string;
@@ -109,8 +108,9 @@ export function OutputWorkspace({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
-  const deleteDialog = useRef<HTMLDivElement>(null);
-  useModalFocus(confirmDelete, deleteDialog, () => { if (!deleting) setConfirmDelete(false); });
+  const deleteTrigger = useRef<HTMLButtonElement>(null);
+  const selectTrigger = useRef<HTMLButtonElement>(null);
+  const cancelDelete = useRef<HTMLButtonElement>(null);
   const url = preview
     ? resolveAssetUrl(preview.url, `${preview.mtime}-${retry}`)
     : null;
@@ -258,9 +258,9 @@ export function OutputWorkspace({
               {mode === "library" ? selecting ? <>
                 <span className="gallery-selection-count" role="status">{selected.size} selected</span>
                 <Button onClick={() => setSelected((previous) => { const next = new Set(previous); const allSelected = filtered.every((image) => next.has(image.name)); for (const image of filtered) { if (allSelected) next.delete(image.name); else next.add(image.name); } return next; })} disabled={!filtered.length}>{filtered.length && filtered.every((image) => selected.has(image.name)) ? "Deselect results" : "Select all results"}</Button>
-                <Button variant="danger" disabled={!selected.size || deleting} onClick={() => { setDeleteError(""); setConfirmDelete(true); }}>Delete selected</Button>
+                <Button ref={deleteTrigger} variant="danger" disabled={!selected.size || deleting} onClick={() => { setDeleteError(""); setConfirmDelete(true); }}>Delete selected</Button>
                 <Button onClick={() => { setSelecting(false); setSelected(new Set()); }}>Done</Button>
-              </> : <Button onClick={() => setSelecting(true)} disabled={!images.length}>Select</Button> : null}
+              </> : <Button ref={selectTrigger} onClick={() => setSelecting(true)} disabled={!images.length}>Select</Button> : null}
               <Input
                 ref={search}
                 className="gallery-search"
@@ -277,20 +277,18 @@ export function OutputWorkspace({
                   }))
                 }
               />
-              <Select
+              <Select<View["sort"]>
                 aria-label="Sort images"
                 value={view.sort}
-                onChange={(event) =>
+                options={[{ value: "newest", label: "Newest" }, { value: "oldest", label: "Oldest" }]}
+                onChange={(sort) =>
                   setView((v) => ({
                     ...v,
-                    sort: event.target.value as View["sort"],
+                    sort,
                     scroll: 0,
                   }))
                 }
-              >
-                <option value="newest">Newest</option>
-                <option value="oldest">Oldest</option>
-              </Select>
+              />
             </div>
           </div> : null}
           <div
@@ -352,11 +350,13 @@ export function OutputWorkspace({
           </div>
         </section>
       )}
-      {confirmDelete ? createPortal(<div className="dialog-backdrop image-delete-backdrop"><div className="delete-image-dialog" role="alertdialog" aria-modal="true" aria-label="Delete selected images" tabIndex={-1} ref={deleteDialog}>
-        <h3>Move {selected.size} {selected.size === 1 ? "image" : "images"} to {trashName}?</h3>
-        <p>They will disappear from Library and their threads. You can restore the files from {trashName}.</p>
+      {confirmDelete && <Dialog alert initialFocus={cancelDelete}
+        finalFocus={deleteTrigger}
+        onClose={() => { if (!deleting) setConfirmDelete(false); }}>
+        <DialogTitle>Move {selected.size} {selected.size === 1 ? "image" : "images"} to {trashName}?</DialogTitle>
+        <DialogDescription>They will disappear from Library and their threads. You can restore the files from {trashName}.</DialogDescription>
         {deleteError ? <p role="alert">{deleteError}</p> : null}
-        <div className="image-actions"><Button disabled={deleting} onClick={() => setConfirmDelete(false)}>Cancel</Button><Button variant="danger" disabled={deleting || !selected.size} onClick={() => void (async () => {
+        <div className="ui-dialog-actions"><Button ref={cancelDelete} disabled={deleting} onClick={() => setConfirmDelete(false)}>Cancel</Button><Button variant="danger" disabled={deleting || !selected.size} onClick={() => void (async () => {
           setDeleting(true); setDeleteError("");
           let deletedCount = 0;
           try {
@@ -368,11 +368,12 @@ export function OutputWorkspace({
               setSelected((previous) => { const next = new Set(previous); next.delete(image.name); return next; });
             }
             setConfirmDelete(false); setSelecting(false);
+            requestAnimationFrame(() => (selectTrigger.current ?? search.current)?.focus({ preventScroll: true }));
             notify(`${deletedCount} ${deletedCount === 1 ? "image" : "images"} moved to ${trashName}.`);
           } catch (error) { setDeleteError(`${deletedCount ? `${deletedCount} moved. ` : ""}${error instanceof Error ? error.message : "Could not delete the remaining images. Try again."}`); }
           finally { setDeleting(false); }
         })()}>{deleting ? "Deleting…" : "Delete images"}</Button></div>
-      </div></div>, document.body) : null}
+      </Dialog>}
     </section>
   );
 }

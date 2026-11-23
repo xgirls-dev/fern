@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { expect } from "@playwright/test";
 import { fixture } from "./ui-fixture.mjs";
 const { page, dir, errors, close } = await fixture();
 try {
@@ -35,19 +36,33 @@ try {
   assert.deepEqual(focusRing, { width: "2px", offset: "-3px" });
   await firstImage.press("Enter");
   const viewer = page.getByRole("dialog", { name: /^Review image \d+ of \d+:/ });
-  const imageActions = viewer.getByLabel("Image actions for audit-1.png");
-  await imageActions.focus();
+  const imageActions = viewer.getByRole("button", { name: "Image actions for audit-1.png", exact: true });
+  const menu = viewer.getByRole("menu", { name: "Image actions", exact: true });
+  await imageActions.press("ArrowDown");
+  await expect(menu.getByRole("menuitem", { name: "Remix in new thread" })).toBeFocused();
+  await expect(viewer.getByRole("button", { name: "Previous", exact: true })).toBeEnabled();
+  await page.keyboard.press("ArrowLeft");
+  await expect(imageActions).toBeVisible();
+  await page.keyboard.press("c");
+  await expect(menu.getByRole("menuitem", { name: "Copy prompt" })).toBeFocused();
   await page.keyboard.press("Enter");
-  await viewer.getByRole("button", { name: "Copy prompt", exact: true }).click();
-  await viewer.locator(".image-menu-content").waitFor({ state: "detached" });
-  assert(await imageActions.evaluate((element) => element === document.activeElement));
+  await menu.waitFor({ state: "detached" });
+  await expect(imageActions).toBeFocused();
+  await page.getByText("Prompt copied.", { exact: true }).waitFor();
   await imageActions.click();
-  await viewer.getByRole("button", { name: "Delete image", exact: true }).click();
-  const confirmation = page.getByRole("alertdialog", { name: "Delete image", exact: true });
-  await confirmation.getByRole("button", { name: "Cancel", exact: true }).waitFor();
+  await menu.getByRole("menuitem", { name: "Delete image", exact: true }).click();
+  const confirmation = page.getByRole("alertdialog", { name: "Move image to Recycle Bin?", exact: true });
+  await expect(confirmation.getByRole("button", { name: "Cancel", exact: true })).toBeFocused();
   await page.keyboard.press("Escape");
-  await confirmation.waitFor({ state: "hidden" });
-  await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Image actions for audit-1.png");
+  await confirmation.waitFor({ state: "detached" });
+  await expect(imageActions).toBeFocused();
+  await page.evaluate(() => { window.studio.deleteOutputImage = async () => { throw new Error("Image is in use."); }; });
+  await imageActions.click();
+  await menu.getByRole("menuitem", { name: "Delete image", exact: true }).click();
+  await confirmation.getByRole("button", { name: "Delete image", exact: true }).click();
+  await expect(confirmation.getByRole("alert")).toHaveText("Image is in use.");
+  await confirmation.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(imageActions).toBeFocused();
   for (const [width, height] of [
     [1440, 900],
     [1080, 720],
@@ -72,82 +87,34 @@ try {
     assert(geometry.backdrop >= geometry.title);
     assert(geometry.close >= geometry.title + 12);
     for (let repeat = 0; repeat < 2; repeat++) {
-      const positions = await page.evaluate(async () => {
-        const details = document.querySelector(".image-viewer details");
-        details.querySelector("summary").focus();
-        details.querySelector("summary").click();
+      const positions = await imageActions.evaluate(async (trigger) => {
+        trigger.focus();
+        trigger.click();
+        const popupSelector = '[role="menu"][aria-label="Image actions"]';
         const visible = [];
         for (let frame = 0; frame < 15; frame++) {
           await new Promise(requestAnimationFrame);
-          const popup = details.querySelector(".image-menu-content");
-          if (!popup) continue;
-          const css = getComputedStyle(popup);
-          if (
-            details.open &&
-            css.visibility === "visible" &&
-            popup.checkVisibility()
-          ) {
-            const r = popup.getBoundingClientRect();
-            visible.push({
-              x: r.x,
-              y: r.y,
-              right: r.right,
-              bottom: r.bottom,
-              inline: popup.style.top,
-              anchor: details.getBoundingClientRect().bottom,
-              vh: innerHeight,
-            });
+          const popup = trigger.closest(".image-viewer").querySelector(popupSelector);
+          if (popup?.checkVisibility({ opacityProperty: true, visibilityProperty: true })) {
+            const { x, y, right, bottom } = popup.getBoundingClientRect();
+            visible.push({ x, y, right, bottom });
           }
         }
         return visible;
       });
       assert(positions.length > 0);
       assert(
-        positions.every(
-          (p) =>
-            Math.abs(p.x - positions[0].x) < 1 &&
-            Math.abs(p.y - positions[0].y) < 1,
-        ),
+        positions.every((p) => Math.abs(p.x - positions[0].x) < 1 && Math.abs(p.y - positions[0].y) < 1),
         JSON.stringify({ width, repeat, positions }),
       );
-      if (positions.some((p) => p.bottom > height))
-        console.log(
-          await page
-            .locator(".image-viewer .image-menu-content")
-            .evaluate((el) => {
-              const a = [];
-              for (let p = el; p; p = p.parentElement) {
-                const c = getComputedStyle(p);
-                a.push({
-                  cls: p.className,
-                  top: c.top,
-                  pos: c.position,
-                  filter: c.filter,
-                  backdrop: c.backdropFilter,
-                  transform: c.transform,
-                  contain: c.contain,
-                  will: c.willChange,
-                  rect: p.getBoundingClientRect().toJSON(),
-                });
-              }
-              return a;
-            }),
-        );
       assert(
-        positions.every(
-          (p) =>
-            p.y >= geometry.title &&
-            p.x >= 0 &&
-            p.right <= width &&
-            p.bottom <= height,
-        ),
+        positions.every((p) => p.y >= geometry.title && p.x >= 0 && p.right <= width && p.bottom <= height),
         JSON.stringify({ width, geometry, positions }),
       );
+      if (width === 390 && repeat === 0) await page.screenshot({ path: `${dir}/viewer-image-actions-390.png` });
       await page.keyboard.press("Escape");
-      assert.equal(
-        await page.locator(".image-viewer details[open]").count(),
-        0,
-      );
+      await menu.waitFor({ state: "detached" });
+      await expect(imageActions).toBeFocused();
     }
     await page.screenshot({ path: `${dir}/viewer-chrome-${width}.png` });
   }

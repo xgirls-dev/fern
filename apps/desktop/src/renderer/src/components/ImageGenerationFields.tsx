@@ -33,6 +33,7 @@ export function ImageCanvasFields({
 }: Fields<Canvas> & { modelStatus?: ImageDimensionHints | null }) {
   const [custom, setCustom] = useState(false);
   const widthInput = useRef<HTMLInputElement>(null);
+  const focusWidth = useRef(false);
   const fixedSizes = fixedImagePreset(model)?.sizes;
   const fixedCanvas = model === "flux3-klein";
   const { minimum, maximum, multiple } = imageDimensionLimits(model, modelStatus);
@@ -50,19 +51,22 @@ export function ImageCanvasFields({
   return <>
     <div className="field">
       <label htmlFor={resolutionId}>Resolution</label>
-      <Select id={resolutionId} name={resolutionId} value={size} disabled={disabled} onChange={(event) => {
-        const next = event.currentTarget.value;
-        setCustom(next === "custom");
-        if (next === "custom") {
-          widthInput.current?.focus();
-        } else {
-          const [width, height] = next.split("x").map(Number);
-          onChange({ width, height });
-        }
-      }}>
-        {presets.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}
-        {!fixedSizes && !fixedCanvas && <option value="custom">Custom</option>}
-      </Select>
+      <Select id={resolutionId} name={resolutionId} value={size} disabled={disabled}
+        options={!fixedSizes && !fixedCanvas ? [...presets, { value: "custom", label: "Custom" }] : presets}
+        finalFocus={() => {
+          const target = focusWidth.current ? widthInput.current : null;
+          focusWidth.current = false;
+          return target ?? true;
+        }}
+        onChange={(next) => {
+          const customSize = next === "custom";
+          focusWidth.current = customSize;
+          setCustom(customSize);
+          if (!customSize) {
+            const [width, height] = next.split("x").map(Number);
+            onChange({ width, height });
+          }
+        }} />
     </div>
     <div className="dims-row" hidden={Boolean(fixedSizes)}>
       <div className="field">
@@ -147,11 +151,9 @@ export function ImageBatchField({ model, value, disabled, id = "batch-size", onC
   return <div className="field">
     <label htmlFor={id}>Images per render</label>
     <Select id={id} name={id} value={maximum === 1 ? 1 : value} disabled={disabled || maximum === 1}
-      onChange={(event) => onChange(Number(event.currentTarget.value))}>
-      {Array.from({ length: maximum }, (_, index) => index + 1).map((count) =>
-        <option key={count} value={count}>{count} {count === 1 ? "image" : "images"}</option>
-      )}
-    </Select>
+      onChange={onChange} options={Array.from({ length: maximum }, (_, index) => ({
+        value: index + 1, label: index === 0 ? "1 image" : `${index + 1} images`,
+      }))} />
     {maximum === 1 && <small className="field-note">This model generates one image per request.</small>}
   </div>;
 }

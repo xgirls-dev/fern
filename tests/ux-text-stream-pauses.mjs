@@ -12,9 +12,10 @@ const button = (name) => page.getByRole("button", { name, exact: true });
 const status = page.locator(".text-composer-hint").getByRole("status");
 const stream = page.getByRole("article", { name: "Response in progress" });
 const update = (patch) => { state.textStatus.job = { ...state.textStatus.job, ...patch }; };
+let disconnected = false;
 
 try {
-  await page.route("**/api/text/job", (route) => route.fulfill({ json: state.textStatus.job }));
+  await page.route("**/api/text/job", (route) => disconnected ? route.abort() : route.fulfill({ json: state.textStatus.job }));
   await page.clock.install();
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.reload();
@@ -34,6 +35,10 @@ try {
   await page.clock.fastForward(8_100);
   await expect(summary).toHaveText("Still reasoning…");
   await expect(stream.getByText("Use a short example.", { exact: true })).toBeVisible();
+  disconnected = true;
+  await expect(status).toHaveText("Reconnecting to the text runtime…");
+  disconnected = false;
+  await expect(summary).toHaveText("Still reasoning…");
   await button("New chat").click();
   await expect(status).toHaveText("A response is running in another chat");
   await button("Open running chat").click();
@@ -42,11 +47,29 @@ try {
   await expect(summary).toHaveText("Reasoning…");
 
   const fence = "```";
-  const example = `A short example:\n\n${fence}python\nprint(1)\n`;
-  update({ partialText: example });
+  const opening = "A short example:";
   const code = stream.locator("pre code");
   const cursor = stream.locator(".text-stream-cursor");
+  const inlineCursor = stream.getByText(opening, { exact: true });
+  const inlineStyle = () => inlineCursor.evaluate((line) => {
+    const style = getComputedStyle(line, "::after");
+    return [style.content, style.animationName, style.opacity];
+  });
+  update({ partialText: opening });
+  await expect(inlineCursor).toBeVisible();
+  await expect.poll(async () => (await inlineStyle()).slice(0, 2)).toEqual(['""', "none"]);
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await expect.poll(async () => (await inlineStyle()).slice(0, 2)).toEqual(['""', "text-cursor-pulse"]);
+  await expect(cursor).toBeHidden();
+  await page.clock.fastForward(8_100);
+  await expect(status).toHaveText("Waiting for more text…");
+  await expect.poll(inlineStyle).toEqual(['""', "none", "0.55"]);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+
+  const example = `${opening}\n\n${fence}python\nprint(1)\n`;
+  update({ partialText: example });
   await expect(code).toContainText("print(1)");
+  await expect.poll(async () => (await inlineStyle())[0]).toBe("none");
   await expect(cursor).toBeVisible();
   await expect(status).toHaveText("Responding…");
   await expect(summary).toHaveText("Reasoning");

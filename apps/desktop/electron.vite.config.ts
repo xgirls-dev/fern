@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import react from "@vitejs/plugin-react";
 import { defineConfig, externalizeDepsPlugin } from "electron-vite";
+import { defaultClientConditions } from "vite";
 
 export default defineConfig({
   main: {
@@ -28,6 +29,8 @@ export default defineConfig({
   },
   renderer: {
     root: resolve(__dirname, "src/renderer"),
+    // Markdown is shared with a worker, where its DOM-based decoder cannot run.
+    resolve: { conditions: ["worker", ...defaultClientConditions] },
     optimizeDeps: { entries: ["index.html", "src/components/TextMarkdown.tsx", "src/lib/textCodeHighlight.ts"] },
     build: {
       rollupOptions: {

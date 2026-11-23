@@ -88,7 +88,7 @@ try {
   assert.equal(recovered.messages.at(-1).metrics.tokensPerSecond, 12);
 
   await button(`Actions for text thread ${firstPrompt}`).click();
-  await button("Delete").click();
+  await page.getByRole("menuitem", { name: "Delete", exact: true }).click();
   await button("Delete thread").click();
   await expect.poll(() => database(first.threadId)).toBeUndefined();
   await page.evaluate(({ id, stale }) => localStorage.setItem(id, stale), { id, stale });

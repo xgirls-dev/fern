@@ -1,7 +1,8 @@
 import FileText from "lucide-react/dist/esm/icons/file-text.mjs";
 import X from "lucide-react/dist/esm/icons/x.mjs";
 import type { ChatDocument, ChatDocumentSource } from "../lib/chatDocuments";
-import { IconButton } from "./ui/controls";
+import { Disclosure } from "./ui/Disclosure";
+import { TooltipIconButton } from "./ui/Tooltip";
 
 export function ChatDocumentAttachments({ documents, disabled, onRemove }: {
   documents: readonly ChatDocument[];
@@ -12,15 +13,14 @@ export function ChatDocumentAttachments({ documents, disabled, onRemove }: {
     {documents.map(({ id, name }) => <li key={id}>
       <FileText size={15} aria-hidden="true" />
       <span title={name}>{name}</span>
-      <IconButton aria-label={`Remove ${name} from this chat`} title="Remove document from this chat"
-        disabled={disabled} onClick={() => onRemove(id)}><X size={13} aria-hidden="true" /></IconButton>
+      <TooltipIconButton aria-label={`Remove ${name} from this chat`} tooltip="Remove document from this chat"
+        disabled={disabled} onClick={() => onRemove(id)}><X size={13} aria-hidden="true" /></TooltipIconButton>
     </li>)}
   </ul>;
 }
 
 export function ChatDocumentSources({ sources }: { sources: readonly ChatDocumentSource[] }) {
-  return <details className="text-document-sources">
-    <summary>Document sources</summary>
+  return <Disclosure className="text-document-sources" label="Document sources">
     <ul>
       {sources.map(({ number, name, location, excerpt }) => <li key={number}>
         <strong>[{number}] {name}</strong>
@@ -28,5 +28,5 @@ export function ChatDocumentSources({ sources }: { sources: readonly ChatDocumen
         <p>{excerpt}</p>
       </li>)}
     </ul>
-  </details>;
+  </Disclosure>;
 }
