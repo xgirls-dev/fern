@@ -1,6 +1,6 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { RootContent } from "hast";
-import { canReuseChatMarkdownPrefix, parseChatMarkdown, parsePlainChatMarkdown, type ChatMarkdownRequest, type ChatMarkdownResponse } from "../lib/chatMarkdown";
+import { appendChatMarkdownTableRows, canReuseChatMarkdownPrefix, parseChatMarkdown, parsePlainChatMarkdown, type ChatMarkdownRequest, type ChatMarkdownResponse } from "../lib/chatMarkdown";
 
 const WORKER_THRESHOLD = 2_000;
 const SYNC_PROSE_LIMIT = 16_000;
@@ -81,7 +81,7 @@ function parseSmallReply(content: string, streaming: boolean, receivingReply: bo
 type ParsedWorkerMarkdown = ParsedMarkdown & {
   requestId: number;
   streaming: boolean;
-  signatures: string[];
+  signatures: (string | undefined)[];
   stablePrefix?: ChatMarkdownResponse["stablePrefix"];
   matchesFinal?: ChatMarkdownResponse["matchesFinal"];
 };
@@ -161,7 +161,7 @@ export function useChatMarkdown(content: string, streaming: boolean, receivingRe
       waiting.current = null;
       const { queue, ...input } = next;
       const previous = latestWorkerResult.current;
-      const cancel = requestMarkdown(queue, { ...input, previousId: previous?.requestId }, ({ id, blocks, retained, stablePrefix, matchesFinal }) => {
+      const cancel = requestMarkdown(queue, { ...input, previousId: previous?.requestId }, ({ id, blocks, retained, tableRows, stablePrefix, matchesFinal }) => {
         inFlight.current = null;
         const count = retained?.blockCount ?? 0;
         if (!blocks || (retained && (!previous || previous.requestId !== retained.requestId || count > previous.nodes.length))) {
@@ -170,8 +170,17 @@ export function useChatMarkdown(content: string, streaming: boolean, receivingRe
         }
         const nodes = previous?.nodes.slice(0, count) ?? [];
         const signatures = previous?.signatures.slice(0, count) ?? [];
+        if (tableRows) {
+          const table = appendChatMarkdownTableRows(previous?.nodes[count], tableRows);
+          if (!table) {
+            setWorkerFailed(true);
+            return;
+          }
+          nodes.push(table);
+          signatures.push(undefined);
+        }
         for (const [index, { node, signature }] of blocks.entries()) {
-          const position = count + index;
+          const position = count + Number(!!tableRows) + index;
           nodes.push(previous?.signatures[position] === signature ? previous.nodes[position] : node);
           signatures.push(signature);
         }

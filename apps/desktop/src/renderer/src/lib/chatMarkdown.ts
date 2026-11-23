@@ -1,4 +1,4 @@
-import type { Root, RootContent } from "hast";
+import type { ElementContent, Root, RootContent } from "hast";
 import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
 import remarkRehype from "remark-rehype";
@@ -62,7 +62,38 @@ export function parsePreparedChatMarkdown(source: string, preview: boolean, find
     }
   }
   const renderable: Root = { type: "root", children: root.children.map(renderableNode) };
-  return { root: renderable, boundary, trimmedPreview };
+  const last = tree.children.at(-1);
+  let openTable: { header: string; completedThrough: number; rowCount: number } | undefined;
+  const start = last?.position?.start.offset;
+  const end = last?.position?.end.offset;
+  if (findBoundary && last?.type === "table" && start !== undefined && end !== undefined && last.children.length > 1) {
+    const remainder = source.slice(end);
+    const rowCount = last.children.length - (remainder.endsWith("\n") ? 1 : 2);
+    const firstRow = last.children[1].position?.start.offset;
+    const completedEnd = last.children[rowCount]?.position?.end.offset;
+    if (rowCount > 0 && firstRow !== undefined && completedEnd !== undefined && /^[ \t]*(?:\r?\n)?$/.test(remainder)) {
+      const firstRowLine = source.lastIndexOf("\n", firstRow - 1) + 1;
+      const completedThrough = source.indexOf("\n", completedEnd) + 1;
+      if (firstRowLine > start && completedThrough > firstRowLine) openTable = {
+        header: source.slice(source.lastIndexOf("\n", start - 1) + 1, firstRowLine),
+        completedThrough,
+        rowCount,
+      };
+    }
+  }
+  return { root: renderable, boundary, trimmedPreview, openTable };
+}
+
+export function appendChatMarkdownTableRows(table: RootContent | undefined, update: ChatMarkdownTableRows): RootContent | undefined {
+  if (table?.type !== "element" || table.tagName !== "table") return;
+  const bodyIndex = table.children.findIndex((child) => child.type === "element" && child.tagName === "tbody");
+  const body = table.children[bodyIndex];
+  // GFM wraps body rows with newlines before, between, and after them.
+  const keep = update.rowCount * 2 + 1;
+  if (body?.type !== "element" || body.children.length < keep) return;
+  const children = table.children.slice();
+  children[bodyIndex] = { ...body, children: [...body.children.slice(0, keep), ...update.tail] };
+  return { ...table, children };
 }
 
 export interface ChatMarkdownRequest {
@@ -78,10 +109,16 @@ export interface ChatMarkdownBlock {
   node: RootContent;
 }
 
+export interface ChatMarkdownTableRows {
+  rowCount: number;
+  tail: ElementContent[];
+}
+
 export interface ChatMarkdownResponse {
   id: number;
   blocks?: ChatMarkdownBlock[];
   retained?: { requestId: number; blockCount: number };
+  tableRows?: ChatMarkdownTableRows;
   stablePrefix?: { sourceLength: number; blockCount: number };
   matchesFinal?: true;
 }

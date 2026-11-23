@@ -1,7 +1,7 @@
 import { cloneElement, createContext, Fragment, isValidElement, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentPropsWithoutRef } from "react";
 import { jsx, jsxs } from "react/jsx-runtime";
 import { toJsxRuntime } from "hast-util-to-jsx-runtime";
-import type { RootContent } from "hast";
+import type { Element, RootContent } from "hast";
 import Copy from "lucide-react/dist/esm/icons/copy.mjs";
 import MoveHorizontal from "lucide-react/dist/esm/icons/move-horizontal.mjs";
 import WrapText from "lucide-react/dist/esm/icons/wrap-text.mjs";
@@ -171,12 +171,34 @@ const components = {
   a: ({ href, children }: ComponentPropsWithoutRef<"a">) => /^https?:\/\//i.test(href ?? "")
     ? <a href={href} target="_blank" rel="noopener noreferrer">{children}</a> : <span>{children}</span>,
 };
-const MarkdownBlock = memo(function MarkdownBlock({ node, cursor }: { node: RootContent; cursor?: StreamCursor }) {
-  const element = useMemo(() => node.type === "text" ? node.value : toJsxRuntime(node, {
+function markdownElement(node: RootContent) {
+  return node.type === "text" ? node.value : toJsxRuntime(node, {
     components, Fragment, jsx, jsxs, ignoreInvalidStyle: true, passKeys: true,
-  }), [node]);
+  });
+}
+
+const MarkdownTableRow = memo(function MarkdownTableRow({ node }: { node: Element }) {
+  return markdownElement(node);
+});
+
+const MarkdownTableSection = memo(function MarkdownTableSection({ node }: { node: Element }) {
+  const Section = node.tagName === "thead" ? "thead" : "tbody";
+  return <Section>{node.children.map((row, index) => row.type === "element"
+    ? <MarkdownTableRow key={index} node={row} /> : null)}</Section>;
+});
+
+function isTable(node: RootContent): node is Element {
+  return node.type === "element" && node.tagName === "table";
+}
+
+const MarkdownBlock = memo(function MarkdownBlock({ node, cursor }: { node: RootContent; cursor?: StreamCursor }) {
+  const element = useMemo(() => isTable(node)
+    ? <MarkdownTable>{node.children.map((section, index) => section.type === "element"
+      ? <MarkdownTableSection key={index} node={section} /> : null)}</MarkdownTable>
+    : markdownElement(node), [node]);
   return cursor && isValidElement<StreamTailProps>(element) ? cloneElement(element, { "data-stream-tail": cursor }) : element;
-}, (previous, next) => previous.cursor === next.cursor && (previous.node === next.node || JSON.stringify(previous.node) === JSON.stringify(next.node)));
+}, (previous, next) => previous.cursor === next.cursor && (previous.node === next.node ||
+  (!isTable(next.node) && !isTable(previous.node) && JSON.stringify(previous.node) === JSON.stringify(next.node))));
 
 export const TextMarkdown = memo(function TextMarkdown({ content, streaming = false, receivingReply = streaming, cursor, preserveSelection = false }: {
   content: string; streaming?: boolean; receivingReply?: boolean; cursor?: StreamCursor; preserveSelection?: boolean;

@@ -135,7 +135,7 @@ try {
     longReply + "First item\n\n- One\n- Two\n\n  continued\n\nAn evolving title",
     longReply + "First item\n\n- One\n- Two\n\n  continued\n\nAn evolving title\n---\n\n| A | B |\n| - | - |\n| 1 | 2 |",
   ];
-  const comparison = await page.evaluate(async ({ url, snapshots }) => {
+  const comparison = await page.evaluate(async ({ url, snapshots, longReply }) => {
     const parser = new Worker(url, { type: "module" });
     let id = 0;
     const acknowledged = new Map();
@@ -147,9 +147,16 @@ try {
             reject(new Error("Worker returned an invalid Markdown update"));
             return;
           }
-          const blocks = [...(previous?.blocks.slice(0, data.retained?.blockCount ?? 0) ?? []), ...data.blocks];
+          const blocks = previous?.blocks.slice(0, data.retained?.blockCount ?? 0) ?? [];
+          if (data.tableRows) {
+            const node = structuredClone(previous.blocks[blocks.length].node);
+            const body = node.children.find((part) => part.tagName === "tbody");
+            body.children.splice(data.tableRows.rowCount * 2 + 1, Infinity, ...data.tableRows.tail);
+            blocks.push({ signature: JSON.stringify(node), node });
+          }
+          blocks.push(...data.blocks);
           acknowledged.set(view, { id: data.id, blocks });
-          resolve({ blocks, transferred: data.blocks.length, matchesFinal: data.matchesFinal });
+          resolve({ blocks, transferred: data.blocks.length, matchesFinal: data.matchesFinal, tableRows: data.tableRows });
         };
         parser.onerror = reject;
         parser.postMessage({ id: ++id, view, content, streaming, previousId });
@@ -178,23 +185,38 @@ try {
       await parse(snapshots[0], "missing-ack", true);
       const recovered = await parse(snapshots[1], "missing-ack", true, -1);
       const fresh = await parse(snapshots[1], "fresh-recovery", true);
+      const table = longReply + "| Choice | Result |\n| --- | ---: |\n" + Array.from({ length: 32 }, (_, index) =>
+        `| Option ${index} with **detail** and \\| pipe | &copy; [guide](https://example.com/guide) |\n`).join("");
+      const tableSnapshots = [table, `${table}| Last | **writing`, `${table}| Last | **done** |\n`,
+        `${table}| Last | **done** |\n\nA new paragraph.`, `${table}| Last | [resource] |\n\n[resource]: https://example.com/resource`];
+      const tableUpdates = [];
+      for (const [index, snapshot] of tableSnapshots.entries()) {
+        const streaming = index < tableSnapshots.length - 2;
+        const update = await parse(snapshot, "growing-table", streaming);
+        const full = await parse(snapshot, `fresh-table-${index}`, streaming);
+        tableUpdates.push({ matches: JSON.stringify(update.blocks) === JSON.stringify(full.blocks),
+          rows: update.tableRows?.rowCount ?? 0, tail: update.tableRows?.tail.length ?? 0 });
+      }
       return {
         matches: JSON.stringify(incremental.blocks) === JSON.stringify(full.blocks),
         unchangedMatchesFinal: unchanged.matchesFinal && JSON.stringify(unchanged.blocks) === JSON.stringify(full.blocks),
         changedPreviewsReparse: changed.every(Boolean),
         savedBlocks,
+        tableUpdates,
         recovered: recovered.transferred === fresh.transferred &&
           JSON.stringify(recovered.blocks) === JSON.stringify(fresh.blocks),
       };
     } finally {
       parser.terminate();
     }
-  }, { url: worker.url(), snapshots });
+  }, { url: worker.url(), snapshots, longReply });
   assert(comparison.matches, "Incremental rendering should agree with a fresh parse.");
   assert(comparison.unchangedMatchesFinal, "A preview that matches the final parse can be reused.");
   assert(comparison.changedPreviewsReparse, "Repaired emphasis and hidden table syntax still require a final parse.");
   assert(comparison.savedBlocks > 24, "Stable blocks should not be transferred repeatedly.");
   assert(comparison.recovered, "An unacknowledged prefix should produce a complete result.");
+  assert(comparison.tableUpdates.every(({ matches }) => matches), JSON.stringify(comparison.tableUpdates));
+  assert.deepEqual(comparison.tableUpdates.map(({ rows, tail }) => [rows, tail]), [[0, 0], [32, 2], [32, 2], [33, 0], [0, 0]]);
 
   await composer.fill("Start with plain paragraphs, then add a formatted section.");
   await send.click();

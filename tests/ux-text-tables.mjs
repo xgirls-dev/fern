@@ -120,6 +120,23 @@ try {
   await expect(fit).toHaveAttribute("aria-pressed", "false");
   await expect.poll(overflow).toBeLessThanOrEqual(1);
   await expect(scroller).not.toHaveAttribute("tabindex");
+
+  const growing = `${state.textStatus.job.partialText}\n` + Array.from({ length: 36 }, (_, index) =>
+    `${row([`Option ${index + 1}`, "**Owner**", "[Guide](https://example.invalid/guide)", "-3.5", "Ready", "Needs review", "Next week"])}\n`).join("");
+  state.textStatus.job = { ...state.textStatus.job, partialText: growing };
+  await expect(table.getByRole("cell", { name: "Option 36", exact: true })).toBeAttached();
+  const firstOption = table.getByRole("cell", { name: "Option 1", exact: true });
+  await firstOption.evaluate((cell) => { cell.dataset.retainedRow = "true"; });
+  state.textStatus.job = { ...state.textStatus.job, partialText: `${growing}${row(["Latest row", "**Ready**"])}\n` };
+  await expect(table.getByRole("cell", { name: "Latest row", exact: true })).toBeVisible();
+  await expect(firstOption).toHaveAttribute("data-retained-row", "true");
+  await expect(table.getByRole("link", { name: "Guide", exact: true })).toHaveCount(36);
+  state.textStatus.job = { ...state.textStatus.job, status: "complete", finishedAt: Date.now() / 1000,
+    partialText: `${state.textStatus.job.partialText}\nFinished comparing these options.` };
+  await expect(reply).not.toHaveClass(/text-message--streaming/);
+  await expect(reply.getByText("Finished comparing these options.", { exact: true })).toBeVisible();
+  await expect(table.getByRole("row")).toHaveCount(39);
+  await expect(firstOption).toHaveAttribute("data-retained-row", "true");
   assert.deepEqual(errors, []);
   console.log("Streamed tables preserve focus and fit, update when resized, copy tidy spreadsheet rows, and reveal off-screen matches.");
 } finally {
