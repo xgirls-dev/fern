@@ -1,4 +1,5 @@
 import { useId, type ComponentProps, type ReactNode, type Ref } from "react";
+export { IconButton } from "./IconButton";
 export { Select } from "./Select";
 
 type ButtonProps = ComponentProps<"button"> & {
@@ -8,14 +9,6 @@ type ButtonProps = ComponentProps<"button"> & {
 /** Shared interactive primitives. Keep their dimensions and states in design-system.css. */
 export function Button({ variant = "secondary", className = "", type = "button", ...props }: ButtonProps) {
   return <button type={type} className={`ui-button ui-button--${variant} ${className}`} {...props} />;
-}
-
-export function IconButton({ variant = "default", shape = "square", className = "", type = "button", ref, ...props }: ComponentProps<"button"> & {
-  variant?: "default" | "primary" | "danger";
-  shape?: "square" | "circle";
-  ref?: Ref<HTMLButtonElement>;
-}) {
-  return <button ref={ref} type={type} className={`ui-icon-button ui-icon-button--${variant} ui-icon-button--${shape} ${className}`} {...props} />;
 }
 
 export function MenuItem({ destructive = false, className = "", type = "button", ref, ...props }: ComponentProps<"button"> & { destructive?: boolean; ref?: Ref<HTMLButtonElement> }) {

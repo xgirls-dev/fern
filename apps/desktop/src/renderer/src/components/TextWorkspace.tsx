@@ -243,6 +243,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   const { id: threadId, messages, draftImage, draftContextImage: draftContextName } = activeThread;
   const fieldPrefix = useId() + "-";
   const inspectorId = fieldPrefix + "chat-inspector";
+  const deletionStatusId = fieldPrefix + "deletion-status";
   const stopping = studio.isStopping(activeThread);
   const pendingReplyOutput = studio.pendingReplyOutput(activeThread);
   const documents = activeThread.documents ?? [];
@@ -335,6 +336,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   const deletions = studio.messageDeletions.get(activeThread.id);
   const deletion = deletions?.at(-1);
   const deletionCount = deletions?.length ?? 0;
+  const dismissDeletionLabel = deletionCount > 1 ? "Dismiss undo for all deletions" : "Dismiss deletion notice";
   const models = status.models;
   const modelOptions = [
     ...models.map((model) => {
@@ -828,12 +830,12 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
         {visibleError ? <div className="text-error" role="alert">{visibleError}<Button variant="secondary" onClick={() => { void studio.refresh(); }}>Refresh status</Button></div> : null}
         {!empty && modelNotice && <ChatModelReadiness notice={modelNotice} actionRef={bindModelAction} />}
         {deletion && <div className="text-deletion-notice">
-          <span id="text-deletion-status" role="status">{deletion.messages.length > 1 ? "Message and reply deleted." : deletion.messages[0].role === "assistant" ? "Reply deleted." : "Message deleted."}
+          <span id={deletionStatusId} role="status">{deletion.messages.length > 1 ? "Message and reply deleted." : deletion.messages[0].role === "assistant" ? "Reply deleted." : "Message deleted."}
             {deletionCount > 1 && ` ${deletionCount} deletions to undo.`}
             {undoBlocked && " Undo is available after the response."}</span>
-          <Button ref={undoButton} variant="ghost" aria-describedby="text-deletion-status" disabled={undoBlocked} onClick={undoDeletion}>Undo deletion</Button>
-          <IconButton aria-label={deletionCount > 1 ? "Dismiss undo for all deletions" : "Dismiss deletion notice"}
-            title={deletionCount > 1 ? "Dismiss undo for all deletions" : "Dismiss deletion notice"} onClick={dismissDeletion}><X size={14} aria-hidden="true" /></IconButton>
+          <Button ref={undoButton} variant="ghost" aria-describedby={deletionStatusId} disabled={undoBlocked} onClick={undoDeletion}>Undo deletion</Button>
+          <TooltipIconButton aria-label={dismissDeletionLabel} tooltip={dismissDeletionLabel}
+            onClick={dismissDeletion}><X size={14} aria-hidden="true" /></TooltipIconButton>
         </div>}
         <form className={`text-composer${fileOver ? " is-file-over" : ""}`} onSubmit={(event) => { event.preventDefault(); submit(); }}
           onDragEnter={(event) => {
@@ -860,18 +862,18 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
           {attachment?.status === "saving" && <div className="text-attachment-notice">
             <LoaderCircle className="spinner" size={15} aria-hidden="true" />
             <span className="text-attachment-status" role="status"><span title={attachment.filename}>{attachment.filename}</span><small>Attaching image…</small></span>
-            <IconButton aria-label="Cancel image attachment" title="Cancel image attachment" onClick={() => {
+            <TooltipIconButton aria-label="Cancel image attachment" tooltip="Cancel image attachment" onClick={() => {
               studio.clearAttachment(activeThread.id);
               inputRef.current?.focus({ preventScroll: true });
-            }}><X size={14} aria-hidden="true" /></IconButton>
+            }}><X size={14} aria-hidden="true" /></TooltipIconButton>
           </div>}
           {attachment?.status === "failed" && <div className="text-attachment-notice text-attachment-notice--error">
             <span role="alert">{attachment.message}</span>
             {attachmentRetry && <Button variant="ghost" aria-label="Retry image attachment" onClick={() => stageAttachment([attachmentRetry])}>Retry</Button>}
-            <IconButton aria-label="Dismiss attachment message" title="Dismiss attachment message" onClick={() => {
+            <TooltipIconButton aria-label="Dismiss attachment message" tooltip="Dismiss attachment message" onClick={() => {
               studio.clearAttachment(activeThread.id);
               inputRef.current?.focus({ preventScroll: true });
-            }}><X size={14} aria-hidden="true" /></IconButton>
+            }}><X size={14} aria-hidden="true" /></TooltipIconButton>
           </div>}
           {activeThread.draftContextImage ? <div className="text-draft-image text-draft-context">
             {draftContextImage && <img src={resolveAssetUrl(draftContextImage.url, draftContextImage.mtime)} alt="" onError={(event) => { event.currentTarget.hidden = true; }} key={draftContextImage.name} />}

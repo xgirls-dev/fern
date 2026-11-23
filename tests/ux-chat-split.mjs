@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { expect } from "@playwright/test";
-import { fixture } from "./ui-fixture.mjs";
+import { chooseMessageAction, fixture } from "./ui-fixture.mjs";
 
 const models = [
   { id: "gemma", name: "Gemma", installed: true, format: "gguf", maxContextSize: 65536, supportsVision: true, supportsTools: true },
@@ -131,6 +131,14 @@ try {
   assert.equal(leftRequest.documentIds, undefined);
   await complete("Left answer.", left);
 
+  await chooseMessageAction(left.getByRole("article", { name: "Model response" }), "Delete reply");
+  await button("Delete", left.getByRole("group", { name: "Confirm message deletion" })).click();
+  await chooseMessageAction(right.getByRole("article", { name: "Your message" }), "Delete message");
+  await button("Delete", right.getByRole("group", { name: "Confirm message deletion" })).click();
+  await expect(button("Undo deletion", left)).toHaveAccessibleDescription("Reply deleted.");
+  await expect(button("Undo deletion", right)).toHaveAccessibleDescription("Message and reply deleted.");
+  await button("Undo deletion", left).click();
+  await button("Undo deletion", right).click();
   await page.reload();
   await right.getByText("Right answer.", { exact: true }).waitFor();
   await left.getByText("Left answer.", { exact: true }).waitFor();

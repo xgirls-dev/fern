@@ -13,9 +13,9 @@ export function TextMenu({ label, value, options, onSelect, disabled, children }
   children?: ReactNode;
 }) {
   const displayedName = options.find((option) => option.value === value)?.label ?? "Select model";
-  return <Dropdown label={label} className="text-model-dropdown" side="top" align="end"
+  return <Dropdown label={label} className="text-model-dropdown" side="top" align="end" triggerTooltip={displayedName}
     trigger={<Button variant="ghost" className="composer-model-trigger text-menu-trigger"
-      aria-label={`${label}: ${displayedName}`} title={displayedName} disabled={disabled}>
+      aria-label={`${label}: ${displayedName}`} disabled={disabled}>
       <span>{displayedName}</span><ChevronDown size={13} aria-hidden="true" />
     </Button>}
   >

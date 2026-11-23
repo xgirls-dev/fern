@@ -8,6 +8,7 @@ import WrapText from "lucide-react/dist/esm/icons/wrap-text.mjs";
 import { notify } from "../lib/notifications";
 import { useChatMarkdown } from "../hooks/useChatMarkdown";
 import { Button } from "./ui/controls";
+import { Tooltip } from "./ui/Tooltip";
 
 const StreamingCode = createContext(false);
 type StreamCursor = "active" | "waiting";
@@ -137,9 +138,11 @@ function MarkdownTable({ children, "data-stream-tail": streamTail }: ComponentPr
       }}>
         <MoveHorizontal size={13} aria-hidden="true" />Fit width
       </Button>}
-      <Button variant="ghost" onClick={copyRows} aria-label={copied ? "Table copied" : "Copy table"} title="Copy table as tab-separated values">
-        <Copy size={13} aria-hidden="true" />{copied ? "Copied" : "Copy table"}
-      </Button>
+      <Tooltip content={copied ? "Table copied" : "Copy table as tab-separated values"}>
+        <Button variant="ghost" onClick={copyRows} aria-label={copied ? "Table copied" : "Copy table"}>
+          <Copy size={13} aria-hidden="true" />{copied ? "Copied" : "Copy table"}
+        </Button>
+      </Tooltip>
     </div>
     <div className="text-table-scroll" ref={ref} data-chat-horizontal-scroll tabIndex={overflowing ? 0 : undefined}
       role={overflowing ? "region" : undefined} aria-label={overflowing ? "Scrollable table" : undefined}>

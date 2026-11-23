@@ -66,7 +66,10 @@ try {
   await expect(table.getByRole("cell", { name: "2026-10-08" })).toHaveCSS("border-inline-start-width", "1px");
   await expect(fit).toHaveAttribute("aria-pressed", "true");
   await expect(table).toHaveAttribute("data-original-table", "true");
-  await button("Copy table").click();
+  const copyTable = button("Copy table");
+  await copyTable.hover();
+  await expect(page.getByRole("tooltip").filter({ hasText: "Copy table as tab-separated values" })).toBeVisible();
+  await copyTable.click();
   assert.equal(await page.evaluate(() => window.tableClipboard), clipboard);
   await expect(button("Table copied")).toBeVisible();
 

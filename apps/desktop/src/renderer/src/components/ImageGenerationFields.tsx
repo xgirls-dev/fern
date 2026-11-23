@@ -6,8 +6,9 @@ import Shuffle from "lucide-react/dist/esm/icons/shuffle.mjs";
 import { imageDimensionLimits, type ImageDimensionHints } from "../lib/imageDimensions";
 import { fixedImagePreset, isKleinLoraModel, maxImageBatch } from "../lib/imageModels";
 import type { StudioSettings } from "../lib/types";
-import { IconButton, Select } from "./ui/controls";
+import { Select } from "./ui/controls";
 import { Slider } from "./ui/Slider";
+import { TooltipIconButton } from "./ui/Tooltip";
 
 type Canvas = Pick<StudioSettings, "width" | "height">;
 type Sampling = Pick<StudioSettings, "steps" | "guidance" | "seed" | "seedLocked">;
@@ -75,10 +76,10 @@ export function ImageCanvasFields({
         <DraftNumberInput ref={widthInput} error={errors?.width} id={widthId} name={widthId} type="number" disabled={disabled || fixedCanvas}
           min={minimum} max={maximum} step={multiple} value={settings.width} onChange={(event) => onChange({ width: Number(event.target.value) })} />
       </div>
-      <IconButton disabled={disabled || fixedCanvas} onClick={() => onChange({ width: settings.height, height: settings.width })}
-        title="Swap dimensions" aria-label="Swap width and height">
+      <TooltipIconButton disabled={disabled || fixedCanvas} onClick={() => onChange({ width: settings.height, height: settings.width })}
+        tooltip="Swap width and height" aria-label="Swap width and height">
         <Shuffle size={15} aria-hidden="true" />
-      </IconButton>
+      </TooltipIconButton>
       <div className="field">
         <label htmlFor={heightId}>Height</label>
         <DraftNumberInput error={errors?.height} id={heightId} name={heightId} type="number" disabled={disabled || fixedCanvas}
@@ -104,14 +105,14 @@ export function ImageSamplingFields({ model, settings, errors, disabled, idPrefi
       <div className="seed-row">
         <DraftNumberInput error={errors?.seed} id={seedId} name={seedId} type="number" disabled={disabled}
           value={settings.seed} onChange={(event) => onChange({ seed: Number(event.target.value) })} />
-        <IconButton disabled={disabled} title="Randomize seed" aria-label="Randomize seed"
+        <TooltipIconButton disabled={disabled} tooltip="Randomize seed" aria-label="Randomize seed"
           onClick={() => onChange({ seed: Math.floor(Math.random() * 1_000_000_000) })}>
           <Dices size={15} aria-hidden="true" />
-        </IconButton>
-        <IconButton disabled={disabled} title={lockLabel} aria-label={lockLabel} aria-pressed={settings.seedLocked}
+        </TooltipIconButton>
+        <TooltipIconButton disabled={disabled} tooltip={lockLabel} aria-label={lockLabel} aria-pressed={settings.seedLocked}
           onClick={() => onChange({ seedLocked: !settings.seedLocked })}>
           {settings.seedLocked ? <Lock size={15} aria-hidden="true" /> : <LockOpen size={15} aria-hidden="true" />}
-        </IconButton>
+        </TooltipIconButton>
       </div>
     </div>
     <div className="field" hidden={fixedSampling && !adjustableSteps}>

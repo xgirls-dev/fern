@@ -14,7 +14,7 @@ export function WorkspaceThreadTitle({ id, thread, threads, switchLabel, sidebar
     <div className="workspace-thread-title">
       <h2 id={id} title={thread.title}>{thread.title}</h2>
       <Select appearance="icon" className={`workspace-thread-switcher${sidebarCollapsed ? " is-visible" : ""}`}
-        aria-label={switchLabel} title={switchLabel} value={thread.id} onChange={onSwitch}
+        aria-label={switchLabel} triggerTooltip={switchLabel} triggerTooltipSide="bottom" value={thread.id} onChange={onSwitch}
         options={threads.filter((item) => !item.archived || item.id === thread.id).map(({ id, title }) => ({ value: id, label: title }))} />
     </div>
   );

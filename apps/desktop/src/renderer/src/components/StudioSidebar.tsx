@@ -19,7 +19,7 @@ import FolderPlus from "lucide-react/dist/esm/icons/folder-plus.mjs";
 import { memo, useRef, useState, type DragEvent, type RefObject } from "react";
 import { Button, IconButton, Input, NavigationButton } from "./ui/controls";
 import { Dropdown, DropdownItem, DropdownSeparator, useDropdownActions } from "./ui/Dropdown";
-import { TooltipIconButton, TooltipScope } from "./ui/Tooltip";
+import { Tooltip, TooltipIconButton, TooltipScope } from "./ui/Tooltip";
 import type { ImageThread } from "../lib/threads";
 import type { AudioThread } from "../lib/ttsThreads";
 import type { TextSidebarRow } from "../hooks/useTextChat";
@@ -334,28 +334,26 @@ export const StudioSidebar = memo(function StudioSidebar({
 
       <div className="sidebar-new-divider" />
       <nav className="sidebar-nav" aria-label="Studio">
-        <NavigationButton
+        <Tooltip content="Install and manage models" side="right"><NavigationButton
           className="sidebar-nav-button"
           selected={activeSection === "models"}
           onClick={() => navigate(onOpenModels)}
           aria-label="Models"
-          title="Install and manage models"
-        ><Box size={15} aria-hidden="true" /><span>Models</span></NavigationButton>
-        <NavigationButton
+        ><Box size={15} aria-hidden="true" /><span>Models</span></NavigationButton></Tooltip>
+        <Tooltip content={`Images · ${shortcutLabel(shortcuts.images)}`} side="right"><NavigationButton
           className="sidebar-nav-button"
           selected={activeSection === "library"}
           onClick={() => navigate(onOpenLibrary)}
           aria-label="Images"
           aria-busy={openingImages || undefined}
-          title={`Images · ${shortcutLabel(shortcuts.images)}`}
         >
           {openingImages ? <LoaderCircle className="spinner" size={15} aria-hidden="true" /> : <Images size={15} aria-hidden="true" />}
           <span>{openingImages ? "Opening Images…" : "Images"}</span>
-        </NavigationButton>
-        <NavigationButton className="sidebar-nav-button" selected={activeSection === "video"}
-          onClick={() => navigate(onOpenVideo)} aria-label="Video" title="Create and play videos">
+        </NavigationButton></Tooltip>
+        <Tooltip content="Create and play videos" side="right"><NavigationButton className="sidebar-nav-button" selected={activeSection === "video"}
+          onClick={() => navigate(onOpenVideo)} aria-label="Video">
           <Clapperboard size={15} aria-hidden="true" /><span>Video</span>
-        </NavigationButton>
+        </NavigationButton></Tooltip>
       </nav>
 
       {!collapsed && <div className="sidebar-scroll-area" role="group" aria-label="Threads">
@@ -629,26 +627,24 @@ export const StudioSidebar = memo(function StudioSidebar({
         className="sidebar-nav sidebar-nav--secondary"
         aria-label="Application"
       >
-        <NavigationButton
+        <Tooltip content="Manage local data" side="right"><NavigationButton
           className="sidebar-nav-button"
           selected={activeSection === "storage"}
           onClick={() => navigate(onOpenData)}
           aria-label="Local data"
-          title="Manage local data"
         >
           <HardDrive size={15} aria-hidden="true" />
           <span>Local data</span>
-        </NavigationButton>
-        <NavigationButton
+        </NavigationButton></Tooltip>
+        <Tooltip content="Open preferences" side="right"><NavigationButton
           className="sidebar-nav-button"
           selected={activeSection === "preferences"}
           onClick={() => navigate(onOpenPreferences)}
           aria-label="Preferences"
-          title="Open preferences"
         >
           <Settings2 size={15} aria-hidden="true" />
           <span>Preferences</span>
-        </NavigationButton>
+        </NavigationButton></Tooltip>
       </nav>
 
     </aside></TooltipScope>

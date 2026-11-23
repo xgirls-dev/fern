@@ -1,6 +1,6 @@
 import { Tooltip as BaseTooltip } from "@base-ui/react/tooltip";
 import { createContext, useContext, useState, type ComponentProps, type ReactElement, type ReactNode } from "react";
-import { IconButton } from "./controls";
+import { IconButton } from "./IconButton";
 
 type TooltipSide = "top" | "right" | "bottom" | "left";
 type TooltipPayload = { content: ReactNode; side: TooltipSide };

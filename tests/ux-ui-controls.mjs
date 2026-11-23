@@ -35,6 +35,11 @@ try {
   await expect(mode).toBeFocused();
   await expect(page.locator("select")).toHaveCount(0);
 
+  await button("Models").hover();
+  await expect(page.getByRole("tooltip").filter({ hasText: "Install and manage models" })).toBeVisible();
+  const modelButton = button("Text model: Local model");
+  await modelButton.hover();
+  await expect(page.getByRole("tooltip").filter({ hasText: /^Local model$/ })).toBeVisible();
   await button("New chat").hover();
   await expect(page.locator(".ui-tooltip")).toHaveText("New chat");
   await expect(page.locator(".ui-tooltip")).toBeVisible();
@@ -87,6 +92,16 @@ try {
 
   await button("Duplicate chat").hover();
   await expect(page.getByRole("tooltip").filter({ hasText: /^Duplicate chat$/ })).toBeVisible();
+  await button("Collapse sidebar").click();
+  const threadSwitcher = page.getByRole("combobox", { name: "Open text thread", exact: true });
+  await threadSwitcher.hover();
+  await expect(page.getByRole("tooltip").filter({ hasText: /^Open text thread$/ })).toBeVisible();
+  await threadSwitcher.press("ArrowDown");
+  await expect(options).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(options).toHaveCount(0);
+  await expect(threadSwitcher).toBeFocused();
+  await button("Expand sidebar").click();
   await button("Chat settings").press("Enter");
   const settings = page.getByRole("complementary", { name: "Chat settings panel" });
   const views = settings.getByRole("group", { name: "Chat inspector views" });
