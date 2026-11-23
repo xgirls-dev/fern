@@ -44,7 +44,7 @@ import { useTextDraftField } from "../hooks/useTextDraftField";
 import { resolveAssetUrl } from "../lib/api";
 import type { ChatSearchMatch } from "../lib/chatSearch";
 import { notify } from "../lib/notifications";
-import { canContinueTextReply, findChatImage, latestTextPrompt, replyVersions, resolveTextModel, savedVersionForDeletedReply, showReplyVersion, textRuntimeIssue, type GeneratedChatImage, type TextMessage } from "../lib/textThreads";
+import { canContinueTextReply, countTextPromptCharacters, findChatImage, latestTextPrompt, replyVersions, resolveTextModel, savedVersionForDeletedReply, showReplyVersion, TEXT_MESSAGE_CHARACTER_LIMIT, textPromptExceedsLimit, textRuntimeIssue, type GeneratedChatImage, type TextMessage } from "../lib/textThreads";
 import { chatImageErrors, chatImageSettings, MAX_IMAGE_PROMPT_SUFFIX, type ChatImageSettings } from "../lib/chatImageSettings";
 import { isKleinLoraModel, maxReferenceImages } from "../lib/imageModels";
 import { CHAT_DOCUMENT_ACCEPT, MAX_CHAT_DOCUMENTS } from "../lib/chatDocuments";
@@ -53,6 +53,8 @@ import type { SetupTask } from "../lib/modelSetup";
 import type { ImageRecord } from "../lib/types";
 
 type TextStudio = ReturnType<typeof useTextChat>;
+const PROMPT_COUNT_THRESHOLD = TEXT_MESSAGE_CHARACTER_LIMIT - 2_000;
+const PROMPT_LIMIT_MESSAGE = `OpenVINO accepts up to ${TEXT_MESSAGE_CHARACTER_LIMIT.toLocaleString()} characters per message.`;
 
 interface TranscriptRow {
   message: TextMessage;
@@ -244,6 +246,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   const fieldPrefix = useId() + "-";
   const inspectorId = fieldPrefix + "chat-inspector";
   const deletionStatusId = fieldPrefix + "deletion-status";
+  const draftLimitId = fieldPrefix + "draft-limit";
   const stopping = studio.isStopping(activeThread);
   const pendingReplyOutput = studio.pendingReplyOutput(activeThread);
   const documents = activeThread.documents ?? [];
@@ -361,7 +364,14 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   const replaceablePrompt = latestTextPrompt(activeThread.messages);
   const lastPrompt = useMemo(() => messages[messages.map((message) => message.role).lastIndexOf("user")], [messages]);
   const canRetry = modelAvailable && !runtimeIssue && (selected.supportsVision || !(lastPrompt?.image || lastPrompt?.includedImage));
-  const canSend = !busy && !attachingImage && modelAvailable && !runtimeIssue && !incompatibleImages && (!!activeThread.draft.trim() || hasDraftImage);
+  const hasPromptLimit = !!selected && selected.format !== "gguf";
+  const draftCharacters = useMemo(() => hasPromptLimit && activeThread.draft.length >= PROMPT_COUNT_THRESHOLD
+    ? countTextPromptCharacters(activeThread.draft, TEXT_MESSAGE_CHARACTER_LIMIT + 1) : undefined,
+  [activeThread.draft, hasPromptLimit]);
+  const draftTooLong = (draftCharacters ?? 0) > TEXT_MESSAGE_CHARACTER_LIMIT;
+  const revisionTooLong = useMemo(() => hasPromptLimit && textPromptExceedsLimit(promptEdit?.content ?? ""),
+    [hasPromptLimit, promptEdit?.content]);
+  const canSend = !busy && !attachingImage && modelAvailable && !runtimeIssue && !incompatibleImages && !draftTooLong && (!!activeThread.draft.trim() || hasDraftImage);
   const canAttach = studio.attachmentReady && !attachingImage && !activeThread.draftContextImage;
   useEffect(() => { dragDepth.current = 0; setFileOver(false); }, [activeThread.id]);
   const imageModels = status.imageToolModels ?? [];
@@ -700,7 +710,8 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
     const editUnavailable = busy ? "Finish the current response before sending this revision."
       : !modelAvailable ? "Choose an installed model to send this revision."
       : runtimeIssue ? "The text runtime is unavailable."
-      : hasImage && !selected?.supportsVision ? "Choose a vision model to send this image." : "";
+      : hasImage && !selected?.supportsVision ? "Choose a vision model to send this image."
+      : revisionTooLong ? PROMPT_LIMIT_MESSAGE : "";
     return <TextChatMessage
       key={row.key}
       selectionId={row.key}
@@ -715,7 +726,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
       includedImageLabel={findChatImage({ messages }, message.includedImage)?.prompt}
       editor={editing && <TextPromptEditor draftKey={`revision:${threadId}:${message.id}`} content={promptEdit.content} original={message.content} replaceLatest={replaceLatest}
         focusRequested={requestedEdit === message.id}
-        onFocusHandled={clearEditFocus} hasImage={hasImage} sendUnavailable={editUnavailable}
+        onFocusHandled={clearEditFocus} hasImage={hasImage} sendUnavailable={editUnavailable} invalid={revisionTooLong}
         onChange={(content) => studio.updateThread(threadId, { promptEdit: { messageId: message.id, content } })}
         onCancel={() => studio.updateThread(threadId, { promptEdit: undefined })} onApply={applyRevision}
         onResend={!replaceLatest ? () => { jumpToLatest(); void studio.send(threadId, promptEdit.content, message.id); } : undefined} />}
@@ -741,7 +752,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
       busy={(latest && busy) || !!match}
     />;
   }, [activeMatch, applyRevision, branchReply, busy, canDeleteMessages, canForkReplies, canRetry, clearEditFocus, closeFind, continueReply,
-    deleteMessage, deleteTarget, editMessage, forkReply, jumpToLatest, lastMessage, messages, modelAvailable, promptEdit, renderChatImage,
+    deleteMessage, deleteTarget, editMessage, forkReply, jumpToLatest, lastMessage, messages, modelAvailable, promptEdit, revisionTooLong, renderChatImage,
     replaceablePrompt?.id, requestDelete, requestedEdit, restoreReasoningId, retry, runtimeIssue, selectVersion, selected?.supportsVision,
     studio.restorePromptVersion, studio.send, studio.updateThread, threadId]);
   const renderStoredRow = useCallback((index: number) => renderRow(storedRows[index], index), [renderRow, storedRows]);
@@ -900,11 +911,12 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
             ref={bindDraftField}
             autosize
             aria-label="Message"
+            aria-invalid={draftTooLong || undefined}
+            aria-describedby={draftTooLong ? draftLimitId : undefined}
             name="message"
             autoComplete="off"
             placeholder={hasDraftImage ? "Ask about this image…" : "Write a message…"}
             rows={1}
-            maxLength={selected?.format === "gguf" ? undefined : 20_000}
             value={activeThread.draft}
             onChange={(event) => studio.updateThread(activeThread.id, { draft: event.target.value })}
             onPaste={(event) => {
@@ -957,13 +969,15 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
                 {stopping ? <LoaderCircle className="spinner" size={16} aria-hidden="true" /> : <Square size={14} fill="currentColor" aria-hidden="true" />}
               </TooltipIconButton> : <TooltipIconButton key="send" type="submit" variant="primary" shape="circle"
                 className="composer-submit" disabled={!canSend} aria-label="Send message"
-                tooltip={attachingImage ? "Attaching image…" : activity || unavailableReason || "Send message"}>
+                tooltip={attachingImage ? "Attaching image…" : activity || unavailableReason || (draftTooLong ? PROMPT_LIMIT_MESSAGE : "Send message")}>
                 <Send size={20} aria-hidden="true" />
               </TooltipIconButton>}
             </div>
           </div>
         </form>
-        <div className="text-composer-hint"><span role="status" aria-atomic="true">{modelNotice ? "" : activity || unavailableReason}</span>{otherResponseThread && <Button variant="ghost" className="text-open-running" onClick={() => studio.selectThread(otherResponseThread.id)}>Open running chat</Button>}<span className="text-keyboard-hint">{activeThread.draft.length > 18000 ? `${activeThread.draft.length.toLocaleString()} / 20,000` : "Enter to send · Shift + Enter for newline"}</span></div>
+        {draftTooLong && <p id={draftLimitId} role="status" className="text-composer-limit">{PROMPT_LIMIT_MESSAGE} Shorten the draft or choose a GGUF model.</p>}
+        <div className="text-composer-hint"><span role="status" aria-atomic="true">{modelNotice ? "" : activity || unavailableReason}</span>{otherResponseThread && <Button variant="ghost" className="text-open-running" onClick={() => studio.selectThread(otherResponseThread.id)}>Open running chat</Button>}<span className="text-keyboard-hint">{!draftTooLong && draftCharacters !== undefined && draftCharacters >= PROMPT_COUNT_THRESHOLD
+          ? `${draftCharacters.toLocaleString()} / ${TEXT_MESSAGE_CHARACTER_LIMIT.toLocaleString()}` : "Enter to send · Shift + Enter for newline"}</span></div>
         <TextReplyAnnouncement key={activeThread.id} jobId={displayJobId} inspectionMessageId={inspectionMessageId} messages={activeThread.messages} />
         {empty && <div className="text-empty-actions" role="group" aria-label="Creation workspaces">
           <Button variant="ghost" onClick={onCreateImage}><ImagePlus size={15} aria-hidden="true" /> Create image</Button>

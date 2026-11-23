@@ -964,7 +964,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     const prompt = messages.at(-1);
     if (!prompt) return;
     if (model.format !== "gguf" && textPromptExceedsLimit(prompt.content)) {
-      setActionError(`The current prompt exceeds ${TEXT_MESSAGE_CHARACTER_LIMIT.toLocaleString()} characters. Edit it before sending.`);
+      setActionError(`The current prompt exceeds ${TEXT_MESSAGE_CHARACTER_LIMIT.toLocaleString()} characters. Edit it before sending.`, thread.id);
       return;
     }
     if (!model.supportsVision && (prompt.image || prompt.includedImage)) {

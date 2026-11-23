@@ -265,6 +265,7 @@ body {
 .text-composer-model-controls .text-response-mode { width: auto; min-width: 0; }
 .text-empty-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px; }
 .text-composer-hint { display: flex; justify-content: space-between; gap: 12px; color: var(--muted); font-size: 11px; text-align: center; min-height: 16px; }
+.text-composer-limit { margin: 0; color: var(--danger); font-size: 12px; overflow-wrap: anywhere; }
 .text-open-running { height: auto; min-height: 0; padding-inline: 0; color: var(--chat-action); line-height: inherit; }
 /* Share the image composer's compact controls and menu surface. */
 .text-composer .text-menu-trigger { max-width: 230px; }

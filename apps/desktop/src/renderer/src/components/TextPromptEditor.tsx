@@ -1,9 +1,9 @@
-import { useLayoutEffect } from "react";
+import { useId, useLayoutEffect } from "react";
 import Send from "lucide-react/dist/esm/icons/arrow-up.mjs";
 import { Button, Textarea } from "./ui/controls";
 import { useTextDraftField } from "../hooks/useTextDraftField";
 
-export function TextPromptEditor({ draftKey, content, original, replaceLatest, focusRequested, hasImage, sendUnavailable, onChange, onCancel, onApply, onResend, onFocusHandled }: {
+export function TextPromptEditor({ draftKey, content, original, replaceLatest, focusRequested, hasImage, sendUnavailable, invalid, onChange, onCancel, onApply, onResend, onFocusHandled }: {
   draftKey: string;
   content: string;
   original: string;
@@ -11,6 +11,7 @@ export function TextPromptEditor({ draftKey, content, original, replaceLatest, f
   focusRequested: boolean;
   hasImage: boolean;
   sendUnavailable: string;
+  invalid?: boolean;
   onChange: (content: string) => void;
   onCancel: () => void;
   onApply: (sendNow: boolean) => void;
@@ -18,6 +19,7 @@ export function TextPromptEditor({ draftKey, content, original, replaceLatest, f
   onFocusHandled: () => void;
 }) {
   const { fieldRef: field, bindField } = useTextDraftField(draftKey, content, 240);
+  const statusId = useId();
   const canApply = !!content.trim() || hasImage;
   const canSend = canApply && !sendUnavailable && (!replaceLatest || content.trim() !== original.trim());
   const sendLabel = replaceLatest ? "Send revision" : "Send in new chat";
@@ -63,14 +65,15 @@ export function TextPromptEditor({ draftKey, content, original, replaceLatest, f
         if (canSend && !event.repeat) onApply(true);
       }
     }}>
-      <Textarea key={draftKey} ref={bindField} autosize aria-label="Edited prompt" maxLength={20_000} rows={2} value={content} onChange={(event) => onChange(event.target.value)} />
+      <Textarea key={draftKey} ref={bindField} autosize aria-label="Edited prompt" aria-invalid={invalid || undefined}
+        aria-describedby={sendUnavailable ? statusId : undefined} rows={2} value={content} onChange={(event) => onChange(event.target.value)} />
       <div className="text-prompt-editor-actions">
         <Button variant="ghost" onClick={onCancel}>Cancel</Button>
         <Button variant="secondary" disabled={!canApply} onClick={() => onApply(false)}>Open branch draft</Button>
         {onResend && <Button variant="secondary" disabled={!canSend} onClick={onResend}>Resend</Button>}
         <Button type="submit" variant="primary" disabled={!canSend} title={sendUnavailable || sendLabel}><Send size={15} aria-hidden="true" />{sendLabel}</Button>
       </div>
-      {sendUnavailable && <span className="text-prompt-editor-status" role="status">{sendUnavailable}</span>}
+      {sendUnavailable && <span id={statusId} className="text-prompt-editor-status" role="status">{sendUnavailable}</span>}
       {!sendUnavailable && replaceLatest && <span className="text-prompt-editor-status">The previous prompt and reply stay in Prompt versions.</span>}
     </form>
   );

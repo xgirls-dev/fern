@@ -599,9 +599,16 @@ function promptPrefixLength(content: string) {
 }
 
 export function textPromptExceedsLimit(content: string) {
-  if (content.length <= TEXT_MESSAGE_CHARACTER_LIMIT) return false;
-  const trimmed = content.trim();
-  return promptPrefixLength(trimmed) < trimmed.length;
+  return content.length > TEXT_MESSAGE_CHARACTER_LIMIT &&
+    countTextPromptCharacters(content, TEXT_MESSAGE_CHARACTER_LIMIT + 1) > TEXT_MESSAGE_CHARACTER_LIMIT;
+}
+
+export function countTextPromptCharacters(content: string, limit: number) {
+  let count = 0;
+  for (const _character of content.trim()) {
+    if (++count >= limit) break;
+  }
+  return count;
 }
 
 function shortenHistoryMessage(message: TextPromptMessage) {
@@ -773,7 +780,7 @@ export function restoreTextThreads(value: unknown): TextThreadWorkspace | undefi
       draftContextImageThreadId: isOutputImage(thread.draftContextImage) && isTextThreadId(thread.draftContextImageThreadId) ? thread.draftContextImageThreadId : undefined,
       promptEdit: typeof thread.promptEdit?.content === "string" && thread.messages.some((message) =>
         message?.role === "user" && message.id === thread.promptEdit?.messageId)
-        ? { ...thread.promptEdit, content: thread.promptEdit.content.slice(0, 20_000) }
+        ? thread.promptEdit
         : undefined,
       sourceThreadId: isTextThreadId(thread.sourceThreadId) && thread.sourceThreadId !== thread.id ? thread.sourceThreadId : undefined,
       mode: thread.mode === "reasoning" ? "reasoning" : "instant",
