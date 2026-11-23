@@ -4,6 +4,7 @@ import { chooseMessageAction, fixture } from "./ui-fixture.mjs";
 
 const id = "text-thread-long-history";
 const otherId = "text-thread-short-history";
+const thresholdId = "text-thread-window-threshold";
 const messages = Array.from({ length: 420 }, (_, index) => ({
   id: `row-${index}`, role: index % 2 ? "assistant" : "user", createdAt: index + 1,
   content: index % 2
@@ -15,6 +16,7 @@ messages[211].alternatives = [{ id: "old-211", role: "assistant", content: "The 
 const { page, state, errors, close } = await fixture({ builtRenderer: process.env.FERN_SCALE_BUILT === "1", firstRun: true, legacyTextWorkspace: { activeId: id, threads: [
   { id, title: "Long transcript", modelId: "local", messages },
   { id: otherId, title: "Short transcript", modelId: "local", draft: "A separate draft", messages: [] },
+  { id: thresholdId, title: "Threshold transcript", modelId: "local", messages: messages.slice(0, 72) },
 ] }, textStatus: { models: [{ id: "local", name: "Local model", installed: true, format: "gguf" }], ggufAvailable: true, job: { id: null, status: "idle" } } });
 
 const feed = page.getByRole("log", { name: "Conversation" });
@@ -151,8 +153,30 @@ try {
   await expect(row("row-242")).toBeFocused();
   assert(Math.abs(await row("row-242").evaluate((element) => element.getBoundingClientRect().top) - beforeDismiss) < 3,
     "Dismissing Undo should return focus to the surviving message without moving the transcript");
+
+  await button("Text thread: Threshold transcript").click();
+  const thresholdRow = row("row-71");
+  await expect(thresholdRow).toBeVisible();
+  await thresholdRow.evaluate((element) => { element.dataset.thresholdRow = "true"; });
+  await composer.fill("Cross the transcript threshold");
+  await button("Send message").click();
+  await expect(stream).toBeVisible();
+  await expect(thresholdRow).toHaveAttribute("data-threshold-row", "true");
+  await expect.poll(() => state.textStatus.job.status).toBe("running");
+  state.textStatus.job = { ...state.textStatus.job, status: "complete", partialText: "The threshold reply.", finishedAt: Date.now() / 1000 };
+  await expect(stream).toHaveCount(0);
+  await expect(thresholdRow).toHaveAttribute("data-threshold-row", "true");
+  const newPrompt = feed.getByRole("article", { name: "Your message" }).filter({ hasText: "Cross the transcript threshold" });
+  await chooseMessageAction(newPrompt, "Delete message");
+  await button("Delete").click();
+  await expect(newPrompt).toHaveCount(0);
+  await expect(rows).toHaveCount(72);
+  await expect(thresholdRow).toHaveAttribute("data-threshold-row", "true");
+  await button("Undo deletion").click();
+  await expect(newPrompt).toBeVisible();
+  await expect(thresholdRow).toHaveAttribute("data-threshold-row", "true");
   assert.deepEqual(errors, []);
-  console.log(`Long chat mounted ${settledMountCount} of ${messages.length} messages. Keyboard scrolling, search, streaming, thread restoration, jump to latest, resuming an older edit, and deleting and restoring an older turn passed.`);
+  console.log(`Long chat mounted ${settledMountCount} of ${messages.length} messages. Scroll, search, streaming, edits, deletion, and crossing the window threshold passed.`);
 } finally {
   await close();
 }

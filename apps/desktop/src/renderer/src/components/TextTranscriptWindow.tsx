@@ -1,4 +1,4 @@
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from "react";
+import { memo, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from "react";
 
 const PAGE_SIZE = 24;
 export const TEXT_TRANSCRIPT_WINDOW_THRESHOLD = 72;
@@ -46,12 +46,13 @@ function pageOf(node: Node | null, container: HTMLElement | null): number | null
   return page && container?.contains(page) ? Number(page.dataset.chatPage) : null;
 }
 
-const TranscriptPage = memo(function TranscriptPage({ index, first, last, estimate, mounted, cache, renderItem, storedCount, liveReply }: {
+const TranscriptPage = memo(function TranscriptPage({ index, first, last, estimate, mounted, windowed, cache, renderItem, storedCount, liveReply }: {
   index: number;
   first: string;
   last: string;
   estimate: number;
   mounted: boolean;
+  windowed: boolean;
   cache: Map<number, Measurement>;
   renderItem: (index: number) => ReactElement;
   storedCount: number;
@@ -65,7 +66,7 @@ const TranscriptPage = memo(function TranscriptPage({ index, first, last, estima
 
   useLayoutEffect(() => {
     const page = element.current;
-    if (!mounted || !page) return;
+    if (!windowed || !mounted || !page) return;
     const measure = () => {
       const height = page.getBoundingClientRect().height;
       if (height > 0) cache.set(index, { first, last, height });
@@ -74,7 +75,7 @@ const TranscriptPage = memo(function TranscriptPage({ index, first, last, estima
     const observer = new ResizeObserver(measure);
     observer.observe(page);
     return () => observer.disconnect();
-  }, [cache, first, index, last, mounted]);
+  }, [cache, first, index, last, mounted, windowed]);
 
   return <div ref={element} className="text-transcript-page" data-chat-page={index} data-deferred={!mounted || undefined}
     aria-hidden={mounted ? undefined : true}
@@ -96,11 +97,9 @@ export const TextTranscriptWindow = memo(function TextTranscriptWindow({ threadI
   const [cache] = useState(() => measurementsFor(threadId));
   const [nearby, setNearby] = useState(() => restorePage < 0 ? cache.nearby
     : new Set([...cache.nearby, restorePage - 1, restorePage, restorePage + 1].filter((index) => index >= 0 && index < pageCount)));
+  const [canDeferPages, setCanDeferPages] = useState(windowed);
   const [focused, setFocused] = useState<number | null>(null);
   const [selection, setSelection] = useState<[number, number] | null>(null);
-  const storedCount = items.length - (liveReply ? 1 : 0);
-  const rows = useMemo(() => windowed ? [] : Array.from({ length: storedCount }, (_, index) => renderItem(index)),
-    [windowed, storedCount, renderItem]);
   const pages = useMemo(() => Array.from({ length: pageCount }, (_, index) => {
     const start = index * PAGE_SIZE;
     const page = items.slice(start, start + PAGE_SIZE);
@@ -109,9 +108,13 @@ export const TextTranscriptWindow = memo(function TextTranscriptWindow({ threadI
   }), [items, pageCount]);
 
   useLayoutEffect(() => {
+    if (!windowed) {
+      setCanDeferPages(false);
+      return;
+    }
     const container = root.current;
     const feed = container?.closest(".text-conversation");
-    if (!windowed || !container || !feed) return;
+    if (!container || !feed) return;
     const observer = new IntersectionObserver((entries) => {
       setNearby((current) => {
         let next = current;
@@ -124,6 +127,7 @@ export const TextTranscriptWindow = memo(function TextTranscriptWindow({ threadI
         }
         return next;
       });
+      setCanDeferPages(true);
     }, { root: feed, rootMargin: OVERSCAN });
     for (const page of container.children) observer.observe(page);
     return () => observer.disconnect();
@@ -131,7 +135,7 @@ export const TextTranscriptWindow = memo(function TextTranscriptWindow({ threadI
 
   useLayoutEffect(() => { cache.nearby = nearby; }, [cache, nearby]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!windowed) return;
     const trackSelection = () => {
       const selected = window.getSelection();
@@ -144,22 +148,23 @@ export const TextTranscriptWindow = memo(function TextTranscriptWindow({ threadI
         return current?.[0] === first && current[1] === last ? current : [first, last];
       });
     };
+    trackSelection();
     document.addEventListener("selectionchange", trackSelection);
     return () => document.removeEventListener("selectionchange", trackSelection);
   }, [windowed]);
 
-  // Keep the live and stored versions in the same keyed list through settlement.
-  if (!windowed) return <>{liveReply ? [...rows, liveReply] : rows}</>;
-
+  if (!pageCount) return null;
   const revealPage = Math.floor(revealIndex / PAGE_SIZE);
+  // Keep the same keyed rows as the chat grows. Wait for an intersection
+  // reading before deferring pages in a chat that was already visible.
   return <div ref={root} className="text-transcript-pages" onFocusCapture={(event) => setFocused(pageOf(event.target, root.current))}
     onBlurCapture={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setFocused(null); }}>
     {pages.map((page, index) => {
-      const mounted = index >= pageCount - 2 || nearby.has(index) || nearTarget(index, revealPage) || nearTarget(index, restorePage) || index === focused ||
+      const mounted = !windowed || !canDeferPages || index >= pageCount - 2 || nearby.has(index) || nearTarget(index, revealPage) || nearTarget(index, restorePage) || index === focused ||
         !!selection && index >= selection[0] && index <= selection[1];
       const tail = index === pageCount - 1 ? liveReply : undefined;
       return <TranscriptPage key={index} index={index} first={page.first} last={page.last}
-        estimate={page.estimatedHeight} cache={cache.pages} mounted={mounted} renderItem={renderItem}
+        estimate={page.estimatedHeight} cache={cache.pages} mounted={mounted} windowed={windowed} renderItem={renderItem}
         storedCount={page.count - (tail ? 1 : 0)} liveReply={tail} />;
     })}
   </div>;
