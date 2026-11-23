@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { Select } from "./ui/Select";
 
 interface WorkspaceThreadTitleProps {
@@ -9,7 +10,9 @@ interface WorkspaceThreadTitleProps {
   onSwitch: (id: string) => void;
 }
 
-export function WorkspaceThreadTitle({ id, thread, threads, switchLabel, sidebarCollapsed, onSwitch }: WorkspaceThreadTitleProps) {
+export const WorkspaceThreadTitle = memo(function WorkspaceThreadTitle({
+  id, thread, threads, switchLabel, sidebarCollapsed, onSwitch,
+}: WorkspaceThreadTitleProps) {
   return (
     <div className="workspace-thread-title">
       <h2 id={id} title={thread.title}>{thread.title}</h2>
@@ -18,4 +21,4 @@ export function WorkspaceThreadTitle({ id, thread, threads, switchLabel, sidebar
         options={threads.filter((item) => !item.archived || item.id === thread.id).map(({ id, title }) => ({ value: id, label: title }))} />
     </div>
   );
-}
+});

@@ -5,7 +5,7 @@ import { fixture } from "./ui-fixture.mjs";
 const { page, state, errors, dir, close } = await fixture({ threadCount: 100 });
 const button = (name) => page.getByRole("button", { name, exact: true });
 const newThread = async (name) => { await page.locator(".sidebar-new-menu > button").click(); await page.getByRole("menuitem", { name, exact: true }).click(); };
-const longName = "A custom image model with a very long repository name that should always stay on one line";
+const longName = "A custom image model with a very long repository name that should stay readable in the picker";
 try {
   state.installedModels = [{ id: "9b", label: "Klein 9B" }, { id: "4b", label: "Klein 4B" }, { id: "custom-long", label: longName, family: "sdxl" }, { id: "tame-pony-v25-sdxl", label: "Tame Pony · SDXL" }];
   await page.route("**/api/models", (route) => route.fulfill({ json: { models: state.installedModels.map((model) => ({ ...model, installed: true, bytes: 4e9, downloaded: 4e9, state: "installed" })), customImageDownload: { status: "idle" } } }));
@@ -45,9 +45,17 @@ try {
 
   await page.locator('.sidebar-thread-button[data-thread-id="study"]').click();
   await page.getByRole("button", { name: "Image model: Klein 9B" }).click();
-  const modelRows = page.getByRole("menuitemradio");
-  const rows = await modelRows.evaluateAll((items) => items.map((item) => ({ height: item.getBoundingClientRect().height, whitespace: getComputedStyle(item.querySelector(".composer-model-label")).whiteSpace, width: item.getBoundingClientRect().width, overflow: item.scrollWidth > item.clientWidth })));
-  assert(rows.every((row) => row.height === 32 && row.whitespace === "nowrap" && !row.overflow), JSON.stringify(rows));
+  const modelMenu = page.getByRole("menu", { name: "Image model", exact: true });
+  const longModel = modelMenu.getByRole("menuitemradio", { name: longName, exact: true });
+  await expect(longModel).toBeVisible();
+  const rows = await modelMenu.getByRole("menuitemradio").evaluateAll((items) => items.map((item) => ({
+    height: item.getBoundingClientRect().height, overflow: item.scrollWidth > item.clientWidth,
+  })));
+  assert(rows.every((row) => row.height >= 32 && !row.overflow), JSON.stringify(rows));
+  const longLabel = longModel.locator(".ui-popup-label");
+  assert(await longLabel.evaluate((element) => element.scrollWidth <= element.clientWidth &&
+    element.scrollHeight <= element.clientHeight && element.clientHeight > parseFloat(getComputedStyle(element).lineHeight)),
+  "Long model names should wrap and remain readable inside the menu.");
   await page.screenshot({ path: `${dir}/navigation-model-menu.png` });
   await page.getByRole("menuitemradio", { name: "Klein 4B", exact: true }).click();
   const png = async (color) => Buffer.from(await page.evaluate((fill) => { const canvas = document.createElement("canvas"); canvas.width = canvas.height = 8; const context = canvas.getContext("2d"); context.fillStyle = fill; context.fillRect(0, 0, 8, 8); return canvas.toDataURL("image/png").split(",")[1]; }, color), "base64");
@@ -94,5 +102,5 @@ try {
   await page.getByRole("menuitem", { name: "Manage models" }).click();
   await page.getByRole("heading", { name: "Text models", exact: true }).waitFor();
   assert.deepEqual(errors, []);
-  console.log("Navigation, Models view, single sidebar scroll, one-line model items, multi-reference order/removal/persistence, and incompatible-model handling passed.");
+  console.log("Navigation, Models view, single sidebar scroll, readable model items, multi-reference order/removal/persistence, and incompatible-model handling passed.");
 } finally { await close(); }

@@ -850,7 +850,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     }
   }, [attachmentReady, getThread, setWorkspace, updateAttachment]);
 
-  const attachDocuments = async (threadId: string, files: File[]) => {
+  const attachDocuments = useCallback(async (threadId: string, files: File[]) => {
     const activeThread = getThread(threadId);
     if (!activeThread || !files.length || busy || documentUpload.current) return;
     setActionError(null);
@@ -876,7 +876,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
       documentUpload.current = false;
       setAttachingDocument(false);
     }
-  };
+  }, [busy, getThread, setActionError, setWorkspace]);
 
   const removeDocument = (threadId: string, id: string) => {
     const activeThread = getThread(threadId);
@@ -1133,14 +1133,16 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     }
   }, [acceptJob, beginSubmission, busy, computeDevice, finishSubmission, getThread, setWorkspace, submissionIsMissing, updateThread]);
 
+  const runningJobId = status.job.status === "running" ? status.job.id : null;
+  const runningThreadId = status.job.threadId;
   const stop = useCallback((threadId: string) => {
     const requestId = getThread(threadId)?.pendingJobId ??
-      (status.job.status === "running" && status.job.threadId === threadId ? status.job.id : null);
+      (runningThreadId === threadId ? runningJobId : null);
     if (requestId && requestId !== stoppingId) {
       setActionError(null);
       setStoppingId(requestId);
     }
-  }, [getThread, status.job, stoppingId, setActionError]);
+  }, [getThread, runningJobId, runningThreadId, stoppingId, setActionError]);
 
   const selectModel = useCallback((threadId: string, modelId: string) => {
     const activeThread = getThread(threadId);

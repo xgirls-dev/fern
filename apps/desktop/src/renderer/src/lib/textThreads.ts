@@ -358,7 +358,10 @@ export function checkpointTextReply(workspace: TextThreadWorkspace, job: TextJob
   }) };
 }
 
-export function textRuntimeIssue(status: TextRuntimeStatus, model: TextModel | undefined): string | null {
+export function textRuntimeIssue(
+  status: Pick<TextRuntimeStatus, "ggufAvailable" | "ggufUnavailableReason" | "runtimeAvailable" | "runtimeError">,
+  model: TextModel | undefined,
+): string | null {
   if (model?.format === "gguf") {
     return status.ggufAvailable === false
       ? status.ggufUnavailableReason ?? "The managed GGUF runtime is unavailable on this device."

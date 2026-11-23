@@ -239,15 +239,20 @@ export function App() {
     [studio.selectThread, tts.selectThread, text.selectThread],
   );
 
-  const openModelSetup = (task: SetupTask, textThreadId?: string) => {
-    const threadId = task === "image" ? studio.activeThread.id : textThreadId ?? text.activeThread?.id;
+  const imageThreadId = studio.activeThread.id;
+  const textThreadId = text.activeThread?.id;
+  const { models: textModels, ggufAvailable, ggufUnavailableReason, runtimeAvailable, runtimeError } = text.status;
+  const openModelSetup = useCallback((task: SetupTask, chatId?: string) => {
+    const threadId = task === "image" ? imageThreadId : chatId ?? textThreadId;
     if (!threadId) return;
     const setup = { task, threadId };
     setModelSetup(setup);
-    const hasVisionModel = text.status.models.some((model) => model.installed && model.supportsTools && model.supportsVision && !textRuntimeIssue(text.status, model));
+    const runtime = { ggufAvailable, ggufUnavailableReason, runtimeAvailable, runtimeError };
+    const hasVisionModel = task === "chat-image" && textModels.some((model) =>
+      model.installed && model.supportsTools && model.supportsVision && !textRuntimeIssue(runtime, model));
     setModelCategory(task === "image" || (task === "chat-image" && hasVisionModel) ? "image" : "text");
     setActiveSection("models");
-  };
+  }, [ggufAvailable, ggufUnavailableReason, imageThreadId, runtimeAvailable, runtimeError, textModels, textThreadId]);
 
   const returnToDraft = (selection?: SetupSelection) => {
     if (!modelSetup) return;

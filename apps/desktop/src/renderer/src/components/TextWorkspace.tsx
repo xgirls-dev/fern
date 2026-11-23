@@ -1,6 +1,5 @@
 import { useCallback, useDeferredValue, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import Plus from "lucide-react/dist/esm/icons/plus.mjs";
-import Send from "lucide-react/dist/esm/icons/arrow-up.mjs";
 import ArrowDown from "lucide-react/dist/esm/icons/arrow-down.mjs";
 import RotateCcw from "lucide-react/dist/esm/icons/rotate-ccw.mjs";
 import Check from "lucide-react/dist/esm/icons/check.mjs";
@@ -8,13 +7,13 @@ import ImageOff from "lucide-react/dist/esm/icons/image-off.mjs";
 import AudioLines from "lucide-react/dist/esm/icons/audio-lines.mjs";
 import ImagePlus from "lucide-react/dist/esm/icons/image-plus.mjs";
 import Copy from "lucide-react/dist/esm/icons/copy.mjs";
-import Paperclip from "lucide-react/dist/esm/icons/paperclip.mjs";
 import Columns2 from "lucide-react/dist/esm/icons/columns-2.mjs";
 import ArrowLeftRight from "lucide-react/dist/esm/icons/arrow-left-right.mjs";
 import Search from "lucide-react/dist/esm/icons/search.mjs";
 import GitBranch from "lucide-react/dist/esm/icons/git-branch.mjs";
 import Pencil from "lucide-react/dist/esm/icons/pencil.mjs";
 import { TextChatMessage, type TextReplyProgress } from "./TextChatMessage";
+import { TextComposerControls } from "./TextComposerControls";
 import { TextPromptEditor } from "./TextPromptEditor";
 import { TextPromptVersions } from "./TextPromptVersions";
 import { TextReplyAnnouncement } from "./TextReplyAnnouncement";
@@ -24,7 +23,6 @@ import { Button, IconButton, SegmentedControl, Select, Textarea } from "./ui/con
 import { Slider } from "./ui/Slider";
 import { NumberField } from "./ui/NumberField";
 import { Disclosure } from "./ui/Disclosure";
-import { ModelMenu } from "./ui/ModelMenu";
 import { Tooltip, TooltipIconButton } from "./ui/Tooltip";
 import { WorkspaceThreadTitle } from "./WorkspaceThreadTitle";
 import { ImageBatchField, ImageCanvasFields, ImageSamplingFields } from "./ImageGenerationFields";
@@ -36,7 +34,6 @@ import { ChatDocumentAttachments } from "./ChatDocuments";
 
 import X from "lucide-react/dist/esm/icons/x.mjs";
 import Settings2 from "lucide-react/dist/esm/icons/settings-2.mjs";
-import Square from "lucide-react/dist/esm/icons/square.mjs";
 import LoaderCircle from "lucide-react/dist/esm/icons/loader-circle.mjs";
 import type { useTextChat } from "../hooks/useTextChat";
 import { clearTextFindHighlight, useTextScroll } from "../hooks/useTextScroll";
@@ -47,8 +44,7 @@ import { notify } from "../lib/notifications";
 import { canContinueTextReply, countTextPromptCharacters, findChatImage, latestTextPrompt, replyVersions, resolveTextModel, savedVersionForDeletedReply, showReplyVersion, TEXT_MESSAGE_CHARACTER_LIMIT, textPromptExceedsLimit, textRuntimeIssue, type GeneratedChatImage, type TextMessage } from "../lib/textThreads";
 import { chatImageErrors, chatImageSettings, MAX_IMAGE_PROMPT_SUFFIX, type ChatImageSettings } from "../lib/chatImageSettings";
 import { isKleinLoraModel, maxReferenceImages } from "../lib/imageModels";
-import { CHAT_DOCUMENT_ACCEPT, MAX_CHAT_DOCUMENTS } from "../lib/chatDocuments";
-import { chatTokenLimits, ggufLoadOptions, KV_CACHE_TYPES, type ChatPane, type GgufLoadOptions, type TextSamplingSettings, type TextThread } from "../lib/textThreads";
+import { chatTokenLimits, ggufLoadOptions, KV_CACHE_TYPES, type ChatPane, type GgufLoadOptions, type TextMode, type TextSamplingSettings, type TextThread } from "../lib/textThreads";
 import type { SetupTask } from "../lib/modelSetup";
 import type { ImageRecord } from "../lib/types";
 
@@ -219,7 +215,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   const documents = activeThread.documents ?? [];
   const [panel, setPanel] = useState<"settings" | "image" | null>(null);
   const inspectorOpen = panel !== null;
-  const openModels = () => { setPanel(null); onSetupModels("chat", activeThread.id); };
+  const openModels = useCallback(() => { setPanel(null); onSetupModels("chat", threadId); }, [onSetupModels, threadId]);
   const openImageSetup = () => { setPanel(null); onSetupModels("chat-image", activeThread.id); };
   const panelRef = useRef<HTMLElement>(null);
   const panelTrigger = useRef<HTMLButtonElement>(null);
@@ -255,8 +251,6 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   const focusUndoFor = useRef<string | undefined>(undefined);
   const [focusJump, setFocusJump] = useState<{ threadId: string; messageId: string; block?: "start" } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ threadId: string; messageId: string } | null>(null);
-  const attachmentInput = useRef<HTMLInputElement>(null);
-  const documentInput = useRef<HTMLInputElement>(null);
   const [fileOver, setFileOver] = useState(false);
   const dragDepth = useRef(0);
   const focusBranchId = useRef<string | undefined>(undefined);
@@ -307,16 +301,20 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   const deletion = deletions?.at(-1);
   const deletionCount = deletions?.length ?? 0;
   const dismissDeletionLabel = deletionCount > 1 ? "Dismiss undo for all deletions" : "Dismiss deletion notice";
-  const models = status.models;
-  const modelOptions = [
-    ...models.map((model) => {
-      const description = !model.installed ? "Unavailable" : textRuntimeIssue(status, model) ? "Runtime unavailable" : undefined;
-      return { value: model.id, label: model.name, description, disabled: !!description };
-    }),
-    ...(status.recommendedModels ?? []).filter(model => !model.installed && !models.some(installed => installed.id === model.id))
-      .map(model => ({ value: model.id, label: model.name, description: "Not installed", disabled: true })),
-  ];
-  const installedModels = models.filter((model) => model.installed);
+  const { models, recommendedModels, ggufAvailable, ggufUnavailableReason, runtimeAvailable, runtimeError } = status;
+  const modelOptions = useMemo(() => {
+    const runtime = { ggufAvailable, ggufUnavailableReason, runtimeAvailable, runtimeError };
+    const catalogIds = new Set(models.map((model) => model.id));
+    return [
+      ...models.map((model) => {
+        const description = !model.installed ? "Unavailable" : textRuntimeIssue(runtime, model) ? "Runtime unavailable" : undefined;
+        return { value: model.id, label: model.name, description, disabled: !!description };
+      }),
+      ...(recommendedModels ?? []).filter((model) => !model.installed && !catalogIds.has(model.id))
+        .map((model) => ({ value: model.id, label: model.name, description: "Not installed", disabled: true })),
+    ];
+  }, [models, recommendedModels, ggufAvailable, ggufUnavailableReason, runtimeAvailable, runtimeError]);
+  const installedModels = useMemo(() => models.filter((model) => model.installed), [models]);
   const selectedModel = resolveTextModel(status, activeThread) ?? "";
   const modelRecord = models.find((model) => model.id === selectedModel);
   const selected = modelRecord?.installed ? modelRecord : undefined;
@@ -520,11 +518,18 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
     void studio.send(activeThread.id, activeThread.draft);
   };
 
-  const stageAttachment = (files: File[]) => {
+  const stageAttachment = useCallback((files: File[]) => {
     if (!files.length) return;
     inputRef.current?.focus({ preventScroll: true });
-    void studio.attachImages(activeThread.id, files);
-  };
+    void studio.attachImages(threadId, files);
+  }, [inputRef, studio.attachImages, threadId]);
+  const stageDocuments = useCallback((files: File[]) => {
+    void studio.attachDocuments(threadId, files);
+  }, [studio.attachDocuments, threadId]);
+  const changeMode = useCallback((mode: TextMode) => {
+    studio.updateThread(threadId, { mode, ...(mode === "reasoning" && activeThread.maxNewTokens === 512 ? { maxNewTokens: 1024 } : {}) });
+  }, [activeThread.maxNewTokens, studio.updateThread, threadId]);
+  const changeModel = useCallback((id: string) => studio.selectModel(threadId, id), [studio.selectModel, threadId]);
 
   const retry = useCallback(() => {
     jumpToLatest();
@@ -536,10 +541,10 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
     inputRef.current?.focus({ preventScroll: true });
     void studio.continueReply(activeThread.id, id);
   }, [activeThread.id, inputRef, jumpToLatest, studio.continueReply]);
-  const stopFromComposer = () => {
+  const stopFromComposer = useCallback(() => {
     inputRef.current?.focus({ preventScroll: true });
-    void studio.stop(activeThread.id);
-  };
+    studio.stop(threadId);
+  }, [inputRef, studio.stop, threadId]);
 
   const selectVersion = useCallback((messageId: string, versionId: string) => {
     if (messageId === lastMessage?.id) {
@@ -903,44 +908,15 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
               }
             }}
           />
-          <div className="text-composer-bottom">
-            <div className="text-composer-model-controls">
-              <input ref={documentInput} type="file" accept={CHAT_DOCUMENT_ACCEPT} aria-label="Chat document files" hidden multiple
-                onChange={(event) => {
-                  const files = Array.from(event.currentTarget.files ?? []);
-                  event.currentTarget.value = "";
-                  void studio.attachDocuments(activeThread.id, files);
-                }} />
-              <TooltipIconButton aria-label="Attach documents"
-                tooltip={documents.length >= MAX_CHAT_DOCUMENTS ? "This chat has eight documents" : "Attach documents for this chat"}
-                disabled={busy || documents.length >= MAX_CHAT_DOCUMENTS} onClick={() => documentInput.current?.click()}><Paperclip size={16} aria-hidden="true" /></TooltipIconButton>
-              <input ref={attachmentInput} type="file" accept="image/png,image/jpeg,image/webp" aria-label="Chat image file" hidden onChange={(event) => {
-                const files = Array.from(event.currentTarget.files ?? []);
-                event.currentTarget.value = "";
-                stageAttachment(files);
-              }} />
-              <TooltipIconButton aria-label="Attach chat image" tooltip={activeThread.draftContextImage ? "Remove the selected conversation image to attach a new file"
-                : attachingImage ? "Attaching image…" : "Attach chat image · Paste or drop an image"} disabled={!canAttach}
-                onClick={() => attachmentInput.current?.click()}><ImagePlus size={16} aria-hidden="true" /></TooltipIconButton>
-              {selected?.supportsReasoning && <Select appearance="toolbar" className="text-response-mode" aria-label="Response mode" value={activeThread.mode} disabled={busy}
-                options={[{ value: "instant", label: "Instant" }, { value: "reasoning", label: "Reasoning" }]}
-                onChange={(mode) => studio.updateThread(activeThread.id, { mode, ...(mode === "reasoning" && activeThread.maxNewTokens === 512 ? { maxNewTokens: 1024 } : {}) })} />}
-            </div>
-            <div className="composer-send-tools">
-              <ModelMenu label="Text model" className="text-model-dropdown" triggerClassName="text-menu-trigger"
-                value={selectedModel} disabled={busy} options={modelOptions} onManageModels={openModels}
-                onChange={(id) => studio.selectModel(activeThread.id, id)} />
-              {responseHere ? <TooltipIconButton key="stop" ref={bindStopControl} variant="danger" shape="circle"
-                className="composer-submit is-stop" disabled={stopping} onClick={stopFromComposer} aria-label="Stop generation"
-                tooltip={stopping ? "Stopping generation…" : "Stop generation · Esc in composer"}>
-                {stopping ? <LoaderCircle className="spinner" size={16} aria-hidden="true" /> : <Square size={14} fill="currentColor" aria-hidden="true" />}
-              </TooltipIconButton> : <TooltipIconButton key="send" type="submit" variant="primary" shape="circle"
-                className="composer-submit" disabled={!canSend} aria-label="Send message"
-                tooltip={attachingImage ? "Attaching image…" : activity || unavailableReason || (draftTooLong ? PROMPT_LIMIT_MESSAGE : "Send message")}>
-                <Send size={20} aria-hidden="true" />
-              </TooltipIconButton>}
-            </div>
-          </div>
+          <TextComposerControls busy={busy} canAttach={canAttach} canSend={canSend} documentCount={documents.length}
+            imageTooltip={activeThread.draftContextImage ? "Remove the selected conversation image to attach a new file"
+              : attachingImage ? "Attaching image…" : "Attach chat image · Paste or drop an image"}
+            mode={selected?.supportsReasoning ? activeThread.mode : undefined} model={selectedModel} models={modelOptions}
+            responding={responseHere} stopping={stopping} stopRef={bindStopControl}
+            sendTooltip={responseHere ? "" : attachingImage ? "Attaching image…"
+              : activity || unavailableReason || (draftTooLong ? PROMPT_LIMIT_MESSAGE : "Send message")}
+            onAttachDocuments={stageDocuments} onAttachImage={stageAttachment} onChangeMode={changeMode}
+            onChangeModel={changeModel} onManageModels={openModels} onStop={stopFromComposer} />
         </form>
         {draftTooLong && <p id={draftLimitId} role="status" className="text-composer-limit">{PROMPT_LIMIT_MESSAGE} Shorten the draft or choose a GGUF model.</p>}
         <div className="text-composer-hint"><span role="status" aria-atomic="true">{modelNotice ? "" : activity || unavailableReason}</span>{otherResponseThread && <Button variant="ghost" className="text-open-running" onClick={() => studio.selectThread(otherResponseThread.id)}>Open running chat</Button>}<span className="text-keyboard-hint">{!draftTooLong && draftCharacters !== undefined && draftCharacters >= PROMPT_COUNT_THRESHOLD
