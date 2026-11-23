@@ -698,6 +698,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
       key={row.key}
       selectionId={row.key}
       message={message}
+      latest={latest}
       initialReasoningOpen={!!restoreReasoningId && row.messageId === restoreReasoningId}
       contextVersionId={row.messageId}
       findMatch={match}

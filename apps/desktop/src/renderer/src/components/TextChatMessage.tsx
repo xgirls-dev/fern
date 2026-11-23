@@ -127,7 +127,7 @@ function useReplySelection(id: string, content: string, reasoning: string | unde
     shown: holding ? committed.current : { content, reasoning, streaming: renderAsStream } };
 }
 
-export const TextChatMessage = memo(function TextChatMessage({ message, selectionId, initialReasoningOpen, contextVersionId, findMatch, progress, previewWhileStreaming = false, generatedImage, includedImageLabel, contextChanged, editor, promptVersions, editingAnother, onEdit, onBranch, onFork, canFork, onDelete, onDeleteRequested, canDelete, confirmDelete, deleteTurn, onRetry, canRetry, onContinue, canContinue, onSelectVersion, busy }: {
+export const TextChatMessage = memo(function TextChatMessage({ message, selectionId, initialReasoningOpen, contextVersionId, findMatch, progress, previewWhileStreaming = false, generatedImage, includedImageLabel, contextChanged, editor, promptVersions, editingAnother, onEdit, onBranch, onFork, canFork, onDelete, onDeleteRequested, canDelete, confirmDelete, deleteTurn, onRetry, canRetry, onContinue, canContinue, onSelectVersion, busy, latest }: {
   message: TextMessage;
   selectionId?: string;
   initialReasoningOpen?: boolean;
@@ -156,6 +156,7 @@ export const TextChatMessage = memo(function TextChatMessage({ message, selectio
   canContinue?: boolean;
   onSelectVersion?: (messageId: string, versionId: string) => void;
   busy?: boolean;
+  latest: boolean;
 }) {
   const [detailsFor, setDetailsFor] = useState<{ id: string; placement: "context" | "actions" }>();
   const [reasoningOpen, setReasoningOpen] = useState(!!initialReasoningOpen);
@@ -244,8 +245,25 @@ export const TextChatMessage = memo(function TextChatMessage({ message, selectio
     </ul>}
   </div> : null;
 
+  const body = <>
+    {message.image && <img className="text-message-image" src={resolveAssetUrl(`/references/${message.image}`)} alt="Attached chat image" />}
+    {message.includedImage && <p className="text-context-note">Selected image: {includedImageLabel ?? message.includedImage}</p>}
+    {generatedImage}
+    {reasoning && <Disclosure className="text-reasoning" label={reasoningInProgress ? indicator : "Reasoning"}
+      open={reasoningOpen} lockOpen={revealReasoning} onOpenChange={setReasoningOpen}>
+      {reasoningExpanded && <div ref={reasoningRef} onPointerDown={onPointerDown} data-find-target={revealReasoning || undefined}><TextMarkdown content={reasoning} streaming={shown.streaming} /></div>}
+    </Disclosure>}
+    {editing && findSection === "body" && <div className="text-find-original"><span>Current prompt</span><p data-find-target>{message.content}</p></div>}
+    {editing ? editor : <div ref={bodyRef} onPointerDown={onPointerDown} className="text-message-content" data-find-target={findSection === "body" || undefined}>
+      {assistant ? (streaming || content) && <TextMarkdown content={content} streaming={shown.streaming} receivingReply={streaming}
+        cursor={showCursor ? cursorState : undefined} /> : content}
+      {!showCursor && !reasoningInProgress && !checkingImageInCaption && indicator}
+    </div>}
+  </>;
+
   return (
     <article className={`text-message text-message--${message.role}${streaming ? " text-message--streaming" : ""}${editing ? " text-message--editing" : ""}`} tabIndex={-1} aria-live={streaming || editing ? "off" : undefined} data-chat-message={targetId} data-find-match={!!findMatch || undefined}
+      data-actions-persistent={latest || showDetails || copied || confirmDelete || undefined}
       aria-label={streaming ? "Response in progress" : assistant ? "Model response" : "Your message"}>
       {assistant && <div className="text-response-author">{previewWhileStreaming ? "Previous reply" : modelName ?? "Assistant"}</div>}
       {contextNotice && <div className="text-context-note text-reply-context-note">
@@ -254,19 +272,7 @@ export const TextChatMessage = memo(function TextChatMessage({ message, selectio
           onClick={() => setDetailsFor(showContextDetails ? undefined : { id: message.id, placement: "context" })}>Context details</Button>
       </div>}
       {showContextDetails && detailPanel}
-      {message.image && <img className="text-message-image" src={resolveAssetUrl(`/references/${message.image}`)} alt="Attached chat image" />}
-      {message.includedImage && <p className="text-context-note">Selected image: {includedImageLabel ?? message.includedImage}</p>}
-      {generatedImage}
-      {reasoning && <Disclosure className="text-reasoning" label={reasoningInProgress ? indicator : "Reasoning"}
-        open={reasoningOpen} lockOpen={revealReasoning} onOpenChange={setReasoningOpen}>
-        {reasoningExpanded && <div ref={reasoningRef} onPointerDown={onPointerDown} data-find-target={revealReasoning || undefined}><TextMarkdown content={reasoning} streaming={shown.streaming} /></div>}
-      </Disclosure>}
-      {editing && findSection === "body" && <div className="text-find-original"><span>Current prompt</span><p data-find-target>{message.content}</p></div>}
-      {editing ? editor : <div ref={bodyRef} onPointerDown={onPointerDown} className="text-message-content" data-find-target={findSection === "body" || undefined}>
-        {assistant ? (streaming || content) && <TextMarkdown content={content} streaming={shown.streaming} receivingReply={streaming}
-          cursor={showCursor ? cursorState : undefined} /> : content}
-        {!showCursor && !reasoningInProgress && !checkingImageInCaption && indicator}
-      </div>}
+      {assistant ? body : <div className="text-user-bubble">{body}</div>}
       {!!message.metrics?.documentSources?.length && <ChatDocumentSources sources={message.metrics.documentSources} />}
       {!streaming && message.status === "failed" && <div className="text-error">
         {message.error ?? "Generation failed. Retry the response."}

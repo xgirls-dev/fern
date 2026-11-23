@@ -75,7 +75,7 @@ try {
   })).toBe(true);
   await page.setViewportSize({ width: 1440, height: 900 });
   await history.getByRole("button", { name: "Restore this version", exact: true }).click();
-  await expect(prompt.locator(":scope > .text-message-content")).toContainText("Describe the first step");
+  await expect(prompt.locator(".text-user-bubble > .text-message-content")).toContainText("Describe the first step");
   await expect(feed.locator('[data-chat-message="a2"]')).toContainText("Start by measuring the flour.");
   await expect(feed.locator('[data-chat-message="a2"]').getByRole("group", { name: "Response versions" })).toContainText("2 / 2");
   await expect(composer).toHaveValue("Keep this composer draft");
@@ -93,7 +93,7 @@ try {
   await expect(history).toContainText("Describe mixing the dough");
   await expect(history).toContainText("Mix flour and water until just combined.");
   await expect(history.getByRole("button", { name: "Restore this version" })).toHaveCount(0);
-  await expect(prompt.locator(":scope > .text-message-content")).toContainText("Describe the first step");
+  await expect(prompt.locator(".text-user-bubble > .text-message-content")).toContainText("Describe the first step");
 
   const latestPrompt = feed.getByRole("article", { name: "Your message" }).last();
   await latestPrompt.getByRole("button", { name: "Edit message", exact: true }).click();

@@ -1,10 +1,14 @@
 import { Menu } from "@base-ui/react/menu";
-import { useEffect, useRef, useState, type ComponentProps, type ReactElement, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ComponentProps, type ReactElement, type ReactNode, type RefObject } from "react";
 import { Tooltip } from "./Tooltip";
 
-export function useDropdownActions({ dismissOnResize = false } = {}) {
+export function useDropdownActions({ dismissOnResize = false, trigger: externalTrigger }: {
+  dismissOnResize?: boolean;
+  trigger?: RefObject<HTMLButtonElement | null>;
+} = {}) {
   const [open, setOpen] = useState(false);
-  const trigger = useRef<HTMLButtonElement>(null);
+  const internalTrigger = useRef<HTMLButtonElement>(null);
+  const trigger = externalTrigger ?? internalTrigger;
   const dismissedByScroll = useRef(false);
   const pendingAction = useRef<(() => void) | null>(null);
 
@@ -22,7 +26,7 @@ export function useDropdownActions({ dismissOnResize = false } = {}) {
       window.removeEventListener("scroll", closeOnAncestorScroll, true);
       if (dismissOnResize) window.removeEventListener("resize", closeOnResize);
     };
-  }, [dismissOnResize, open]);
+  }, [dismissOnResize, open, trigger]);
 
   return {
     trigger,

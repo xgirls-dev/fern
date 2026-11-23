@@ -36,13 +36,33 @@ async function openMenu(id) {
 }
 
 try {
-  await expect(row("reply-one").getByRole("button", { name: "Copy message" })).toBeVisible();
+  const olderCopy = row("reply-one").getByRole("button", { name: "Copy message" });
+  await olderCopy.scrollIntoViewIfNeeded();
+  await page.mouse.move(0, 0);
+  await expect(olderCopy).toHaveCSS("opacity", "0");
+  await expect(more("reply-two")).toHaveCSS("opacity", "1");
+  const quietRow = await row("reply-one").boundingBox();
+  await row("reply-one").hover();
+  await expect(olderCopy).toHaveCSS("opacity", "1");
+  assert.deepEqual(await row("reply-one").boundingBox(), quietRow, "Revealing actions should keep the transcript layout stable");
+  await page.mouse.move(0, 0);
+  await expect(olderCopy).toHaveCSS("opacity", "0");
+  const device = await page.context().newCDPSession(page);
+  await device.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 });
+  await expect(olderCopy).toHaveCSS("opacity", "1");
+  await device.send("Emulation.setTouchEmulationEnabled", { enabled: false });
+  await device.detach();
   await expect(row("prompt-one").getByRole("button", { name: "Edit message" })).toBeVisible();
+  const prompt = row("prompt-one");
+  const bubble = await prompt.locator(".text-user-bubble").boundingBox();
+  const tools = await prompt.locator(".text-message-tools").boundingBox();
+  assert(bubble && tools && bubble.y + bubble.height <= tools.y, "Prompt tools should sit below the bubble");
   await expect(row("reply-two").getByRole("button", { name: "Regenerate response" })).toBeVisible();
   await expect(button("Delete reply")).toHaveCount(0);
   await expect(menu).toHaveCount(0);
 
   await more("reply-one").focus();
+  await expect(olderCopy).toHaveCSS("opacity", "1");
   await page.keyboard.press("ArrowDown");
   await expect(more("reply-one")).toHaveAttribute("aria-expanded", "true");
   await expect(item("Branch from response")).toBeFocused();
@@ -79,6 +99,16 @@ try {
   assert(bounds.y + bounds.height <= (await composer.boundingBox()).y, "A reply menu must leave the composer usable");
   await composer.click();
   await expect(menu).toHaveCount(0);
+
+  await page.setViewportSize({ width: 390, height: 420 });
+  await openMenu("reply-two");
+  await conversation.evaluate((element) => {
+    if (element.scrollHeight - element.clientHeight <= 16) throw new Error("The transcript must be scrollable");
+    element.scrollTop += element.scrollTop > 16 ? -16 : 16;
+  });
+  await expect(menu).toHaveCount(0);
+  await expect(more("reply-two")).not.toBeFocused();
+  await page.setViewportSize({ width: 390, height: 500 });
 
   await openMenu("reply-one");
   await item("Delete reply").click();
@@ -121,7 +151,7 @@ try {
   await openMenu("prompt-two");
   await expect(item("Delete message")).toBeEnabled();
   assert.deepEqual(errors, []);
-  console.log("Reply actions keep their identity across generation and preserve anchored menus, keyboard focus, and scoped deletion.");
+  console.log("Reply actions reveal on hover and focus, stay visible on touch, and dismiss during transcript scrolling.");
 } finally {
   await close();
 }

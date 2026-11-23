@@ -71,7 +71,7 @@ try {
   await find.press("Escape");
   await expect(panel).toHaveCount(0);
   await expect.poll(() => page.evaluate(() => CSS.highlights.has("fern-chat-find"))).toBe(false);
-  await expect(row.locator(":scope > .text-message-content")).toHaveText("Current prompt 20");
+  await expect(row.locator(".text-user-bubble > .text-message-content")).toHaveText("Current prompt 20");
   await expect(composer).toHaveValue("Keep the notebook draft");
 
   const versions = row.getByRole("button", { name: "Prompt versions", exact: true });
