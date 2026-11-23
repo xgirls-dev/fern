@@ -36,6 +36,7 @@ function useStreamedText(text: string, streaming: boolean) {
   const [visible, setVisible] = useState(text);
   const frame = useRef<number | undefined>(undefined);
   const latest = useRef(text);
+  const animating = useRef(false);
   const animate = streaming && !reducedTextMotion.matches && text.length <= 16_000 && !hasStreamingMarkdown(text);
   useLayoutEffect(() => () => {
     if (frame.current !== undefined) window.cancelAnimationFrame(frame.current);
@@ -43,14 +44,24 @@ function useStreamedText(text: string, streaming: boolean) {
   }, []);
   useLayoutEffect(() => {
     latest.current = text;
+    const wasAnimating = animating.current;
+    animating.current = animate;
+    if (!animate) {
+      if (frame.current !== undefined) window.cancelAnimationFrame(frame.current);
+      frame.current = undefined;
+      // The render already used the full text. Keep it as the starting point
+      // if prose animation resumes, without scheduling another commit.
+      displayed.current = text;
+      return;
+    }
     const show = (next: string) => {
-      if (next === displayed.current) return;
+      if (wasAnimating && next === displayed.current) return;
       displayed.current = next;
       setVisible(next);
     };
 
     const appended = text.length - displayed.current.length;
-    if (!animate || appended <= SMALL_PROSE_UPDATE || !text.startsWith(displayed.current)) {
+    if (appended <= SMALL_PROSE_UPDATE || !text.startsWith(displayed.current)) {
       if (frame.current !== undefined) window.cancelAnimationFrame(frame.current);
       frame.current = undefined;
       show(text);
@@ -70,7 +81,8 @@ function useStreamedText(text: string, streaming: boolean) {
       show(latest.current);
     });
   }, [animate, text]);
-  return animate && text.startsWith(visible) ? visible : text;
+  const previous = animating.current ? visible : displayed.current;
+  return animate && text.startsWith(previous) ? previous : text;
 }
 
 function useReplySelection(id: string, content: string, reasoning: string | undefined, streaming: boolean, preview: boolean) {

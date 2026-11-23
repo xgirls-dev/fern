@@ -176,11 +176,16 @@ export const TextMarkdown = memo(function TextMarkdown({ content, streaming = fa
     if (!preserveSelection) rendered.current = parsed;
   }, [parsed, preserveSelection]);
   const blocks = preserveSelection ? rendered.current : parsed;
-  let tail = cursor && blocks ? blocks.length - 1 : -1;
-  while (tail >= 0 && blocks?.[tail].type !== "element") tail -= 1;
+  // Incoming text can outpace the Markdown worker. Reuse the rendered list
+  // until the worker publishes different blocks or the cursor changes.
+  const elements = useMemo(() => {
+    if (!blocks) return null;
+    let tail = cursor ? blocks.length - 1 : -1;
+    while (tail >= 0 && blocks[tail].type !== "element") tail -= 1;
+    return blocks.map((block, index) => <MarkdownBlock key={index} node={block} cursor={index === tail ? cursor : undefined} />);
+  }, [blocks, cursor]);
   return <StreamingCode.Provider value={streaming}>
-    {blocks ? blocks.map((block, index) => <MarkdownBlock key={index} node={block} cursor={index === tail ? cursor : undefined} />)
-      : <p data-chat-markdown-pending="" data-stream-tail={cursor}>{content.slice(0, 512)}…</p>}
+    {elements ?? <p data-chat-markdown-pending="" data-stream-tail={cursor}>{content.slice(0, 512)}…</p>}
     {cursor && <span className="text-stream-cursor" data-waiting={cursor === "waiting" || undefined} aria-hidden="true" />}
   </StreamingCode.Provider>;
 });

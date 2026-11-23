@@ -57,10 +57,22 @@ try {
   respond(smallUpdate);
   await expect(reply.locator("p")).toHaveText(smallUpdate);
   assert.deepEqual((await page.evaluate(() => window.replyFrames)).slice(extendedFrames.length), [smallUpdate]);
-  const rich = `${smallUpdate} Keep &copy; and **the accent** intact.`;
+
+  const duringTool = `${smallUpdate} This text is already visible while the model is busy.`;
+  state.textStatus.job = { ...state.textStatus.job, partialText: duringTool, phase: "Checking the generated image…" };
+  await expect(reply.locator("p")).toHaveText(duringTool);
+  const beforeResuming = await page.evaluate(() => window.replyFrames.length);
+  const resumed = `${duringTool} 👩🏽‍💻 Carry on with the reply.`;
+  respond(resumed);
+  await expect(reply.locator("p")).toHaveText(resumed);
+  const resumedFrames = (await page.evaluate(() => window.replyFrames)).slice(beforeResuming);
+  assert(resumedFrames.every((frame) => frame.startsWith(duringTool)), "Resuming animation must preserve the already visible text.");
+  assertCompleteCharacters(resumedFrames, resumed);
+
+  const rich = `${resumed} Keep &copy; and **the accent** intact.`;
   respond(rich);
   await expect(reply.locator("strong")).toHaveText("the accent");
-  await expect(reply.locator("p")).toHaveText(`${smallUpdate} Keep © and the accent intact.`);
+  await expect(reply.locator("p")).toHaveText(`${resumed} Keep © and the accent intact.`);
   respond(rich, "complete");
   await expect(stream).toHaveCount(0);
 
