@@ -26,6 +26,12 @@ try {
   await context.fill("24789");
   assert.equal(await output.getAttribute("max"), "24789");
   await output.fill("15100");
+  const temperature = page.getByRole("slider", { name: "Temperature", exact: true });
+  await temperature.press("Home");
+  await temperature.press("ArrowRight");
+  await expect(temperature).toHaveCSS("height", "32px");
+  await expect(temperature).toHaveAccessibleDescription("Lower for focused answers, higher for variety.");
+  await expect(page.getByLabel("Temperature value", { exact: true })).toHaveValue("0.01");
   await page.getByLabel("Temperature value", { exact: true }).fill("0.137");
   await page.getByLabel("Top P value", { exact: true }).fill("0.035");
   await page.getByText("Advanced model loading", { exact: true }).click();
@@ -66,6 +72,8 @@ try {
   assert.equal(await page.getByLabel("Width", { exact: true }).inputValue(), "896");
   assert.equal(await page.getByLabel("Width", { exact: true }).getAttribute("step"), "8");
   assert.equal(await page.getByLabel("Step count", { exact: true }).inputValue(), "28");
+  await page.getByRole("slider", { name: "Steps", exact: true }).press("ArrowRight");
+  await expect(page.getByLabel("Step count", { exact: true })).toHaveValue("29");
   await chooseSelectOption(page.getByLabel("Image generation model", { exact: true }), "Kromoss");
   assert.equal(await page.getByLabel("Width", { exact: true }).inputValue(), "2064");
   await page.getByRole("textbox", { name: "Message", exact: true }).fill("Use these chat settings.");

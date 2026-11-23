@@ -21,6 +21,7 @@ import { TextReplyAnnouncement } from "./TextReplyAnnouncement";
 import { TEXT_TRANSCRIPT_WINDOW_THRESHOLD, TextTranscriptWindow } from "./TextTranscriptWindow";
 import { TextFindBar } from "./TextFindBar";
 import { Button, IconButton, Input, SegmentedControl, Select, Textarea } from "./ui/controls";
+import { Slider } from "./ui/Slider";
 import { Disclosure } from "./ui/Disclosure";
 import { DropdownItem } from "./ui/Dropdown";
 import { Tooltip, TooltipIconButton } from "./ui/Tooltip";
@@ -131,8 +132,8 @@ function SamplingRangeField({ label, help, min, max, value, disabled, onChange }
     <label htmlFor={id}>{label}</label>
     <small className="text-setting-help" id={id + "-help"}>{help}</small>
     <div className="text-range-control">
-      <input id={id} type="range" min={min} max={max} step={step} value={value} disabled={disabled} aria-describedby={id + "-help"}
-        onChange={(event) => onChange(event.currentTarget.valueAsNumber)} />
+      <Slider id={id} min={min} max={max} step={step} value={value} disabled={disabled} aria-describedby={id + "-help"}
+        onChange={onChange} />
       <SamplingNumberField compact field={{ label: label + " value", min, max, step, placeholder: "" }}
         value={value} disabled={disabled} onChange={(next) => { if (next !== undefined) onChange(next); }} />
     </div>

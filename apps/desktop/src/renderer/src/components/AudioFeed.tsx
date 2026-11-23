@@ -11,10 +11,11 @@ import Search from "lucide-react/dist/esm/icons/search.mjs";
 import Star from "lucide-react/dist/esm/icons/star.mjs";
 import Trash2 from "lucide-react/dist/esm/icons/trash-2.mjs";
 import X from "lucide-react/dist/esm/icons/x.mjs";
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { resolveAssetUrl } from "../lib/api";
 import type { AudioOutput, AudioThread } from "../lib/ttsThreads";
 import { Button, IconButton, Input, SegmentedControl, Select } from "./ui/controls";
+import { Slider } from "./ui/Slider";
 import { Dialog, DialogDescription, DialogTitle } from "./ui/Dialog";
 import { Disclosure } from "./ui/Disclosure";
 import { Dropdown, DropdownItem, DropdownSeparator, useDropdownActions } from "./ui/Dropdown";
@@ -22,10 +23,12 @@ import { TooltipIconButton, TooltipScope } from "./ui/Tooltip";
 
 type FeedFilter = "all" | "favorites" | "preset" | "clone" | "design";
 const dateTime = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
-const formatDuration = (seconds: number) => {
+const formatDuration = (seconds: number, tenths = false) => {
   if (!Number.isFinite(seconds)) return "—";
-  const total = Math.max(0, Math.round(seconds));
-  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
+  const ticks = Math.max(0, Math.round(seconds * (tenths ? 10 : 1)));
+  const total = tenths ? Math.floor(ticks / 10) : ticks;
+  const fraction = tenths && ticks % 10 ? `.${ticks % 10}` : "";
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}${fraction}`;
 };
 const voiceKind = (model?: AudioOutput["model"]) =>
   model?.startsWith("custom-") ? "preset" : model?.startsWith("base-") ? "clone" : model === "voice-design-1.7b" ? "design" : "unknown";
@@ -306,12 +309,11 @@ function AudioTakeCard({ output, number, featured, modelLabel, onUseText, onReus
           {playing ? <Pause size={16} fill="currentColor" aria-hidden="true" /> : <Play size={16} fill="currentColor" aria-hidden="true" />}
         </IconButton>
         <span className="audio-take-time">{formatDuration(position)}</span>
-        <input type="range" min={0} max={Math.max(duration, 0.1)} step="0.1" value={Math.min(position, Math.max(duration, 0.1))}
-          aria-label={`Seek ${title}`} onChange={(event) => {
-            const next = Number(event.target.value);
+        <Slider compact min={0} max={Math.max(duration, 0.1)} step={0.1} value={Math.min(position, Math.max(duration, 0.1))}
+          aria-label={`Seek ${title}`} aria-valuetext={`${formatDuration(position, true)} of ${formatDuration(duration, true)}`} onChange={(next) => {
             if (audioRef.current) audioRef.current.currentTime = next;
             setPosition(next);
-          }} style={{ "--audio-progress": `${duration ? (position / duration) * 100 : 0}%` } as CSSProperties} />
+          }} />
         <span className="audio-take-time">{formatDuration(duration)}</span>
       </div>
       <audio preload="metadata" src={resolveAssetUrl(output.url, output.createdAt)}

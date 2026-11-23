@@ -7,6 +7,7 @@ import { imageDimensionLimits, type ImageDimensionHints } from "../lib/imageDime
 import { fixedImagePreset, isKleinLoraModel, maxImageBatch } from "../lib/imageModels";
 import type { StudioSettings } from "../lib/types";
 import { IconButton, Select } from "./ui/controls";
+import { Slider } from "./ui/Slider";
 
 type Canvas = Pick<StudioSettings, "width" | "height">;
 type Sampling = Pick<StudioSettings, "steps" | "guidance" | "seed" | "seedLocked">;
@@ -116,10 +117,10 @@ export function ImageSamplingFields({ model, settings, errors, disabled, idPrefi
     <div className="field" hidden={fixedSampling && !adjustableSteps}>
       <label htmlFor={stepsId}>Steps</label>
       <div className={adjustableSteps ? undefined : "range-pair"}>
-        {!adjustableSteps && <input id={stepsId} name={stepsId} type="range" disabled={disabled}
+        {!adjustableSteps && <Slider id={stepsId} name={stepsId} disabled={disabled}
           min={1} max={50} step={1} value={settings.steps}
           aria-invalid={Boolean(errors?.steps)} aria-describedby={errors?.steps ? `${idPrefix}step-count-error` : undefined}
-          onChange={(event) => onChange({ steps: Number(event.target.value) })} />}
+          onChange={(steps) => onChange({ steps })} />}
         <DraftNumberInput error={errors?.steps} className={adjustableSteps ? undefined : "compact-input"}
           id={adjustableSteps ? stepsId : undefined} aria-label="Step count" name={`${idPrefix}step-count`} type="number" disabled={disabled}
           min={1} max={preset?.maximumSteps ?? 50} value={settings.steps} onChange={(event) => onChange({ steps: Number(event.target.value) })} />
@@ -129,9 +130,9 @@ export function ImageSamplingFields({ model, settings, errors, disabled, idPrefi
     <div className="field" hidden={fixedGuidance}>
       <label htmlFor={guidanceId}>Guidance</label>
       <div className="range-pair">
-        <input id={guidanceId} name={guidanceId} type="range" disabled={disabled} min={0} max={guidanceMaximum} step={0.1}
+        <Slider id={guidanceId} name={guidanceId} disabled={disabled} min={0} max={guidanceMaximum} step={0.1}
           value={settings.guidance} aria-invalid={Boolean(errors?.guidance)} aria-describedby={errors?.guidance ? `${idPrefix}guidance-value-error` : undefined}
-          onChange={(event) => onChange({ guidance: Number(event.target.value) })} />
+          onChange={(guidance) => onChange({ guidance })} />
         <DraftNumberInput error={errors?.guidance} className="compact-input" aria-label="Guidance value" name={`${idPrefix}guidance-value`}
           type="number" disabled={disabled} min={0} max={guidanceMaximum} step={0.1} value={settings.guidance}
           onChange={(event) => onChange({ guidance: Number(event.target.value) })} />

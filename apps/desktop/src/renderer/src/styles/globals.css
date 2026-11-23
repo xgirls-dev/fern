@@ -725,30 +725,6 @@ textarea:focus {
   align-items: center;
 }
 
-.range-pair input[type="range"] {
-  -webkit-appearance: none;
-  appearance: none;
-  height: 30px;
-  padding: 0;
-  background: transparent;
-  border: none;
-}
-
-.range-pair input[type="range"]::-webkit-slider-runnable-track {
-  height: 3px;
-  border-radius: 999px;
-  background: var(--border-strong);
-}
-
-.range-pair input[type="range"]::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  width: 13px;
-  height: 13px;
-  margin-top: -5px;
-  border-radius: 999px;
-  background: var(--accent);
-}
-
 .compact-input {
   font-family: inherit;
   font-size: 11px;
@@ -4001,11 +3977,8 @@ textarea:focus {
 .audio-take-transport { display: flex; align-items: center; gap: 11px; min-width: 0; }
 .audio-take-play { display: grid; flex: 0 0 auto; width: 34px; height: 34px; place-items: center; border: 0; border-radius: 50%; background: var(--accent); color: var(--accent-foreground); cursor: pointer; }
 .audio-take-play:hover { background: var(--accent-hover); }
-.audio-take-play:focus-visible, .audio-take-transport input:focus-visible { outline: var(--ui-focus-ring); outline-offset: 2px; }
+.audio-take-play:focus-visible { outline: var(--ui-focus-ring); outline-offset: 2px; }
 .audio-take-time { flex: 0 0 auto; color: var(--muted); font: 11px ui-monospace, Consolas, monospace; }
-.audio-take-transport input[type="range"] { width: 100%; min-width: 0; height: 24px; margin: 0; padding: 0; border: 0; appearance: none; background: transparent; cursor: pointer; }
-.audio-take-transport input[type="range"]::-webkit-slider-runnable-track { height: 4px; border-radius: 999px; background: linear-gradient(to right, var(--foreground) var(--audio-progress), var(--border-strong) var(--audio-progress)); }
-.audio-take-transport input[type="range"]::-webkit-slider-thumb { width: 11px; height: 11px; margin-top: -3.5px; appearance: none; border: 2px solid var(--foreground); border-radius: 50%; background: var(--card); }
 .audio-take-actions { gap: 5px; margin-top: 12px; }
 .audio-take-actions .ui-button { border-color: transparent; background: transparent; color: var(--muted); }
 .audio-take-actions .ui-button:hover:not(:disabled) { border-color: var(--border); background: var(--secondary-bg); color: var(--foreground); }

@@ -17,7 +17,15 @@ wav.writeUInt16LE(16, 34);
 wav.write("data", 36);
 wav.writeUInt32LE(wav.length - 44, 40);
 try {
-  await page.route("**/audio/*.wav*", (route) => route.fulfill({ body: wav, contentType: "audio/wav" }));
+  await page.route("**/audio/*.wav*", (route) => {
+    const range = /^bytes=(\d+)-(\d*)$/.exec(route.request().headers().range ?? "");
+    const headers = { "Accept-Ranges": "bytes" };
+    if (!range) return route.fulfill({ body: wav, contentType: "audio/wav", headers });
+    const start = Number(range[1]);
+    const end = Math.min(range[2] ? Number(range[2]) : wav.length - 1, wav.length - 1);
+    return route.fulfill({ status: 206, body: wav.subarray(start, end + 1), contentType: "audio/wav",
+      headers: { ...headers, "Content-Range": `bytes ${start}-${end}/${wav.length}` } });
+  });
   await page.addInitScript(() => {
     const id = "audio-thread-review";
     const now = Date.now();
@@ -51,11 +59,21 @@ try {
   await page.getByRole("button", { name: "Latest take", exact: true }).click();
   await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Play Station intro");
   assert(await play.isVisible());
-  const transport = await first.getByRole("slider", { name: "Seek Station intro", exact: true }).evaluate((slider) => ({
+  const seek = first.getByRole("slider", { name: "Seek Station intro", exact: true });
+  const transport = await seek.evaluate((slider) => ({
     height: slider.getBoundingClientRect().height,
     border: getComputedStyle(slider).borderTopWidth,
   }));
   assert.deepEqual(transport, { height: 24, border: "0px" });
+  await expect.poll(() => first.locator("audio").evaluate((audio) => audio.seekable.length)).toBeGreaterThan(0);
+  await seek.press("End");
+  await expect(seek).toHaveAttribute("aria-valuetext", "0:02 of 0:02");
+  await expect.poll(() => first.locator("audio").evaluate((audio) => audio.currentTime)).toBe(2);
+  await seek.press("Home");
+  await expect(seek).toHaveAttribute("aria-valuetext", "0:00 of 0:02");
+  await seek.press("ArrowRight");
+  await expect(seek).toHaveAttribute("aria-valuetext", "0:00.1 of 0:02");
+  await seek.press("Home");
   await page.setViewportSize({ width: 1080, height: 720 });
   await play.click();
   await first.getByRole("button", { name: "Pause Station intro", exact: true }).waitFor();

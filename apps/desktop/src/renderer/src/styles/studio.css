@@ -285,7 +285,7 @@ body {
 .text-settings-grid .ui-textarea { min-height: 88px; }
 .text-range-field { display: grid; gap: 6px; }
 .text-range-control { display: flex; align-items: center; gap: 12px; }
-.text-range-control > input { flex: 1; min-width: 0; accent-color: var(--foreground); }
+.text-range-control > .ui-slider { flex: 1; }
 .text-range-control > label { flex: 0 0 76px; min-width: 0; }
 .text-model-library { display: grid; gap: 8px; margin-bottom: 20px; }
 .text-recommended-model { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 0; border-bottom: 1px solid var(--border); }
