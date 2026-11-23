@@ -153,13 +153,14 @@ try {
   content += selected;
   state.textStatus.job = { ...state.textStatus.job, partialText: content };
   const selectedParagraph = reply.getByText(selected, { exact: true });
+  await expect(selectedParagraph).toBeAttached();
   await atLatest();
   await expect(selectedParagraph).toBeInViewport({ ratio: 1 });
   const drag = await selectedParagraph.evaluate((element) => {
     const range = document.createRange();
     range.selectNodeContents(element);
     const bounds = range.getBoundingClientRect();
-    return { start: bounds.left + 0.25, end: bounds.right - 0.25, y: bounds.top + bounds.height / 2 };
+    return { start: Math.floor(bounds.left) + 1, end: Math.ceil(bounds.right) - 1, y: bounds.top + bounds.height / 2 };
   });
   await page.mouse.move(drag.start, drag.y);
   await page.mouse.down();

@@ -166,10 +166,16 @@ const MarkdownBlock = memo(function MarkdownBlock({ node, cursor }: { node: Root
   return cursor && isValidElement<StreamTailProps>(element) ? cloneElement(element, { "data-stream-tail": cursor }) : element;
 }, (previous, next) => previous.cursor === next.cursor && (previous.node === next.node || JSON.stringify(previous.node) === JSON.stringify(next.node)));
 
-export const TextMarkdown = memo(function TextMarkdown({ content, streaming = false, receivingReply = streaming, cursor }: {
-  content: string; streaming?: boolean; receivingReply?: boolean; cursor?: StreamCursor;
+export const TextMarkdown = memo(function TextMarkdown({ content, streaming = false, receivingReply = streaming, cursor, preserveSelection = false }: {
+  content: string; streaming?: boolean; receivingReply?: boolean; cursor?: StreamCursor; preserveSelection?: boolean;
 }) {
-  const blocks = useChatMarkdown(content, streaming, receivingReply);
+  const parsed = useChatMarkdown(content, streaming, receivingReply);
+  const rendered = useRef(parsed);
+  // A pending parse can replace visible nodes even when the reply text is held.
+  useLayoutEffect(() => {
+    if (!preserveSelection) rendered.current = parsed;
+  }, [parsed, preserveSelection]);
+  const blocks = preserveSelection ? rendered.current : parsed;
   let tail = cursor && blocks ? blocks.length - 1 : -1;
   while (tail >= 0 && blocks?.[tail].type !== "element") tail -= 1;
   return <StreamingCode.Provider value={streaming}>

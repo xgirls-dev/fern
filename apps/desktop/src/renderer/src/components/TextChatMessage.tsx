@@ -124,7 +124,7 @@ function useReplySelection(id: string, content: string, reasoning: string | unde
     if (chatSelectionIntersects(bodyRef.current, reasoningRef.current)) window.getSelection()?.removeAllRanges();
     setHeldReply(undefined);
   };
-  return { bodyRef, reasoningRef, onPointerDown, releaseSelection,
+  return { bodyRef, reasoningRef, onPointerDown, releaseSelection, holding,
     shown: holding ? committed.current : { content, reasoning, streaming: renderAsStream } };
 }
 
@@ -174,7 +174,7 @@ export const TextChatMessage = memo(function TextChatMessage({ message, selectio
   const streaming = !!progress;
   const assistant = message.role === "assistant";
   const animatedContent = useStreamedText(message.content, progress?.kind === "answer" && !previewWhileStreaming);
-  const { bodyRef, reasoningRef, onPointerDown, releaseSelection, shown } = useReplySelection(selectionId ?? message.id, animatedContent, message.reasoning, streaming, previewWhileStreaming);
+  const { bodyRef, reasoningRef, onPointerDown, releaseSelection, holding, shown } = useReplySelection(selectionId ?? message.id, animatedContent, message.reasoning, streaming, previewWhileStreaming);
   const { content, reasoning } = shown;
   const hasAnswer = !!content.trim();
   const showCursor = progress?.kind === "answer" && hasAnswer && shown.streaming;
@@ -254,12 +254,14 @@ export const TextChatMessage = memo(function TextChatMessage({ message, selectio
     {generatedImage}
     {reasoning && <Disclosure className="text-reasoning" label={reasoningInProgress ? indicator : "Reasoning"}
       open={reasoningOpen} lockOpen={revealReasoning} onOpenChange={setReasoningOpen}>
-      {reasoningExpanded && <div ref={reasoningRef} onPointerDown={onPointerDown} data-find-target={revealReasoning || undefined}><TextMarkdown content={reasoning} streaming={shown.streaming} /></div>}
+      {reasoningExpanded && <div ref={reasoningRef} onPointerDown={onPointerDown} data-find-target={revealReasoning || undefined}>
+        <TextMarkdown content={reasoning} streaming={shown.streaming} preserveSelection={holding} />
+      </div>}
     </Disclosure>}
     {editing && findSection === "body" && <div className="text-find-original"><span>Current prompt</span><p data-find-target>{message.content}</p></div>}
     {editing ? editor : <div ref={bodyRef} onPointerDown={onPointerDown} className="text-message-content" data-find-target={findSection === "body" || undefined}>
       {assistant ? (streaming || content) && <TextMarkdown content={content} streaming={shown.streaming} receivingReply={streaming}
-        cursor={showCursor ? cursorState : undefined} /> : content}
+        cursor={showCursor ? cursorState : undefined} preserveSelection={holding} /> : content}
       {!showCursor && !reasoningInProgress && !checkingImageInCaption && indicator}
     </div>}
   </>;

@@ -30,6 +30,10 @@ try {
       }
       postMessage(data) {
         if (!data.streaming) window.finishedMarkdownRequests++;
+        if (window.holdMarkdownTail && data.content.endsWith(window.holdMarkdownTail)) {
+          window.releaseMarkdownTail = () => super.postMessage(data);
+          return;
+        }
         super.postMessage(data);
       }
     };
@@ -65,10 +69,48 @@ try {
   await expect(reply).toContainText("Entity ©.");
   assert(await page.evaluate(() => window.parsedMarkdownReplies >= 3));
   await expect(code).toHaveAttribute("data-before-worker", "true");
-  const completedRequests = await page.evaluate(() => window.finishedMarkdownRequests);
   const composer = page.getByRole("textbox", { name: "Message", exact: true });
   const send = page.getByRole("button", { name: "Send message", exact: true });
+
+  await composer.fill("Write a title I can select while the reply streams.");
+  await send.click();
+  await expect(reply).toHaveClass(/text-message--streaming/);
+  const title = "Keep this title selected";
+  const formattedTitle = `${title}\n---`;
+  state.textStatus.job = { ...state.textStatus.job, partialText: longReply + title };
+  const titleParagraph = reply.locator("p").filter({ hasText: title });
+  await titleParagraph.scrollIntoViewIfNeeded();
+  await page.evaluate((tail) => { window.holdMarkdownTail = tail; }, formattedTitle);
+  state.textStatus.job = { ...state.textStatus.job, partialText: longReply + formattedTitle };
+  await expect.poll(() => page.evaluate(() => typeof window.releaseMarkdownTail)).toBe("function");
+  const bounds = await titleParagraph.evaluate((element) => {
+    const text = document.createRange();
+    text.selectNodeContents(element);
+    const { left, right, top, height } = text.getBoundingClientRect();
+    return { start: Math.floor(left) + 1, end: Math.ceil(right) - 1, y: top + height / 2 };
+  });
+  await page.mouse.move(bounds.start, bounds.y);
+  await page.mouse.down();
+  await page.mouse.move(bounds.end, bounds.y, { steps: 8 });
+  await expect.poll(() => page.evaluate(() => window.getSelection().toString())).toBe(title);
+  const priorParses = await page.evaluate(() => {
+    const count = window.parsedMarkdownReplies;
+    window.holdMarkdownTail = "";
+    window.releaseMarkdownTail();
+    return count;
+  });
+  await expect.poll(() => page.evaluate(() => window.parsedMarkdownReplies)).toBeGreaterThan(priorParses);
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await expect(titleParagraph).toHaveText(title);
+  await page.mouse.up();
+  await expect.poll(() => page.evaluate(() => window.getSelection().toString())).toBe(title);
+  await page.evaluate(() => window.getSelection().removeAllRanges());
+  await expect(reply.getByRole("heading", { name: title })).toBeVisible();
+  state.textStatus.job = { ...state.textStatus.job, status: "complete", finishedAt: Date.now() / 1000 };
+  await expect(reply).not.toHaveClass(/text-message--streaming/);
+
   // A small ordinary tail can finalize directly from the already rendered prefix.
+  const completedRequests = await page.evaluate(() => window.finishedMarkdownRequests);
   const mediumReply = codeBlock + Array.from({ length: 14 }, (_, index) =>
     `### Short section ${index + 1}\n\n${"A compact paragraph giving enough context for the answer. ".repeat(5)}\n\n`,
   ).join("");
