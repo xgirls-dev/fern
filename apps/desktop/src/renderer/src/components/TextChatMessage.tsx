@@ -2,7 +2,6 @@ import { memo, useEffect, useId, useLayoutEffect, useRef, useState, type Pointer
 import Copy from "lucide-react/dist/esm/icons/copy.mjs";
 import GitBranch from "lucide-react/dist/esm/icons/git-branch.mjs";
 import Info from "lucide-react/dist/esm/icons/info.mjs";
-import LoaderCircle from "lucide-react/dist/esm/icons/loader-circle.mjs";
 import Pencil from "lucide-react/dist/esm/icons/pencil.mjs";
 import RotateCcw from "lucide-react/dist/esm/icons/rotate-ccw.mjs";
 import Trash2 from "lucide-react/dist/esm/icons/trash-2.mjs";
@@ -18,6 +17,7 @@ import { TextMarkdown } from "./TextMarkdown";
 import { TextMessageMenu, type MessageAction } from "./TextMessageMenu";
 import { TooltipIconButton } from "./ui/Tooltip";
 import { Disclosure } from "./ui/Disclosure";
+import { ProgressLabel } from "./ui/ProgressLabel";
 import { VersionStepper } from "./ui/VersionStepper";
 import { Button, InlineConfirmation } from "./ui/controls";
 
@@ -179,7 +179,7 @@ export const TextChatMessage = memo(function TextChatMessage({ message, selectio
   const cursorState = progress?.kind === "answer" && progress.waiting ? "waiting" : "active";
   const reasoningInProgress = progress?.kind === "reasoning" && !!message.reasoning && !previewWhileStreaming;
   const checkingImageInCaption = progress?.kind === "image-check" && !!generatedImage;
-  const indicator = progress && <span className="text-thinking"><LoaderCircle className="spinner" size={15} aria-hidden="true" />{progress.label}</span>;
+  const indicator = progress && <ProgressLabel className="text-thinking">{progress.label}</ProgressLabel>;
   const stoppedNote = hasAnswer ? "Stopped · Partial response" : message.generatedImage ? "Stopped · Image saved"
     : message.reasoning ? "Stopped during reasoning" : "Stopped before any text was generated";
   const recoveryNote = message.status === "stopped" ? stoppedNote

@@ -23,6 +23,7 @@ import { Button, IconButton, SegmentedControl, Select, Textarea } from "./ui/con
 import { Slider } from "./ui/Slider";
 import { NumberField } from "./ui/NumberField";
 import { Disclosure } from "./ui/Disclosure";
+import { ProgressLabel } from "./ui/ProgressLabel";
 import { Tooltip, TooltipIconButton } from "./ui/Tooltip";
 import { WorkspaceThreadTitle } from "./WorkspaceThreadTitle";
 import { ImageBatchField, ImageCanvasFields, ImageSamplingFields } from "./ImageGenerationFields";
@@ -115,8 +116,8 @@ interface ModelReadiness {
 function ChatModelReadiness({ notice, actionRef }: { notice: ModelReadiness; actionRef: (node: HTMLButtonElement | null) => void }) {
   return <div className="text-model-readiness" data-tone={notice.tone}>
     <div className="text-model-readiness-message" role={notice.tone === "error" ? "alert" : "status"} aria-atomic="true">
-      {notice.tone === "pending" && <LoaderCircle className="spinner" size={15} aria-hidden="true" />}
-      <div><span>{notice.label}</span>{notice.detail && <small>{notice.detail}</small>}</div>
+      {notice.tone === "pending" ? <ProgressLabel>{notice.label}{notice.detail && <small>{notice.detail}</small>}</ProgressLabel>
+        : <div><span>{notice.label}</span>{notice.detail && <small>{notice.detail}</small>}</div>}
     </div>
     {notice.action && <Button ref={actionRef} variant="secondary" onClick={notice.action.run}>{notice.action.label}</Button>}
   </div>;
@@ -137,11 +138,11 @@ function estimateRowHeight(message: TextMessage) {
   return 64 + lines * 25 + illustration + (message.reasoning ? 26 : 0) + (message.error ? 24 : 0);
 }
 
-function ChatImage({ image, ordinal, checked, checking, onOpen, onRetryCheck, canRetryCheck, contextLabel, onInclude, showFindCaption }: {
+function ChatImage({ image, ordinal, checked, checkStatus, onOpen, onRetryCheck, canRetryCheck, contextLabel, onInclude, showFindCaption }: {
   image: GeneratedChatImage;
   ordinal: number;
   checked?: boolean;
-  checking?: boolean;
+  checkStatus?: string;
   onOpen: () => void;
   onRetryCheck?: () => void;
   canRetryCheck?: boolean;
@@ -161,16 +162,16 @@ function ChatImage({ image, ordinal, checked, checking, onOpen, onRetryCheck, ca
       <img src={resolveAssetUrl(`/outputs/${encodeURIComponent(image.name)}`, String(revision))} alt={`Generated image ${ordinal}. Prompt: ${subject}`} width={image.width} height={image.height} onError={() => setFailed(true)} />
     </button>}
     {!failed && <figcaption>
-      {(checked || checking || onRetryCheck || contextLabel) && <span className="text-artifact-status">
+      {(checked || checkStatus || onRetryCheck || contextLabel) && <span className="text-artifact-status">
         {checked && <span><Check size={14} aria-hidden="true" /> Image checked</span>}
-        {checking && <span>Checking image…</span>}
-        {onRetryCheck && <span>Image check incomplete</span>}
+        {checkStatus && <ProgressLabel className="text-artifact-progress">{checkStatus}</ProgressLabel>}
+        {onRetryCheck && !checkStatus && <span>Image check incomplete</span>}
         {contextLabel && <span className="text-artifact-context">{contextLabel}</span>}
       </span>}
       <span className="text-artifact-metadata">{[image.modelLabel, `${image.width} × ${image.height}`].filter(Boolean).join(" · ")}</span>
     </figcaption>}
     {showFindCaption && <p className="text-find-image-caption" data-find-target>{image.prompt}</p>}
-    {!failed && !checking && (onRetryCheck || onInclude) ? <div className="text-artifact-actions">
+    {!failed && !checkStatus && (onRetryCheck || onInclude) ? <div className="text-artifact-actions">
       {onRetryCheck ? <Button variant="secondary" disabled={!canRetryCheck} onClick={(event) => {
         event.currentTarget.closest<HTMLElement>("[data-chat-message]")?.focus({ preventScroll: true });
         onRetryCheck();
@@ -372,7 +373,13 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   const runningThread = status.job.status === "running" ? studio.threads.find((thread) => thread.id === status.job.threadId) : undefined;
   const otherResponseThread = responseHere ? undefined : runningThread ?? studio.threads.find((thread) => thread.pendingJobId);
   const reconnecting = !!statusError && (responseHere || !!otherResponseThread);
-  const checkingImage = runningHere && !reconnecting && !stopping && (phase.startsWith("Checking") || !!liveJob?.inspection || !!replyImage);
+  const creatingImage = phase.startsWith("Generating image") || phase.startsWith("Generating an image");
+  // Image batches publish previews before generation finishes. An existing
+  // preview only implies review after the image generation phase ends.
+  const checkingImage = responseHere && !reconnecting && !stopping && !creatingImage &&
+    (!!inspectionMessageId || runningHere && (phase.startsWith("Checking") || !!liveJob?.inspection || !!replyImage));
+  const inspectionCaption = reconnecting ? (stopping ? "Reconnecting to stop…" : "Reconnecting to check the image…")
+    : stopping ? "Stopping image check…" : "Checking image…";
   const modelNotice: ModelReadiness | null = responseHere || otherResponseThread ? null
     : installing ? { label: `Installing ${installName ?? "a chat model"}`, detail: install.phase, tone: "pending", action: { label: "View model download", run: openModels } }
     : studio.modelAction ? { label: studio.modelAction, tone: "pending" }
@@ -393,7 +400,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   const statusLabel = reconnecting ? stopping ? "Reconnecting to stop…" : "Reconnecting to the text runtime…"
     : stopping ? "Stopping…"
     : pendingHere ? liveJob && liveJob.status !== "idle" ? "Finishing response…" : "Starting response…"
-    : phase.startsWith("Generating image") || phase.startsWith("Generating an image") ? "Creating an image…"
+    : creatingImage ? "Creating an image…"
     : phase.startsWith("Finding document") ? phase
     : phase.includes("Compacting") ? "Summarizing earlier messages…"
     : /download/i.test(phase) ? "Downloading the text runtime…"
@@ -652,8 +659,11 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
     const index = existing < 0 ? collection.length - 1 : existing;
     const firstImage = image.name === (message ? messageImages(message)[0]?.name : replyImage?.name);
     const canRecover = message && firstImage && !preview && (message.status === "failed" || message.status === "stopped") && !message.metrics?.visionChecked;
+    const checkStatus = !firstImage ? undefined : message
+      ? message.inspectionJobId && message.inspectionJobId === displayJobId ? inspectionCaption : undefined
+      : checkingImage ? "Checking image…" : undefined;
     return <ChatImage key={image.name} image={image} ordinal={index + 1} showFindCaption={showFindCaption}
-      checked={firstImage && message?.metrics?.visionChecked} checking={firstImage && (message ? !!message.inspectionJobId : checkingImage)}
+      checked={firstImage && message?.metrics?.visionChecked} checkStatus={checkStatus}
       onRetryCheck={canRecover ? () => void studio.retryInspection(threadId, message.id) : undefined}
       canRetryCheck={!busy && !!selected?.supportsVision && !runtimeIssue}
       contextLabel={draftContextName === image.name
@@ -665,7 +675,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
         inputRef.current?.focus();
       } : undefined}
       onOpen={() => onOpenImage(collection[index], collection)} />;
-  }, [attachingImage, busy, checkingImage, draftContextName, draftImage, imageCollection, inputRef, latestContext, onOpenImage, replyImage?.name,
+  }, [attachingImage, busy, checkingImage, displayJobId, draftContextName, draftImage, imageCollection, inputRef, inspectionCaption, latestContext, onOpenImage, replyImage?.name,
     runtimeIssue, selected?.supportsVision, studio.clearAttachment, studio.retryInspection, studio.updateThread, threadId]);
 
   const renderRow = useCallback((row: TranscriptRow, index: number, live?: { progress: TextReplyProgress; previous: boolean }) => {

@@ -25,6 +25,7 @@ import { StudioSidebar } from "./components/StudioSidebar";
 import { TitleBar } from "./components/TitleBar";
 import { WorkspaceThreadTitle } from "./components/WorkspaceThreadTitle";
 import { Button, IconButton, PageHeader } from "./components/ui/controls";
+import { ProgressLabel } from "./components/ui/ProgressLabel";
 
 import { Notifications } from "./components/Notifications";
 import { notify } from "./lib/notifications";
@@ -590,9 +591,9 @@ export function App() {
           {activeSection === "models" || activeSection === "preferences" ||
           activeSection === "storage" ? null : activeSection === "text" ? (
             text.storageReady
-              ? <Suspense fallback={<div className="dashboard-loading" role="status">Opening chat…</div>}><ChatWorkspace studio={text} sidebarCollapsed={sidebarIsCollapsed} onSetupModels={openModelSetup} focusRequest={chatFocusRequest} findRequest={chatFindRequest} onFindRequestHandled={clearChatFindRequest} imageGpuAvailable={imageGpuAvailable} onOpenImage={openImage} onNewChat={newTextThread} onCreateImage={newThread} onCreateSpeech={newAudioThread} onOpenCompute={openComputePreferences} /></Suspense>
+              ? <Suspense fallback={<div className="dashboard-loading" role="status"><ProgressLabel>Opening chat…</ProgressLabel></div>}><ChatWorkspace studio={text} sidebarCollapsed={sidebarIsCollapsed} onSetupModels={openModelSetup} focusRequest={chatFocusRequest} findRequest={chatFindRequest} onFindRequestHandled={clearChatFindRequest} imageGpuAvailable={imageGpuAvailable} onOpenImage={openImage} onNewChat={newTextThread} onCreateImage={newThread} onCreateSpeech={newAudioThread} onOpenCompute={openComputePreferences} /></Suspense>
               : <div className="dashboard-loading">
-                {text.storageError ? <><span role="alert">{text.storageError}</span><Button variant="secondary" onClick={text.retryStorage}>Retry opening chats</Button></> : <span role="status">Opening chats…</span>}
+                {text.storageError ? <><span role="alert">{text.storageError}</span><Button variant="secondary" onClick={text.retryStorage}>Retry opening chats</Button></> : <span role="status"><ProgressLabel>Opening chats…</ProgressLabel></span>}
               </div>
           ) : activeSection === "video" ? (
             <Suspense fallback={<div className="dashboard-loading" role="status">Opening video workspace…</div>}>

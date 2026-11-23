@@ -74,8 +74,7 @@ body {
 .text-empty-state h3 { margin: 0; font-size: clamp(24px, 3vw, 30px); font-weight: 500; letter-spacing: -.7px; text-wrap: balance; }
 .text-empty-state p { margin: 12px 0 22px; color: var(--muted); font-size: 14px; line-height: 1.6; }
 .text-model-readiness { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; font-size: 13px; }
-.text-model-readiness-message { display: flex; align-items: center; min-width: 0; gap: 8px; overflow-wrap: anywhere; }
-.text-model-readiness-message > svg { flex: none; color: var(--chat-action); }
+.text-model-readiness-message { --ui-progress-color: var(--chat-action); min-width: 0; overflow-wrap: anywhere; }
 .text-model-readiness-message small { display: block; margin-top: 3px; color: var(--muted); font-size: 12px; }
 .text-model-readiness[data-tone="error"] .text-model-readiness-message span { color: var(--danger); }
 .text-empty-state .text-model-readiness { display: grid; justify-items: center; gap: 12px; margin: 12px 0 4px; }
@@ -226,8 +225,8 @@ body {
 .text-response-details--context { margin-bottom: 10px; }
 .text-message-label { font-weight: 600; }
 .text-thinking, .text-reply-recovery { color: var(--muted); font-size: 13px; }
-.text-thinking { display: inline-flex; min-height: 24px; align-items: center; gap: 8px; }
-.text-thinking svg { flex-shrink: 0; color: var(--chat-action); }
+.text-thinking { min-height: 24px; }
+.text-thinking, .text-artifact-progress { --ui-progress-color: var(--chat-action); }
 .text-reasoning summary .text-thinking { min-height: 0; vertical-align: middle; }
 .text-reply-recovery { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin-top: 8px; }
 /* Mark the tail directly so each streaming insert leaves earlier blocks out of cursor styling. */

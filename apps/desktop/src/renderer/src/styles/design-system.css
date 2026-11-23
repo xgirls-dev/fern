@@ -211,6 +211,11 @@ body:has(.ui-resize-handle[data-resizing][aria-orientation="horizontal"]) { curs
 .ui-model-menu-options .ui-popup-label { flex: 1; white-space: normal; overflow-wrap: anywhere; }
 .ui-model-menu-options .ui-menu-item { padding-block: var(--ui-space-1); }
 .ui-model-menu-note { flex: 0 0 auto; color: var(--muted); font-size: 11px; }
+.ui-progress-label { display: inline-flex; align-items: center; gap: var(--ui-space-2); min-width: 0; }
+.ui-progress-label > svg { flex: none; color: var(--ui-progress-color, var(--accent)); }
+@media (prefers-reduced-motion: reduce) {
+  .ui-progress-label > .spinner { animation: none; }
+}
 .ui-tooltip-positioner { z-index: 510; pointer-events: none; }
 .ui-tooltip {
   max-width: min(240px, var(--available-width));
