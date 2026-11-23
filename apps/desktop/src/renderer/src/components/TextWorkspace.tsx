@@ -23,6 +23,7 @@ import { Button, IconButton, SegmentedControl, Select, Textarea } from "./ui/con
 import { Slider } from "./ui/Slider";
 import { NumberField } from "./ui/NumberField";
 import { Disclosure } from "./ui/Disclosure";
+import { InlineNotice } from "./ui/InlineNotice";
 import { ProgressLabel } from "./ui/ProgressLabel";
 import { Tooltip, TooltipIconButton } from "./ui/Tooltip";
 import { WorkspaceThreadTitle } from "./WorkspaceThreadTitle";
@@ -393,8 +394,8 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
     : !modelAvailable ? { label: "Download a local model to start chatting.", action: { label: "Browse models", run: openModels } }
     : runtimeIssue ? { label: "The selected model can’t run right now.", detail: runtimeIssue, tone: "error", action: modelSetupAction }
     : null;
-  const localError = actionError && (actionError.threadId ? actionError.threadId === activeThread.id : focused) ? actionError.message : null;
-  const visibleError = localError ?? (reconnecting || modelNotice?.tone === "error" ? null : catalogError);
+  const localError = actionError && (actionError.threadId ? actionError.threadId === threadId : focused) ? actionError : null;
+  const catalogNotice = reconnecting || modelNotice?.tone === "error" ? null : catalogError;
   const undoBlocked = responseHere;
   const replyPaused = runningHere && studio.replyPaused;
   const statusLabel = reconnecting ? stopping ? "Reconnecting to stop…" : "Reconnecting to the text runtime…"
@@ -822,8 +823,26 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
 
       <footer className="text-composer-area">
         {showScrollButton && <TooltipIconButton shape="circle" className="text-scroll-latest" aria-label="Jump to latest message" tooltip="Jump to latest message" onClick={() => { jumpToLatest(); inputRef.current?.focus({ preventScroll: true }); }}><ArrowDown size={16} aria-hidden="true" /></TooltipIconButton>}
-        {studio.storageError && <div className="text-error" role="alert">{studio.storageError}<Button variant="secondary" onClick={studio.retryStorage}>Retry saving chats</Button></div>}
-        {visibleError ? <div className="text-error" role="alert">{visibleError}<Button variant="secondary" onClick={() => { void studio.refresh(); }}>Refresh status</Button></div> : null}
+        {studio.storageError && <InlineNotice tone="error" announce
+          actions={<Button variant="secondary" onClick={studio.retryStorage}>Retry saving chats</Button>}>
+          {studio.storageError}
+        </InlineNotice>}
+        {localError ? <InlineNotice tone="error" announce actions={<>
+          {localError.recovery === "image-settings" && <Button variant="secondary" onClick={() => {
+            setFindThreadId(null);
+            setPanel("image");
+            panelRef.current?.focus({ preventScroll: true });
+            studio.dismissActionError(localError);
+          }}>Open image settings</Button>}
+          <Button variant="ghost" onClick={() => {
+            inputRef.current?.focus({ preventScroll: true });
+            studio.dismissActionError(localError);
+          }}>Dismiss error</Button>
+        </>}>{localError.message}</InlineNotice>
+          : catalogNotice && <InlineNotice tone="error" announce
+            actions={<Button variant="secondary" onClick={() => { void studio.refresh(); }}>Refresh status</Button>}>
+            {catalogNotice}
+          </InlineNotice>}
         {!empty && modelNotice && <ChatModelReadiness notice={modelNotice} actionRef={bindModelAction} />}
         {deletion && <div className="text-deletion-notice">
           <span id={deletionStatusId} role="status">{deletion.messages.length > 1 ? "Message and reply deleted." : deletion.messages[0].role === "assistant" ? "Reply deleted." : "Message deleted."}

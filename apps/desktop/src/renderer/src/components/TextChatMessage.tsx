@@ -17,6 +17,7 @@ import { TextMarkdown } from "./TextMarkdown";
 import { TextMessageMenu, type MessageAction } from "./TextMessageMenu";
 import { TooltipIconButton } from "./ui/Tooltip";
 import { Disclosure } from "./ui/Disclosure";
+import { InlineNotice } from "./ui/InlineNotice";
 import { ProgressLabel } from "./ui/ProgressLabel";
 import { VersionStepper } from "./ui/VersionStepper";
 import { Button, InlineConfirmation } from "./ui/controls";
@@ -183,7 +184,10 @@ export const TextChatMessage = memo(function TextChatMessage({ message, selectio
   const indicator = progress && <ProgressLabel className="text-thinking">{progress.label}</ProgressLabel>;
   const stoppedNote = hasAnswer ? "Stopped · Partial response" : message.generatedImage ? "Stopped · Image saved"
     : message.reasoning ? "Stopped during reasoning" : "Stopped before any text was generated";
-  const recoveryNote = message.status === "stopped" ? stoppedNote
+  const failed = message.status === "failed";
+  const showRetry = !!onRetry && (failed || message.status === "stopped");
+  const recoveryNote = failed ? message.error || "Generation failed."
+    : message.status === "stopped" ? stoppedNote
     : message.status === "complete" && message.metrics?.finishReason === "length" ? "Reached the output limit" : null;
   const modelName = message.modelName ?? message.metrics?.modelName;
   const versions = onSelectVersion && message.alternatives?.length ? replyVersions(message) : [];
@@ -201,7 +205,6 @@ export const TextChatMessage = memo(function TextChatMessage({ message, selectio
   ].filter(Boolean).join(" ") : "";
   const copied = copiedId === message.id;
   const targetId = contextVersionId ?? message.id;
-  const retryLabel = message.status === "failed" || message.status === "stopped" ? "Retry response" : "Regenerate response";
   useEffect(() => () => window.clearTimeout(copyTimer.current), []);
   useLayoutEffect(() => {
     if (wasEditing.current && !editing) editButton.current?.focus({ preventScroll: true });
@@ -274,14 +277,16 @@ export const TextChatMessage = memo(function TextChatMessage({ message, selectio
       {showContextDetails && detailPanel}
       {assistant ? body : <div className="text-user-bubble">{body}</div>}
       {!!message.metrics?.documentSources?.length && <ChatDocumentSources sources={message.metrics.documentSources} />}
-      {!streaming && message.status === "failed" && <div className="text-error">
-        {message.error ?? "Generation failed. Retry the response."}
-        {message.errorCode === "intel-vulkan-driver" && window.studio.platform === "win32" && <a href="https://www.intel.com/content/www/us/en/support/detect.html" target="_blank" rel="noreferrer">Get Intel graphics drivers</a>}
-      </div>}
-      {!streaming && (recoveryNote || onContinue) && <div className="text-reply-recovery">
-        {recoveryNote && <span>{recoveryNote}</span>}
-        {onContinue && <Button variant="secondary" disabled={!canContinue} onClick={() => onContinue(message.id)}>Continue response</Button>}
-      </div>}
+      {!streaming && recoveryNote && <InlineNotice className="text-reply-recovery" tone={failed ? "error" : "neutral"}
+        actions={(onContinue || showRetry) && <>
+          {onContinue && <Button variant="secondary" disabled={!canContinue} onClick={() => onContinue(message.id)}>Continue response</Button>}
+          {showRetry && <Button variant={onContinue ? "ghost" : "secondary"} disabled={!canRetry} onClick={onRetry}>Retry response</Button>}
+        </>}>
+        <span>{recoveryNote}</span>
+        {failed && message.errorCode === "intel-vulkan-driver" && window.studio.platform === "win32" && <>
+          {" "}<a className="ui-link" href="https://www.intel.com/content/www/us/en/support/detect.html" target="_blank" rel="noreferrer">Get Intel graphics drivers</a>
+        </>}
+      </InlineNotice>}
       {!streaming && !editing && <div className="text-message-tools">
         {message.content.trim() && <TooltipIconButton className="text-icon-button" aria-label={copied ? "Copied" : "Copy message"}
           tooltip={copied ? "Copied" : "Copy message"} tooltipSide="bottom" onClick={() => void copy()}><Copy size={15} aria-hidden="true" /></TooltipIconButton>}
@@ -290,8 +295,8 @@ export const TextChatMessage = memo(function TextChatMessage({ message, selectio
           disabled={editingAnother} onClick={() => onEdit(message)}><Pencil size={15} aria-hidden="true" /></TooltipIconButton>}
         {onFork && <TooltipIconButton className="text-icon-button" aria-label="Fork chat here"
           tooltip="Fork chat here" tooltipSide="bottom" disabled={!canFork} onClick={() => onFork(message)}><GitBranch size={15} aria-hidden="true" /></TooltipIconButton>}
-        {onRetry && <TooltipIconButton className="text-icon-button" aria-label={retryLabel}
-          tooltip={canRetry ? retryLabel : "Select a model that can use the last prompt to retry"} tooltipSide="bottom"
+        {onRetry && !showRetry && <TooltipIconButton className="text-icon-button" aria-label="Regenerate response"
+          tooltip={canRetry ? "Regenerate response" : "Select a model that can use the last prompt to retry"} tooltipSide="bottom"
           disabled={!canRetry} onClick={onRetry}><RotateCcw size={15} aria-hidden="true" /></TooltipIconButton>}
         {actions.length > 0 && <TextMessageMenu actions={actions} trigger={menuButton} align={assistant ? "start" : "end"} />}
         {message.metrics && <span className="text-response-speed">{message.metrics.tokensPerSecond.toFixed(1)} tok/s</span>}

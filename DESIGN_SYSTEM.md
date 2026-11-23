@@ -28,6 +28,7 @@ Fern gives content visual priority and keeps controls quiet until needed. Each s
 - `ProgressLabel` pairs a spinner with a short description of ongoing work. Place live announcements on the surrounding status region when the same progress appears in more than one location.
 - `ui-link` styles inline links with a visible underline and keyboard focus without browser-specific visited colors.
 - `ErrorMessage` gives failures a consistent, wrapping treatment and announces them as alerts.
+- `InlineNotice` places status or error text beside recovery actions. Enable `announce` when the notice itself should announce a new error. Keep it off when another live region already announces the outcome.
 - `ui-empty-state` centers a short title, supporting explanation, and optional recovery action without adding another surface border.
 - `ChoiceCard` is for selectable options with supporting detail. It provides consistent selected, focus, and disabled states while the containing layout controls whether options appear in a row or a grid. `ToggleRow` combines an icon, label, description, and on/off state for preference-style settings.
 - `SegmentedControl` groups related choices and exposes the selected state with `aria-pressed`. `ToggleChip` handles compact optional modifiers with the same selected and focus behavior.

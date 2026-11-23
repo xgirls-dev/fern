@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { expect } from "@playwright/test";
 import { fixture } from "./ui-fixture.mjs";
 
 const model = { id: "gemma", name: "Gemma", installed: true, format: "gguf", maxContextSize: 65536 };
@@ -13,7 +14,9 @@ const documents = page.getByRole("list", { name: "Chat documents", exact: true }
 const upload = page.locator('input[aria-label="Chat document files"]');
 const composer = page.getByRole("textbox", { name: "Message", exact: true });
 const uploads = [];
+let uploadError;
 await page.route("**/api/text/documents", async (route) => {
+  if (uploadError) return route.fulfill({ status: 400, json: { error: uploadError } });
   uploads.push(route.request().postDataJSON());
   await route.fulfill({ status: 201, json: { document } });
 });
@@ -35,6 +38,16 @@ try {
   await page.locator(".sidebar-new-button").click();
   await page.getByRole("menuitem", { name: "Chat", exact: true }).click();
   await button("Attach documents").waitFor();
+  uploadError = "This document could not be opened.";
+  await composer.fill("Keep this draft while the attachment is retried.");
+  await upload.setInputFiles(file);
+  await expect(page.getByRole("alert")).toHaveText(uploadError);
+  await expect(button("Refresh status")).toHaveCount(0);
+  await button("Dismiss error").click();
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(composer).toHaveValue("Keep this draft while the attachment is retried.");
+  await expect(composer).toBeFocused();
+  uploadError = undefined;
   await upload.setInputFiles(file);
   await documents.getByText(name, { exact: true }).waitFor();
   assert.equal(Buffer.from(uploads[0].content, "base64").toString(), file.buffer.toString());

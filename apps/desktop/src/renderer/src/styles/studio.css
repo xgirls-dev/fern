@@ -232,11 +232,11 @@ body {
 .text-response-details { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 8px; padding: 12px 14px; border-radius: 10px; background: var(--secondary-bg); color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 .text-response-details--context { margin-bottom: 10px; }
 .text-message-label { font-weight: 600; }
-.text-thinking, .text-reply-recovery { color: var(--muted); font-size: 13px; }
+.text-thinking { color: var(--muted); font-size: 13px; }
 .text-thinking { min-height: 24px; }
 .text-thinking, .text-artifact-progress { --ui-progress-color: var(--chat-action); }
 .text-reasoning summary .text-thinking { min-height: 0; vertical-align: middle; }
-.text-reply-recovery { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin-top: 8px; }
+.text-reply-recovery { margin-top: 8px; }
 /* Mark the tail directly so each streaming insert leaves earlier blocks out of cursor styling. */
 .text-stream-cursor, .text-message-content > p[data-stream-tail]::after { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-left: 5px; background: var(--chat-action); }
 .text-message-content > p[data-stream-tail]::after { content: ""; }

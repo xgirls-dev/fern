@@ -169,7 +169,9 @@ try {
   await expect(incomplete.getByText("The model finished without a final answer. The partial response was kept.")).toBeVisible();
   await expect(incomplete.getByText(partial)).toBeVisible();
   await expect(replyStatus).toHaveText("Response incomplete. Partial reply available.");
-  const retry = incomplete.getByRole("button", { name: "Retry response", exact: true });
+  const recovery = incomplete.locator(".ui-inline-notice");
+  await expect(recovery.getByRole("button", { name: "Continue response", exact: true })).toBeVisible();
+  const retry = recovery.getByRole("button", { name: "Retry response", exact: true });
   await expect(retry).toBeVisible();
   release(3);
   await expect.poll(async () => {

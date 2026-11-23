@@ -1,7 +1,7 @@
 import { chooseSelectOption } from "./select-option.mjs";
 import assert from "node:assert/strict";
 import { expect } from "@playwright/test";
-import { fixture } from "./ui-fixture.mjs";
+import { fixture, savedTextWorkspace } from "./ui-fixture.mjs";
 
 const model = { id: "gemma", name: "Gemma", installed: true, format: "gguf", supportsVision: true, supportsTools: true };
 const adapter = "C:\\styles\\character.safetensors";
@@ -60,6 +60,30 @@ try {
   await page.reload();
   await page.getByText("Two images are ready.", { exact: true }).waitFor();
   assert.equal(await page.locator(".text-generated-artifact").count(), 2);
+
+  const workspace = await savedTextWorkspace(page);
+  const active = workspace.threads.find((thread) => thread.id === workspace.activeId);
+  active.imageRenderSettings["4b-lora"].width = 513;
+  await savedTextWorkspace(page, workspace);
+  await page.reload();
+  const composer = page.getByRole("textbox", { name: "Message", exact: true });
+  await composer.fill("Retry with a corrected image width.");
+  await button("Send message").click();
+  await expect(page.getByRole("alert")).toContainText("Correct the image settings");
+  assert.equal(state.textRequests.length, 1);
+  await button("Open image settings").click();
+  const settings = page.getByRole("complementary", { name: "Chat settings panel" });
+  await expect(settings).toBeFocused();
+  await expect(settings.getByRole("button", { name: "Image", exact: true })).toHaveAttribute("aria-pressed", "true");
+  const width = settings.getByLabel("Width", { exact: true });
+  await expect(width).toHaveAttribute("aria-invalid", "true");
+  await expect(composer).toHaveValue("Retry with a corrected image width.");
+  await width.fill("512");
+  await expect(width).toHaveAttribute("aria-invalid", "false");
+  await button("Close chat settings").click();
+  await button("Send message").click();
+  await expect.poll(() => state.textRequests.length).toBe(2);
+  assert.equal(state.textRequests[1].imageSettings.width, 512);
   assert.deepEqual(errors, []);
   console.log("Chat submits references, LoRA strength, and batch size and persists both images.");
 } finally {

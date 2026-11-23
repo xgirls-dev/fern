@@ -259,9 +259,12 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
   const modelActionRef = useRef(false);
   const [statusError, setStatusError] = useState<string | null>(null);
   const replyPaused = useTextReplyPause(status.job);
-  const [actionError, setError] = useState<{ message: string; threadId?: string } | null>(null);
-  const setActionError = useCallback((message: string | null, threadId?: string) => {
-    setError(message ? { message, threadId } : null);
+  const [actionError, setError] = useState<{ message: string; threadId?: string; recovery?: "image-settings" } | null>(null);
+  const setActionError = useCallback((message: string | null, threadId?: string, recovery?: "image-settings") => {
+    setError(message ? { message, threadId, recovery } : null);
+  }, []);
+  const dismissActionError = useCallback((shown: NonNullable<typeof actionError>) => {
+    setError((current) => current === shown ? null : current);
   }, []);
   const [storageError, setStorageError] = useState<string | null>(null);
   const [stoppingId, setStoppingId] = useState<string | null>(null);
@@ -983,7 +986,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
       : undefined;
     const imageSettings = imageModel ? chatImageSettings(imageModel, thread.imageRenderSettings?.[imageModel.id]) : undefined;
     if (imageModel && imageSettings && Object.keys(chatImageErrors(imageModel, imageSettings)).length) {
-      setActionError("Correct the image settings or turn image generation off before sending.", thread.id);
+      setActionError("Correct the image settings or turn image generation off before sending.", thread.id, "image-settings");
       return;
     }
     const { contextSize, maxNewTokens } = chatTokenLimits(thread, model);
@@ -1216,7 +1219,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
 
   return {
     sidebarThreads,
-    threads: storageReady ? threads : [], activeThread, status, statusLoaded, modelAction, submitting, draftAttachments: attachmentStates, attachingDocument, attachmentReady, savingAttachment, statusError, actionError, storageReady, storageError, retryStorage, busy, computeDevice,
+    threads: storageReady ? threads : [], activeThread, status, statusLoaded, modelAction, submitting, draftAttachments: attachmentStates, attachingDocument, attachmentReady, savingAttachment, statusError, actionError, dismissActionError, storageReady, storageError, retryStorage, busy, computeDevice,
     pendingReplyOutput: (thread: TextThread) => pendingTextReply(thread, liveJobRef.current),
     primaryThread, secondaryThread, activePane, splitPercent: workspace.splitPercent ?? 50, compareThread, closePane, resizePanes, focusPane,
     folders: workspace.folders ?? EMPTY_CHAT_FOLDERS, organize,

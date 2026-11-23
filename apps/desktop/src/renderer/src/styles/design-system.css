@@ -309,6 +309,10 @@ input.ui-checkbox[type="checkbox"] {
 .ui-model-status { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 12px; line-height: 18px; }
 .ui-model-status.is-installed::before { content: ""; flex: 0 0 6px; width: 6px; height: 6px; border-radius: 50%; background: #56a879; }
 .ui-error-message, .ui-model-card > .ui-error-message { min-width: 0; margin: 0 0 var(--ui-space-3); color: var(--danger); font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
+.ui-inline-notice { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ui-space-1) var(--ui-space-3); min-width: 0; padding: var(--ui-space-2) var(--ui-space-3); border-radius: var(--ui-radius-control); background: var(--secondary-bg); color: var(--muted); font-size: 13px; line-height: 1.45; }
+.ui-inline-notice[data-tone="error"] .ui-inline-notice-message { color: var(--danger); }
+.ui-inline-notice-message { flex: 1 1 14rem; min-width: 0; overflow-wrap: anywhere; }
+.ui-inline-notice-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ui-space-1); min-width: 0; }
 .ui-model-card > .ui-error-message { margin: 0; }
 .ui-empty-state { display: flex; min-height: 220px; flex-direction: column; align-items: center; justify-content: center; gap: var(--ui-space-3); padding: var(--ui-space-5); text-align: center; }
 .ui-empty-state strong { color: var(--foreground); font-size: 14px; line-height: 20px; }
