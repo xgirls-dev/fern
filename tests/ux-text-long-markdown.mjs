@@ -257,6 +257,10 @@ try {
     window.Worker = class extends NativeWorker {
       postMessage(data) {
         this.markdownHistory ??= !data.streaming;
+        if (window.pendingFormattingTail && data.content.endsWith(window.pendingFormattingTail)) {
+          window.releasePendingFormatting = () => super.postMessage(data);
+          return;
+        }
         if (this.markdownHistory && !historyReleased) historyRequests.push(() => super.postMessage(data));
         else super.postMessage(data);
       }
@@ -264,11 +268,26 @@ try {
   });
   await page.reload();
   await expect.poll(() => page.evaluate(() => window.markdownHistoryBlocked())).toBe(true);
+  const holdFormatting = (tail) => page.evaluate((ending) => {
+    window.pendingFormattingTail = ending;
+    window.releasePendingFormatting = undefined;
+  }, tail);
+  const releaseFormatting = () => page.evaluate(() => {
+    window.pendingFormattingTail = "";
+    window.releasePendingFormatting();
+  });
+  const formatting = reply.locator("[data-chat-markdown-formatting]");
+  const replyStatus = page.getByRole("status", { name: "Reply status" });
   await composer.fill("Write a new reply while saved replies are being opened.");
   await send.click();
   await expect(reply).toHaveClass(/text-message--streaming/);
   await expect.poll(() => state.textStatus.job.status).toBe("running");
+  await holdFormatting("**This is a live update");
   state.textStatus.job = { ...state.textStatus.job, partialText: `${mediumReply}**This is a live update` };
+  await expect(formatting).toHaveText("Formatting response…");
+  await expect(reply.locator(".text-message-content")).not.toContainText("### Short section");
+  await expect.poll(() => page.evaluate(() => typeof window.releasePendingFormatting)).toBe("function");
+  await releaseFormatting();
   await expect(reply.locator("strong")).toHaveText("This is a live update");
   state.textStatus.job = {
     ...state.textStatus.job,
@@ -283,10 +302,18 @@ try {
   await send.click();
   await expect(reply).toHaveClass(/text-message--streaming/);
   await expect.poll(() => state.textStatus.job.status).toBe("running");
+  await holdFormatting("**The final answer arrived in one update.**");
   state.textStatus.job = { ...state.textStatus.job, status: "complete",
     partialText: `${mediumReply}**The final answer arrived in one update.**`, finishedAt: Date.now() / 1000 };
   await expect(reply).not.toHaveClass(/text-message--streaming/);
+  await expect(formatting).toHaveText("Formatting response…");
+  await expect(replyStatus).toBeEmpty();
+  await expect(reply.locator(".text-message-content")).not.toContainText("### Short section");
+  await expect.poll(() => page.evaluate(() => typeof window.releasePendingFormatting)).toBe("function");
+  await releaseFormatting();
   await expect(reply.locator("strong")).toHaveText("The final answer arrived in one update.");
+  await expect(formatting).toHaveCount(0);
+  await expect(replyStatus).toHaveText("Reply ready.");
 
   await page.getByRole("button", { name: "Regenerate response", exact: true }).click();
   await expect(reply).toHaveClass(/text-message--streaming/);

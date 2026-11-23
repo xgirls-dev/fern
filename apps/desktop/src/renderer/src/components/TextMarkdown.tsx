@@ -8,6 +8,7 @@ import WrapText from "lucide-react/dist/esm/icons/wrap-text.mjs";
 import { notify } from "../lib/notifications";
 import { useChatMarkdown } from "../hooks/useChatMarkdown";
 import { Button } from "./ui/controls";
+import { ProgressLabel } from "./ui/ProgressLabel";
 import { Tooltip } from "./ui/Tooltip";
 
 const StreamingCode = createContext(false);
@@ -203,7 +204,7 @@ const MarkdownBlock = memo(function MarkdownBlock({ node, cursor }: { node: Root
 export const TextMarkdown = memo(function TextMarkdown({ content, streaming = false, receivingReply = streaming, cursor, preserveSelection = false }: {
   content: string; streaming?: boolean; receivingReply?: boolean; cursor?: StreamCursor; preserveSelection?: boolean;
 }) {
-  const parsed = useChatMarkdown(content, streaming, receivingReply);
+  const { blocks: parsed, pending } = useChatMarkdown(content, streaming, receivingReply);
   const rendered = useRef(parsed);
   // A pending parse can replace visible nodes even when the reply text is held.
   useLayoutEffect(() => {
@@ -218,8 +219,13 @@ export const TextMarkdown = memo(function TextMarkdown({ content, streaming = fa
     while (tail >= 0 && blocks[tail].type !== "element") tail -= 1;
     return blocks.map((block, index) => <MarkdownBlock key={index} node={block} cursor={index === tail ? cursor : undefined} />);
   }, [blocks, cursor]);
+  const hasBlocks = !!elements?.length;
+  const formatting = !elements || (pending && (!hasBlocks || !receivingReply));
   return <StreamingCode.Provider value={streaming}>
-    {elements ?? <p data-chat-markdown-pending="" data-stream-tail={cursor}>{content.slice(0, 512)}…</p>}
-    {cursor && <span className="text-stream-cursor" data-waiting={cursor === "waiting" || undefined} aria-hidden="true" />}
+    {elements}
+    {formatting && <div data-chat-markdown-formatting="" data-chat-markdown-pending={!hasBlocks || undefined}>
+      <ProgressLabel className="text-thinking">Formatting response…</ProgressLabel>
+    </div>}
+    {hasBlocks && cursor && <span className="text-stream-cursor" data-waiting={cursor === "waiting" || undefined} aria-hidden="true" />}
   </StreamingCode.Provider>;
 });

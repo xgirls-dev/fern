@@ -957,7 +957,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
         {draftTooLong && <p id={draftLimitId} role="status" className="text-composer-limit">{PROMPT_LIMIT_MESSAGE} Shorten the draft or choose a GGUF model.</p>}
         <div className="text-composer-hint"><span role="status" aria-atomic="true">{modelNotice ? "" : activity || unavailableReason}</span>{otherResponseThread && <Button variant="ghost" className="text-open-running" onClick={() => studio.selectThread(otherResponseThread.id)}>Open running chat</Button>}<span className="text-keyboard-hint">{!draftTooLong && draftCharacters !== undefined && draftCharacters >= PROMPT_COUNT_THRESHOLD
           ? `${draftCharacters.toLocaleString()} / ${TEXT_MESSAGE_CHARACTER_LIMIT.toLocaleString()}` : "Enter to send · Shift + Enter for newline"}</span></div>
-        <TextReplyAnnouncement key={activeThread.id} jobId={displayJobId} inspectionMessageId={inspectionMessageId} messages={activeThread.messages} />
+        <TextReplyAnnouncement key={activeThread.id} jobId={displayJobId} inspectionMessageId={inspectionMessageId} messages={activeThread.messages} conversation={feedRef} />
         {empty && <div className="text-empty-actions" role="group" aria-label="Creation workspaces">
           <Button variant="ghost" onClick={onCreateImage}><ImagePlus size={15} aria-hidden="true" /> Create image</Button>
           <Button variant="ghost" onClick={onCreateSpeech}><AudioLines size={15} aria-hidden="true" /> Create speech</Button>

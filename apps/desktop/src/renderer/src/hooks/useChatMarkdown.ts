@@ -101,7 +101,7 @@ function finishParsedReply(previous: ParsedWorkerMarkdown | null, content: strin
   return [...previous.nodes.slice(0, prefix.blockCount), ...parseChatMarkdown(tail, false).children];
 }
 
-export function useChatMarkdown(content: string, streaming: boolean, receivingReply = streaming): RootContent[] | null {
+export function useChatMarkdown(content: string, streaming: boolean, receivingReply = streaming) {
   const view = useId();
   const [workerFailed, setWorkerFailed] = useState(false);
   const [largeResult, setLargeResult] = useState<ParsedWorkerMarkdown | null>(null);
@@ -202,9 +202,8 @@ export function useChatMarkdown(content: string, streaming: boolean, receivingRe
     drain();
   }, [content, needsWorker, receivingReply, streaming, view]);
 
-  if (smallResult) return smallResult.nodes;
-  if (finalNodes) return finalNodes;
-  if (fitsContent(largeResult, content)) return largeResult!.nodes;
-  if (fitsContent(latestSmall.current, content)) return latestSmall.current!.nodes;
-  return null;
+  const blocks = smallResult?.nodes ?? finalNodes
+    ?? (fitsContent(largeResult, content) ? largeResult!.nodes : null)
+    ?? (fitsContent(latestSmall.current, content) ? latestSmall.current!.nodes : null);
+  return { blocks, pending: needsWorker };
 }
