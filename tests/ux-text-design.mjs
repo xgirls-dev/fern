@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { expect } from '@playwright/test';
 import { fixture, savedTextWorkspace } from './ui-fixture.mjs';
 const textStatus = { models: [{ id: 'qwen', name: 'Qwen 2.5 · 0.5B', path: 'C:/models/qwen2.5-0.5b-instruct-int4', installed: true }], runtimeAvailable: true, runtimeError: null, devices: ['AUTO','GPU','CPU'], job: {id:null,status:'idle'} };
 const {page, errors, dir, close} = await fixture({textStatus});
@@ -75,7 +76,27 @@ try {
   await page.getByRole('button',{name:'Text thread: A simple way to get started',exact:true}).click();
   await page.locator('.text-message-content pre').waitFor();
   await page.getByRole('button',{name:'Copy code',exact:true}).click();
-  await page.getByRole('button',{name:'Code copied',exact:true}).waitFor();
+  const codeCopied = page.getByRole('button',{name:'Code copied',exact:true});
+  await codeCopied.waitFor();
+  await codeCopied.waitFor({state:'detached'});
+  await page.evaluate(() => {
+    window.pendingCopies = [];
+    window.studio.copyText = () => new Promise((resolve, reject) => {
+      window.pendingCopies.push({ resolve, reject });
+    });
+  });
+  const copyCode = page.getByRole('button',{name:'Copy code',exact:true});
+  await copyCode.click();
+  await copyCode.click();
+  await page.evaluate(() => window.pendingCopies[1].resolve());
+  await expect(codeCopied).toBeVisible();
+  await page.evaluate(() => window.pendingCopies[0].reject(new Error('Older write failed')));
+  await expect(codeCopied).toBeVisible();
+  await expect(page.getByText('Could not copy the code.',{exact:false})).toHaveCount(0);
+  await codeCopied.click();
+  await page.evaluate(() => window.pendingCopies[2].reject(new Error('Latest write failed')));
+  await expect(copyCode).toBeVisible();
+  await expect(page.getByText('Could not copy the code.',{exact:false})).toBeVisible();
   await page.locator('.text-conversation').evaluate(e=>e.scrollTop=0);
   await page.screenshot({path:`${dir}/text-design-light.png`});
   await page.evaluate(()=>document.documentElement.dataset.theme='dark');

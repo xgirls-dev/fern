@@ -2,11 +2,12 @@ import { cloneElement, createContext, Fragment, isValidElement, memo, useCallbac
 import { jsx, jsxs } from "react/jsx-runtime";
 import { toJsxRuntime } from "hast-util-to-jsx-runtime";
 import type { Element, RootContent } from "hast";
+import Check from "lucide-react/dist/esm/icons/check.mjs";
 import Copy from "lucide-react/dist/esm/icons/copy.mjs";
 import MoveHorizontal from "lucide-react/dist/esm/icons/move-horizontal.mjs";
 import WrapText from "lucide-react/dist/esm/icons/wrap-text.mjs";
-import { notify } from "../lib/notifications";
 import { useChatMarkdown } from "../hooks/useChatMarkdown";
+import { useClipboardCopy } from "../hooks/useClipboardCopy";
 import { Button } from "./ui/controls";
 import { ProgressLabel } from "./ui/ProgressLabel";
 import { Tooltip } from "./ui/Tooltip";
@@ -45,24 +46,6 @@ function useCodeOverflow(source: string | undefined, wrap: boolean | null) {
   return { ref, overflowing };
 }
 
-function useCopyFeedback(errorMessage: string) {
-  const [copied, setCopied] = useState(false);
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
-  const copy = async (value: string) => {
-    try {
-      await window.studio.copyText(value);
-      setCopied(true);
-      if (timer.current) clearTimeout(timer.current);
-      timer.current = setTimeout(() => setCopied(false), 1500);
-    } catch {
-      setCopied(false);
-      notify(errorMessage, "error");
-    }
-  };
-  return { copied, copy };
-}
-
 function CodeBlock({ children, "data-stream-tail": streamTail }: ComponentPropsWithoutRef<"pre"> & StreamTailProps) {
   const streaming = useContext(StreamingCode);
   const code = isValidElement<{ className?: string; children?: unknown }>(children) ? children.props : undefined;
@@ -70,7 +53,7 @@ function CodeBlock({ children, "data-stream-tail": streamTail }: ComponentPropsW
   const source = typeof code?.children === "string" ? code.children : undefined;
   const [wrap, setWrap] = useState<boolean | null>(null);
   const { ref, overflowing } = useCodeOverflow(source, wrap);
-  const { copied, copy } = useCopyFeedback("Could not copy the code. Select it and copy manually.");
+  const { copied, copy } = useClipboardCopy(source ?? children, "Could not copy the code. Select it and copy manually.");
 
   useEffect(() => {
     if (streaming || !language || !source || source.length > 32_000 || !CSS.highlights || typeof StaticRange !== "function") return;
@@ -91,8 +74,9 @@ function CodeBlock({ children, "data-stream-tail": streamTail }: ComponentPropsW
           <WrapText size={13} aria-hidden="true" />Wrap
         </Button>}
         <Button variant="ghost" onClick={() => void copy(source ?? ref.current?.textContent ?? "")} aria-label={copied ? "Code copied" : "Copy code"}>
-          <Copy size={13} aria-hidden="true" />{copied ? "Copied" : "Copy"}
+          {copied ? <Check size={13} aria-hidden="true" /> : <Copy size={13} aria-hidden="true" />}{copied ? "Copied" : "Copy"}
         </Button>
+        <span className="sr-only" role="status">{copied ? "Code copied" : ""}</span>
       </div>
     </div>
     <pre ref={ref} data-chat-horizontal-scroll tabIndex={scrollable ? 0 : undefined} role={scrollable ? "region" : undefined}
@@ -114,7 +98,7 @@ function MarkdownTable({ children, "data-stream-tail": streamTail }: ComponentPr
   const [overflowing, setOverflowing] = useState(false);
   const [fitted, setFitted] = useState<boolean | null>(null);
   const [tightFit, setTightFit] = useState(false);
-  const { copied, copy } = useCopyFeedback("Could not copy the table. Select its cells and copy manually.");
+  const { copied, copy } = useClipboardCopy(children, "Could not copy the table. Select its cells and copy manually.");
   useEffect(() => {
     const viewport = scroller.current;
     const element = table.current;
@@ -153,9 +137,10 @@ function MarkdownTable({ children, "data-stream-tail": streamTail }: ComponentPr
       </Button>}
       <Tooltip content={copied ? "Table copied" : "Copy table as tab-separated values"}>
         <Button variant="ghost" onClick={copyRows} aria-label={copied ? "Table copied" : "Copy table"}>
-          <Copy size={13} aria-hidden="true" />{copied ? "Copied" : "Copy table"}
+          {copied ? <Check size={13} aria-hidden="true" /> : <Copy size={13} aria-hidden="true" />}{copied ? "Copied" : "Copy table"}
         </Button>
       </Tooltip>
+      <span className="sr-only" role="status">{copied ? "Table copied" : ""}</span>
     </div>
     <div className="text-table-scroll" ref={scroller} data-chat-horizontal-scroll tabIndex={overflowing ? 0 : undefined}
       role={overflowing ? "region" : undefined} aria-label={overflowing ? "Scrollable table" : undefined}>

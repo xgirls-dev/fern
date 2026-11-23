@@ -28,9 +28,23 @@ try {
   }] });
   await page.reload();
   await expect(firstReply).toContainText(chosen);
+  await page.evaluate(() => {
+    window.pendingCopies = [];
+    window.studio.copyText = (text) => new Promise((resolve, reject) => {
+      window.pendingCopies.push({ text, resolve, reject });
+    });
+  });
+  const copyMessage = firstReply.getByRole("button", { name: "Copy message", exact: true });
+  await copyMessage.click();
   await firstReply.getByRole("button", { name: "Previous response version" }).click();
   await expect(firstReply).toContainText(alternative);
   await expect(firstReply).toContainText("Chat uses version 2");
+  await copyMessage.click();
+  assert.deepEqual(await page.evaluate(() => window.pendingCopies.map(({ text }) => text)), [chosen, alternative]);
+  await page.evaluate(() => window.pendingCopies[1].resolve());
+  await expect(firstReply.getByRole("button", { name: "Copied", exact: true })).toBeVisible();
+  await page.evaluate(() => window.pendingCopies[0].resolve());
+  await expect(firstReply.getByRole("button", { name: "Copied", exact: true })).toBeVisible();
   await expect(composer).toHaveValue("Keep this draft");
 
   await button("Search threads").click();
@@ -65,7 +79,7 @@ try {
     "Which route?", chosen, "How long will it take?", "About three hours.", "Keep this draft",
   ]);
   assert.deepEqual(errors, []);
-  console.log("Historical versions, reasoning search, exact-version branching and unchanged source context passed.");
+  console.log("Historical versions, clipboard feedback, reasoning search, exact-version branching and unchanged source context passed.");
 } finally {
   await close();
 }

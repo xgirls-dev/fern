@@ -27,6 +27,7 @@ Fern gives content visual priority and keeps controls quiet until needed. Each s
 - `SearchDialogField` is the shared search header inside a dialog. Label the field and close button. Supply the keyboard behavior for the results that belong to the field.
 - `Disclosure` groups optional content with a native summary that opens and closes with the keyboard. Use `inline` for details within a message and `section` for a full-width settings group. Use `open` and `onOpenChange` when another part of the interface tracks the open state. `lockOpen` keeps a search result visible while Find is active.
 - `Tooltip` provides a brief hint on hover and keyboard focus. Use `TooltipIconButton` for an icon action or `triggerTooltip` for a dropdown or select trigger. Wrap a large set of triggers in `TooltipScope` to share one popup. Give the trigger an accessible name and keep information needed to complete a task visible within the interface.
+- `useClipboardCopy` shares copy feedback across chat messages, code blocks, and tables. Tie feedback to the current source, show a check after a successful write, and announce the result through a status region.
 - `ProgressLabel` pairs a spinner with a short description of ongoing work. Place live announcements on the surrounding status region when the same progress appears in more than one location.
 - `ui-link` styles inline links with a visible underline and keyboard focus without browser-specific visited colors.
 - `ErrorMessage` gives failures a consistent, wrapping treatment and announces them as alerts.

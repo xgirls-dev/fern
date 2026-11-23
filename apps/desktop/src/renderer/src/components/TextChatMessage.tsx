@@ -1,4 +1,5 @@
-import { memo, useEffect, useId, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { memo, useId, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import Check from "lucide-react/dist/esm/icons/check.mjs";
 import Copy from "lucide-react/dist/esm/icons/copy.mjs";
 import GitBranch from "lucide-react/dist/esm/icons/git-branch.mjs";
 import Info from "lucide-react/dist/esm/icons/info.mjs";
@@ -6,9 +7,9 @@ import Pencil from "lucide-react/dist/esm/icons/pencil.mjs";
 import RotateCcw from "lucide-react/dist/esm/icons/rotate-ccw.mjs";
 import Trash2 from "lucide-react/dist/esm/icons/trash-2.mjs";
 import { chatSelectionIntersects } from "../hooks/useTextScroll";
+import { useClipboardCopy } from "../hooks/useClipboardCopy";
 import { resolveAssetUrl } from "../lib/api";
 import type { ChatSearchMatch } from "../lib/chatSearch";
-import { notify } from "../lib/notifications";
 import { hasStreamingMarkdown } from "../lib/streamingMarkdown";
 import { segmentGraphemes } from "../lib/text";
 import { replyVersions, type TextMessage } from "../lib/textThreads";
@@ -173,8 +174,6 @@ export const TextChatMessage = memo(function TextChatMessage({ message, selectio
 }) {
   const [detailsFor, setDetailsFor] = useState<{ id: string; placement: "context" | "actions" }>();
   const [reasoningOpen, setReasoningOpen] = useState(!!initialReasoningOpen);
-  const [copiedId, setCopiedId] = useState<string>();
-  const copyTimer = useRef<number | undefined>(undefined);
   const menuButton = useRef<HTMLButtonElement>(null);
   const editButton = useRef<HTMLButtonElement>(null);
   const detailsId = useId();
@@ -215,24 +214,14 @@ export const TextChatMessage = memo(function TextChatMessage({ message, selectio
     requestContext?.omittedAttachments ? "Some earlier image attachments were left out." : "",
     runtimeContext?.compactedMessages ? "Earlier messages were summarized to fit this response." : "",
   ].filter(Boolean).join(" ") : "";
-  const copied = copiedId === message.id;
+  const { copied, copy } = useClipboardCopy(streaming || editing ? undefined : message.content,
+    "Could not copy the message. You can select and copy its text.", message.id);
   const targetId = contextVersionId ?? message.id;
-  useEffect(() => () => window.clearTimeout(copyTimer.current), []);
   useLayoutEffect(() => {
     if (wasEditing.current && !editing) editButton.current?.focus({ preventScroll: true });
     wasEditing.current = editing;
   }, [editing]);
 
-  const copy = async () => {
-    try {
-      await window.studio.copyText(message.content);
-      setCopiedId(message.id);
-      window.clearTimeout(copyTimer.current);
-      copyTimer.current = window.setTimeout(() => setCopiedId(undefined), 1300);
-    } catch {
-      notify("Could not copy the message. You can select and copy its text.", "error");
-    }
-  };
   const cancelDelete = () => {
     onDeleteRequested?.(null);
     menuButton.current?.focus({ preventScroll: true });
@@ -303,7 +292,9 @@ export const TextChatMessage = memo(function TextChatMessage({ message, selectio
       </InlineNotice>}
       {!streaming && !editing && <div className="text-message-tools">
         {message.content.trim() && <TooltipIconButton className="text-icon-button" aria-label={copied ? "Copied" : "Copy message"}
-          tooltip={copied ? "Copied" : "Copy message"} tooltipSide="bottom" onClick={() => void copy()}><Copy size={15} aria-hidden="true" /></TooltipIconButton>}
+          tooltip={copied ? "Copied" : "Copy message"} tooltipSide="bottom" onClick={() => void copy(message.content)}>
+          {copied ? <Check size={15} aria-hidden="true" /> : <Copy size={15} aria-hidden="true" />}
+        </TooltipIconButton>}
         {onEdit && <TooltipIconButton ref={editButton} className="text-icon-button" aria-label="Edit message"
           tooltip={editingAnother ? "Finish or cancel the open prompt edit first" : "Edit message"} tooltipSide="bottom"
           disabled={editingAnother} onClick={() => onEdit(message)}><Pencil size={15} aria-hidden="true" /></TooltipIconButton>}
@@ -321,7 +312,7 @@ export const TextChatMessage = memo(function TextChatMessage({ message, selectio
             onSelectVersion?.(contextVersionId ?? message.id, versions[index].id);
           }} />}
         {contextVersion >= 0 && contextVersion !== version && <span className="text-response-preview" role="status">Chat uses version {contextVersion + 1}</span>}
-        {copied && <span className="sr-only" role="status">Copied</span>}
+        <span className="sr-only" role="status">{copied ? "Message copied" : ""}</span>
       </div>}
       {promptVersions}
       {!editing && confirmDelete && onDelete && <InlineConfirmation className="text-message-delete"
