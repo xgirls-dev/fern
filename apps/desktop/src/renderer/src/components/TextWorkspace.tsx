@@ -20,8 +20,9 @@ import { TextPromptVersions } from "./TextPromptVersions";
 import { TextReplyAnnouncement } from "./TextReplyAnnouncement";
 import { TEXT_TRANSCRIPT_WINDOW_THRESHOLD, TextTranscriptWindow } from "./TextTranscriptWindow";
 import { TextFindBar } from "./TextFindBar";
-import { Button, IconButton, Input, SegmentedControl, Select, Textarea } from "./ui/controls";
+import { Button, IconButton, SegmentedControl, Select, Textarea } from "./ui/controls";
 import { Slider } from "./ui/Slider";
+import { NumberField } from "./ui/NumberField";
 import { Disclosure } from "./ui/Disclosure";
 import { DropdownItem } from "./ui/Dropdown";
 import { Tooltip, TooltipIconButton } from "./ui/Tooltip";
@@ -68,26 +69,9 @@ function TokenField({ label, value, min, max, disabled, help, onChange }: {
   label: string; value: number; min: number; max: number; disabled: boolean; help?: string;
   onChange: (number: number) => void;
 }) {
-  const id = useId();
-  const [draft, setDraft] = useState(String(value));
-  useEffect(() => setDraft(String(value)), [value]);
-  const number = Number(draft);
-  const valid = draft !== "" && Number.isInteger(number) && number >= min && number <= max;
-  const hint = valid ? help : `Use a whole number from ${min.toLocaleString()} to ${max.toLocaleString()}.`;
-  return (
-    <label htmlFor={id}>{label}
-      <Input id={id} type="number" inputMode="numeric" min={min} max={max} step={1}
-        value={draft} disabled={disabled} aria-invalid={!valid} aria-describedby={hint ? `${id}-help` : undefined}
-        onBlur={() => { if (!valid) setDraft(String(value)); }}
-        onChange={(event) => {
-          const next = event.currentTarget.valueAsNumber;
-          setDraft(event.currentTarget.value);
-          if (Number.isInteger(next) && next >= min && next <= max) onChange(next);
-        }}
-      />
-      {hint && <small className={valid ? "text-setting-help" : "field-error"} id={`${id}-help`}>{hint}</small>}
-    </label>
-  );
+  return <NumberField label={label} value={value} min={min} max={max} integer disabled={disabled} help={help}
+    invalidHelp={`Use a whole number from ${min.toLocaleString()} to ${max.toLocaleString()}.`}
+    onChange={(next) => { if (next !== undefined) onChange(next); }} />;
 }
 
 const samplerNumberFields = [
@@ -104,24 +88,8 @@ function SamplingNumberField({ field, value, disabled, onChange, compact = false
   compact?: boolean;
   onChange: (number?: number) => void;
 }) {
-  const id = useId();
-  const [draft, setDraft] = useState(value?.toString() ?? "");
-  useEffect(() => setDraft(value?.toString() ?? ""), [value]);
-  const number = Number(draft);
-  const valid = (!draft && !compact) || (Boolean(draft) && Number.isFinite(number) && number >= field.min && number <= field.max
-    && (field.step !== 1 || Number.isInteger(number)));
-  return <label htmlFor={id}><span className={compact ? "sr-only" : undefined}>{field.label}</span>
-    <Input id={id} type="number" min={field.min} max={field.max} step={field.step === 1 ? 1 : "any"} value={draft}
-      placeholder={field.placeholder} disabled={disabled} aria-invalid={!valid}
-      onBlur={() => { if (!valid) setDraft(value?.toString() ?? ""); }}
-      onChange={(event) => {
-        const next = event.currentTarget.value;
-        const parsed = event.currentTarget.valueAsNumber;
-        setDraft(next);
-        if (!next && !compact) onChange(undefined);
-        else if (Number.isFinite(parsed) && parsed >= field.min && parsed <= field.max && (field.step !== 1 || Number.isInteger(parsed))) onChange(parsed);
-      }} />
-  </label>;
+  return <NumberField label={field.label} value={value} min={field.min} max={field.max} integer={field.step === 1}
+    optional={!compact} hideLabel={compact} disabled={disabled} placeholder={field.placeholder} onChange={onChange} />;
 }
 
 function SamplingRangeField({ label, help, min, max, value, disabled, onChange }: {

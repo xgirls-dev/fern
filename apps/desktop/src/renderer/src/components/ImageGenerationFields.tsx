@@ -176,11 +176,14 @@ function DraftNumberInput({ error, ...props }: ComponentProps<"input"> & { error
       }}
       onBlur={(event) => {
         focused.current = false;
+        if (event.currentTarget.validity.badInput) setDraft(String(props.value ?? ""));
         props.onBlur?.(event);
       }}
       onChange={(event) => {
-        lastEdit.current = Number(event.target.value);
-        setDraft(event.target.value);
+        const { value, validity } = event.currentTarget;
+        setDraft(value);
+        if (validity.badInput) return;
+        lastEdit.current = Number(value);
         props.onChange?.(event);
       }} />
     {error && <span className="field-error" id={errorId} role="alert">{error}</span>}
