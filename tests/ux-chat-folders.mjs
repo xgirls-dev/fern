@@ -109,12 +109,32 @@ try {
   await chat.waitFor();
   assert.equal(await composer.inputValue(), "Keep these local notes.");
 
+  const longFolder = "Field notes from installations with alternating formats and long checkpoints";
+  await item("New subfolder", await folderMenu("Studio plans")).click();
+  await saveFolder("New subfolder", longFolder);
+  await page.setViewportSize({ width: 390, height: 660 });
+  await button("Expand sidebar").click();
   await button("Actions for text thread Local notes", sidebar).click();
   await item("Move to folder…", page.getByRole("menu", { name: "Actions for Local notes", exact: true })).click();
   const moveChat = page.getByRole("dialog", { name: "Move chat", exact: true });
-  await chooseSelectOption(moveChat.getByRole("combobox", { name: "Destination for Local notes" }), "Studio plans");
+  const destination = moveChat.getByRole("combobox", { name: "Destination for Local notes" });
+  const compactOptions = await openSelect(destination);
+  const longPath = compactOptions.getByRole("option", { name: `Studio plans / ${longFolder}`, exact: true });
+  await longPath.scrollIntoViewIfNeeded();
+  await expect.poll(() => longPath.evaluate((option) => {
+    const range = document.createRange();
+    range.selectNodeContents(option.querySelector(".ui-popup-label"));
+    const lines = Array.from(range.getClientRects());
+    return lines.length > 1 && lines.every(({ left, top, height, width }) =>
+      option.contains(document.elementFromPoint(left + Math.min(width / 2, 2), top + height / 2)));
+  })).toBe(true);
+  await page.keyboard.press("Escape");
+  await expect(moveChat).toBeVisible();
+  await expect(destination).toBeFocused();
+  await chooseSelectOption(destination, "Studio plans");
   await button("Move", moveChat).click();
   await expectLocation("Local notes", "Studio plans", "chat");
+  await page.setViewportSize({ width: 1440, height: 920 });
   const folderIcon = await folder("Sources").locator("svg").last().boundingBox();
   const chatIcon = await chat.locator("svg").first().boundingBox();
   assert(Math.abs(folderIcon.x - chatIcon.x) < 1, "Sibling folders and chats should align on the same icon column.");

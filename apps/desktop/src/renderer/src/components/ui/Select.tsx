@@ -38,8 +38,8 @@ export function Select<T extends SelectValue>({
       <BaseSelect.Positioner className="ui-popup-positioner" align="start" side={appearance === "toolbar" ? "top" : "bottom"}
         sideOffset={5} alignItemWithTrigger={false}>
         <BaseSelect.Popup className="ui-popup ui-select-popup" finalFocus={finalFocus}>
-          <BaseSelect.List className="ui-popup-list">
-            {options.map((option) => <BaseSelect.Item className="ui-menu-item ui-popup-item" key={option.value}
+          <BaseSelect.List className="ui-select-list">
+            {options.map((option) => <BaseSelect.Item className="ui-menu-item ui-popup-item ui-select-option" key={option.value}
               value={option.value} disabled={option.disabled} label={option.label}>
               <BaseSelect.ItemText className="ui-popup-label">{option.label}</BaseSelect.ItemText>
               <BaseSelect.ItemIndicator className="ui-popup-indicator"><Check size={14} aria-hidden="true" /></BaseSelect.ItemIndicator>

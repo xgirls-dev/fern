@@ -197,7 +197,10 @@ body:has(.ui-resize-handle[data-resizing][aria-orientation="horizontal"]) { curs
 @media (max-width: 900px) {
   .ui-dialog--search { --ui-dialog-top: 7dvh; }
 }
-.ui-select-popup { min-width: min(max(152px, var(--anchor-width)), var(--available-width)); }
+.ui-select-popup { display: flex; flex-direction: column; min-width: min(max(152px, var(--anchor-width)), 360px, var(--available-width)); overflow: hidden; }
+.ui-select-list { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.ui-select-option { display: grid; grid-template-columns: minmax(0, 1fr) 14px; padding-block: var(--ui-space-1); }
+.ui-select-option .ui-popup-label { overflow: visible; white-space: normal; overflow-wrap: anywhere; }
 .ui-popup-item { user-select: none; }
 .ui-popup-item[data-highlighted], .ui-popup-item[aria-selected="true"] { background: var(--secondary-hover); }
 .ui-popup-item[data-disabled] { opacity: .55; cursor: not-allowed; background: transparent; }

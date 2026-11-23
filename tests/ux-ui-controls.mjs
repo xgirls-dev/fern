@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { expect } from "@playwright/test";
 import { fixture } from "./ui-fixture.mjs";
 
+const longModelName = "Local engineering assistant · Quantized multilingual checkpoint · project-notes-with-extended-context-" + "v2".repeat(24);
 const { page, state, errors, dir, close } = await fixture({
   firstRun: true,
   textStatus: {
@@ -11,6 +12,7 @@ const { page, state, errors, dir, close } = await fixture({
       ...Array.from({ length: 20 }, (_, index) => ({
         id: `installed-${index}`, name: `Installed model ${index + 1}`, installed: true, format: "gguf",
       })),
+      { id: "long-model", name: longModelName, installed: true, format: "gguf" },
     ],
     ggufAvailable: true, job: { id: null, status: "idle" },
   },
@@ -173,6 +175,29 @@ try {
   await button("Toggle theme").click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   await button("Chat settings").press("Enter");
+  const settingsModel = settings.getByRole("combobox", { name: "Settings model", exact: true });
+  await settingsModel.press("ArrowDown");
+  await expect(options).toBeVisible();
+  await page.keyboard.press("End");
+  const lastModel = options.getByRole("option", { name: longModelName, exact: true });
+  await expect(lastModel).toBeFocused();
+  await expect.poll(() => options.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  await expect.poll(() => lastModel.evaluate((option) => {
+    const range = document.createRange();
+    const label = option.querySelector(".ui-popup-label");
+    range.selectNodeContents(label);
+    const lines = Array.from(range.getClientRects());
+    const text = label.getBoundingClientRect();
+    const list = option.closest("[role=listbox]");
+    const viewport = list.getBoundingClientRect();
+    return lines.length > 1 && lines.every((line) => line.right <= text.right + 1 &&
+      line.top >= viewport.top - 1 && line.bottom <= viewport.bottom + 1) &&
+      list.scrollWidth <= list.clientWidth && viewport.left >= 0 && viewport.right <= window.innerWidth;
+  })).toBe(true);
+  await page.screenshot({ path: `${dir}/chat-select-long-options-dark.png` });
+  await page.keyboard.press("Escape");
+  await expect(settingsModel).toBeFocused();
+  await expect(settingsModel).toHaveText("Local model");
   const sampling = settings.locator(".ui-disclosure--section", { hasText: "Advanced sampling" });
   await sampling.locator("summary").press("Space");
   await expect(sampling).toHaveAttribute("open", "");
