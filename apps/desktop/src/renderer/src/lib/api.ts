@@ -235,9 +235,9 @@ export function subscribeToTextJob(threadId: string, jobId: string, onJob: (job:
   return close;
 }
 
-export function recoverChatImage(threadId: string, jobId: string): Promise<{ image: GeneratedChatImage | null; images?: GeneratedChatImage[] }> {
+export function recoverChatImage(threadId: string, jobId: string, cancel: AbortSignal): Promise<{ image: GeneratedChatImage | null; images?: GeneratedChatImage[] }> {
   const query = new URLSearchParams({ threadId, jobId });
-  return requestJson(`/api/text/recover-image?${query}`, { signal: AbortSignal.timeout(15_000) });
+  return requestJson(`/api/text/recover-image?${query}`, { signal: AbortSignal.any([cancel, AbortSignal.timeout(4_000)]) });
 }
 
 export type TextJobAcceptance = { textJob: TextJob } | { job: TextRuntimeStatus };

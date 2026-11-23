@@ -366,6 +366,9 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   const displayJobId = activeThread.pendingJobId ?? (runningHere ? status.job.id : null);
   const inspectionMessageId = displayJobId ? activeThread.messages.find((message) => message.inspectionJobId === displayJobId)?.id : undefined;
   const liveJob = displayJobId && status.job.id === displayJobId && status.job.threadId === activeThread.id ? status.job : null;
+  const restoringReply = pendingHere && !liveJob && !studio.submitting;
+  const restorationLabel = studio.statusLoaded ? inspectionMessageId ? "Recovering image check…" : "Recovering response…"
+    : "Checking for the previous response…";
   const replyContent = pendingReplyOutput?.content || liveJob?.partialText || "";
   const replyReasoning = pendingReplyOutput?.reasoning ?? liveJob?.partialReasoning;
   const replyImages = liveJob?.images ?? pendingReplyOutput?.generatedImages;
@@ -377,10 +380,10 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   const creatingImage = phase.startsWith("Generating image") || phase.startsWith("Generating an image");
   // Image batches publish previews before generation finishes. An existing
   // preview only implies review after the image generation phase ends.
-  const checkingImage = responseHere && !reconnecting && !stopping && !creatingImage &&
+  const checkingImage = responseHere && !restoringReply && !reconnecting && !stopping && !creatingImage &&
     (!!inspectionMessageId || runningHere && (phase.startsWith("Checking") || !!liveJob?.inspection || !!replyImage));
   const inspectionCaption = reconnecting ? (stopping ? "Reconnecting to stop…" : "Reconnecting to check the image…")
-    : stopping ? "Stopping image check…" : "Checking image…";
+    : stopping ? "Stopping image check…" : restoringReply ? restorationLabel : "Checking image…";
   const modelNotice: ModelReadiness | null = responseHere || otherResponseThread ? null
     : installing ? { label: `Installing ${installName ?? "a chat model"}`, detail: install.phase, tone: "pending", action: { label: "View model download", run: openModels } }
     : studio.modelAction ? { label: studio.modelAction, tone: "pending" }
@@ -400,6 +403,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   const replyPaused = runningHere && studio.replyPaused;
   const statusLabel = reconnecting ? stopping ? "Reconnecting to stop…" : "Reconnecting to the text runtime…"
     : stopping ? "Stopping…"
+    : restoringReply ? restorationLabel
     : pendingHere ? liveJob && liveJob.status !== "idle" ? "Finishing response…" : "Starting response…"
     : creatingImage ? "Creating an image…"
     : phase.startsWith("Finding document") ? phase

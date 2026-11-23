@@ -15,13 +15,14 @@ const legacy = { activeId: threadId, threads: [{
 }] };
 const { page, state, errors, close } = await fixture({ firstRun: true, builtRenderer: process.env.FERN_STORAGE_BUILT === "1", legacyTextWorkspace: legacy, textStatus: {
   models: [{ id: "local", name: "Local model", installed: true, format: "gguf" }],
-  ggufAvailable: true, job: { id: null, status: "idle" },
+  ggufAvailable: true, supportsJobPolling: true, job: { id: null, status: "idle" },
 } });
 
 const button = (name) => page.getByRole("button", { name, exact: true });
 const composer = page.getByRole("textbox", { name: "Message", exact: true });
 
 try {
+  await page.route("**/api/text/job", (route) => route.fulfill({ json: state.textStatus.job }));
   await expect(composer).toHaveValue("Legacy draft");
   await expect(page.getByText("Our chosen answer.")).toBeVisible();
   assert.equal(await page.evaluate(() => localStorage.getItem("fern-text-threads:v1")), null);
@@ -95,7 +96,36 @@ try {
   await expect(composer).toHaveValue("Keep this new draft alongside the response.");
   await expect.poll(async () => (await savedTextWorkspace(page)).threads[0].pendingPreview?.reasoning).toBe(reasoning);
 
+  let recoveryRequests = 0;
+  let releaseRecovery;
+  let firstRecoveryReturned = false;
+  await page.route("**/api/text/recover-image?*", async (route) => {
+    recoveryRequests += 1;
+    if (recoveryRequests === 1) {
+      await new Promise((resolve) => { releaseRecovery = resolve; });
+      try { await route.fulfill({ json: { image: null } }); }
+      finally { firstRecoveryReturned = true; }
+      return;
+    }
+    if (recoveryRequests === 2) return route.abort();
+    return route.fulfill({ json: { image: null } });
+  });
+  const pausedJob = state.textStatus.job;
   state.textStatus.job = { id: null, status: "idle" };
+  await expect.poll(() => typeof releaseRecovery).toBe("function");
+  state.textStatus.job = pausedJob;
+  await expect(stream).toContainText("Summarizing earlier messages…");
+  releaseRecovery();
+  await expect.poll(() => firstRecoveryReturned).toBe(true);
+  state.textStatus.job = { ...pausedJob, phase: "Loading model…" };
+  await expect(stream).toContainText("Loading model…");
+  await expect(stream).toContainText(partial);
+  await expect(page.getByText("The backend restarted. The partial response was recovered.")).toHaveCount(0);
+  assert.equal((await savedTextWorkspace(page)).threads[0].pendingJobId, running.id);
+
+  state.textStatus.job = { id: null, status: "idle" };
+  await expect(stream).toContainText("Recovering response…");
+  await expect.poll(() => recoveryRequests).toBe(3);
   await expect(page.getByText("The backend restarted. The partial response was recovered.")).toBeVisible();
   await expect(page.getByRole("article", { name: "Model response" }).last()).toContainText(partial);
   await expect.poll(async () => (await savedTextWorkspace(page)).threads[0].messages.at(-1)?.reasoning).toBe(reasoning);
@@ -163,6 +193,28 @@ try {
   await expect(page.getByText(finalAnswer, { exact: true })).toHaveCount(1);
   await expect(versions).toContainText("2 / 2");
 
+  let failedLookups = 0;
+  await page.route("**/api/text/recover-image?*", (route) => {
+    failedLookups += 1;
+    return route.abort();
+  });
+  await composer.fill("What should the team do next?");
+  await button("Send message").click();
+  await expect.poll(() => state.textRequests.length).toBe(4);
+  const unfinished = state.textStatus.job;
+  const savedStart = "Write down the decisions from the pilot.";
+  state.textStatus.job = { ...unfinished, phase: "Generating…", partialText: savedStart };
+  await expect(stream).toContainText(savedStart);
+  await composer.fill("A new draft after the interrupted reply.");
+  state.textStatus.job = { id: null, status: "idle" };
+  await expect(stream).toContainText("Recovering response…");
+  await expect(page.getByText("The response stopped, and Fern couldn’t check for saved images.", { exact: false })).toBeVisible();
+  await expect(page.getByText(savedStart, { exact: true })).toBeVisible();
+  assert.equal(failedLookups, 3);
+  await expect(composer).toHaveValue("A new draft after the interrupted reply.");
+  await expect(button("Send message")).toBeEnabled();
+  await expect.poll(async () => (await savedTextWorkspace(page)).threads[0].pendingJobId).toBeNull();
+
   const storage = {
     cache: { bytes: 100, fileCount: 1, retentionDays: 30, maxBytes: 1000 },
     outputs: { bytes: 0, fileCount: 0 }, images: { bytes: 0, fileCount: 0 }, audio: { bytes: 0, fileCount: 0 },
@@ -200,7 +252,7 @@ try {
   await expect(composer).toHaveValue("");
   assert.equal((await savedTextWorkspace(page)).activeId, cleared.activeId);
   assert.deepEqual(errors, []);
-  console.log("Chat migration, large transcripts, saved drafts, partial and finished reply recovery, reply versions, and local data reset passed.");
+  console.log("Chat migration, draft persistence, recovery retries and live handoff, reply versions, and local data reset passed.");
 } finally {
   await close();
 }

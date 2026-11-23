@@ -273,7 +273,6 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
   const submission = useRef<TextSubmission | null>(null);
   const activePoll = useRef<symbol | null>(null);
   const receivingJobEvents = useRef(false);
-  const recovering = useRef(new Set<string>());
   const [submitting, setSubmitting] = useState(false);
   const invalidatePoll = useCallback(() => {
     activePoll.current = null;
@@ -343,6 +342,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     return rows;
   }, [storageReady, threads]);
   const hasPendingReply = threads.some((thread) => !!thread.pendingJobId);
+  const runtimeJobId = status.job.id;
   const responding = status.job.status === "running" || hasPendingReply;
   const supportsJobPolling = status.supportsJobPolling === true;
   const useJobPoll = responding && supportsJobPolling;
@@ -534,45 +534,55 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
 
   // The model process may be gone while its last render is already on disk.
   useEffect(() => {
-    if (!ready || !storageReady || submitting || status === idleStatus || statusError) return;
-    for (const { id, pendingJobId: jobId } of workspaceRef.current.threads) {
-      if (!jobId || jobId === status.job.id || recovering.current.has(jobId)) continue;
-      recovering.current.add(jobId);
-      const lastLiveJob = liveJobRef.current;
-      void recoverChatImage(id, jobId).then(({ image, images }) => {
-        setWorkspace((saved) => {
-          const current = checkpointTextReply(saved, lastLiveJob);
-          return {
-            ...current,
-            threads: current.threads.map((thread) => {
-              if (thread.id !== id || thread.pendingJobId !== jobId) return thread;
-              const inspectionTarget = thread.messages.find((message) => message.inspectionJobId === jobId);
-              const preview = thread.pendingPreview;
-              const artifact = image ?? images?.[0] ?? preview?.generatedImage;
-              const response: TextMessage = {
-                id: `response-${jobId}`, jobId, role: "assistant", content: preview?.content ?? "",
-                reasoning: preview?.reasoning, createdAt: Date.now(), status: "failed", generatedImage: artifact, generatedImages: images ?? preview?.generatedImages,
-                modelName: status.models.find((model) => model.id === thread.modelId)?.name,
-                requestContext: thread.pendingContext,
-                error: artifact ? "The image was saved before the backend restarted."
-                  : preview?.content || preview?.reasoning ? "The backend restarted. The partial response was recovered."
-                  : "The backend restarted before this response was saved. Retry the response.",
-              };
-              const messages = inspectionTarget
-                ? thread.messages.map((message) => message === inspectionTarget ? {
-                  ...message, inspectionJobId: undefined, status: "failed" as const,
-                  error: "The backend restarted during the image check.",
-                } : message)
-                : finishTextReply(thread, response);
-              return { ...thread, pendingJobId: null, pendingPreview: undefined, pendingContext: undefined, messages };
-            }),
-          };
-        });
-      }).catch(() => {
-        // Keep the request pending and try recovery on the next successful poll.
-      }).finally(() => recovering.current.delete(jobId));
+    if (!ready || !storageReady || !statusLoaded || submitting || statusError || !hasPendingReply) return;
+    const controller = new AbortController();
+    const timers = new Set<number>();
+    const recover = async (threadId: string, jobId: string, attempt = 1) => {
+      if (!workspaceRef.current.threads.some((thread) => thread.id === threadId && thread.pendingJobId === jobId)) return;
+      let recovered: Awaited<ReturnType<typeof recoverChatImage>> | undefined;
+      try {
+        recovered = await recoverChatImage(threadId, jobId, controller.signal);
+      } catch {
+        if (controller.signal.aborted) return;
+        if (attempt < 3) {
+          // Unchanged idle snapshots do not re-render the hook, so retry on a timer.
+          const timer = window.setTimeout(() => {
+            timers.delete(timer);
+            void recover(threadId, jobId, attempt + 1);
+          }, 500 * attempt);
+          timers.add(timer);
+          return;
+        }
+      }
+      if (controller.signal.aborted) return;
+      const observedAt = Date.now();
+      const { image, images } = recovered ?? {};
+      setChatState((current) => {
+        // A status poll may have found the response while the disk lookup was in flight.
+        if (current.status.job.id === jobId) return current;
+        const { workspace, lastRunningJob, status } = current;
+        const thread = workspace.threads.find((item) => item.id === threadId && item.pendingJobId === jobId);
+        if (!thread) return current;
+        const preview = pendingTextReply(thread, lastRunningJob);
+        const checkingImage = thread.messages.some((message) => message.inspectionJobId === jobId);
+        let error = "The backend restarted before this response was saved. Retry the response.";
+        if (checkingImage) error = "The backend restarted during the image check.";
+        else if (!recovered) error = "The response stopped, and Fern couldn’t check for saved images. You can retry the response.";
+        else if (image || images?.length || preview?.generatedImage) error = "The image was saved before the backend restarted.";
+        else if (preview?.content || preview?.reasoning) error = "The backend restarted. The partial response was recovered.";
+        const failed: TextJob = { ...idleStatus.job, id: jobId, threadId, modelId: thread.modelId,
+          status: "failed", error, image, images: images?.length ? images : undefined };
+        return { ...current, workspace: settleTextJob(workspace, failed, lastRunningJob, status.models, observedAt) };
+      });
+    };
+    for (const { id, pendingJobId } of workspaceRef.current.threads) {
+      if (pendingJobId && pendingJobId !== runtimeJobId) void recover(id, pendingJobId);
     }
-  }, [ready, storageReady, submitting, status, statusError]);
+    return () => {
+      controller.abort();
+      for (const timer of timers) window.clearTimeout(timer);
+    };
+  }, [hasPendingReply, ready, runtimeJobId, statusError, statusLoaded, storageReady, submitting]);
 
   const updateThread = useCallback((id: string, patch: Partial<TextThread>) => {
     setWorkspace((current) => ({
