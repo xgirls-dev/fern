@@ -462,6 +462,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   );
   const liveKey = streamId ? retryRow?.key ?? `${threadId}:${streamId}` : undefined;
   const liveMessageId = showPreviousReply ? retryRow?.messageId : streamId;
+  const latestReplyId = liveMessageId ?? (lastMessage?.role === "assistant" ? lastMessage.id : undefined);
   const transcript = useMemo(() => {
     if (!liveKey || !liveMessageId) return storedRows;
     return [...(retryRow ? storedRows.slice(0, -1) : storedRows), { key: liveKey, messageId: liveMessageId, estimatedHeight: 0 }];
@@ -469,8 +470,9 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   const windowed = transcript.length > TEXT_TRANSCRIPT_WINDOW_THRESHOLD;
   const requestedEdit = editJump?.threadId === activeThread.id && editJump.messageId === promptEdit?.messageId ? editJump.messageId : undefined;
   const requestedFocus = focusJump?.threadId === activeThread.id ? focusJump : null;
-  const focusedMessageId = requestedFocus && activeThread.messages.find((message) =>
-    message.id === requestedFocus.messageId || message.alternatives?.some((version) => version.id === requestedFocus.messageId))?.id;
+  const requestedMessageId = requestedFocus?.messageId;
+  const focusedMessageId = requestedMessageId && (requestedMessageId === liveMessageId ? liveMessageId : messages.find((message) =>
+    message.id === requestedMessageId || message.alternatives?.some((version) => version.id === requestedMessageId))?.id);
   const revealId = focusedMessageId ?? requestedEdit ?? activeMatch?.messageId;
   const revealIndex = revealId ? transcript.findIndex(({ messageId }) => messageId === revealId) : -1;
   const revealKey = transcript[revealIndex]?.key;
@@ -884,9 +886,9 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
               inputRef.current?.focus({ preventScroll: true });
             }}><X size={14} aria-hidden="true" /></IconButton>
           </div>}
-          {!responseHere && lastMessage?.role === "assistant" && <Button className="text-latest-reply-link" onClick={() => {
+          {latestReplyId && <Button className="text-latest-reply-link" onClick={() => {
             setFindThreadId(null);
-            setFocusJump({ threadId: activeThread.id, messageId: lastMessage.id, block: "start" });
+            setFocusJump({ threadId, messageId: latestReplyId, block: "start" });
           }}>Go to latest reply</Button>}
           {documents.length > 0 && <ChatDocumentAttachments documents={documents} disabled={busy} onRemove={(id) => studio.removeDocument(activeThread.id, id)} />}
           <Textarea

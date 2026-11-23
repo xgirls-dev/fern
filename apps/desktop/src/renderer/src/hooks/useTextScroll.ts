@@ -255,7 +255,9 @@ export function useTextScroll(threadId: string) {
   }, [cancelRestore, savePosition]);
 
   const onKeyDown = useCallback((event: KeyboardEvent<HTMLDivElement>) => {
-    if (event.target !== event.currentTarget || event.nativeEvent.isComposing || event.metaKey || event.ctrlKey || event.altKey) return;
+    const targetIsMessage = event.target instanceof HTMLElement && event.target.matches("[data-chat-message]");
+    if ((event.target !== event.currentTarget && !targetIsMessage) ||
+        event.nativeEvent.isComposing || event.metaKey || event.ctrlKey || event.altKey) return;
     const feed = event.currentTarget;
     const page = Math.max(1, feed.clientHeight - 36);
     let target: number;

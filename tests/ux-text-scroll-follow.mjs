@@ -15,6 +15,7 @@ const { page, state, errors, close } = await fixture({
 const feed = page.getByRole("log", { name: "Conversation" });
 const composer = page.getByRole("textbox", { name: "Message", exact: true });
 const jump = page.getByRole("button", { name: "Jump to latest message", exact: true });
+const goToReply = page.getByRole("button", { name: "Go to latest reply", exact: true });
 const reply = feed.locator(".text-message--assistant");
 const position = () => feed.evaluate((element) => ({
   top: element.scrollTop,
@@ -41,6 +42,24 @@ try {
   await expect(reply).toHaveClass(/text-message--streaming/);
   state.textStatus.job = { ...state.textStatus.job, phase: "Waiting for the first token…" };
   await append("Introduction", 32);
+  await atLatest();
+  await composer.focus();
+  await composer.press("Shift+Tab");
+  await expect(goToReply).toBeFocused();
+  await expect(goToReply).toHaveCSS("clip-path", "none");
+  await goToReply.press("Enter");
+  await expect(reply).toBeFocused();
+  await expect(reply).toHaveCSS("outline-style", "solid");
+  await expect(reply.getByText("Introduction 1.", { exact: true })).toBeInViewport();
+  await expect(feed).not.toHaveAttribute("data-following", "true");
+  const liveReading = await position();
+  await append("Below the reading position", 3);
+  await expect(reply).toBeFocused();
+  await expect.poll(async () => (await position()).top).toBeCloseTo(liveReading.top, 0);
+  await reply.press("End");
+  await expect(reply).toBeFocused();
+  await expect(feed).toHaveAttribute("data-following", "true");
+  await expect(jump).toHaveCount(0);
   await atLatest();
   const bounds = await feed.boundingBox();
   await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
@@ -172,14 +191,13 @@ try {
   await atLatest();
   await composer.focus();
   await composer.press("Shift+Tab");
-  const goToReply = page.getByRole("button", { name: "Go to latest reply", exact: true });
   await expect(goToReply).toBeFocused();
   await expect(goToReply).toHaveCSS("clip-path", "none");
   await goToReply.press("Enter");
   await expect(reply).toBeFocused();
   await expect(reply.getByText("Introduction 1.", { exact: true })).toBeInViewport();
   assert.deepEqual(errors, []);
-  console.log("Scroll, resize, editing, keyboard focus, and live text selection preserve the reading position until follow is resumed.");
+  console.log("Keyboard navigation to live replies, resize, editing, and text selection preserve the reading position until follow is resumed.");
 } finally {
   await close();
 }

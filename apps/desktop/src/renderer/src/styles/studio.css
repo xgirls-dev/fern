@@ -80,6 +80,7 @@ body {
 .text-empty-state .text-model-readiness { display: grid; justify-items: center; gap: 12px; margin: 12px 0 4px; }
 .text-composer-area > .text-model-readiness { padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); }
 .text-message { width: 100%; flex: 0 0 auto; min-width: 0; scroll-margin-block: 16px; }
+.text-message:focus-visible { border-radius: 8px; outline: var(--ui-focus-ring); outline-offset: 4px; }
 .text-message[data-find-match]:not(:has([data-find-target])) { border-radius: 8px; outline: 2px solid var(--chat-action); outline-offset: 4px; }
 .text-prompt-versions-panel [data-find-target] { border-radius: 4px; outline: 2px solid var(--chat-action); outline-offset: 4px; scroll-margin-block: 12px; }
 .text-message ::highlight(fern-chat-find) { color: var(--foreground); background-color: color-mix(in srgb, var(--chat-action) 30%, var(--card)); }
