@@ -14,8 +14,8 @@ const StreamingCode = createContext(false);
 type StreamCursor = "active" | "waiting";
 type StreamTailProps = { "data-stream-tail"?: StreamCursor };
 
-function useHorizontalOverflow<T extends HTMLElement>(content: unknown, fitted: boolean | null) {
-  const ref = useRef<T>(null);
+function useCodeOverflow(source: string | undefined, wrap: boolean | null) {
+  const ref = useRef<HTMLPreElement>(null);
   const [overflowing, setOverflowing] = useState(false);
   const measureOverflow = useCallback(() => {
     const element = ref.current;
@@ -32,7 +32,7 @@ function useHorizontalOverflow<T extends HTMLElement>(content: unknown, fitted: 
       window.cancelAnimationFrame(frame);
       window.clearTimeout(timer);
     };
-  }, [measureOverflow, content, fitted]);
+  }, [measureOverflow, source, wrap]);
   useEffect(() => {
     const element = ref.current;
     if (!element) return;
@@ -68,7 +68,7 @@ function CodeBlock({ children, "data-stream-tail": streamTail }: ComponentPropsW
   const language = code?.className?.match(/\blanguage-([\w+#.-]+)/)?.[1];
   const source = typeof code?.children === "string" ? code.children : undefined;
   const [wrap, setWrap] = useState<boolean | null>(null);
-  const { ref, overflowing } = useHorizontalOverflow<HTMLPreElement>(source, wrap);
+  const { ref, overflowing } = useCodeOverflow(source, wrap);
   const { copied, copy } = useCopyFeedback("Could not copy the code. Select it and copy manually.");
 
   useEffect(() => {
@@ -109,21 +109,33 @@ function cellText(cell: HTMLTableCellElement) {
 
 function MarkdownTable({ children, "data-stream-tail": streamTail }: ComponentPropsWithoutRef<"table"> & StreamTailProps) {
   const table = useRef<HTMLTableElement>(null);
+  const scroller = useRef<HTMLDivElement>(null);
+  const [overflowing, setOverflowing] = useState(false);
   const [fitted, setFitted] = useState<boolean | null>(null);
   const [tightFit, setTightFit] = useState(false);
-  const { ref, overflowing } = useHorizontalOverflow<HTMLDivElement>(children, fitted);
   const { copied, copy } = useCopyFeedback("Could not copy the table. Select its cells and copy manually.");
-  useLayoutEffect(() => {
-    if (!fitted || tightFit) return;
-    const frame = window.requestAnimationFrame(() => {
-      const viewport = ref.current;
-      if (viewport?.clientWidth && table.current
-        && table.current.getBoundingClientRect().width > viewport.clientWidth + 1) {
-        setTightFit(true);
+  useEffect(() => {
+    const viewport = scroller.current;
+    const element = table.current;
+    if (!viewport || !element) return;
+    let availableWidth = 0;
+    let renderedWidth = 0;
+    const observer = new ResizeObserver((entries) => {
+      // The table owns its intrinsic width. Use the boxes from this layout
+      // pass so an appended chunk doesn't schedule another geometry read.
+      for (const entry of entries) {
+        if (entry.target === viewport) availableWidth = entry.contentRect.width;
+        else renderedWidth = entry.borderBoxSize[0]?.inlineSize ?? entry.contentRect.width;
       }
+      if (!availableWidth || !renderedWidth) return;
+      const needsScroll = renderedWidth > availableWidth + 1;
+      setOverflowing(needsScroll);
+      if (fitted && needsScroll) setTightFit(true);
     });
-    return () => window.cancelAnimationFrame(frame);
-  }, [children, fitted, overflowing, ref, tightFit]);
+    observer.observe(viewport);
+    observer.observe(element, { box: "border-box" });
+    return () => observer.disconnect();
+  }, [fitted]);
   const copyRows = () => {
     if (!table.current) return;
     const rows = Array.from(table.current.rows, (row) => Array.from(row.cells, cellText).join("\t"));
@@ -132,7 +144,7 @@ function MarkdownTable({ children, "data-stream-tail": streamTail }: ComponentPr
   return <div className="text-table-block" data-fitted={fitted || undefined} data-tight-fit={fitted && tightFit || undefined} data-stream-tail={streamTail}>
     <div className="text-table-toolbar">
       {(overflowing || fitted !== null) && <Button variant="ghost" aria-label="Fit table to chat" aria-pressed={!!fitted} onClick={() => {
-        if (!fitted && ref.current) ref.current.scrollLeft = 0;
+        if (!fitted && scroller.current) scroller.current.scrollLeft = 0;
         setFitted(!fitted);
         setTightFit(false);
       }}>
@@ -144,7 +156,7 @@ function MarkdownTable({ children, "data-stream-tail": streamTail }: ComponentPr
         </Button>
       </Tooltip>
     </div>
-    <div className="text-table-scroll" ref={ref} data-chat-horizontal-scroll tabIndex={overflowing ? 0 : undefined}
+    <div className="text-table-scroll" ref={scroller} data-chat-horizontal-scroll tabIndex={overflowing ? 0 : undefined}
       role={overflowing ? "region" : undefined} aria-label={overflowing ? "Scrollable table" : undefined}>
       <table ref={table}>{children}</table>
     </div>

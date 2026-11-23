@@ -94,8 +94,34 @@ try {
     const view = element.getBoundingClientRect();
     return !!mark && mark.left >= view.left && mark.right <= view.right && element.scrollLeft > 0;
   })).toBe(true);
+
+  await page.getByRole("searchbox", { name: "Search this chat" }).press("Escape");
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.getByRole("textbox", { name: "Message", exact: true }).fill("Compare seven options in a second table.");
+  await button("Send message").click();
+  await expect(reply).toHaveClass(/text-message--streaming/);
+  const compactHeaders = headers.slice(0, 7);
+  state.textStatus.job = { ...state.textStatus.job, partialText: [row(compactHeaders), row(compactHeaders.map(() => "---")), row(compactHeaders)].join("\n") };
+  await expect(table.getByRole("columnheader")).toHaveCount(7);
+  await expect.poll(overflow).toBeLessThanOrEqual(1);
+  await expect(scroller).not.toHaveAttribute("tabindex");
+  await expect(fit).toHaveCount(0);
+
+  await page.setViewportSize({ width: 640, height: 720 });
+  await expect.poll(overflow).toBeGreaterThan(10);
+  await expect(scroller).toHaveAttribute("tabindex", "0");
+  await fit.press("Space");
+  await expect(fit).toBeFocused();
+  await expect(fit).toHaveAttribute("aria-pressed", "true");
+  await expect.poll(overflow).toBeLessThanOrEqual(1);
+  await expect(scroller).not.toHaveAttribute("tabindex");
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await fit.press("Space");
+  await expect(fit).toHaveAttribute("aria-pressed", "false");
+  await expect.poll(overflow).toBeLessThanOrEqual(1);
+  await expect(scroller).not.toHaveAttribute("tabindex");
   assert.deepEqual(errors, []);
-  console.log("Wide streamed tables preserve keyboard focus and fit state, copy tidy spreadsheet rows, and reveal off-screen matches.");
+  console.log("Streamed tables preserve focus and fit, update when resized, copy tidy spreadsheet rows, and reveal off-screen matches.");
 } finally {
   await close();
 }
