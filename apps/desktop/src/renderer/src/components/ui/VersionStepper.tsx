@@ -18,10 +18,11 @@ export function VersionStepper({ label, previousLabel, nextLabel, index, count, 
       aria-disabled={previousDisabled} onClick={() => { if (!previousDisabled) onChange(index - 1); }}>
       <ChevronLeft size={14} aria-hidden="true" />
     </TooltipIconButton>
-    <span aria-live="polite" aria-atomic="true">{index + 1} / {count}</span>
+    <span aria-hidden="true">{index + 1} / {count}</span>
     <TooltipIconButton aria-label={nextLabel} tooltip={nextLabel} tooltipSide="bottom"
       aria-disabled={nextDisabled} onClick={() => { if (!nextDisabled) onChange(index + 1); }}>
       <ChevronRight size={14} aria-hidden="true" />
     </TooltipIconButton>
+    <span className="sr-only" role="status" aria-atomic="true">Version {index + 1} of {count}</span>
   </div>;
 }

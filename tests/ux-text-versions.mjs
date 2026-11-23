@@ -3,12 +3,13 @@ import { expect } from "@playwright/test";
 import { chooseMessageAction, fixture, savedTextWorkspace } from "./ui-fixture.mjs";
 
 const model = { id: "local", name: "Local model", installed: true, format: "gguf", supportsVision: true };
-const { page, state, errors, close } = await fixture({ firstRun: true, textStatus: {
+const { page, state, errors, dir, close } = await fixture({ firstRun: true, textStatus: {
   models: [model], ggufAvailable: true, job: { id: null, status: "idle" },
 } });
 
 const chosen = "Use the direct route";
 const alternative = "Use the scenic route";
+const metrics = { inputTokens: 34, outputTokens: 8, generationSeconds: 1, tokensPerSecond: 8 };
 const button = (name) => page.getByRole("button", { name, exact: true });
 const composer = page.getByRole("textbox", { name: "Message", exact: true });
 const conversation = page.getByRole("log", { name: "Conversation" });
@@ -19,8 +20,8 @@ try {
   await savedTextWorkspace(page, { activeId: id, threads: [{
       id, title: "Route planner", modelId: "local", draft: "Keep this draft", messages: [
         { id: "first-prompt", role: "user", content: "Which route?", createdAt: 1 },
-        { id: "direct", role: "assistant", content: chosen, createdAt: 3, alternatives: [
-          { id: "scenic", role: "assistant", content: alternative, reasoning: "The hidden waterfall is worth visiting.", createdAt: 2 },
+        { id: "direct", role: "assistant", content: chosen, createdAt: 3, metrics, alternatives: [
+          { id: "scenic", role: "assistant", content: alternative, reasoning: "The hidden waterfall is worth visiting.", createdAt: 2, metrics },
         ] },
         { id: "second-prompt", role: "user", content: "How long will it take?", createdAt: 4 },
         { id: "duration", role: "assistant", content: "About three hours.", createdAt: 5 },
@@ -39,6 +40,31 @@ try {
   await firstReply.getByRole("button", { name: "Previous response version" }).click();
   await expect(firstReply).toContainText(alternative);
   await expect(firstReply).toContainText("Chat uses version 2");
+  const stepper = firstReply.getByRole("group", { name: "Response versions", exact: true });
+  await expect(stepper.getByRole("status")).toHaveText("Version 1 of 2");
+  const toolbar = firstReply.locator(".text-message-tools");
+  await page.setViewportSize({ width: 320, height: 740 });
+  const heading = page.getByRole("heading", { name: "Route planner", exact: true });
+  await expect.poll(() => heading.evaluate((element) => {
+    const title = element.getBoundingClientRect();
+    const header = element.closest("header");
+    const actions = header.querySelector(".text-header-actions").getBoundingClientRect();
+    return element.scrollWidth <= element.clientWidth && title.bottom <= actions.top &&
+      actions.right <= header.getBoundingClientRect().right;
+  })).toBe(true);
+  await expect.poll(() => toolbar.evaluate((element) => {
+    const bounds = element.getBoundingClientRect();
+    const actions = element.querySelector(".text-message-actions").getBoundingClientRect();
+    const stepper = element.querySelector(".ui-version-stepper").getBoundingClientRect();
+    const context = element.querySelector(".text-response-preview").getBoundingClientRect();
+    const speed = element.querySelector(".text-response-speed").getBoundingClientRect();
+    const center = (rect) => rect.top + rect.height / 2;
+    return actions.bottom <= stepper.top + 1 && Math.abs(center(actions) - center(speed)) < 1 &&
+      Math.abs(center(stepper) - center(context)) < 1 &&
+      [actions, stepper, context, speed].every((rect) => rect.left >= bounds.left - 1 && rect.right <= bounds.right + 1);
+  })).toBe(true);
+  await page.screenshot({ path: `${dir}/chat-reply-version-toolbar-narrow.png` });
+  await page.setViewportSize({ width: 1440, height: 900 });
   await copyMessage.click();
   assert.deepEqual(await page.evaluate(() => window.pendingCopies.map(({ text }) => text)), [chosen, alternative]);
   await page.evaluate(() => window.pendingCopies[1].resolve());

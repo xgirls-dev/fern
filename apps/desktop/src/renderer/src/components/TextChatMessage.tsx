@@ -294,27 +294,31 @@ export const TextChatMessage = memo(function TextChatMessage({ message, selectio
         </>}
       </InlineNotice>}
       {!streaming && !editing && <div className="text-message-tools">
-        {message.content.trim() && <TooltipIconButton className="text-icon-button" aria-label={copied ? "Copied" : "Copy message"}
-          tooltip={copied ? "Copied" : "Copy message"} tooltipSide="bottom" onClick={() => void copy(message.content)}>
-          {copied ? <Check size={15} aria-hidden="true" /> : <Copy size={15} aria-hidden="true" />}
-        </TooltipIconButton>}
-        {onEdit && <TooltipIconButton ref={editButton} className="text-icon-button" aria-label="Edit message"
-          tooltip={editingAnother ? "Finish or cancel the open prompt edit first" : "Edit message"} tooltipSide="bottom"
-          disabled={editingAnother} onClick={() => onEdit(message)}><Pencil size={15} aria-hidden="true" /></TooltipIconButton>}
-        {onFork && <TooltipIconButton className="text-icon-button" aria-label="Fork chat here"
-          tooltip="Fork chat here" tooltipSide="bottom" disabled={!canFork} onClick={() => onFork(message)}><GitBranch size={15} aria-hidden="true" /></TooltipIconButton>}
-        {onRetry && !showRetry && <TooltipIconButton className="text-icon-button" aria-label="Regenerate response"
-          tooltip={canRetry ? "Regenerate response" : "Select a model that can use the last prompt to retry"} tooltipSide="bottom"
-          disabled={!canRetry} onClick={onRetry}><RotateCcw size={15} aria-hidden="true" /></TooltipIconButton>}
-        {actions.length > 0 && <TextMessageMenu actions={actions} trigger={menuButton} align={assistant ? "start" : "end"} />}
-        {message.metrics && <span className="text-response-speed">{message.metrics.tokensPerSecond.toFixed(1)} tok/s</span>}
-        {versions.length > 1 && <VersionStepper label="Response versions" previousLabel="Previous response version"
-          nextLabel="Next response version" index={version} count={versions.length} disabled={busy || !!confirmDelete}
-          onChange={(index) => {
-            releaseSelection();
-            onSelectVersion?.(contextVersionId ?? message.id, versions[index].id);
-          }} />}
-        {contextVersion >= 0 && contextVersion !== version && <span className="text-response-preview" role="status">Chat uses version {contextVersion + 1}</span>}
+        <div className="text-message-actions">
+          {message.content.trim() && <TooltipIconButton className="text-icon-button" aria-label={copied ? "Copied" : "Copy message"}
+            tooltip={copied ? "Copied" : "Copy message"} tooltipSide="bottom" onClick={() => void copy(message.content)}>
+            {copied ? <Check size={15} aria-hidden="true" /> : <Copy size={15} aria-hidden="true" />}
+          </TooltipIconButton>}
+          {onEdit && <TooltipIconButton ref={editButton} className="text-icon-button" aria-label="Edit message"
+            tooltip={editingAnother ? "Finish or cancel the open prompt edit first" : "Edit message"} tooltipSide="bottom"
+            disabled={editingAnother} onClick={() => onEdit(message)}><Pencil size={15} aria-hidden="true" /></TooltipIconButton>}
+          {onFork && <TooltipIconButton className="text-icon-button" aria-label="Fork chat here"
+            tooltip="Fork chat here" tooltipSide="bottom" disabled={!canFork} onClick={() => onFork(message)}><GitBranch size={15} aria-hidden="true" /></TooltipIconButton>}
+          {onRetry && !showRetry && <TooltipIconButton className="text-icon-button" aria-label="Regenerate response"
+            tooltip={canRetry ? "Regenerate response" : "Select a model that can use the last prompt to retry"} tooltipSide="bottom"
+            disabled={!canRetry} onClick={onRetry}><RotateCcw size={15} aria-hidden="true" /></TooltipIconButton>}
+          {actions.length > 0 && <TextMessageMenu actions={actions} trigger={menuButton} align={assistant ? "start" : "end"} />}
+          {message.metrics && <span className="text-response-speed">{message.metrics.tokensPerSecond.toFixed(1)} tok/s</span>}
+        </div>
+        {versions.length > 1 && <div className="text-response-versions">
+          <VersionStepper label="Response versions" previousLabel="Previous response version"
+            nextLabel="Next response version" index={version} count={versions.length} disabled={busy || !!confirmDelete}
+            onChange={(index) => {
+              releaseSelection();
+              onSelectVersion?.(contextVersionId ?? message.id, versions[index].id);
+            }} />
+          {contextVersion >= 0 && contextVersion !== version && <span className="text-response-preview" role="status">Chat uses version {contextVersion + 1}</span>}
+        </div>}
         <span className="sr-only" role="status">{copied ? "Message copied" : ""}</span>
       </div>}
       {promptVersions}
