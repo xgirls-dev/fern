@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ComponentProps } from "react";
+import { useRef, useState } from "react";
 import Dices from "lucide-react/dist/esm/icons/dices.mjs";
 import Lock from "lucide-react/dist/esm/icons/lock.mjs";
 import LockOpen from "lucide-react/dist/esm/icons/lock-open.mjs";
@@ -7,6 +7,7 @@ import { imageDimensionLimits, type ImageDimensionHints } from "../lib/imageDime
 import { fixedImagePreset, isKleinLoraModel, maxImageBatch } from "../lib/imageModels";
 import type { StudioSettings } from "../lib/types";
 import { Select } from "./ui/controls";
+import { NumberInput } from "./ui/NumberField";
 import { Slider } from "./ui/Slider";
 import { TooltipIconButton } from "./ui/Tooltip";
 
@@ -73,8 +74,8 @@ export function ImageCanvasFields({
     <div className="dims-row" hidden={Boolean(fixedSizes)}>
       <div className="field">
         <label htmlFor={widthId}>Width</label>
-        <DraftNumberInput ref={widthInput} error={errors?.width} id={widthId} name={widthId} type="number" disabled={disabled || fixedCanvas}
-          min={minimum} max={maximum} step={multiple} value={settings.width} onChange={(event) => onChange({ width: Number(event.target.value) })} />
+        <NumberInput ref={widthInput} error={errors?.width} id={widthId} name={widthId} disabled={disabled || fixedCanvas}
+          min={minimum} max={maximum} step={multiple} value={settings.width} onChange={(width) => onChange({ width })} />
       </div>
       <TooltipIconButton disabled={disabled || fixedCanvas} onClick={() => onChange({ width: settings.height, height: settings.width })}
         tooltip="Swap width and height" aria-label="Swap width and height">
@@ -82,8 +83,8 @@ export function ImageCanvasFields({
       </TooltipIconButton>
       <div className="field">
         <label htmlFor={heightId}>Height</label>
-        <DraftNumberInput error={errors?.height} id={heightId} name={heightId} type="number" disabled={disabled || fixedCanvas}
-          min={minimum} max={maximum} step={multiple} value={settings.height} onChange={(event) => onChange({ height: Number(event.target.value) })} />
+        <NumberInput error={errors?.height} id={heightId} name={heightId} disabled={disabled || fixedCanvas}
+          min={minimum} max={maximum} step={multiple} value={settings.height} onChange={(height) => onChange({ height })} />
       </div>
     </div>
   </>;
@@ -103,8 +104,8 @@ export function ImageSamplingFields({ model, settings, errors, disabled, idPrefi
     <div className="field">
       <label htmlFor={seedId}>Seed</label>
       <div className="seed-row">
-        <DraftNumberInput error={errors?.seed} id={seedId} name={seedId} type="number" disabled={disabled}
-          value={settings.seed} onChange={(event) => onChange({ seed: Number(event.target.value) })} />
+        <NumberInput error={errors?.seed} id={seedId} name={seedId} disabled={disabled}
+          value={settings.seed} onChange={(seed) => onChange({ seed })} />
         <TooltipIconButton disabled={disabled} tooltip="Randomize seed" aria-label="Randomize seed"
           onClick={() => onChange({ seed: Math.floor(Math.random() * 1_000_000_000) })}>
           <Dices size={15} aria-hidden="true" />
@@ -122,9 +123,9 @@ export function ImageSamplingFields({ model, settings, errors, disabled, idPrefi
           min={1} max={50} step={1} value={settings.steps}
           aria-invalid={Boolean(errors?.steps)} aria-describedby={errors?.steps ? `${idPrefix}step-count-error` : undefined}
           onChange={(steps) => onChange({ steps })} />}
-        <DraftNumberInput error={errors?.steps} className={adjustableSteps ? undefined : "compact-input"}
-          id={adjustableSteps ? stepsId : undefined} aria-label="Step count" name={`${idPrefix}step-count`} type="number" disabled={disabled}
-          min={1} max={preset?.maximumSteps ?? 50} value={settings.steps} onChange={(event) => onChange({ steps: Number(event.target.value) })} />
+        <NumberInput error={errors?.steps} className={adjustableSteps ? undefined : "compact-input"}
+          id={adjustableSteps ? stepsId : undefined} aria-label="Step count" name={`${idPrefix}step-count`} disabled={disabled}
+          min={1} max={preset?.maximumSteps ?? 50} value={settings.steps} onChange={(steps) => onChange({ steps })} />
       </div>
       {adjustableSteps && <small className="field-note">{preset?.steps} steps recommended for the bundled DMD2 adapter.</small>}
     </div>
@@ -134,9 +135,9 @@ export function ImageSamplingFields({ model, settings, errors, disabled, idPrefi
         <Slider id={guidanceId} name={guidanceId} disabled={disabled} min={0} max={guidanceMaximum} step={0.1}
           value={settings.guidance} aria-invalid={Boolean(errors?.guidance)} aria-describedby={errors?.guidance ? `${idPrefix}guidance-value-error` : undefined}
           onChange={(guidance) => onChange({ guidance })} />
-        <DraftNumberInput error={errors?.guidance} className="compact-input" aria-label="Guidance value" name={`${idPrefix}guidance-value`}
-          type="number" disabled={disabled} min={0} max={guidanceMaximum} step={0.1} value={settings.guidance}
-          onChange={(event) => onChange({ guidance: Number(event.target.value) })} />
+        <NumberInput error={errors?.guidance} className="compact-input" aria-label="Guidance value" name={`${idPrefix}guidance-value`}
+          inputMode="decimal" disabled={disabled} min={0} max={guidanceMaximum} step={0.1} value={settings.guidance}
+          onChange={(guidance) => onChange({ guidance })} />
       </div>
     </div>
   </>;
@@ -158,34 +159,4 @@ export function ImageBatchField({ model, value, disabled, id = "batch-size", onC
       }))} />
     {maximum === 1 && <small className="field-note">This model generates one image per request.</small>}
   </div>;
-}
-
-function DraftNumberInput({ error, ...props }: ComponentProps<"input"> & { error?: string }) {
-  const [draft, setDraft] = useState(String(props.value ?? ""));
-  const focused = useRef(false);
-  const lastEdit = useRef(props.value);
-  useEffect(() => {
-    if (!focused.current || props.value !== lastEdit.current) setDraft(String(props.value ?? ""));
-  }, [props.value]);
-  const errorId = `${props.id ?? props.name}-error`;
-  return <>
-    <input {...props} value={draft} aria-invalid={Boolean(error)} aria-describedby={error ? errorId : undefined}
-      onFocus={(event) => {
-        focused.current = true;
-        props.onFocus?.(event);
-      }}
-      onBlur={(event) => {
-        focused.current = false;
-        if (event.currentTarget.validity.badInput) setDraft(String(props.value ?? ""));
-        props.onBlur?.(event);
-      }}
-      onChange={(event) => {
-        const { value, validity } = event.currentTarget;
-        setDraft(value);
-        if (validity.badInput) return;
-        lastEdit.current = Number(value);
-        props.onChange?.(event);
-      }} />
-    {error && <span className="field-error" id={errorId} role="alert">{error}</span>}
-  </>;
 }

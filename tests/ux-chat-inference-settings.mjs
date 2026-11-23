@@ -64,7 +64,16 @@ try {
   assert.equal(await page.getByLabel("Width", { exact: true }).inputValue(), "1024");
   await page.getByLabel("Width", { exact: true }).fill("2064");
   await page.getByLabel("Step count", { exact: true }).fill("60");
-  await page.getByLabel("Seed", { exact: true }).fill("123");
+  const imageSeed = page.getByLabel("Seed", { exact: true });
+  await imageSeed.fill("-1");
+  await expect(imageSeed).toHaveAttribute("aria-invalid", "true");
+  assert(await imageSeed.evaluate((field) => {
+    const bounds = field.getBoundingClientRect();
+    const error = field.parentElement.querySelector(".field-error").getBoundingClientRect();
+    const buttons = [...field.parentElement.querySelectorAll("button")];
+    return error.top >= bounds.bottom && buttons.every((button) => button.getBoundingClientRect().top < bounds.bottom);
+  }), "Seed validation should sit below the field and its actions");
+  await imageSeed.fill("123");
   await button("Lock seed").click();
   await page.getByText("Image style", { exact: true }).click();
   await page.getByLabel("Image prompt additions", { exact: true }).fill("Muted palette");
@@ -81,6 +90,10 @@ try {
   assert.equal(await page.getByLabel("Width", { exact: true }).inputValue(), "896");
   assert.equal(await page.getByLabel("Width", { exact: true }).getAttribute("step"), "8");
   const width = page.getByLabel("Width", { exact: true });
+  await expect(width).toHaveClass(/\bui-field\b/);
+  await width.fill("");
+  await expect(width).toHaveValue("");
+  await width.fill("896");
   await width.press("End");
   await width.press("e");
   await width.press("Tab");
