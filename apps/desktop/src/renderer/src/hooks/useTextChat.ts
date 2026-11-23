@@ -156,9 +156,9 @@ function useTextReplyPause(job: TextJob | null) {
   const phase = job?.phase;
   const text = job?.partialText?.trimEnd();
   const reasoning = job?.partialReasoning?.trimEnd();
-  const delay = text || reasoning ? 8_000 : phase?.startsWith("Waiting for") ? 12_000 : null;
+  const delay = text || reasoning ? 8_000 : phase?.startsWith("Waiting for") ? 12_000 : 25_000;
   // Each change in generation output or phase starts a fresh wait. Repeated status polls share it.
-  const progress = useMemo(() => id && delay ? { delay } : null, [id, phase, text, reasoning, delay]);
+  const progress = useMemo(() => id ? { delay } : null, [id, phase, text, reasoning, delay]);
   const [pausedProgress, setPausedProgress] = useState<typeof progress>(null);
   useEffect(() => {
     if (!progress) return;
@@ -268,6 +268,10 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
   }, []);
   const [storageError, setStorageError] = useState<string | null>(null);
   const [stoppingId, setStoppingId] = useState<string | null>(null);
+  const [stopFailure, setStopFailure] = useState<{ id: string; message: string } | null>(null);
+  const dismissStopFailure = useCallback((id: string) => {
+    setStopFailure((current) => current?.id === id ? null : current);
+  }, []);
   const stopDispatched = useRef<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const submission = useRef<TextSubmission | null>(null);
@@ -528,7 +532,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
       if (stopDispatched.current !== stoppingId) return;
       stopDispatched.current = null;
       setStoppingId((current) => current === stoppingId ? null : current);
-      setActionError(error instanceof Error ? error.message : "Could not stop text generation.");
+      setStopFailure({ id: stoppingId, message: error instanceof Error ? error.message : "Could not stop text generation." });
     });
   }, [finishSubmission, status.job, status.supportsPendingStop, statusError, stoppingId, threads]);
 
@@ -1153,6 +1157,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
       (runningThreadId === threadId ? runningJobId : null);
     if (requestId && requestId !== stoppingId) {
       setActionError(null);
+      setStopFailure(null);
       setStoppingId(requestId);
     }
   }, [getThread, runningJobId, runningThreadId, stoppingId, setActionError]);
@@ -1237,6 +1242,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     chatPresets: workspace.presets, saveChatPreset, applyChatPreset, deleteChatPreset,
     attachDocuments, removeDocument, restoreVersion,
     replyPaused,
+    stopFailure, dismissStopFailure,
     isStopping: (thread: TextThread) => !!stoppingId && thread.pendingJobId === stoppingId
       || status.job.status === "running" && status.job.threadId === thread.id
         && (status.job.id === stoppingId || status.job.phase === "Stopping generation…"),

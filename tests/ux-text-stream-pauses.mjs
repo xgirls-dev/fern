@@ -22,7 +22,12 @@ try {
   await composer.fill("Show how to make a small example.");
   await button("Send message").click();
   await expect(status).toHaveText("Loading model…");
+  await page.clock.fastForward(25_100);
+  await expect(status).toHaveText("Still loading the model…");
+  await expect(stream).toContainText("Still loading the model…");
+  await expect(button("Stop generation")).toBeEnabled();
   update({ phase: "Waiting for the first token…" });
+  await expect(status).toHaveText("Waiting for the first token…");
   await expect(stream).toContainText("Waiting for the first token…");
   await page.clock.fastForward(12_100);
   await expect(status).toHaveText("Still waiting for the first token…");

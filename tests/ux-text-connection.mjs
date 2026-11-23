@@ -21,6 +21,8 @@ let pollingOffline = false;
 let holdAdmission = false;
 let shortenedStoppedReasoning;
 let admitRequest;
+let holdStopFailure = false;
+let rejectStop;
 
 const send = async (text) => { await composer.fill(text); await button("Send message").click(); };
 const release = (index) => receipts[index]?.();
@@ -43,6 +45,11 @@ try {
   });
   await page.route("**/api/text/stop", async (route) => {
     stops.push(route.request().postDataJSON().requestId);
+    if (holdStopFailure) {
+      await new Promise((resolve) => { rejectStop = resolve; });
+      await route.fulfill({ status: 503, json: { error: "The runtime could not accept the Stop request." } });
+      return;
+    }
     if (stops.at(-1) === state.textStatus.job.id) {
       state.textStatus.job = { ...state.textStatus.job, status: "stopped", finishedAt: Date.now() / 1000,
         ...(shortenedStoppedReasoning ? { partialText: "", partialReasoning: shortenedStoppedReasoning } : {}) };
@@ -190,10 +197,41 @@ try {
   await expect(replyStatus).toHaveText("Response failed. Details are in the reply.");
   await expect(search).toBeFocused();
   release(4);
+
+  await send("Keep Stop recovery with the running chat");
+  await expect(stream).toContainText("Loading model…");
+  holdStopFailure = true;
+  await button("Stop generation").click();
+  await expect.poll(() => typeof rejectStop).toBe("function");
+  await button("New chat").click();
+  await expect(composerStatus).toHaveText("A response is running in another chat");
+  const stopFailure = page.getByRole("alert").filter({ hasText: "The runtime could not accept the Stop request." });
+  const stoppedRequest = page.waitForResponse((response) => response.url().endsWith("/api/text/stop") && response.status() === 503);
+  rejectStop();
+  await (await stoppedRequest).finished();
+  await expect(stopFailure).toHaveCount(0);
+  await button("Open running chat").click();
+  await expect(stopFailure).toBeVisible();
+  await expect(button("Stop generation")).toBeEnabled();
+
+  rejectStop = undefined;
+  await button("Try stopping again").press("Enter");
+  await expect(composer).toBeFocused();
+  await expect(stopFailure).toHaveCount(0);
+  await expect.poll(() => typeof rejectStop).toBe("function");
+  assert.deepEqual(stops.slice(-2), [state.textStatus.job.id, state.textStatus.job.id]);
+  state.textStatus.job = { ...state.textStatus.job, status: "complete", partialText: "Finished before the Stop response.", finishedAt: Date.now() / 1000 };
+  await expect(replyStatus).toHaveText("Reply ready.");
+  const lateStop = page.waitForResponse((response) => response.url().endsWith("/api/text/stop") && response.status() === 503);
+  rejectStop();
+  await (await lateStop).finished();
+  await expect(stopFailure).toHaveCount(0);
+  release(5);
   assert.deepEqual(errors, []);
   console.log("Slow receipts, staged progress, connection recovery, partial output, reply announcements, and keyboard focus through stop and retry passed.");
 } finally {
   admitRequest?.();
+  rejectStop?.();
   receipts.forEach((resolve) => resolve());
   await close();
 }

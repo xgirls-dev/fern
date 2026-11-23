@@ -367,6 +367,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   const canForkReplies = !busy && !deferredBusy;
   const canDeleteMessages = !responseHere && !deferredResponseHere;
   const displayJobId = activeThread.pendingJobId ?? (runningHere ? status.job.id : null);
+  const failedStop = responseHere && !stopping && studio.stopFailure?.id === displayJobId ? studio.stopFailure : null;
   const inspectionMessageId = displayJobId ? activeThread.messages.find((message) => message.inspectionJobId === displayJobId)?.id : undefined;
   const liveJob = displayJobId && status.job.id === displayJobId && status.job.threadId === activeThread.id ? status.job : null;
   const restoringReply = pendingHere && !liveJob && !studio.submitting;
@@ -411,8 +412,8 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
     : creatingImage ? "Creating an image…"
     : phase.startsWith("Finding document") ? phase
     : phase.includes("Compacting") ? "Summarizing earlier messages…"
-    : /download/i.test(phase) ? "Downloading the text runtime…"
-    : /^(loading|starting the text worker)/i.test(phase) ? "Loading model…" : null;
+    : /download/i.test(phase) ? replyPaused ? "Still downloading the text runtime…" : "Downloading the text runtime…"
+    : /^(loading|starting the text worker)/i.test(phase) ? replyPaused ? "Still loading the model…" : "Loading model…" : null;
   const hasReplyContent = !!replyContent.trim();
   const hasReplyReasoning = !!replyReasoning?.trim();
   const waitingForToken = phase.startsWith("Waiting for");
@@ -421,7 +422,8 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
     : hasReplyContent ? { kind: "answer", label: replyPaused ? "Waiting for more text…" : "Responding…", waiting: replyPaused }
     : hasReplyReasoning ? { kind: "reasoning", label: replyPaused ? "Still reasoning…" : "Reasoning…" }
     : { kind: "status", label: waitingForToken
-      ? replyPaused ? "Still waiting for the first token…" : "Waiting for the first token…" : "Preparing conversation…" },
+      ? replyPaused ? "Still waiting for the first token…" : "Waiting for the first token…"
+      : replyPaused ? "Still preparing the conversation…" : "Preparing conversation…" },
   [checkingImage, hasReplyContent, hasReplyReasoning, replyPaused, statusLabel, waitingForToken]);
   const unavailableReason = modelNotice?.label ?? (!modelAvailable ? "Choose an installed model to send" : incompatibleImages ? "Choose a vision model or remove the attachment" : "");
   const activity = responseHere ? replyProgress.label
@@ -834,8 +836,9 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
           actions={<Button variant="secondary" onClick={studio.retryStorage}>Retry saving chats</Button>}>
           {studio.storageError}
         </InlineNotice>}
-        {localError ? <InlineNotice tone="error" announce actions={<>
-          {localError.recovery === "image-settings" && <Button variant="secondary" onClick={() => {
+        {failedStop || localError ? <InlineNotice tone="error" announce actions={<>
+          {failedStop && <Button variant="secondary" onClick={stopFromComposer}>Try stopping again</Button>}
+          {!failedStop && localError?.recovery === "image-settings" && <Button variant="secondary" onClick={() => {
             setFindThreadId(null);
             setPanel("image");
             panelRef.current?.focus({ preventScroll: true });
@@ -843,9 +846,10 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
           }}>Open image settings</Button>}
           <Button variant="ghost" onClick={() => {
             inputRef.current?.focus({ preventScroll: true });
-            studio.dismissActionError(localError);
+            if (failedStop) studio.dismissStopFailure(failedStop.id);
+            else if (localError) studio.dismissActionError(localError);
           }}>Dismiss error</Button>
-        </>}>{localError.message}</InlineNotice>
+        </>}>{failedStop?.message ?? localError?.message}</InlineNotice>
           : catalogNotice && <InlineNotice tone="error" announce
             actions={<Button variant="secondary" onClick={() => { void studio.refresh(); }}>Refresh status</Button>}>
             {catalogNotice}
