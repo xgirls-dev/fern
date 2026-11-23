@@ -97,9 +97,9 @@ export function DropdownRadioGroup(props: ComponentProps<typeof Menu.RadioGroup>
   return <Menu.RadioGroup {...props} />;
 }
 
-export function DropdownGroup({ label, children }: { label: string; children: ReactNode }) {
+export function DropdownGroup({ label, children }: { label?: string; children: ReactNode }) {
   return <Menu.Group>
-    <Menu.GroupLabel className="ui-menu-group-label">{label}</Menu.GroupLabel>
+    {label && <Menu.GroupLabel className="ui-menu-group-label">{label}</Menu.GroupLabel>}
     {children}
   </Menu.Group>;
 }

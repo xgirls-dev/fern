@@ -61,6 +61,20 @@ try {
   await expect.poll(() => scroller.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
   const footerAfter = await manageModels.boundingBox();
   assert(footerBefore && footerAfter && Math.abs(footerBefore.y - footerAfter.y) < 1);
+  const localModel = modelMenu.getByRole("menuitemradio", { name: "Local model", exact: true });
+  const refreshedModel = modelMenu.getByRole("menuitemradio", { name: "Missing model", exact: true });
+  state.textStatus.models[1].installed = true;
+  await expect(refreshedModel).toBeEnabled({ timeout: 10_000 });
+  await expect(localModel).toBeFocused();
+  await expect(unavailableModels).toHaveCount(0);
+  await page.keyboard.press("ArrowDown");
+  await expect(refreshedModel).toBeFocused();
+  state.textStatus.models[1].installed = false;
+  await expect(missingModel).toBeDisabled({ timeout: 10_000 });
+  await expect(missingModel).toBeFocused();
+  state.textStatus.models.splice(1, 1);
+  await expect(refreshedModel).toHaveCount(0, { timeout: 10_000 });
+  await expect(localModel).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(modelMenu).toHaveCount(0);
   await expect(modelButton).toBeFocused();
@@ -166,7 +180,7 @@ try {
   await expect(sampling.getByLabel("Top K", { exact: true })).toBeVisible();
   await page.screenshot({ path: `${dir}/chat-disclosure-compact-dark.png` });
   assert.deepEqual(errors, []);
-  console.log("Shared select, menu, tooltip, disclosure, and segmented controls support keyboard navigation and focus restoration.");
+  console.log("Shared select, menu, tooltip, disclosure, and segmented controls support keyboard navigation and focus through model availability updates.");
 } finally {
   await close();
 }
