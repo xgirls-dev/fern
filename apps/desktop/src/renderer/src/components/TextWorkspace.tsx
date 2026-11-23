@@ -43,7 +43,7 @@ import { useTextDraftField } from "../hooks/useTextDraftField";
 import { resolveAssetUrl } from "../lib/api";
 import type { ChatSearchMatch } from "../lib/chatSearch";
 import { notify } from "../lib/notifications";
-import { canContinueTextReply, countTextPromptCharacters, findChatImage, latestTextPrompt, replyVersions, resolveTextModel, savedVersionForDeletedReply, showReplyVersion, TEXT_MESSAGE_CHARACTER_LIMIT, textPromptExceedsLimit, textRuntimeIssue, type GeneratedChatImage, type TextMessage } from "../lib/textThreads";
+import { canContinueTextReply, countTextPromptCharacters, findChatImage, latestTextPrompt, matchesTextMessage, replyVersions, resolveTextModel, savedVersionForDeletedReply, showReplyVersion, TEXT_MESSAGE_CHARACTER_LIMIT, textPromptExceedsLimit, textRuntimeIssue, type GeneratedChatImage, type TextMessage } from "../lib/textThreads";
 import { chatImageErrors, chatImageSettings, MAX_IMAGE_PROMPT_SUFFIX, type ChatImageSettings } from "../lib/chatImageSettings";
 import { isKleinLoraModel, maxReferenceImages } from "../lib/imageModels";
 import { chatTokenLimits, ggufLoadOptions, KV_CACHE_TYPES, type ChatPane, type GgufLoadOptions, type TextMode, type TextSamplingSettings, type TextThread } from "../lib/textThreads";
@@ -254,7 +254,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   const undoButton = useRef<HTMLButtonElement>(null);
   const focusUndoFor = useRef<string | undefined>(undefined);
   const [focusJump, setFocusJump] = useState<{ threadId: string; messageId: string; block?: "start" } | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<{ threadId: string; messageId: string } | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ threadId: string; messageId: string; versionId?: string } | null>(null);
   const [fileOver, setFileOver] = useState(false);
   const dragDepth = useRef(0);
   const focusBranchId = useRef<string | undefined>(undefined);
@@ -481,8 +481,8 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   const requestedEdit = editJump?.threadId === activeThread.id && editJump.messageId === promptEdit?.messageId ? editJump.messageId : undefined;
   const requestedFocus = focusJump?.threadId === activeThread.id ? focusJump : null;
   const requestedMessageId = requestedFocus?.messageId;
-  const focusedMessageId = requestedMessageId && (requestedMessageId === liveMessageId ? liveMessageId : messages.find((message) =>
-    message.id === requestedMessageId || message.alternatives?.some((version) => version.id === requestedMessageId))?.id);
+  const focusedMessageId = requestedMessageId && (requestedMessageId === liveMessageId ? liveMessageId
+    : messages.find((message) => matchesTextMessage(message, requestedMessageId))?.id);
   const revealId = focusedMessageId ?? requestedEdit ?? activeMatch?.messageId;
   const revealIndex = revealId ? transcript.findIndex(({ messageId }) => messageId === revealId) : -1;
   const revealKey = transcript[revealIndex]?.key;
@@ -599,13 +599,13 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
       jumpToLatest();
     } else if (chatId) focusBranchId.current = chatId;
   }, [activeThread.id, jumpToLatest, promptEdit, replaceablePrompt?.id, studio.revisePrompt]);
-  const requestDelete = useCallback((messageId: string | null) => {
-    setDeleteTarget(messageId ? { threadId: activeThread.id, messageId } : null);
+  const requestDelete = useCallback((messageId: string | null, versionId?: string) => {
+    setDeleteTarget(messageId ? { threadId: activeThread.id, messageId, versionId } : null);
   }, [activeThread.id]);
-  const deleteMessage = useCallback((id: string) => {
+  const deleteMessage = useCallback((id: string, versionId?: string) => {
     setDeleteTarget(null);
     focusUndoFor.current = activeThread.id;
-    studio.deleteMessage(activeThread.id, id);
+    studio.deleteMessage(activeThread.id, id, versionId);
   }, [activeThread.id, studio.deleteMessage]);
   const undoDeletion = () => {
     if (!deletion || undoBlocked) return;
@@ -613,7 +613,16 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
     const savedPrompt = prompt && savedVersionForDeletedReply(prompt, deletion) ? prompt : undefined;
     studio.undoMessageDeletion(activeThread.id);
     setFindThreadId(null);
-    setFocusJump({ threadId: activeThread.id, messageId: savedPrompt?.id ?? deletion.messages[0].id });
+    const survivor = deletion.replyVersion?.survivingId;
+    const restoredId = deletion.messages[0].id;
+    if (!survivor || savedPrompt || messages.some((message) => matchesTextMessage(message, survivor) || matchesTextMessage(message, restoredId))) {
+      setFocusJump({ threadId: activeThread.id, messageId: savedPrompt?.id ?? restoredId });
+    } else {
+      inputRef.current?.focus({ preventScroll: true });
+      if (activeThread.versions?.some((snapshot) => snapshot.messages.some((message) => matchesTextMessage(message, survivor)))) {
+        notify("Reply version restored in conversation history.");
+      }
+    }
     if (savedPrompt) notify("Reply restored to Prompt versions.");
   };
   const dismissDeletion = () => {
@@ -629,9 +638,9 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
       const bounds = row.getBoundingClientRect();
       return bounds.bottom > viewport.top && bounds.top < viewport.bottom;
     });
-    for (const id of [deletion.afterId, deletion.beforeId]) {
+    for (const id of [deletion.replyVersion?.survivingId, deletion.afterId, deletion.beforeId]) {
       if (!id) continue;
-      const message = activeThread.messages.find((item) => item.id === id || item.alternatives?.some((reply) => reply.id === id));
+      const message = activeThread.messages.find((item) => matchesTextMessage(item, id));
       const neighbor = visible.find((row) => row.dataset.chatMessage === message?.id);
       if (neighbor) { neighbor.focus({ preventScroll: true }); return; }
     }
@@ -738,7 +747,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
       onDelete={!live ? deleteMessage : undefined}
       onDeleteRequested={!live ? requestDelete : undefined}
       canDelete={canDeleteMessages}
-      confirmDelete={canDeleteMessages && deleteTarget?.threadId === threadId && deleteTarget.messageId === contextMessage?.id}
+      confirmDelete={canDeleteMessages && deleteTarget?.threadId === threadId && deleteTarget.messageId === contextMessage?.id ? deleteTarget : undefined}
       deleteTurn={user && messages[index + 1]?.role === "assistant"}
       onRetry={latest && !preview && !live && !user && !busy && (!message.generatedImage || message.status === "complete") ? retry : undefined}
       canRetry={latest && canRetry}
@@ -856,7 +865,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
           </InlineNotice>}
         {!empty && modelNotice && <ChatModelReadiness notice={modelNotice} actionRef={bindModelAction} />}
         {deletion && <div className="text-deletion-notice">
-          <span id={deletionStatusId} role="status">{deletion.messages.length > 1 ? "Message and reply deleted." : deletion.messages[0].role === "assistant" ? "Reply deleted." : "Message deleted."}
+          <span id={deletionStatusId} role="status">{deletion.replyVersion ? "Reply version deleted." : deletion.messages.length > 1 ? "Message and reply deleted." : deletion.messages[0].role === "assistant" ? "Reply deleted." : "Message deleted."}
             {deletionCount > 1 && ` ${deletionCount} deletions to undo.`}
             {undoBlocked && " Undo is available after the response."}</span>
           <Button ref={undoButton} variant="ghost" aria-describedby={deletionStatusId} disabled={undoBlocked} onClick={undoDeletion}>Undo deletion</Button>

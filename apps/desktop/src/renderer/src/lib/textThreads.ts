@@ -430,6 +430,10 @@ export function showReplyVersion(message: TextMessage, id: string | undefined): 
   return { ...selected, alternatives: [...alternatives.filter((version) => version.id !== id), current] };
 }
 
+export function matchesTextMessage(message: TextMessage | undefined, id: string | undefined) {
+  return !!id && (message?.id === id || !!message?.alternatives?.some((version) => version.id === id));
+}
+
 export function latestTextPrompt(messages: TextMessage[]): TextMessage | undefined {
   const last = messages.at(-1);
   const prompt = last?.role === "assistant" ? messages.at(-2) : last;
@@ -455,8 +459,16 @@ export function replaceLatestPromptVersion(thread: TextThread, messageId: string
 
 export function findChatImage(thread: Pick<TextThread, "messages">, name: string | undefined): GeneratedChatImage | undefined {
   if (!name) return;
-  const imageFrom = (message: TextMessage | undefined) => message?.generatedImage?.name === name
-    ? message.generatedImage : message?.generatedImages?.find((image) => image.name === name) ?? message?.alternatives?.find((item) => item.generatedImage?.name === name)?.generatedImage;
+  function imageFrom(message: TextMessage | undefined): GeneratedChatImage | undefined {
+    if (!message) return;
+    if (message.generatedImage?.name === name) return message.generatedImage;
+    const image = message.generatedImages?.find((item) => item.name === name);
+    if (image) return image;
+    for (const alternative of message.alternatives ?? []) {
+      const found = imageFrom(alternative);
+      if (found) return found;
+    }
+  }
   for (const message of thread.messages) {
     const image = imageFrom(message);
     if (image) return image;
@@ -473,23 +485,40 @@ export interface TextMessageDeletion {
   beforeId?: string;
   afterId?: string;
   replyPromptVersionId?: string;
+  replyVersion?: { selectedId: string; survivingId: string };
   promptEdit?: TextPromptEdit;
   draftContext?: { name: string; threadId?: string; draft: string; lastId?: string };
 }
 
-export function removeTextMessage(thread: TextThread, messageId: string, updatedAt: number) {
+export function removeTextMessage(thread: TextThread, messageId: string, updatedAt: number, versionId?: string) {
   if (thread.pendingJobId) return;
   const index = thread.messages.findIndex((message) => message.id === messageId);
   if (index < 0) return;
-  const end = index + (thread.messages[index].role === "user" && thread.messages[index + 1]?.role === "assistant" ? 2 : 1);
-  const messages = [...thread.messages.slice(0, index), ...thread.messages.slice(end)];
+  const target = thread.messages[index];
+  const end = index + (target.role === "user" && thread.messages[index + 1]?.role === "assistant" ? 2 : 1);
+  const beforeMessages = thread.messages.slice(0, index);
+  const afterMessages = thread.messages.slice(end);
   const before = thread.messages[index - 1];
   const deletion: TextMessageDeletion = {
     messages: thread.messages.slice(index, end), index,
     beforeId: before?.id, afterId: thread.messages[end]?.id,
-    replyPromptVersionId: thread.messages[index].role === "assistant" && before?.role === "user" ? before.promptVersionId ?? before.id : undefined,
+    replyPromptVersionId: target.role === "assistant" && before?.role === "user" ? before.promptVersionId ?? before.id : undefined,
     promptEdit: thread.promptEdit?.messageId === messageId ? thread.promptEdit : undefined,
   };
+  let replacement: TextMessage[] = [];
+  if (versionId !== undefined) {
+    if (target.role !== "assistant" || !target.alternatives?.length) return;
+    const versions = replyVersions(target);
+    const removedIndex = versions.findIndex((reply) => reply.id === versionId);
+    if (removedIndex < 0) return;
+    const removed = versions[removedIndex];
+    const neighbor = versions[removedIndex - 1] ?? versions[removedIndex + 1];
+    const chosen = target.id === versionId ? showReplyVersion(target, neighbor.id) : target;
+    replacement = [{ ...chosen, alternatives: chosen.alternatives?.filter((reply) => reply.id !== versionId) }];
+    deletion.messages = [removed];
+    deletion.replyVersion = { selectedId: target.id, survivingId: chosen.id };
+  }
+  const messages = [...beforeMessages, ...replacement, ...afterMessages];
   const next = { ...thread, messages, updatedAt };
   if (deletion.promptEdit) next.promptEdit = undefined;
   if (thread.draftContextImage && findChatImage(thread, thread.draftContextImage) && !findChatImage(next, thread.draftContextImage)) {
@@ -512,37 +541,52 @@ function restoreReplyVersions(current: TextMessage, removed: TextMessage): TextM
   return { ...current, alternatives: [...replyVersions(removed), ...(current.alternatives ?? [])] };
 }
 
+function restoreDeletedReplyVersion(current: TextMessage, removed: TextMessage, version: NonNullable<TextMessageDeletion["replyVersion"]>) {
+  if (matchesTextMessage(current, removed.id)) return current;
+  const merged = restoreReplyVersions(current, removed);
+  return current.id === version.survivingId && removed.id === version.selectedId ? showReplyVersion(merged, removed.id) : merged;
+}
+
 export function restoreTextMessages(thread: TextThread, deletion: TextMessageDeletion, updatedAt: number): TextThread {
   if (thread.pendingJobId) return thread;
-  const matches = (message: TextMessage | undefined, id: string | undefined) => !!id &&
-    (message?.id === id || !!message?.alternatives?.some((version) => version.id === id));
-  const after = thread.messages.findIndex((message) => matches(message, deletion.afterId));
-  const before = thread.messages.findIndex((message) => matches(message, deletion.beforeId));
+  const after = thread.messages.findIndex((message) => matchesTextMessage(message, deletion.afterId));
+  const before = thread.messages.findIndex((message) => matchesTextMessage(message, deletion.beforeId));
   const removedReply = deletion.messages[0];
+  const deletedVersion = deletion.replyVersion;
   const prompt = thread.messages[before];
   const savedVersion = savedVersionForDeletedReply(prompt, deletion);
   if (savedVersion && prompt?.promptAlternatives) {
     // Keep the answer with the wording that produced it when the prompt was revised after deletion.
-    const response = savedVersion.response ? restoreReplyVersions(savedVersion.response, removedReply) : removedReply;
+    const response = !savedVersion.response ? removedReply : deletedVersion
+      ? restoreDeletedReplyVersion(savedVersion.response, removedReply, deletedVersion) : restoreReplyVersions(savedVersion.response, removedReply);
     const promptAlternatives = prompt.promptAlternatives.map((version) => version === savedVersion ? { ...version, response } : version);
     return { ...thread, updatedAt, messages: thread.messages.map((item) => item === prompt ? { ...item, promptAlternatives } : item) };
   }
-  const index = after >= 0 ? after : before >= 0 ? before + 1 : Math.min(deletion.index, thread.messages.length);
+  const versionIndex = deletedVersion ? thread.messages.findIndex((message) =>
+    matchesTextMessage(message, deletedVersion.survivingId) || matchesTextMessage(message, removedReply.id)) : -1;
+  if (deletedVersion && versionIndex < 0) {
+    // Restoring a saved conversation can move the affected reply into its history.
+    const snapshot = thread.versions?.find(({ messages }) => messages.some((message) => matchesTextMessage(message, deletedVersion.survivingId)));
+    if (!snapshot) return thread;
+    const messages = snapshot.messages.map((message) => matchesTextMessage(message, deletedVersion.survivingId)
+      ? restoreDeletedReplyVersion(message, removedReply, deletedVersion) : message);
+    return { ...thread, updatedAt, versions: thread.versions?.map((item) => item === snapshot ? { ...item, messages } : item) };
+  }
+  const index = versionIndex >= 0 ? versionIndex : after >= 0 ? after : before >= 0 ? before + 1 : Math.min(deletion.index, thread.messages.length);
   const replacement = thread.messages[index];
   // A retry can fill the slot of a deleted reply while Undo is available.
-  const mergeReply = !deletion.afterId && before >= 0 && thread.messages[before].role === "user" &&
+  const mergeReply = !deletedVersion && !deletion.afterId && before >= 0 && thread.messages[before].role === "user" &&
     removedReply.role === "assistant" && replacement?.role === "assistant";
-  const restored = mergeReply
-    ? [restoreReplyVersions(replacement, removedReply)]
-    : deletion.messages;
+  const restored = deletedVersion ? [restoreDeletedReplyVersion(replacement, removedReply, deletedVersion)]
+    : mergeReply ? [restoreReplyVersions(replacement, removedReply)] : deletion.messages;
   const next: TextThread = {
     ...thread, updatedAt,
-    messages: [...thread.messages.slice(0, index), ...restored, ...thread.messages.slice(mergeReply ? index + 1 : index)],
+    messages: [...thread.messages.slice(0, index), ...restored, ...thread.messages.slice(mergeReply || deletedVersion ? index + 1 : index)],
     promptEdit: thread.promptEdit ?? deletion.promptEdit,
   };
   const draft = deletion.draftContext;
   const last = thread.messages.at(-1);
-  const sameTail = draft && (draft.lastId ? matches(last, draft.lastId) : !last);
+  const sameTail = draft && (draft.lastId ? matchesTextMessage(last, draft.lastId) : !last);
   if (draft && sameTail && thread.draft === draft.draft && !thread.draftContextImage && !thread.draftImage) {
     next.draftContextImage = draft.name;
     next.draftContextImageThreadId = draft.threadId;

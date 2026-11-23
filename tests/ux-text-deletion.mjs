@@ -22,6 +22,14 @@ const { page, state, close, errors } = await fixture({
     { id: otherId, title: "Second chat", modelId: "local", draft: "Other chat draft", messages: [
       { id: "other-prompt", role: "user", content: "A lone prompt", createdAt: 6 },
     ] },
+    { id: "text-thread-snapshots", title: "Chat with snapshots", modelId: "local", messages: [
+      { id: "current-notes", role: "user", content: "Current notes", createdAt: 7 },
+      { id: "current-notes-reply", role: "assistant", content: "Current notes answer", createdAt: 9,
+        alternatives: [{ id: "first-notes-reply", role: "assistant", content: "First notes answer", createdAt: 8 }] },
+    ], versions: [{ id: "old-notes", label: "Old notes", messages: [
+      { id: "old-notes-prompt", role: "user", content: "Old notes prompt", createdAt: 1 },
+      { id: "old-notes-reply", role: "assistant", content: "Old notes answer", createdAt: 2 },
+    ] }] },
   ] },
   textStatus: { models: [{ id: "local", name: "Local model", installed: true, format: "gguf", supportsVision: true }],
     ggufAvailable: true, job: { id: null, status: "idle" } },
@@ -84,6 +92,28 @@ try {
   await expect(composer).toHaveValue("Keep my draft");
   await expect.poll(savedIds).toEqual(["first-prompt", "poster", "next-prompt", "description"]);
 
+  const poster = row("poster");
+  await poster.getByRole("button", { name: "Previous response version" }).click();
+  await expect(poster).toContainText("First poster reply");
+  await chooseMessageAction(poster, "Delete this version");
+  await expect(confirmation).toHaveAccessibleDescription("Delete reply version 1?");
+  await page.keyboard.press("Escape");
+  await expect(poster.getByRole("button", { name: "More message actions" })).toBeFocused();
+  await expect(poster).toContainText("First poster reply");
+  await chooseMessageAction(poster, "Delete this version");
+  await confirmation.getByRole("button", { name: "Delete", exact: true }).press("Enter");
+  await expect(undo).toBeFocused();
+  await expect(undo).toHaveAccessibleDescription("Reply version deleted.");
+  await expect(poster).toContainText("Here is the poster");
+  await expect(poster.getByLabel("Response versions")).toHaveCount(0);
+  await expect(selection).toBeVisible();
+  await expect.poll(savedIds).toEqual(["first-prompt", "poster", "next-prompt", "description"]);
+  await undo.click();
+  await expect(poster).toBeFocused();
+  await expect(poster.getByLabel("Response versions")).toContainText("1 / 2");
+  await poster.getByRole("button", { name: "Next response version" }).click();
+  await expect(poster).toContainText("Here is the poster");
+
   await remove("description", "Delete reply", "Delete this reply?");
   await button("Retry response").click();
   await expect(undo).toBeDisabled();
@@ -99,6 +129,19 @@ try {
   await expect(latest).toContainText("An earlier description");
   await latest.getByRole("button", { name: "Next response version" }).click();
   await expect(latest).toContainText("The newly generated description");
+  const selectedReplyId = await latest.getAttribute("data-chat-message");
+  await chooseMessageAction(latest, "Delete this version");
+  await expect(confirmation).toHaveAccessibleDescription("Delete reply version 2?");
+  await confirmation.getByRole("button", { name: "Delete", exact: true }).click();
+  await expect(undo).toBeFocused();
+  await expect(latest).toContainText("An earlier description");
+  await expect(latest.getByLabel("Response versions")).toHaveCount(0);
+  await expect.poll(savedIds).toEqual(["first-prompt", "poster", "next-prompt", "description"]);
+  await undo.press("Enter");
+  await expect(latest).toBeFocused();
+  await expect(latest).toHaveAttribute("data-chat-message", selectedReplyId);
+  await expect(latest).toContainText("The newly generated description");
+  await expect(latest.getByLabel("Response versions")).toContainText("2 / 2");
 
   await remove("poster", "Delete reply", "Delete this reply and its other versions?");
   await expect(selection).toHaveCount(0);
@@ -158,8 +201,32 @@ try {
   await expect(row("next-prompt")).toBeVisible();
   await expect(row("poster")).toHaveCount(0);
   await expect(undo).toHaveCount(0);
+
+  await button("Text thread: Chat with snapshots").click();
+  await remove("current-notes-reply", "Delete this version", "Delete reply version 2?");
+  const notesReply = feed.getByRole("article", { name: "Model response" });
+  await expect(notesReply).toContainText("First notes answer");
+  await notesReply.getByRole("button", { name: "Regenerate response", exact: true }).click();
+  await expect.poll(() => state.textRequests.length).toBe(3);
+  state.textStatus.job = { ...state.textStatus.job, status: "complete", partialText: "Regenerated notes answer", finishedAt: Date.now() / 1000 };
+  await expect(notesReply).toContainText("Regenerated notes answer");
+  await expect(undo).toBeEnabled();
+  const conversationVersions = page.getByRole("combobox", { name: "Conversation versions", exact: true });
+  await conversationVersions.press("ArrowDown");
+  await page.getByRole("option", { name: "Old notes", exact: true }).click();
+  await expect(notesReply).toContainText("Old notes answer");
+  await undo.press("Enter");
+  await expect(composer).toBeFocused();
+  await expect(notesReply).toContainText("Old notes answer");
+  await expect(page.getByText("Reply version restored in conversation history.")).toBeVisible();
+  await conversationVersions.press("ArrowDown");
+  await page.getByRole("option", { name: "Current notes", exact: true }).click();
+  await expect(notesReply).toContainText("Regenerated notes answer");
+  await expect(notesReply.getByLabel("Response versions")).toContainText("3 / 3");
+  await notesReply.getByRole("button", { name: "Previous response version" }).click();
+  await expect(notesReply).toContainText("Current notes answer");
   assert.deepEqual(errors, []);
-  console.log("Chat deletion, per-chat undo history, keyboard focus, archived reply restoration, image context, retry reconciliation, and durable dismissal passed.");
+  console.log("Chat and reply-version deletion, per-chat undo history, keyboard focus, archived reply restoration, image context, retry reconciliation, and durable dismissal passed.");
 } finally {
   await close();
 }

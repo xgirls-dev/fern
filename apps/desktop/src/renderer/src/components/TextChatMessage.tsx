@@ -159,10 +159,10 @@ export const TextChatMessage = memo(function TextChatMessage({ message, selectio
   onFork?: (message: TextMessage) => void;
   canFork: boolean;
   onBranch?: (message: TextMessage) => void;
-  onDelete?: (id: string) => void;
-  onDeleteRequested?: (id: string | null) => void;
+  onDelete?: (id: string, versionId?: string) => void;
+  onDeleteRequested?: (id: string | null, versionId?: string) => void;
   canDelete: boolean;
-  confirmDelete?: boolean;
+  confirmDelete?: { versionId?: string };
   deleteTurn?: boolean;
   onRetry?: () => void;
   canRetry?: boolean;
@@ -204,6 +204,7 @@ export const TextChatMessage = memo(function TextChatMessage({ message, selectio
   const versions = onSelectVersion && message.alternatives?.length ? replyVersions(message) : [];
   const version = versions.findIndex((item) => item.id === message.id);
   const contextVersion = versions.findIndex((item) => item.id === contextVersionId);
+  const versionToDelete = confirmDelete?.versionId ? versions.findIndex((item) => item.id === confirmDelete.versionId) : -1;
   const showDetails = !streaming && detailsFor?.id === message.id;
   const showContextDetails = showDetails && detailsFor?.placement === "context";
   const requestContext = message.requestContext;
@@ -230,6 +231,8 @@ export const TextChatMessage = memo(function TextChatMessage({ message, selectio
   if (onBranch) actions.push({ label: "Branch from response", icon: GitBranch, run: () => onBranch(message) });
   if (assistant) actions.push({ label: showDetails ? "Hide response details" : "Response details", icon: Info,
     run: () => setDetailsFor(showDetails ? undefined : { id: message.id, placement: "actions" }) });
+  if (versions.length > 1 && onDelete && onDeleteRequested) actions.push({ label: "Delete this version", icon: Trash2,
+    run: () => onDeleteRequested(targetId, message.id), destructive: true, disabled: !canDelete });
   if (onDelete && onDeleteRequested) actions.push({ label: assistant ? "Delete reply" : "Delete message", icon: Trash2,
     run: () => onDeleteRequested(targetId), destructive: true, disabled: !canDelete });
 
@@ -306,7 +309,7 @@ export const TextChatMessage = memo(function TextChatMessage({ message, selectio
         {actions.length > 0 && <TextMessageMenu actions={actions} trigger={menuButton} align={assistant ? "start" : "end"} />}
         {message.metrics && <span className="text-response-speed">{message.metrics.tokensPerSecond.toFixed(1)} tok/s</span>}
         {versions.length > 1 && <VersionStepper label="Response versions" previousLabel="Previous response version"
-          nextLabel="Next response version" index={version} count={versions.length} disabled={busy}
+          nextLabel="Next response version" index={version} count={versions.length} disabled={busy || !!confirmDelete}
           onChange={(index) => {
             releaseSelection();
             onSelectVersion?.(contextVersionId ?? message.id, versions[index].id);
@@ -316,8 +319,11 @@ export const TextChatMessage = memo(function TextChatMessage({ message, selectio
       </div>}
       {promptVersions}
       {!editing && confirmDelete && onDelete && <InlineConfirmation className="text-message-delete"
-        label="Confirm message deletion" confirmLabel="Delete" onCancel={cancelDelete} onConfirm={() => onDelete(targetId)}>
-        {deleteTurn ? "Delete this message and its reply?" : assistant && message.alternatives?.length
+        label="Confirm message deletion" confirmLabel="Delete" onCancel={cancelDelete}
+        disabled={!!confirmDelete.versionId && versionToDelete < 0} onConfirm={() => onDelete(targetId, confirmDelete.versionId)}>
+        {versionToDelete >= 0 ? `Delete reply version ${versionToDelete + 1}?`
+          : confirmDelete.versionId ? "This reply version is no longer available."
+          : deleteTurn ? "Delete this message and its reply?" : assistant && message.alternatives?.length
           ? "Delete this reply and its other versions?" : assistant ? "Delete this reply?" : "Delete this message?"}
       </InlineConfirmation>}
       {!showContextDetails && detailPanel}

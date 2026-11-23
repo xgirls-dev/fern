@@ -686,12 +686,12 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     });
   }, [getThread, updateThread]);
 
-  const deleteMessage = useCallback((threadId: string, messageId: string) => {
+  const deleteMessage = useCallback((threadId: string, messageId: string, versionId?: string) => {
     const updatedAt = Date.now();
     setChatState((current) => {
       const threads = current.workspace.threads;
       const thread = threads.find((item) => item.id === threadId);
-      const removed = thread && removeTextMessage(thread, messageId, updatedAt);
+      const removed = thread && removeTextMessage(thread, messageId, updatedAt, versionId);
       if (!removed) return current;
       const deletions = current.messageDeletions.get(threadId) ?? [];
       return {
