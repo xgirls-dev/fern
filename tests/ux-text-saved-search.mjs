@@ -33,11 +33,24 @@ messages[20].promptAlternatives = [
     } },
 ];
 
+const snapshot = {
+  id: "earlier-draft",
+  label: "Kiln workshop",
+  messages: Array.from({ length: 160 }, (_, index) => ({
+    id: `snapshot-${index}`, role: index % 2 ? "assistant" : "user", createdAt: index + 1,
+    content: index % 2 ? `Saved reply ${index}` : `Saved prompt ${index}`,
+  })),
+};
+Object.assign(snapshot.messages[141], {
+  content: "The **opal** arch survived firing.",
+  generatedImage: { name: "tile.png", prompt: "The old tiled kiln", modelLabel: "Local model", width: 256, height: 256 },
+});
+
 const { page, close, state, errors } = await fixture({
   builtRenderer: process.env.FERN_SAVED_SEARCH_BUILT === "1", firstRun: true,
   legacyTextWorkspace: { activeId: "text-thread-saved-search-other", threads: [
     { id: "text-thread-saved-search-other", title: "Other chat", modelId: "local", draft: "Keep the other draft", messages: [] },
-    { id: chatId, title: "Studio notebook", modelId: "local", draft: "Keep the notebook draft", messages },
+    { id: chatId, title: "Studio notebook", modelId: "local", draft: "Keep the notebook draft", messages, versions: [snapshot] },
   ] },
   textStatus: { models: [{ id: "local", name: "Local model", installed: true, format: "gguf" }], ggufAvailable: true, job: { id: null, status: "idle" } },
 });
@@ -167,7 +180,32 @@ try {
   }
   await globalFind.fill("crystal stable lattice");
   await expect(page.getByRole("status", { name: "" }).filter({ hasText: "No matching threads" })).toBeVisible();
+
+  await globalFind.fill("opal arch");
+  await expect(notebook).toContainText("opal arch");
+  await expect(notebook).toContainText("Saved version");
+  await globalFind.press("Enter");
+  const preview = page.getByRole("dialog", { name: "Saved conversation", exact: true });
+  await expect(preview).toContainText("Studio notebook · Kiln workshop");
+  const previewFind = preview.getByRole("searchbox", { name: "Search this chat" });
+  await expect(previewFind).toHaveValue("opal arch");
+  const savedFeed = preview.getByRole("log", { name: "Saved conversation messages", exact: true });
+  assert(await savedFeed.evaluate((element) => getComputedStyle(element).getPropertyValue("--chat-action").trim()),
+    "The saved conversation should use the chat match highlight color.");
+  await expect.poll(() => savedFeed.evaluate((element) => element.clientHeight)).toBeGreaterThan(300);
+  await expect.poll(() => page.evaluate(() => [...(CSS.highlights.get("fern-chat-find") ?? [])][0]?.toString()))
+    .toBe("opal arch");
+  assert(await preview.locator("[data-chat-message]").count() < snapshot.messages.length,
+    "The saved conversation should keep distant rows deferred.");
+  await previewFind.fill("old tiled kiln");
+  await expect.poll(() => page.evaluate(() => [...(CSS.highlights.get("fern-chat-find") ?? [])][0]?.toString()))
+    .toBe("old tiled kiln");
+  await preview.getByRole("button", { name: "Back to search", exact: true }).click();
+  await expect(globalFind).toHaveValue("opal arch");
+  await expect(globalFind).toBeFocused();
   await globalFind.press("Escape");
+  await expect(button("Search threads")).toBeFocused();
+  await expect(composer).toHaveValue("Keep the notebook draft");
 
   const saved = await savedTextWorkspace(page);
   assert.equal(saved.threads.find((thread) => thread.id === chatId).messages[20].promptVersionId, "edited-firing");
@@ -176,7 +214,7 @@ try {
   const history = state.textRequests[0].messages;
   assert.equal(state.textRequests[0].threadId, chatId);
   assert(history.some((message) => message.content === "Current prompt 20"));
-  assert(!history.some((message) => message.content.includes("golden cedar") || message.content.includes("red clay")));
+  assert(!history.some((message) => ["golden cedar", "red clay", "opal"].some((term) => message.content.includes(term))));
   assert.deepEqual(errors, []);
   console.log("Saved prompts, reply variants, image descriptions, global search, virtualized navigation, and unchanged model context passed.");
 } finally {

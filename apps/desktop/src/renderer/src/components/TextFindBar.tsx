@@ -9,13 +9,14 @@ import type { ChatSearchMatch } from "../lib/chatSearch";
 import { isComposingKey } from "../lib/keyboard";
 import type { TextMessage } from "../lib/textThreads";
 
-export function TextFindBar({ input, messages, liveMessage, initialQuery, onMatch, onClose }: {
+export function TextFindBar({ input, messages, liveMessage, initialQuery, onMatch, onClose, showClose = true }: {
   input: RefObject<HTMLInputElement | null>;
   messages: TextMessage[];
   liveMessage: TextMessage | null;
   initialQuery: string;
   onMatch: (match: ChatSearchMatch | null) => void;
   onClose: () => void;
+  showClose?: boolean;
 }) {
   const [query, setQuery] = useState(initialQuery);
   const [selected, setSelected] = useState<ChatSearchMatch>();
@@ -67,9 +68,9 @@ export function TextFindBar({ input, messages, liveMessage, initialQuery, onMatc
       <Tooltip content="Next match · Enter">
         <IconButton aria-label="Next match" disabled={!matches.length} onClick={() => step(1)}><ChevronDown size={16} aria-hidden="true" /></IconButton>
       </Tooltip>
-      <Tooltip content="Close find · Esc">
+      {showClose && <Tooltip content="Close find · Esc">
         <IconButton aria-label="Close find" onClick={onClose}><X size={16} aria-hidden="true" /></IconButton>
-      </Tooltip>
+      </Tooltip>}
     </div>
   );
 }
