@@ -15,6 +15,7 @@ const sendMethod = process.env.FERN_BENCH_STREAM_SEND ?? "click";
 assert(["renderer", "electron"].includes(mode), "Choose renderer or electron.");
 assert(["click", "enter"].includes(sendMethod), "Choose click or enter for FERN_BENCH_STREAM_SEND.");
 const visible = mode === "electron" && process.env.FERN_E2E_VISIBLE === "1";
+const trace = process.env.FERN_BENCH_STREAM_TRACE === "1";
 const sampleCount = 100;
 const appendIntervalMs = 50;
 const phase = "Waiting for the first token…";
@@ -120,13 +121,57 @@ try {
   const send = page.getByRole("button", { name: "Send message", exact: true });
   const browser = await page.evaluate(() => ({ userAgent: navigator.userAgent, width: innerWidth, height: innerHeight, devicePixelRatio }));
   await composer.fill("Draft workshop notes and end with a short table and code example.");
-  await (sendMethod === "enter" ? composer : send).evaluate((trigger, { sampleCount, markerPattern, sendMethod, eventsOrigin }) => {
+  await (sendMethod === "enter" ? composer : send).evaluate((trigger, { sampleCount, markerPattern, sendMethod, eventsOrigin, trace }) => {
     const marker = new RegExp(markerPattern, "g");
     const arrivals = new Map();
     const rendered = new Map();
     let firstBackend;
     let firstText;
     let terminal;
+    const workerEvents = [];
+    const longTasks = [];
+    const longFrames = [];
+    let timingObserver;
+    function collectTimings(entries) {
+      for (const entry of entries) {
+        if (entry.entryType === "longtask") {
+          longTasks.push({ at: entry.startTime, duration: entry.duration });
+        } else {
+          longFrames.push({ at: entry.startTime, duration: entry.duration, blocking: entry.blockingDuration,
+            renderAt: entry.renderStart, layoutAt: entry.styleAndLayoutStart,
+            scripts: entry.scripts.map((script) => ({ invoker: script.invoker, functionName: script.sourceFunctionName,
+              duration: script.duration, forcedLayout: script.forcedStyleAndLayoutDuration })) });
+        }
+      }
+    }
+    function stopTiming() {
+      if (!timingObserver) return;
+      collectTimings(timingObserver.takeRecords());
+      timingObserver.disconnect();
+    }
+    if (trace) {
+      const NativeWorker = window.Worker;
+      window.Worker = class extends NativeWorker {
+        constructor(url, options) {
+          super(url, options);
+          if (!String(url).includes("chatMarkdown.worker")) return;
+          const post = this.postMessage;
+          this.postMessage = function (input, ...args) {
+            workerEvents.push({ at: performance.now(), event: "sent", id: input.id, streaming: input.streaming,
+              length: input.content.length, lastMarker: input.content.match(marker)?.at(-1), queue: options?.name,
+              seedLength: input.seedPrefix?.source.length, seedBlocks: input.seedPrefix?.blockCount });
+            post.call(this, input, ...args);
+          };
+          this.addEventListener("message", ({ data }) => workerEvents.push({ at: performance.now(), event: "received", id: data.id,
+            retainedBlocks: data.retained?.blockCount }));
+        }
+      };
+      const entryTypes = ["longtask", "long-animation-frame"].filter((type) => PerformanceObserver.supportedEntryTypes.includes(type));
+      if (entryTypes.length) {
+        timingObserver = new PerformanceObserver((entries) => collectTimings(entries.getEntries()));
+        timingObserver.observe({ entryTypes });
+      }
+    }
     const NativeEventSource = window.EventSource;
     window.EventSource = class extends NativeEventSource {
       constructor(url, options) {
@@ -149,11 +194,26 @@ try {
 
     window.fernStreamingMeasurement = new Promise((resolve) => {
       const conversation = document.querySelector(".text-conversation");
+      let traceMutations;
+      let terminalCommitted;
+      const committed = new Map();
+      function recordCommit() {
+        const row = conversation.querySelector(".text-message--assistant");
+        const body = row?.querySelector(".text-message-content");
+        const now = performance.now();
+        if (terminal !== undefined && terminalCommitted === undefined && row && !row.classList.contains("text-message--streaming") &&
+            body?.querySelector("table") && body.querySelector("pre code")) terminalCommitted = now;
+        for (const name of body?.textContent.match(marker) ?? []) {
+          if (arrivals.has(name) && !committed.has(name)) committed.set(name, now);
+        }
+      }
       let frame;
       let observer;
       const timeout = setTimeout(() => {
         cancelAnimationFrame(frame);
         observer?.disconnect();
+        traceMutations?.disconnect();
+        stopTiming();
         resolve({ error: "The measured reply did not reach its final formatted frame." });
       }, 30_000);
       trigger.addEventListener(sendMethod === "enter" ? "keydown" : "click", () => {
@@ -170,6 +230,10 @@ try {
           observer.disconnect();
         });
         observer.observe(conversation, { childList: true, subtree: true, attributes: true, attributeFilter: ["class"] });
+        if (trace) {
+          traceMutations = new MutationObserver(recordCommit);
+          traceMutations.observe(conversation, { childList: true, subtree: true, characterData: true, attributeFilter: ["class"] });
+        }
         const tick = () => {
           const now = performance.now();
           firstFrame ??= now;
@@ -189,6 +253,8 @@ try {
               rendered.size === sampleCount) {
             clearTimeout(timeout);
             observer.disconnect();
+            traceMutations?.disconnect();
+            stopTiming();
             resolve({
               sendToFirstFrameMs: firstFrame - sent,
               sendToReplyCommitMs: replyCommit - sent,
@@ -199,6 +265,13 @@ try {
               terminalReceiptToFormattedFrameMs: now - terminal,
               maxFrameGapMs,
               samples: [...rendered.values()],
+              ...(trace ? { trace: { sentAt: sent, terminalAt: terminal, terminalCommittedAt: terminalCommitted ?? null,
+                settledAt: now, workerEvents, longTasks, longFrames,
+                updates: [...rendered.values()].map((sample) => {
+                  const received = arrivals.get(sample.marker);
+                  return { marker: sample.marker, receivedAt: received, committedAt: committed.get(sample.marker) ?? null,
+                    frameAt: received + sample.receiptToFrameMs };
+                }) } } : {}),
             });
             return;
           }
@@ -207,7 +280,7 @@ try {
         frame = requestAnimationFrame(tick);
       }, { once: true, capture: true });
     });
-  }, { sampleCount, markerPattern, sendMethod, eventsOrigin });
+  }, { sampleCount, markerPattern, sendMethod, eventsOrigin, trace });
 
   if (sendMethod === "enter") await composer.press("Enter");
   else await send.click();
@@ -244,7 +317,7 @@ try {
 
   const measurement = await page.evaluate(() => window.fernStreamingMeasurement);
   assert(!measurement.error, measurement.error);
-  const { samples, ...milestones } = measurement;
+  const { samples, trace: frameTrace, ...milestones } = measurement;
   assert.equal(samples.length, sampleCount);
   for (const [key, value] of Object.entries(milestones)) assert(Number.isFinite(value) && value >= 0, key);
   assert.deepEqual(errors, []);
@@ -254,6 +327,7 @@ try {
     host: { os: os.version(), arch: os.arch(), cpu: os.cpus()[0]?.model, memoryBytes: os.totalmem() },
     sampleCount, appendIntervalMs, milestones,
     receiptToFrameMs: summarize(samples.map(({ receiptToFrameMs }) => receiptToFrameMs)), samples,
+    ...(frameTrace ? { trace: frameTrace } : {}),
   }, null, 2));
 } finally {
   connection?.response.end();

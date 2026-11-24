@@ -34,7 +34,7 @@ function parseTableTail(source: string, table: TablePrefix, preview: boolean, st
 }
 
 self.addEventListener("message", (event: MessageEvent<ChatMarkdownRequest>) => {
-  const { id, content, streaming, view, previousId } = event.data;
+  const { id, content, streaming, view, previousId, seedPrefix } = event.data;
   let response: ChatMarkdownResponse;
   try {
     const { source, preview } = prepareChatMarkdown(content, streaming);
@@ -42,7 +42,8 @@ self.addEventListener("message", (event: MessageEvent<ChatMarkdownRequest>) => {
     const candidate = prefixes.get(view);
     // Only omit nodes from a reply the renderer has acknowledged.
     const acknowledged = independent && candidate?.requestId === previousId ? candidate : undefined;
-    const prefix = acknowledged?.blocks && source.startsWith(acknowledged.blocks.source) ? acknowledged.blocks : undefined;
+    const prior = acknowledged?.blocks ?? (!acknowledged && streaming && independent ? seedPrefix : undefined);
+    const prefix = prior && source.startsWith(prior.source) ? prior : undefined;
     const table = acknowledged?.table;
     const delta = table && parseTableTail(source, table, preview, streaming);
     let reusable = streaming ? prefix : undefined;
@@ -78,7 +79,7 @@ self.addEventListener("message", (event: MessageEvent<ChatMarkdownRequest>) => {
     if (prefixes.size > PREFIX_LIMIT && oldestView !== undefined) prefixes.delete(oldestView);
     response = {
       id, blocks,
-      retained: retained && acknowledged ? { requestId: acknowledged.requestId, blockCount: retained.blockCount } : undefined,
+      retained: retained ? { requestId: acknowledged?.requestId, blockCount: retained.blockCount } : undefined,
       tableRows: delta?.tableRows,
       stablePrefix: reusable && content.startsWith(reusable.source)
         ? { sourceLength: reusable.source.length, blockCount: reusable.blockCount } : undefined,

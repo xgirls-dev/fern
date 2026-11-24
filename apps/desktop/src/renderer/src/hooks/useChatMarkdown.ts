@@ -167,15 +167,19 @@ export function useChatMarkdown(content: string, streaming: boolean, receivingRe
       waiting.current = null;
       const { queue, ...input } = next;
       const previous = latestWorkerResult.current;
-      const cancel = requestMarkdown(queue, { ...input, previousId: previous?.requestId }, ({ id, blocks, retained, tableRows, stablePrefix, matchesFinal }) => {
+      const seed = !previous && input.streaming ? latestSmall.current?.streamingParse : undefined;
+      const cancel = requestMarkdown(queue, { ...input, previousId: previous?.requestId, seedPrefix: seed?.prefix }, ({ id, blocks, retained, tableRows, stablePrefix, matchesFinal }) => {
         inFlight.current = null;
         const count = retained?.blockCount ?? 0;
-        if (!blocks || (retained && (!previous || previous.requestId !== retained.requestId || count > previous.nodes.length))) {
+        const usesSeed = retained && retained.requestId === undefined;
+        const sourceNodes = usesSeed ? seed?.nodes : previous?.nodes;
+        const matched = usesSeed ? seed?.prefix?.blockCount === count : previous?.requestId === retained?.requestId;
+        if (!blocks || (retained && (!matched || !sourceNodes || count > sourceNodes.length))) {
           setWorkerFailed(true);
           return;
         }
-        const nodes = previous?.nodes.slice(0, count) ?? [];
-        const signatures = previous?.signatures.slice(0, count) ?? [];
+        const nodes = sourceNodes?.slice(0, count) ?? [];
+        const signatures = usesSeed ? nodes.map(() => undefined) : previous?.signatures.slice(0, count) ?? [];
         if (tableRows) {
           const table = appendChatMarkdownTableRows(previous?.nodes[count], tableRows);
           if (!table) {
