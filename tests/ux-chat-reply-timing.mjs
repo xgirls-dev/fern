@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { expect } from "@playwright/test";
-import { observeChatReply } from "../apps/desktop/e2e/chat-reply-timing.mjs";
+import { measureWarmStop, observeChatReply, readReplyTiming } from "../apps/desktop/e2e/chat-reply-timing.mjs";
 import { fixture } from "./ui-fixture.mjs";
 
 let stream;
+let connections = 0;
 const { page, state, errors, close } = await fixture({
   firstRun: true,
   textStatus: {
@@ -14,6 +15,7 @@ const { page, state, errors, close } = await fixture({
     response.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-store" });
     response.flushHeaders();
     stream = response;
+    connections++;
   },
 });
 const emit = (frame) => stream.write("data: " + JSON.stringify(frame) + "\n\n");
@@ -37,8 +39,7 @@ try {
   emit({ job: state.textStatus.job });
   stream.end();
 
-  const measured = await timing.evaluate(({ result }) => result);
-  await timing.dispose();
+  const measured = await readReplyTiming(timing);
   for (const name of ["feedbackFrameMs", "firstBackendEventMs", "firstAnswerEventMs",
     "firstAnswerFrameMs", "terminalEventMs", "settledFrameMs", "maxFrameGapMs"]) {
     assert(Number.isFinite(measured[name]) && measured[name] >= 0, name);
@@ -48,9 +49,43 @@ try {
   assert(measured.firstAnswerEventMs <= measured.firstAnswerFrameMs);
   assert(measured.firstAnswerFrameMs <= measured.terminalEventMs);
   assert(measured.terminalEventMs <= measured.settledFrameMs);
+  // The backend acknowledges Stop before reporting that the job has ended.
+  const stoppedIds = [];
+  await page.route("**/api/text/stop", async (route) => {
+    stoppedIds.push(route.request().postDataJSON().requestId);
+    await route.fulfill({ status: 202, json: { textJob: state.textStatus.job } });
+    state.textStatus.job = { ...state.textStatus.job, status: "stopped", finishedAt: Date.now() / 1000 };
+    emit({ job: state.textStatus.job });
+    stream.end();
+  });
+
+  async function driveWarmStop() {
+    await expect.poll(() => connections).toBe(2);
+    state.textStatus.job = { ...state.textStatus.job, partialText: "1. A notebook", phase: "Waiting for the first token…" };
+    emit({ job: state.textStatus.job });
+    await expect.poll(() => connections).toBe(3);
+    state.textStatus.job = {
+      ...state.textStatus.job, partialText: "ORCHID-42", status: "complete", finishedAt: Date.now() / 1000,
+      result: { inputTokens: 37, outputTokens: 6, generationSeconds: 0.4, tokensPerSecond: 15, backend: "OpenVINO", device: "GPU",
+        runtimeTiming: { prefillMs: 20, decodeMs: 80, cachedPromptTokens: 32 } },
+    };
+    emit({ job: state.textStatus.job });
+    stream.end();
+  }
+
+  const [warm] = await Promise.all([measureWarmStop(page, () => state.textStatus.job, "local"), driveWarmStop()]);
+  assert.deepEqual(stoppedIds, [state.textRequests[1].requestId]);
+  assert(state.textRequests[2].messages.some(({ role, content }) => role === "user" && content.includes("ORCHID-42")));
+  assert.equal(state.textRequests[2].threadId, state.textRequests[1].threadId);
+  assert(warm.stoppedReply.stopClickMs >= warm.stoppedReply.firstAnswerFrameMs);
+  assert(Number.isFinite(warm.stopToBackendEventMs) && warm.stopToBackendEventMs >= 0);
+  assert(Number.isFinite(warm.stopToSendReadyFrameMs) && warm.stopToSendReadyFrameMs >= 0);
+  assert(Number.isFinite(warm.stopToSettledFrameMs) && warm.stopToSettledFrameMs >= 0);
+  assert.equal(warm.followUp.runtime.cachedPromptTokens, 32);
+  assert.equal(warm.followUp.backend, "OpenVINO");
   assert(await page.evaluate(() => window.EventSource === window.originalBenchEventSource));
   assert.deepEqual(errors, []);
-  console.log("The benchmark distinguishes loading, SSE receipt, first rendered answer text, and the settled reply.");
+  console.log("The benchmark distinguishes loading, first answer, backend Stop, composer readiness, and the warm follow-up.");
 } finally {
   stream?.end();
   await close();

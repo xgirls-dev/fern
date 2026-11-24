@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { _electron as electron, expect } from "@playwright/test";
-import { observeChatReply } from "./chat-reply-timing.mjs";
+import { measureWarmStop, observeChatReply, readReplyTiming } from "./chat-reply-timing.mjs";
 
 const desktop = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const scratch = await mkdtemp(path.join(os.tmpdir(), "fern-gguf-"));
@@ -132,13 +132,18 @@ try {
     assert.equal(Boolean(response.job.partialReasoning?.trim()), test.mode === "reasoning");
     if (test.color) await expect(page.getByAltText("Attached chat image")).toBeVisible();
     const { backend, device, generationSeconds, tokensPerSecond, inputTokens, outputTokens, runtimeTiming } = response.job.result;
-    const rendererTiming = await timing.evaluate(({ result }) => result);
-    await timing.dispose();
-    assert(!rendererTiming.error, rendererTiming.error);
-    assert(Number.isFinite(rendererTiming.firstAnswerFrameMs), "The renderer should show answer text in a frame.");
+    const rendererTiming = await readReplyTiming(timing);
     report.push({ modality: test.modality, mode: test.mode, backend, device, generationSeconds, tokensPerSecond,
       inputTokens, outputTokens, runtimeTiming, rendererTiming, answer: response.job.partialText });
     console.log(JSON.stringify(report.at(-1)));
+    if (index === 0) {
+      assert(Number.isFinite(runtimeTiming?.modelReadyMs), "The first reply should report its cold GGUF model load.");
+      const warmStop = await measureWarmStop(page, async () => (await status()).job, installed.id);
+      assert.equal(warmStop.followUp.backend, "OpenVINO");
+      assert.equal(warmStop.followUp.device, "GPU");
+      report.push({ modality: "text", mode: "instant", journey: "warm-stop-and-follow-up", ...warmStop });
+      console.log(JSON.stringify(report.at(-1)));
+    }
   }
   await expect(page.locator(".text-message--streaming")).toHaveCount(0);
   const screenshot = sourceApp
