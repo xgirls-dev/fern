@@ -25,11 +25,16 @@ const { page, close, errors } = await fixture({
 const feed = page.getByRole("log", { name: "Conversation" });
 const button = (name) => page.getByRole("button", { name, exact: true });
 async function switchChat(title) {
-  const thread = button(`Text thread: ${title}`);
-  const expand = button("Expand sidebar");
-  await expect(thread.or(expand).first()).toBeVisible();
-  if (!(await thread.isVisible())) await expand.click();
-  await thread.click();
+  const toggle = page.locator("button[aria-controls='studio-sidebar']");
+  const overlay = page.viewportSize().width <= 900;
+  if (overlay) {
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  }
+  await button(`Text thread: ${title}`).click();
+  await expect(page.locator(".text-header h2")).toHaveText(title);
+  if (overlay) await expect(toggle).toHaveAttribute("aria-expanded", "false");
 }
 const marker = (label) => feed.getByText(label, { exact: true });
 const readOffset = (label) => marker(label).evaluate((node) => {

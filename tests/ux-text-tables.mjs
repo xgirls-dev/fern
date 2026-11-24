@@ -107,7 +107,9 @@ try {
   await expect(scroller).not.toHaveAttribute("tabindex");
   await expect(fit).toHaveCount(0);
 
-  await page.setViewportSize({ width: 640, height: 720 });
+  // Standard system fonts differ in width. Leave room for the seven headers
+  // on desktop and force overflow well past that difference in a narrow pane.
+  await page.setViewportSize({ width: 520, height: 720 });
   await expect.poll(overflow).toBeGreaterThan(10);
   await expect(scroller).toHaveAttribute("tabindex", "0");
   await fit.press("Space");

@@ -155,11 +155,14 @@ try {
   await handle.press("End");
   await handle.press("ArrowDown");
   await expect(handle).toHaveAttribute("aria-valuenow", "408");
+  // Use the part of the grip inside the panel and wait for pointer hit-testing.
+  await expect(handle).toBeInViewport();
   const resizeBounds = await handle.boundingBox();
   const resizeX = resizeBounds.x + resizeBounds.width / 2;
-  const resizeY = resizeBounds.y + resizeBounds.height / 2;
-  await page.mouse.move(resizeX, resizeY);
+  const resizeY = resizeBounds.y + resizeBounds.height - 2;
+  await handle.hover({ position: { x: resizeBounds.width / 2, y: resizeBounds.height - 2 } });
   await page.mouse.down();
+  await expect(handle).toHaveAttribute("data-resizing", "true");
   await page.mouse.move(resizeX, resizeY + 36, { steps: 5 });
   await expect(handle).toHaveAttribute("aria-valuetext", "372 pixels");
   await expect(terminal).toHaveCSS("height", "372px");
