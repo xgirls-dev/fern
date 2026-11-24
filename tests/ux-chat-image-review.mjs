@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
-import { fixture } from "./ui-fixture.mjs";
+import { expect } from "@playwright/test";
+import { chooseSelectOption } from "./select-option.mjs";
+import { fixture, savedTextWorkspace } from "./ui-fixture.mjs";
 
 const posters = [
   { name: "red-poster.png", prompt: "Red circle poster", color: "#b83e2c" },
   { name: "blue-poster.png", prompt: "Blue circle poster", color: "#3a6480" },
   { name: "green-poster.png", prompt: "Green circle poster", color: "#48624f" },
 ];
+const archivedPoster = { name: "archived-poster.png", prompt: "Archived poster", color: "#b6925a" };
 const id = "text-thread-review";
 const legacyTextWorkspace = { activeId: id, threads: [{
       id, title: "Poster", draft: "Keep this draft.", updatedAt: Date.now(),
@@ -19,6 +22,13 @@ const legacyTextWorkspace = { activeId: id, threads: [{
             ...(i === 2 ? { context: { size: 4096, compactedMessages: 2, images: 2, imageNames: posters.slice(1).map(({ name }) => name) } } : {}),
           } },
       ]),
+      versions: [{ id: "archive", label: "Early poster", messages: [
+        { id: "archive-prompt", role: "user", content: "Make a poster for the archive.", createdAt: 1 },
+        { id: "archive-poster", role: "assistant", content: "The archive poster is ready.", createdAt: 2,
+          generatedImage: { name: archivedPoster.name, prompt: archivedPoster.prompt, modelLabel: "Klein 4B", width: 512, height: 512 } },
+        { id: "archive-review", role: "user", content: "Check the poster lines.", includedImage: archivedPoster.name, createdAt: 3 },
+        { id: "archive-answer", role: "assistant", content: "The poster has clear lines.", createdAt: 4 },
+      ] }],
 }] };
 
 const { page, state, errors, dir, close } = await fixture({
@@ -31,7 +41,7 @@ const { page, state, errors, dir, close } = await fixture({
 });
 try {
   let redMissing = false;
-  for (const { name, color } of posters) {
+  for (const { name, color } of [...posters, archivedPoster]) {
     await page.route(`**/outputs/${name}*`, (route) => redMissing && name === posters[0].name
       ? route.fulfill({ status: 404 })
       : route.fulfill({ contentType: "image/svg+xml", body: `<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512"><rect width="512" height="512" fill="#efdfc0"/><circle cx="256" cy="256" r="140" fill="${color}"/></svg>` }));
@@ -96,6 +106,27 @@ try {
   assert.equal(state.textRequests[0].messages.at(-1).includedImage, "red-poster.png");
   assert.equal(state.textRequests[0].messages.at(-1).imageThreadId, "text-thread-review");
   assert.equal(state.textRequests[0].messages.find((message) => message.generatedImage === "red-poster.png").imageThreadId, "text-thread-review");
+
+  const copyId = state.textRequests[0].threadId;
+  state.textStatus.job = { ...state.textStatus.job, status: "complete", partialText: "The current copy works.", finishedAt: Date.now() / 1000 };
+  await expect(page.getByText("The current copy works.", { exact: true })).toBeVisible();
+  await page.setViewportSize({ width: 1440, height: 920 });
+  await chooseSelectOption(page.getByLabel("Conversation versions", { exact: true }), "Early poster");
+  await expect.poll(async () => (await savedTextWorkspace(page)).threads.find((thread) => thread.id === copyId)?.messages[1]?.id)
+    .toBe("archive-poster");
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Poster (copy)", exact: true })).toBeVisible();
+  const archivedCard = page.locator(".text-generated-artifact").filter({ has: page.getByRole("button", { name: "Review image 1: Archived poster", exact: true }) });
+  await archivedCard.getByRole("button", { name: "Include this image again" }).click();
+  await expect(page.getByText("Selected for next message: Archived poster", { exact: true })).toBeVisible();
+  await page.getByRole("textbox", { name: "Message", exact: true }).fill("Look at the border in the saved poster.");
+  await page.getByRole("button", { name: "Send message", exact: true }).click();
+  await expect.poll(() => state.textRequests.length).toBe(2);
+  const archivedRequest = state.textRequests[1];
+  assert.equal(archivedRequest.threadId, copyId);
+  assert.equal(archivedRequest.messages.find((message) => message.generatedImage === archivedPoster.name).imageThreadId, id);
+  assert.deepEqual(archivedRequest.messages.filter((message) => message.includedImage === archivedPoster.name)
+    .map((message) => message.imageThreadId), [id, id]);
   assert.deepEqual(errors, []);
   console.log("Chat image viewer, descriptive names, keyboard return, and missing-preview recovery passed.");
 } finally {
