@@ -20,8 +20,26 @@ try {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.reload();
   await composer.fill("Show how to make a small example.");
+  await page.evaluate(() => {
+    const feed = document.querySelector(".text-conversation");
+    window.firstReplyFrame = new Promise((resolve) => {
+      const observer = new MutationObserver(() => {
+        const reply = feed.querySelector(".text-message--streaming");
+        if (!reply) return;
+        observer.disconnect();
+        requestAnimationFrame(() => {
+          const viewport = feed.getBoundingClientRect();
+          const row = reply.getBoundingClientRect();
+          resolve(row.height > 0 && row.top >= viewport.top && row.bottom <= viewport.bottom);
+        });
+      });
+      observer.observe(feed, { childList: true, subtree: true });
+    });
+  });
   await button("Send message").click();
   await expect(status).toHaveText("Loading model…");
+  assert.equal(await page.evaluate(() => window.firstReplyFrame), true,
+    "The first loading row should fit inside the conversation on its first frame");
   await page.clock.fastForward(25_100);
   await expect(status).toHaveText("Still loading the model…");
   await expect(stream).toContainText("Still loading the model…");
