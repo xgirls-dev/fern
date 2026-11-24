@@ -28,7 +28,7 @@ group);
 
 try {
   await page.route("**/api/text/job", (route) => route.fulfill({ json: state.textStatus.job }));
-  await page.route(/\/textCodeHighlight[^/]*\.(?:js|ts)(?:\?.*)?$/, async (route) => {
+  await page.route(/\/textCodeHighlight\.worker[^/]*\.(?:js|ts)(?:\?.*)?$/, async (route) => {
     imports += 1;
     await new Promise((resolve) => { releaseHighlight = resolve; });
     await route.continue();
@@ -46,7 +46,7 @@ try {
   await expect(python).toHaveAttribute("tabindex", "0");
   await python.press("ArrowRight");
   await expect.poll(() => python.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
-  assert.equal(imports, 0, "An in-progress reply must not load the syntax module.");
+  assert.equal(imports, 0, "An in-progress reply must not load the syntax worker.");
 
   await wrap.press("Space");
   await expect(wrap).toBeFocused();
@@ -59,6 +59,8 @@ try {
   state.textStatus.job = { ...state.textStatus.job, status: "complete", partialText: full, finishedAt: Date.now() / 1000 };
   await expect(reply).not.toHaveClass(/text-message--streaming/);
   await expect.poll(() => typeof releaseHighlight).toBe("function");
+  assert.equal(await code.textContent(), script);
+  assert.deepEqual(await tokens("keyword"), []);
   await expect(wrap).toHaveAttribute("aria-pressed", "true");
   await code.evaluate((element) => {
     const text = element.firstChild;
@@ -75,6 +77,7 @@ try {
   assert.equal(await reply.locator("pre code").nth(1).textContent(), unknown);
   assert.deepEqual(await tokens("name", 1), []);
   await expect.poll(() => tokens("keyword", 2)).toContain("Write-Output");
+  assert.equal(imports, 1, "Settled blocks should share a single syntax worker.");
   await expect(reply.locator("pre input")).toHaveCount(0);
 
   const keywordColor = () => code.evaluate((element) => getComputedStyle(element, "::highlight(fern-code-keyword)").color);

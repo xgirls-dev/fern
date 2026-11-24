@@ -24,6 +24,8 @@ Repeat with the same opener, window visibility, recorded viewport, browser, and 
 
 Set `FERN_BENCH_STREAM_TRACE=1` for a diagnostic replay. The `trace` section records event receipt, DOM commit, the following render opportunity, Markdown worker round trips, and Chromium long tasks and animation frames where supported. The extra observers affect timing. Use ordinary replays for paired latency comparisons.
 
+Set `FERN_BENCH_STREAM_CODE_LINES=350` to stress syntax coloring. This replay measures the formatted reply, the first colored code, the frame with all code lines colored, and the longest frame gap while colors arrive.
+
 ## Read the report
 
 - **Send to first frame** measures the first frame opportunity after the click or Enter. **Send to reply commit** measures the first streaming row mutation in the DOM. **Send to feedback** measures the first frame with that row present.
