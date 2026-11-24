@@ -2,11 +2,12 @@ import ArrowDown from "lucide-react/dist/esm/icons/arrow-down.mjs";
 import Check from "lucide-react/dist/esm/icons/check.mjs";
 import Upload from "lucide-react/dist/esm/icons/upload.mjs";
 import X from "lucide-react/dist/esm/icons/x.mjs";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { useQwen3Tts } from "../hooks/useQwen3Tts";
 import type { AudioOutput, QwenTtsModel } from "../lib/ttsThreads";
 import { Button, ChoiceCard, IconButton, Select, Textarea } from "./ui/controls";
 import { AudioFeed } from "./AudioFeed";
+import { SpeechModelRequirements } from "./SpeechModelRequirements";
 import { TtsJobProgress } from "./TtsJobProgress";
 import { WorkspaceThreadTitle } from "./WorkspaceThreadTitle";
 
@@ -29,6 +30,10 @@ const outputLabel = (output: AudioOutput) => models.find((item) => item.id === o
 
 export function Qwen3TtsWorkspace({ studio, sidebarCollapsed, onOpenThreadSearch }: { studio: ReturnType<typeof useQwen3Tts>; sidebarCollapsed: boolean; onOpenThreadSearch: () => void }) {
   const { activeThread, status, busy, error, updateThread } = studio;
+  const setupRequirementsId = useId();
+  const scriptCountId = useId();
+  const setupFocusThread = useRef<string | undefined>(undefined);
+  const script = useRef<HTMLTextAreaElement>(null);
   const [fileError, setFileError] = useState<string | null>(null);
   const [referenceReady, setReferenceReady] = useState(false);
   const [fileInputKey, setFileInputKey] = useState(0);
@@ -53,9 +58,18 @@ export function Qwen3TtsWorkspace({ studio, sidebarCollapsed, onOpenThreadSearch
   const canGenerate = studio.statusLoaded && !studio.statusError && modelReady && !busy && !working && !!activeThread.text.trim() && (model.mode !== "clone" || (!!referenceFile && referenceReady && !fileError)) && (model.mode !== "design" || !!activeThread.designInstruction.trim());
 
   useEffect(() => { setFileError(null); }, [activeThread.id]);
+  useEffect(() => {
+    if (busy || !setupFocusThread.current) return;
+    const finishedHere = status.operation === "setup" && status.status === "complete" &&
+      status.threadId === activeThread.id && setupFocusThread.current === activeThread.id;
+    setupFocusThread.current = undefined;
+    if (finishedHere && document.activeElement === document.body) script.current?.focus({ preventScroll: true });
+  }, [activeThread.id, busy, status.operation, status.status, status.threadId]);
 
   const chooseMode = (nextMode: VoiceMode) => {
-    const next = models.find((item) => item.mode === nextMode && item.size === model.size) ?? models.find((item) => item.mode === nextMode)!;
+    if (nextMode === model.mode) return;
+    const options = models.filter((item) => item.mode === nextMode);
+    const next = options.find((item) => status.models.some((available) => available.id === item.id && available.installed)) ?? options[0];
     updateThread(activeThread.id, { model: next.id });
   };
   const chooseReference = (file: File | null) => {
@@ -142,7 +156,7 @@ export function Qwen3TtsWorkspace({ studio, sidebarCollapsed, onOpenThreadSearch
             <ArrowDown size={14} aria-hidden="true" /> Latest take
           </Button>}
         </div>
-        <div className="tts-control-group tts-script-group"><div className="tts-group-heading"><strong>Script</strong></div><label className="tts-field"><span className="sr-only">Text to speak</span><Textarea id="tts-script" value={activeThread.text} maxLength={10000} rows={7} placeholder="Write or paste your script…" onChange={(event) => updateThread(activeThread.id, { text: event.target.value })} /><small className="tts-character-count">{activeThread.text.length.toLocaleString()} / 10,000</small></label></div>
+        <div className="tts-control-group tts-script-group"><div className="tts-group-heading"><strong>Script</strong></div><label className="tts-field"><Textarea id="tts-script" ref={script} aria-label="Text to speak" aria-describedby={scriptCountId} value={activeThread.text} maxLength={10000} rows={7} placeholder="Write or paste your script…" onChange={(event) => updateThread(activeThread.id, { text: event.target.value })} /><small className="tts-character-count" id={scriptCountId}>{activeThread.text.length.toLocaleString()} / 10,000</small></label></div>
         <div className="tts-control-group"><div className="tts-group-heading"><strong>Voice source</strong></div><div className="tts-mode-list" role="group" aria-label="Voice source">{modes.map((item) => <ChoiceCard key={item.id} className="tts-mode-option" selected={model.mode === item.id} disabled={busy || working} onClick={() => chooseMode(item.id)}>{model.mode === item.id && <Check className="tts-voice-selected" size={12} aria-hidden="true" />}<span><strong>{item.title}</strong><small>{item.summary}</small></span></ChoiceCard>)}</div></div>
         <div className="tts-control-group tts-voice-detail"><div className="tts-group-heading"><strong>{model.mode === "custom" ? "Speaker & delivery" : model.mode === "clone" ? "Reference voice" : "Voice direction"}</strong><small>{model.mode === "custom" ? "Pick a speaker and guide the performance." : model.mode === "clone" ? "Use a clear sample of the voice to match." : "Describe the voice you want to create."}</small></div>
           {model.mode === "custom" ? <div className="tts-control-stack"><label className="tts-field">Preset speaker<Select value={activeThread.speaker} onChange={(speaker) => updateThread(activeThread.id, { speaker })} options={speakers.map((speaker) => ({ value: speaker, label: speaker.replaceAll("_", " ") }))} /></label><label className="tts-field">Delivery direction <span className="tts-optional">Optional</span><Textarea value={activeThread.instruction} maxLength={2000} rows={2} placeholder="For example: calm, warm, and measured" onChange={(event) => updateThread(activeThread.id, { instruction: event.target.value })} /></label></div> : null}
@@ -160,9 +174,11 @@ export function Qwen3TtsWorkspace({ studio, sidebarCollapsed, onOpenThreadSearch
 
 
           {studio.statusError || error || fileError || (status.threadId === activeThread.id && status.status === "failed" && status.error) ? <div className="tts-footer-error" role="alert"><span>{studio.statusError ?? error ?? fileError ?? status.error}</span>{studio.statusError ? <Button variant="secondary" className="tts-retry-status" onClick={() => void studio.retryStatus()}>Retry</Button> : null}</div> : null}
-          {setupNeeded && !working ? <div className="tts-submit">
-            <span>{model.label}{selectedModel?.bytes && !selectedModel.installed ? ` · ${(selectedModel.bytes / 1e9).toFixed(2)} GB download` : ""}. Fern also prepares the OpenVINO speech runtime.</span>
-            <Button variant="primary" className="tts-generate-button" disabled={busy} onClick={() => void studio.setupModel(model.id)}>Set up model</Button>
+          {setupNeeded && !working ? <div className="tts-submit tts-submit--setup">
+            <SpeechModelRequirements id={setupRequirementsId} model={selectedModel} device={studio.computeDevice}
+              environmentReady={status.environmentReady} label={model.label} />
+            <Button variant="primary" className="tts-generate-button" disabled={busy} aria-describedby={setupRequirementsId}
+              onClick={() => { setupFocusThread.current = activeThread.id; void studio.setupModel(model.id); }}>Set up model</Button>
           </div> : <div className="tts-submit">
             <span>{status.status === "stopping" ? "Stopping the current audio job" : working ? workingHere ? "This take is in progress" : "Another audio thread is busy" : studio.statusError ? "Audio service unavailable · retry above" : !studio.statusLoaded ? "Checking audio models…" : setupUnavailable ? setupUnavailable : !modelReady ? "Set up this model to continue" : !activeThread.text.trim() ? "Add a script to continue" : model.mode === "clone" && !referenceFile ? "Add a reference clip to continue" : model.mode === "clone" && fileError ? "Replace the reference clip to continue" : model.mode === "clone" && !referenceReady ? "Checking the reference clip…" : model.mode === "design" && !activeThread.designInstruction.trim() ? "Describe the voice to continue" : "Ctrl + Enter to generate"}</span>
             <Button variant="primary" className="tts-generate-button" disabled={!canGenerate} onClick={() => void studio.generate()}>{workingHere && status.operation === "generate" ? "Generating…" : "Generate speech"}</Button>

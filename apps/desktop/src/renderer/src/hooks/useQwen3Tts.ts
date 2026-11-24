@@ -2,7 +2,16 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { getApiBaseUrl, resolveAssetUrl } from "../lib/api";
 import { createAudioThread, loadAudioThreads, saveAudioThreads, type AudioOutput, type AudioThread, type AudioThreadWorkspace, type QwenTtsModel } from "../lib/ttsThreads";
 
-export interface TtsModelStatus { id: QwenTtsModel; label: string; kind: "custom_voice" | "base" | "voice_design"; installed: boolean; ready?: boolean; bytes?: number | null }
+export interface TtsModelStatus {
+  id: QwenTtsModel;
+  label: string;
+  kind: "custom_voice" | "base" | "voice_design";
+  installed: boolean;
+  ready?: boolean;
+  bytes?: number | null;
+  minimumFreeBytes?: number;
+  downloadIncludes?: string[];
+}
 interface TtsStatus { startedAt?: number | null; finishedAt?: number | null; diagnostics?: string[]; phase?: string | null; setupUnavailableReason?: string | null }
 interface TtsStatus { id: string | null; threadId: string | null; model: QwenTtsModel | null; status: "idle" | "setting_up" | "running" | "stopping" | "stopped" | "complete" | "failed"; operation: "setup" | "generate" | null; logs: string[]; output: Omit<AudioOutput, "prompt" | "createdAt"> | null; error: string | null; models: TtsModelStatus[]; environmentReady: boolean }
 
@@ -311,5 +320,5 @@ export function useQwen3Tts(apiReady: boolean, computeDevice: "GPU" | "CPU" = "G
     } catch (caught) { setError(caught instanceof Error ? caught.message : "Could not stop the audio job."); }
   }, [jobRunning, status.status]);
 
-  return { workspace, threads: workspace.threads, activeThread, status, statusLoaded, statusError, retryStatus: refresh, busy, error, clearError: () => setError(null), referenceFiles, setReferenceFile, updateThread, updateOutput, deleteOutput, newThread, selectThread, renameThread, archiveThread, deleteThread, resetWorkspace, setupModel, generate, stopJob };
+  return { workspace, threads: workspace.threads, activeThread, status, statusLoaded, statusError, computeDevice, retryStatus: refresh, busy, error, clearError: () => setError(null), referenceFiles, setReferenceFile, updateThread, updateOutput, deleteOutput, newThread, selectThread, renameThread, archiveThread, deleteThread, resetWorkspace, setupModel, generate, stopJob };
 }

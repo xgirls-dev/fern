@@ -1,8 +1,9 @@
 """Pinned, anonymous downloads of ready-made Qwen3-TTS OpenVINO exports."""
 from __future__ import annotations
-import hashlib,json,os,re,shutil,time,urllib.request
+import hashlib,json,math,os,re,shutil,time,urllib.request
 from pathlib import Path,PurePosixPath
 CATALOG_PATH=Path(__file__).with_name('tts_model_catalog.json')
+DOWNLOAD_RESERVE_BYTES = 512 * 1024**2
 COMPONENTS=(
  'openvino_talker_language_model','openvino_talker_embedding_model',
  'openvino_talker_text_embedding_model','openvino_talker_text_projection_model',
@@ -29,7 +30,45 @@ def catalog_spec(model):
   if file['size']<=0 or not re.fullmatch(r'[a-f0-9]{64}',file['sha256']):raise ValueError('Invalid speech export checksum or size.')
   seen.add(file['path'])
  if not set(required_files(model)).issubset(seen):raise ValueError('Speech manifest is incomplete.')
+ if spec.get('bytes') != sum(file['size'] for file in spec['files']):raise ValueError('Speech manifest download size does not match its files.')
  return spec
+
+
+def model_download_details(model):
+    spec = catalog_spec(model)
+    companions = ["Speech tokenizer"]
+    if model.startswith("base-"):
+        companions.append("Speaker encoder")
+    return {
+        "bytes": spec["bytes"],
+        "minimumFreeBytes": spec["bytes"] + DOWNLOAD_RESERVE_BYTES,
+        "downloadIncludes": companions,
+    }
+
+
+def model_directories(root, spec):
+    folder = root / spec["folder"]
+    stage = root / (spec["folder"] + ".download")
+    if folder.parent != root or stage.parent != root:
+        raise ValueError("Invalid speech model folder.")
+    return folder, stage
+
+
+def require_download_space(root, download_bytes):
+    required = download_bytes + DOWNLOAD_RESERVE_BYTES
+    if shutil.disk_usage(root).free < required:
+        gigabytes = math.ceil(required / 10_000_000) / 100
+        raise RuntimeError(f"Free at least {gigabytes:.2f} GB for the remaining speech model files.")
+
+
+def require_fresh_install_space(model, model_root):
+    spec = catalog_spec(model)
+    root = Path(model_root).resolve()
+    folder, stage = model_directories(root, spec)
+    if model_ready(folder, model) or stage.exists():
+        return
+    root.mkdir(parents=True, exist_ok=True)
+    require_download_space(root, spec["bytes"])
 
 def digest(path):
  h=hashlib.sha256()
@@ -73,8 +112,7 @@ def download_file(url,target,file,progress):
 
 def install_model(model,model_root,progress=print):
  spec=catalog_spec(model);root=Path(model_root).resolve();root.mkdir(parents=True,exist_ok=True)
- folder=root/spec['folder'];stage=root/(spec['folder']+'.download')
- if folder.parent!=root or stage.parent!=root:raise ValueError('Invalid speech model folder.')
+ folder,stage=model_directories(root,spec)
  marker=folder/'.fern-tts-model.json'
  if marker.is_file():
   try:
@@ -91,7 +129,7 @@ def install_model(model,model_root,progress=print):
   offset=partial.stat().st_size if partial.is_file() else 0
   # A full but invalid partial will be restarted, so reserve its full size.
   missing+=file['size']-offset if 0<offset<file['size'] else file['size']
- if shutil.disk_usage(root).free<missing+512*1024**2:raise RuntimeError(f'Free at least {(missing+512*1024**2)/1024**3:.1f} GiB before installing this speech model.')
+ require_download_space(root,missing)
  progress(f'Downloading ready-made OpenVINO model · {spec["bytes"]/1024**3:.2f} GiB. No conversion is needed.')
  for file in spec['files']:
   url=f'https://huggingface.co/{spec["repo"]}/resolve/{spec["revision"]}/{file["path"]}'

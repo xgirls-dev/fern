@@ -1,5 +1,6 @@
-import hashlib,io,json,sys,tempfile,unittest
+import hashlib,io,json,sys,tempfile,threading,unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
 import tts_model_download as download
@@ -45,6 +46,59 @@ class TtsDownloadTests(unittest.TestCase):
     download.install_model('base-0.6b',root,lambda _:None);self.assertEqual(fetch.call_count,count)
    self.assertTrue(download.model_ready(folder,'base-0.6b'));self.assertTrue(json.loads((folder/'.fern-tts-model.json').read_text())['verifiedSha256'])
    (folder/'openvino_talker_language_model.bin').unlink();self.assertFalse(download.model_ready(folder,'base-0.6b'))
+ def test_catalog_reports_model_space_and_required_companions(self):
+  with patch.object(api_server, 'tts_environment_ready', return_value=False):
+   models = {model['id']: model for model in api_server.tts_snapshot()['models']}
+  voice = models['custom-0.6b']
+  self.assertEqual(voice['bytes'], download.catalog_spec('custom-0.6b')['bytes'])
+  self.assertEqual(voice['minimumFreeBytes'], voice['bytes'] + download.DOWNLOAD_RESERVE_BYTES)
+  self.assertEqual(voice['downloadIncludes'], ['Speech tokenizer'])
+  self.assertEqual(models['base-0.6b']['downloadIncludes'], ['Speech tokenizer', 'Speaker encoder'])
+
+ def test_fresh_disk_check_stops_before_runtime_setup(self):
+  model = 'custom-0.6b'
+  required = download.model_download_details(model)['minimumFreeBytes']
+  with (
+   tempfile.TemporaryDirectory() as tmp,
+   patch.object(api_server, 'TTS_MODEL_ROOT', Path(tmp) / 'speech'),
+   patch.dict(api_server.TTS_JOB, {'id': 'test-setup', 'status': 'setting_up', 'logs': [], 'diagnostics': []}),
+   patch.object(download.shutil, 'disk_usage', return_value=SimpleNamespace(free=required - 1)),
+   patch.object(api_server, 'run_tts_process') as process,
+   patch.object(api_server.TEXT_GENERATION_WORKER, 'close') as close,
+  ):
+   api_server.run_tts_setup(model, 'test-setup', threading.Event())
+   self.assertEqual(api_server.TTS_JOB['status'], 'failed')
+   self.assertRegex(api_server.TTS_JOB['error'], r'Free at least [0-9.]+ GB')
+   process.assert_not_called()
+   close.assert_not_called()
+
+ def test_runtime_only_setup_reuses_existing_speech_files(self):
+  model = 'base-0.6b'
+  with tempfile.TemporaryDirectory() as tmp:
+   root = Path(tmp)
+   for name in download.required_files(model):
+    target = root / f'{model}-OV' / name
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(b'legacy OpenVINO export')
+   with (
+    patch.object(api_server, 'TTS_MODEL_ROOT', root),
+    patch.dict(api_server.TTS_JOB, {'id': 'test-setup', 'status': 'setting_up', 'logs': [], 'diagnostics': []}),
+    patch.object(api_server, 'tts_environment_ready', return_value=False),
+    patch.object(api_server.shutil, 'which', return_value='powershell.exe'),
+    patch.object(api_server, 'run_tts_process', return_value=(0, '')) as process,
+   ):
+    api_server.run_tts_setup(model, 'test-setup', threading.Event())
+    self.assertEqual(api_server.TTS_JOB['status'], 'complete')
+    process.assert_called_once()
+    self.assertIn('install-qwen3-tts.ps1', ' '.join(process.call_args.args[0]))
+
+ def test_speech_setup_platform_reason(self):
+  with patch.object(api_server, 'apple_silicon', return_value=False):
+   for platform, expected in (('win32', None), ('linux', 'Qwen3-TTS setup is unavailable in the Linux beta.'),
+                              ('darwin', 'Speech setup requires Fern on Windows x64.')):
+    with self.subTest(platform=platform), patch.object(api_server.sys, 'platform', platform):
+     self.assertEqual(api_server.tts_setup_unavailable(), expected)
+
  def test_manifest_cannot_escape_destination(self):
   with tempfile.TemporaryDirectory() as tmp:
    catalog=Path(tmp)/'catalog.json';catalog.write_text(json.dumps({'base-0.6b':{'repo':'xgirls/fixture','revision':'a'*40,'files':[self.file('../escape.bin',b'bad')]}}))
