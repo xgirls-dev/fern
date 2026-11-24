@@ -2,6 +2,8 @@ export type ThemeMode = "light" | "dark" | "system";
 
 export interface StudioApi {
   platform: NodeJS.Platform;
+  architecture?: string;
+  appVersion?: string;
   getApiBaseUrl: () => Promise<string>;
   adjustZoom: (action: "in" | "out" | "reset") => Promise<number>;
   onApiBaseUrl: (listener: (url: string) => void) => () => void;

@@ -1,6 +1,7 @@
 import type { ChatImageModel, ChatImageSettings } from "./chatImageSettings";
 import { normalizeChatFolders, type ChatFolder } from "./chatFolders";
 import { normalizeChatDocuments, normalizeDocumentSources, type ChatDocument, type ChatDocumentSource } from "./chatDocuments";
+import { normalizeTextFailure, type TextFailureDiagnostics } from "./textFailure";
 
 const DEFAULT_CONTEXT_SIZE = 8192;
 export const MIN_CHAT_CONTEXT = 1024;
@@ -66,6 +67,7 @@ export interface TextMessage {
   status?: "complete" | "failed" | "stopped";
   error?: string | null;
   errorCode?: string | null;
+  failureDiagnostics?: TextFailureDiagnostics;
   modelName?: string;
   alternatives?: TextMessage[];
   promptVersionId?: string;
@@ -198,6 +200,7 @@ export interface TextJob {
   result: TextMessage["metrics"] | null;
   error: string | null;
   errorCode?: string | null;
+  failureDiagnostics?: TextFailureDiagnostics | null;
 }
 export interface TextRuntimeStatus {
   registryError?: string | null;
@@ -784,6 +787,7 @@ function restoreMessage(message: TextMessage, restoreAlternatives = true): TextM
     createdAt: Number.isFinite(message.createdAt) ? message.createdAt : Date.now(),
     error: typeof message.error === "string" ? message.error : null,
     errorCode: typeof message.errorCode === "string" ? message.errorCode : null,
+    failureDiagnostics: message.role === "assistant" && message.status === "failed" ? normalizeTextFailure(message.failureDiagnostics) : undefined,
     modelName: typeof message.modelName === "string" ? message.modelName : undefined,
     image: message.role === "user" && isChatImage(message.image) ? message.image : undefined,
     includedImage: message.role === "user" && isOutputImage(message.includedImage) ? message.includedImage : undefined,

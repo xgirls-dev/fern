@@ -10,8 +10,10 @@ import { chatSelectionIntersects } from "../hooks/useTextScroll";
 import { useClipboardCopy } from "../hooks/useClipboardCopy";
 import { resolveAssetUrl } from "../lib/api";
 import type { ChatSearchMatch } from "../lib/chatSearch";
+import { notify } from "../lib/notifications";
 import { hasStreamingMarkdown } from "../lib/streamingMarkdown";
 import { segmentGraphemes } from "../lib/text";
+import { formatTextFailure } from "../lib/textFailure";
 import { replyVersions, type TextMessage } from "../lib/textThreads";
 import { ChatDocumentSources } from "./ChatDocuments";
 import { TextMarkdown } from "./TextMarkdown";
@@ -254,6 +256,16 @@ export const TextChatMessage = memo(function TextChatMessage({ message, selectio
   if (onBranch) actions.push({ label: "Branch from response", icon: GitBranch, run: () => onBranch(message) });
   if (assistant) actions.push({ label: showDetails ? "Hide response details" : "Response details", icon: Info,
     run: () => setDetailsFor(showDetails ? undefined : { id: message.id, placement: "actions" }) });
+  if (assistant && failed) actions.push({
+    label: "Copy reply diagnostics",
+    icon: Copy,
+    run: () => {
+      void window.studio.copyText(formatTextFailure(message.failureDiagnostics, message.errorCode)).then(
+        () => notify("Reply diagnostics copied."),
+        () => notify("Couldn’t copy reply diagnostics.", "error"),
+      );
+    },
+  });
   if (versions.length > 1 && onDelete && onDeleteRequested) actions.push({ label: "Delete this version", icon: Trash2,
     run: () => onDeleteRequested(targetId, message.id), destructive: true, disabled: !canDelete });
   if (onDelete && onDeleteRequested) actions.push({ label: assistant ? "Delete reply" : "Delete message", icon: Trash2,

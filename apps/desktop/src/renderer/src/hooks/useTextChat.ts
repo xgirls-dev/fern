@@ -24,6 +24,7 @@ import { notify } from "../lib/notifications";
 import { reuseUnchangedStatus } from "../lib/statusSnapshot";
 import { createTextThreadStorage } from "../lib/textThreadStorage";
 import { formatTextTranscript, type TranscriptDestination } from "../lib/textTranscript";
+import { captureTextFailure } from "../lib/textFailure";
 import {
   chatTokenLimits, closeChatPane, compareChatThread, ggufLoadOptions, modelDefaultsFromThread, normalizeChatSplit,
   chatPresetSettings, showChatThread, snapshotTextVersion, textSamplingOverrides, visibleChatPane, type ChatPane,
@@ -127,15 +128,21 @@ function settleTextJob(workspace: TextThreadWorkspace, job: TextJob, lastRunning
     ? "The model reached the output limit before finishing an answer. Increase Maximum output in Chat settings or try a shorter prompt."
     : content ? "The model finished without a final answer. The partial response was kept."
     : "The model returned no answer. Retry, edit your message, or send a new one.";
+  const model = models.find((item) => item.id === job.modelId);
+  const failureDiagnostics = empty ? captureTextFailure({
+    stage: "checking-reply", runtime: model && (model.format === "gguf" ? "gguf" : "openvino"),
+    device: job.result?.device === "CPU" || job.result?.device === "GPU" ? job.result.device : undefined,
+  })
+    : outcome === "failed" ? captureTextFailure(job.failureDiagnostics ?? undefined) : undefined;
   const assistant: TextMessage = {
     id: `response-${jobId}`, jobId, role: "assistant", content,
     status: empty ? "failed" : outcome,
-    error: empty ? emptyError : job.error, errorCode: job.errorCode,
+    error: empty ? emptyError : job.error, errorCode: empty ? "empty-response" : job.errorCode, failureDiagnostics,
     reasoning: outcome === "complete" && job.partialReasoning?.trim() ? job.partialReasoning
       : keepStreamedText(preview?.reasoning, job.partialReasoning),
     generatedImage: image,
     generatedImages: job.images ?? preview?.generatedImages,
-    modelName: job.result?.modelName ?? models.find((model) => model.id === job.modelId)?.name ?? "Unavailable model",
+    modelName: job.result?.modelName ?? model?.name ?? "Unavailable model",
     createdAt: job.finishedAt ? job.finishedAt * 1000 : observedAt,
     metrics: textResponseMetrics(job.result),
     requestContext: thread.pendingContext,
@@ -146,7 +153,7 @@ function settleTextJob(workspace: TextThreadWorkspace, job: TextJob, lastRunning
       ...message, inspectionJobId: undefined,
       content: job.result?.visionChecked ? assistant.content : message.content,
       metrics: job.result?.visionChecked ? assistant.metrics : message.metrics,
-      status: assistant.status, error: assistant.error, errorCode: assistant.errorCode,
+      status: assistant.status, error: assistant.error, errorCode: assistant.errorCode, failureDiagnostics,
     } : message)
     : thread.messages.some((message) => message.jobId === jobId) ? thread.messages : finishTextReply(thread, assistant);
   return { ...workspace, threads: workspace.threads.map((item) => item === thread
@@ -582,7 +589,8 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
         else if (image || images?.length || preview?.generatedImage) error = "The image was saved before the backend restarted.";
         else if (preview?.content || preview?.reasoning) error = "The backend restarted. The partial response was recovered.";
         const failed: TextJob = { ...idleStatus.job, id: jobId, threadId, modelId: thread.modelId,
-          status: "failed", error, image, images: images?.length ? images : undefined };
+          status: "failed", error, errorCode: "backend-restarted", failureDiagnostics: { stage: "connection-lost" },
+          image, images: images?.length ? images : undefined };
         return { ...current, workspace: settleTextJob(workspace, failed, lastRunningJob, status.models, observedAt) };
       });
     };
@@ -1066,6 +1074,10 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
           ...item, pendingJobId: null, pendingPreview: undefined, pendingContext: undefined, messages: finishTextReply(item, {
             id: `response-${requestId}`, jobId: requestId, role: "assistant", content: "", createdAt: Date.now(), status: "failed",
             error: error instanceof Error ? error.message : "Could not start text generation.",
+            failureDiagnostics: captureTextFailure({
+              stage: "request-admission", requestedDevice: computeDevice === "CPU" ? "CPU" : "AUTO",
+              runtime: model.format === "gguf" ? "gguf" : "openvino",
+            }),
             requestContext: item.pendingContext,
           }),
         } : item),
@@ -1162,6 +1174,10 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
           messages: item.messages.map((message) => message.id === messageId ? {
             ...message, inspectionJobId: undefined, status: "failed",
             error: error instanceof Error ? error.message : "Could not start the image check.",
+            errorCode: undefined, failureDiagnostics: captureTextFailure({
+              stage: "request-admission", requestedDevice: computeDevice === "CPU" ? "CPU" : "AUTO",
+              runtime: model.format === "gguf" ? "gguf" : "openvino",
+            }),
           } : message),
         } : item),
       }));
