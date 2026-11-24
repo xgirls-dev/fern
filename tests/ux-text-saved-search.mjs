@@ -119,6 +119,17 @@ try {
   await button("Text thread: Other chat").click();
   await page.reload();
   await expect(composer).toHaveValue("Keep the other draft");
+  await page.evaluate(() => {
+    window.sentThreadQueries = [];
+    window.threadSearchCancellations = 0;
+    const send = Worker.prototype.postMessage;
+    Worker.prototype.postMessage = function (message, ...options) {
+      if (typeof message?.query === "string") window.sentThreadQueries.push(message.query);
+      if (typeof message?.cancel === "number") window.threadSearchCancellations++;
+      return Reflect.apply(send, this, [message, ...options]);
+    };
+  });
+  const sentQueries = () => page.evaluate(() => window.sentThreadQueries);
   await page.route(workerUrl, async (route) => {
     await workerGate.promise;
     await route.continue();
@@ -128,12 +139,16 @@ try {
   await Promise.all([page.waitForRequest(workerUrl), globalFind.fill("Studio notebook")]);
   await expect(page.locator(".thread-browser-open").filter({ hasText: "Studio notebook" })).toBeVisible();
   await globalFind.press("Enter");
+  await globalFind.fill("hidden");
   await globalFind.fill("hidden kiln");
   await expect(page.getByRole("status").filter({ hasText: "Searching chat messages" })).toBeVisible();
   await globalFind.press("Enter");
   await expect(globalFind).toBeFocused();
+  assert.deepEqual(await sentQueries(), ["Studio notebook"], "Do not queue obsolete searches while the worker is busy");
+  assert.equal(await page.evaluate(() => window.threadSearchCancellations), 1, "Interrupt the obsolete search once");
   workerGate.resolve();
   await expect(find).toHaveValue("hidden kiln");
+  assert.deepEqual(await sentQueries(), ["Studio notebook", "hidden kiln"]);
   await expectTarget("The hidden kiln kept the sample dry.");
   await expect.poll(() => page.evaluate(() => [...CSS.highlights.get("fern-chat-find")][0].toString())).toBe("hidden kiln");
   await expect(panel).toContainText("Try the red clay sample.");

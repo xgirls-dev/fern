@@ -14,6 +14,10 @@ const executable = mode === "electron" ? process.env.FERN_E2E_EXECUTABLE : undef
 const visible = mode === "electron" && process.env.FERN_E2E_VISIBLE === "1";
 const runs = positiveInteger("FERN_BENCH_RUNS", 5);
 const warmRuns = positiveInteger("FERN_BENCH_WARM_RUNS", 20);
+const opener = process.env.FERN_BENCH_SEARCH_OPENER ?? "pointer";
+const input = process.env.FERN_BENCH_SEARCH_INPUT ?? "fill";
+assert(["pointer", "keyboard"].includes(opener), "Choose pointer or keyboard for FERN_BENCH_SEARCH_OPENER.");
+assert(["fill", "keys"].includes(input), "Choose fill or keys for FERN_BENCH_SEARCH_INPUT.");
 const activeId = "text-thread-search-0";
 const retainedDraft = "Keep this unsent draft.";
 const queries = [
@@ -107,43 +111,57 @@ async function openElectron(scratch) {
 }
 
 async function measure(field, query) {
-  // Browser timestamps exclude Playwright transport and sample the next paint opportunity.
-  await field.evaluate((input, expectedTitle) => {
+  // Browser timestamps sample paint opportunities from the first input event.
+  await field.evaluate((input, { expectedTitle, phrase }) => {
     const list = document.querySelector(".thread-browser-list");
     window.fernHistoryMeasurement = new Promise((resolve) => {
       let frame;
+      let start;
+      let enteredAt;
+      let lastFrame;
+      let firstFrameMs;
+      let firstResultFrameMs;
+      let maxFrameGapMs = 0;
+      const cleanup = () => input.removeEventListener("input", onInput, true);
       const timeout = setTimeout(() => {
+        cleanup();
         cancelAnimationFrame(frame);
         resolve({ error: `Timed out waiting for ${expectedTitle}` });
       }, 30_000);
-      input.addEventListener("input", () => {
-        const start = performance.now();
-        let lastFrame = start;
-        let firstFrameMs;
-        let firstResultFrameMs;
-        let maxFrameGapMs = 0;
-        const tick = () => {
-          const now = performance.now();
-          firstFrameMs ??= now - start;
-          maxFrameGapMs = Math.max(maxFrameGapMs, now - lastFrame);
-          lastFrame = now;
+      const tick = () => {
+        const now = performance.now();
+        firstFrameMs ??= now - start;
+        maxFrameGapMs = Math.max(maxFrameGapMs, now - lastFrame);
+        lastFrame = now;
+        if (enteredAt !== undefined) {
           const found = Array.from(list.querySelectorAll(".thread-browser-open strong"))
             .some((element) => element.textContent === expectedTitle);
           if (found) {
             firstResultFrameMs ??= now - start;
             if (!list.querySelector(".thread-browser-empty[role=status]")) {
               clearTimeout(timeout);
-              resolve({ firstFrameMs, firstResultFrameMs, completeFrameMs: now - start, maxFrameGapMs });
+              cleanup();
+              resolve({ firstFrameMs, firstResultFrameMs, completeFrameMs: now - start, maxFrameGapMs,
+                enterQueryMs: enteredAt - start, completeAfterQueryMs: now - enteredAt });
               return;
             }
           }
-          frame = requestAnimationFrame(tick);
-        };
+        }
         frame = requestAnimationFrame(tick);
-      }, { capture: true, once: true });
+      };
+      const onInput = () => {
+        const now = performance.now();
+        if (input.value === phrase) enteredAt = now;
+        if (start === undefined) {
+          start = lastFrame = now;
+          frame = requestAnimationFrame(tick);
+        }
+      };
+      input.addEventListener("input", onInput, true);
     });
-  }, title(query.chat));
-  await field.fill(query.phrase);
+  }, { expectedTitle: title(query.chat), phrase: query.phrase });
+  if (input === "keys") await field.pressSequentially(query.phrase);
+  else await field.fill(query.phrase);
   const sample = await field.page().evaluate(() => window.fernHistoryMeasurement);
   assert(!sample.error, sample.error);
   return sample;
@@ -172,12 +190,15 @@ try {
     try {
       userAgent ??= await page.evaluate(() => navigator.userAgent);
       await expect(page.getByRole("textbox", { name: "Message", exact: true })).toHaveValue(retainedDraft);
-      await page.getByRole("button", { name: "Search threads", exact: true }).click();
+      const openSearch = page.getByRole("button", { name: "Search threads", exact: true });
+      if (opener === "keyboard") await openSearch.press("Enter");
+      else await openSearch.click();
       const field = page.getByRole("searchbox", { name: "Find a thread", exact: true });
       await expect(field).toBeFocused();
       cold.push(await measure(field, queries[0]));
       for (let index = 0; index < warmRuns; index += 1) {
         await expect(field).toBeFocused();
+        if (input === "keys") await field.press("ControlOrMeta+a");
         warm.push(await measure(field, queries[(index + 1) % queries.length]));
       }
       const lastQuery = queries[warmRuns % queries.length];
@@ -193,7 +214,7 @@ try {
   }
   console.log(JSON.stringify({
     mode: mode === "renderer" ? mode : executable ? "packaged-electron" : "built-electron",
-    revision, startedAt, visible, userAgent,
+    revision, startedAt, visible, userAgent, opener, input,
     host: { os: os.version(), arch: os.arch(), cpu: os.cpus()[0]?.model, cores: os.availableParallelism(), memoryBytes: os.totalmem() },
     fixture: { threads: threads.length, messages: threads.reduce((count, thread) => count + thread.messages.length, 0) },
     summary: { cold: summarize(cold), warm: summarize(warm) }, cold, warm,
