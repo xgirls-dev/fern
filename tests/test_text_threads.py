@@ -1,5 +1,6 @@
 """Regression coverage for text admission, cancellation and external model safety."""
 import base64
+import hashlib
 import io
 import json
 import sys
@@ -12,13 +13,15 @@ import urllib.error
 import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from unittest.mock import ANY, patch
+from types import SimpleNamespace
+from unittest.mock import ANY, Mock, patch
 from http.server import ThreadingHTTPServer
 
 from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import api_server as api
+import text_model_download as download
 from text_model_registry import TextModelRegistry, REQUIRED_FILES
 from text_generation_process import TextGenerationProcess, TextWorkerError
 from text_generation_worker import resolve_text_device
@@ -117,6 +120,8 @@ class TextThreadsTests(unittest.TestCase):
                     status = json.load(response)
                 self.assertEqual({item["id"]: item["ownership"] for item in status["models"]},
                                  {self.model["id"]: "linked", managed["id"]: "managed"})
+                original = next(item for item in status["recommendedModels"] if item["id"] == api.DEFAULT_TEXT_MODEL_ID)
+                self.assertEqual(original["repairModelId"], managed["id"])
                 with self.assertRaises(urllib.error.HTTPError) as refused:
                     remove(self.model["id"], action="remove-download")
                 with refused.exception as response:
@@ -128,6 +133,14 @@ class TextThreadsTests(unittest.TestCase):
                     remove(managed["id"], action="remove-download")
                 with mismatched.exception as response:
                     self.assertEqual(response.code, 400)
+                repair = urllib.request.Request(f"{base}/models/install",
+                    data=json.dumps({"modelId": api.DEFAULT_TEXT_MODEL_ID, "repair": True}).encode(),
+                    headers={"Content-Type": "application/json"})
+                with self.assertRaises(urllib.error.HTTPError) as unverified_repair:
+                    urllib.request.urlopen(repair, timeout=5)
+                with unverified_repair.exception as response:
+                    self.assertEqual(response.code, 400)
+                    self.assertIn("own verified downloads", json.load(response)["error"])
                 self.assertTrue((downloaded / "openvino_model.bin").is_file())
                 marker_path.write_text(json.dumps(marker), encoding="utf-8")
                 close_worker.reset_mock()
@@ -144,6 +157,75 @@ class TextThreadsTests(unittest.TestCase):
                 server.shutdown()
                 worker.join(timeout=5)
 
+    def test_openvino_repair_rebuilds_missing_tokenizer_at_the_registered_path(self):
+        root = (self.root / "downloads").resolve()
+        model_id = api.DEFAULT_TEXT_MODEL_ID
+        spec = model_spec(model_id)
+        folder = root / spec["folder"]
+        folder.mkdir(parents=True)
+        for name in set(REQUIRED_FILES).union(item["path"] for item in spec["files"]):
+            source = self.folder / name
+            (folder / name).write_bytes(source.read_bytes() if source.exists() else b"fixture")
+        manifest = []
+        for item in spec["files"]:
+            data = (folder / item["path"]).read_bytes()
+            manifest.append({"path": item["path"], "size": len(data), "algorithm": "sha256", "digest": hashlib.sha256(data).hexdigest()})
+        spec = {**spec, "files": manifest}
+        (folder / INSTALL_MARKER).write_text(json.dumps({"modelId": model_id, "verifiedChecksums": True,
+            **{key: spec[key] for key in ("name", "repo", "revision", "format")}}), encoding="utf-8")
+        registered = self.registry.add(str(folder))
+        missing = "openvino_detokenizer.xml"
+        (folder / missing).unlink()
+        self.assertFalse(self.registry.snapshot()[-1]["installed"])
+        finished = threading.Event()
+        install = api.run_text_model_install
+        fetch = Mock(side_effect=AssertionError("Verified OpenVINO files should be reused."))
+        request_api = SimpleNamespace(Request=urllib.request.Request, urlopen=fetch)
+
+        def complete(*args):
+            try:
+                install(*args)
+            finally:
+                finished.set()
+
+        def convert(stage, _progress):
+            for name in ("openvino_tokenizer.xml", "openvino_tokenizer.bin", missing, "openvino_detokenizer.bin"):
+                (stage / name).write_bytes((self.folder / name).read_bytes())
+
+        with (
+            patch.object(api, "TEXT_MODEL_ROOT", root),
+            patch.object(api, "TEXT_MODEL_REGISTRY", self.registry),
+            patch.object(api, "apple_silicon", return_value=False),
+            patch.object(api, "TEXT_MODEL_DOWNLOAD_PAUSE", None),
+            patch.dict(api.TEXT_MODEL_INSTALL, {"id": None, "status": "idle"}, clear=True),
+            patch.object(api, "run_text_model_install", side_effect=complete),
+            patch.object(api.TEXT_GENERATION_WORKER, "close"),
+            patch.object(download, "model_spec", return_value=spec),
+            patch.object(download, "convert_tokenizers", side_effect=convert),
+            patch.object(download, "urllib", SimpleNamespace(request=request_api)),
+            ThreadingHTTPServer(("127.0.0.1", 0), api.Handler) as server,
+        ):
+            worker = threading.Thread(target=server.serve_forever, daemon=True)
+            worker.start()
+            try:
+                request = urllib.request.Request(f"http://127.0.0.1:{server.server_port}/api/text/models/install",
+                    data=json.dumps({"modelId": model_id, "repair": True}).encode(),
+                    headers={"Content-Type": "application/json"})
+                with urllib.request.urlopen(request, timeout=5) as response:
+                    self.assertEqual(response.status, 202)
+                    self.assertEqual(json.load(response)["modelInstall"]["operation"], "repair")
+                self.assertTrue(finished.wait(5))
+                self.assertEqual(api.TEXT_MODEL_INSTALL["status"], "complete", api.TEXT_MODEL_INSTALL.get("error"))
+                self.assertEqual(api.TEXT_MODEL_INSTALL["phase"], "Repaired and verified.")
+                fetch.assert_not_called()
+                record = next(item for item in self.registry.snapshot() if item["id"] == registered["id"])
+                self.assertEqual(record["path"], str(folder))
+                self.assertTrue(record["installed"])
+                self.assertTrue((folder / missing).is_file())
+            finally:
+                server.shutdown()
+                worker.join(timeout=5)
+
     def test_pause_is_job_scoped_and_finishes_before_resume_or_local_install(self):
         downloading = threading.Event()
         allow_pause = threading.Event()
@@ -151,7 +233,8 @@ class TextThreadsTests(unittest.TestCase):
         allow_install = threading.Event()
         pauses = []
 
-        def install(_model, _root, progress, *, pause):
+        def install(_model, _root, progress, *, pause, repair=False):
+            self.assertFalse(repair)
             pauses.append(pause)
             if len(pauses) == 1:
                 progress("Downloading model weights…")

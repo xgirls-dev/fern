@@ -207,6 +207,7 @@ export interface TextJob {
 export interface TextModelInstall {
   id: string | null;
   modelId?: string | null;
+  operation?: "install" | "repair";
   status: "idle" | "downloading" | "pausing" | "paused" | "preparing" | "complete" | "failed";
   phase: string | null;
   error: string | null;
@@ -222,7 +223,7 @@ export interface TextRuntimeStatus {
   models: TextModel[];
   recommendedModels?: Array<{
     id: string; name: string; repo: string; bytes: number; installed: boolean; format?: string;
-    minimumFreeBytes?: number; projectorBytes?: number; hasPartialDownload?: boolean;
+    minimumFreeBytes?: number; projectorBytes?: number; hasPartialDownload?: boolean; repairModelId?: string | null;
   }>;
   defaultModelId?: string;
   imageToolModels?: ChatImageModel[];

@@ -36,6 +36,51 @@ class FakeResponse:
 
 
 class TextModelDownloadTests(unittest.TestCase):
+    def test_repair_reuses_verified_gguf_and_replaces_same_length_corruption(self):
+        model_id = "gemma-4-e4b-gguf"
+        spec = download.model_spec(model_id)
+        good = {spec["modelFile"]: b"verified model", spec["projectorFile"]: b"verified projector"}
+        spec = {**spec, "files": [
+            {"path": name, "size": len(data), "algorithm": "sha256", "digest": hashlib.sha256(data).hexdigest()}
+            for name, data in good.items()
+        ]}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            folder = root / spec["folder"]
+            folder.mkdir()
+            main, projector = download.model_files(folder, spec)
+            main.write_bytes(good[main.name])
+            damaged = b"!" * len(good[projector.name])
+            projector.write_bytes(damaged)
+            marker = folder / download.INSTALL_MARKER
+            marker.write_text(json.dumps({"modelId": model_id, "verifiedChecksums": True,
+                                          **{key: spec[key] for key in ("repo", "revision", "format")}}), encoding="utf-8")
+            notes = folder / "notes.txt"
+            notes.write_text("Keep this", encoding="utf-8")
+            disk = SimpleNamespace(free=download.MINIMUM_FREE_BYTES + len(damaged))
+            with (
+                patch.object(download, "model_spec", return_value=spec),
+                patch.object(download.shutil, "disk_usage", return_value=disk),
+                patch.object(download.urllib.request, "urlopen") as fetch,
+                patch.object(download, "inspect_model") as inspect_model,
+            ):
+                fetch.return_value = FakeResponse(damaged, 200)
+                with self.assertRaisesRegex(RuntimeError, "Checksum verification failed"):
+                    download.install_model(model_id, root, lambda _: None, repair=True)
+                self.assertEqual(projector.read_bytes(), damaged)
+                inspect_model.assert_not_called()
+                fetch.reset_mock()
+                fetch.return_value = FakeResponse(good[projector.name], 200)
+                self.assertEqual(download.install_model(model_id, root, lambda _: None, repair=True), folder)
+                fetch.assert_called_once()
+                self.assertTrue(fetch.call_args.args[0].full_url.endswith("/" + projector.name))
+                staged = root / (spec["folder"] + ".download")
+                inspect_model.assert_called_once_with(main, projector_path=staged / projector.name, validate_ir=True)
+                self.assertEqual(main.read_bytes(), good[main.name])
+                self.assertEqual(projector.read_bytes(), good[projector.name])
+                self.assertEqual(notes.read_text(encoding="utf-8"), "Keep this")
+                self.assertEqual(list(staged.iterdir()), [])
+
     def test_gguf_removal_checks_shared_projector_and_can_retry_after_io_failure(self):
         catalog_id = "gemma-4-e4b-gguf"
         spec = download.model_spec(catalog_id)

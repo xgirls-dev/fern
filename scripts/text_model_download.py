@@ -123,6 +123,21 @@ def managed_download_id(root: Path, model: dict, specs: dict) -> str | None:
     return None
 
 
+def model_package_files(spec: dict) -> set[str]:
+    names = {file["path"] for file in spec["files"]}
+    if spec["format"] != "gguf":
+        names.update(REQUIRED_FILES)
+    return names
+
+
+def check_package_paths(folder: Path, names: set[str]) -> None:
+    for name in names:
+        target = folder / name
+        if (not target.is_relative_to(folder) or target.resolve() != target
+                or target.is_symlink() or (target.exists() and not target.is_file())):
+            raise ValueError("A download file was moved or replaced. Restore its location or unlink the model.")
+
+
 def remove_download(root: Path, model: dict, models: list[dict], unregister: Callable[[str], None]) -> None:
     catalog_id = managed_download_id(root, model, catalog())
     if catalog_id is None:
@@ -138,19 +153,13 @@ def remove_download(root: Path, model: dict, models: list[dict], unregister: Cal
             references = (entry.get("path"), entry.get("projectorPath"))
             if any(path and Path(path).resolve().is_relative_to(folder) for path in references):
                 raise ValueError(f'“{entry["name"]}” uses files in this download. Unlink that model first.')
-        filenames = {file["path"] for file in spec["files"]}
-        if spec["format"] != "gguf":
-            filenames.update(REQUIRED_FILES)
-        targets = [folder / name for name in sorted(filenames)]
-        for target in targets:
-            if (not target.is_relative_to(folder) or target.resolve() != target
-                    or target.is_symlink() or (target.exists() and not target.is_file())):
-                raise ValueError("A download file was moved or replaced. Unlink the model to keep its files.")
-        for target in targets:
+        filenames = model_package_files(spec)
+        check_package_paths(folder, filenames)
+        for name in sorted(filenames):
             try:
-                target.unlink(missing_ok=True)
+                (folder / name).unlink(missing_ok=True)
             except OSError as error:
-                raise ValueError(f"Could not delete {target.name}. Close any app using it and retry.") from error
+                raise ValueError(f"Could not delete {Path(name).name}. Close any app using it and retry.") from error
         unregister(model["id"])
         try:
             (folder / INSTALL_MARKER).unlink(missing_ok=True)
@@ -291,7 +300,8 @@ def convert_tokenizers(folder: Path, progress: Callable[[str], None]) -> None:
         raise RuntimeError(f"Could not prepare this export's tokenizer for OpenVINO GenAI: {error}") from error
 
 
-def _install_model(model_id: str, model_root: str | Path, progress: Callable[[str], None], *, pause: Event | None = None) -> Path:
+def _install_model(model_id: str, model_root: str | Path, progress: Callable[[str], None], *,
+                   pause: Event | None = None, repair: bool = False) -> Path:
     check_download_pause(pause)
     spec = model_spec(model_id)
     root = Path(model_root).resolve()
@@ -301,7 +311,20 @@ def _install_model(model_id: str, model_root: str | Path, progress: Callable[[st
     if folder.parent != root or stage.parent != root:
         raise ValueError("Invalid text model installation path.")
     marker = folder / INSTALL_MARKER
-    if marker.is_file():
+    files = spec["files"]
+    gguf = spec["format"] == "gguf"
+    reused = set()
+    if repair:
+        model, _ = model_files(folder, spec)
+        if not managed_download_id(root, {"path": str(model)}, {model_id: spec}):
+            raise ValueError("Fern can repair only its own verified downloads. Import a replacement for linked files.")
+        names = model_package_files(spec)
+        check_package_paths(folder, names)
+        check_package_paths(stage, names | {f"{item['path']}.part" for item in files} | {INSTALL_MARKER})
+        progress("Checking downloaded files…")
+        if gguf:
+            reused = {item["path"] for item in files if verified(folder / item["path"], item, pause)}
+    elif marker.is_file():
         try:
             current = json.loads(marker.read_text(encoding="utf-8"))
             if current.get("revision") == spec["revision"]:
@@ -315,26 +338,44 @@ def _install_model(model_id: str, model_root: str | Path, progress: Callable[[st
         except (OSError, ValueError, json.JSONDecodeError):
             pass
     stage.mkdir(exist_ok=True)
-    files = spec["files"]
-    needed = [item for item in files if not verified(stage / item["path"], item, pause)]
+    needed = [item for item in files if item["path"] not in reused and not verified(stage / item["path"], item, pause)]
     required_missing = sum(
         max(0, item["size"] - ((stage / item["path"]).with_name(Path(item["path"]).name + ".part").stat().st_size
                               if (stage / item["path"]).with_name(Path(item["path"]).name + ".part").is_file()
                               else 0))
         for item in needed
     )
-    required_free = required_missing + MINIMUM_FREE_BYTES
+    required_free = required_missing + (MINIMUM_FREE_BYTES if not repair or needed or not gguf else 0)
     if shutil.disk_usage(root).free < required_free:
         needed_gb = math.ceil(required_free / 10_000_000) / 100
-        raise RuntimeError(f"Free at least {needed_gb:.2f} GB before installing this text model.")
-    action = "Resuming" if has_partial_download(root, spec) else "Downloading"
-    progress(f"{action} {spec['name']} from {spec['repo']} · {sum(file['size'] for file in files) / 1e9:.2f} GB.")
+        action = "repairing" if repair else "installing"
+        raise RuntimeError(f"Free at least {needed_gb:.2f} GB before {action} this text model.")
+    if repair:
+        if needed:
+            progress(f"Repairing {spec['name']}…")
+    else:
+        action = "Resuming" if has_partial_download(root, spec) else "Downloading"
+        progress(f"{action} {spec['name']} from {spec['repo']} · {sum(file['size'] for file in files) / 1e9:.2f} GB.")
     for file in needed:
+        target = stage / file["path"]
+        partial = target.with_name(target.name + ".part")
+        source = folder / file["path"]
+        if repair and not gguf and not partial.exists() and verified(source, file, pause):
+            progress(f"Reusing {source.name}…")
+            with source.open("rb") as reader, partial.open("wb") as writer:
+                while block := reader.read(4 * 1024 * 1024):
+                    check_download_pause(pause)
+                    writer.write(block)
         url = f"https://huggingface.co/{spec['repo']}/resolve/{spec['revision']}/{file['path']}"
-        download_file(url, stage / file["path"], file, progress, pause=pause)
+        download_file(url, target, file, progress, pause=pause)
     check_download_pause(pause)
     progress(PREPARING_MODEL_FILES)
     model, projector = model_files(stage, spec)
+    if projector:
+        if spec["modelFile"] in reused:
+            model = folder / spec["modelFile"]
+        if spec["projectorFile"] in reused:
+            projector = folder / spec["projectorFile"]
     if not projector:
         convert_tokenizers(stage, progress)
     try:
@@ -351,6 +392,20 @@ def _install_model(model_id: str, model_root: str | Path, progress: Callable[[st
         "verifiedChecksums": True,
     }
     (stage / INSTALL_MARKER).write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+    if repair:
+        try:
+            for name in sorted(model_package_files(spec) - reused):
+                os.replace(stage / name, folder / name)
+            os.replace(stage / INSTALL_MARKER, marker)
+        except OSError as error:
+            raise RuntimeError("Fern could not replace the files. Close any other app using the model and retry.") from error
+        for name in reused | {f"{item['path']}.part" for item in files}:
+            try:
+                (stage / name).unlink(missing_ok=True)
+            except OSError:
+                pass
+        progress("Model files repaired and verified.")
+        return folder
     previous = None
     if folder.exists():
         previous = root / (spec["folder"] + f".previous-{time.time_ns()}")
@@ -365,13 +420,14 @@ def _install_model(model_id: str, model_root: str | Path, progress: Callable[[st
     return folder
 
 
-def install_model(model_id: str, model_root: str | Path, progress: Callable[[str], None] = print, *, pause: Event | None = None) -> Path:
+def install_model(model_id: str, model_root: str | Path, progress: Callable[[str], None] = print, *,
+                  pause: Event | None = None, repair: bool = False) -> Path:
     check_download_pause(pause)
     spec = model_spec(model_id)
     root = Path(model_root).resolve()
     root.mkdir(parents=True, exist_ok=True)
     with model_install_lock(root, spec):
-        return _install_model(model_id, root, progress, pause=pause)
+        return _install_model(model_id, root, progress, pause=pause, repair=repair)
 
 
 @contextmanager

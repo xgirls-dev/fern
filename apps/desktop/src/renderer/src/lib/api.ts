@@ -295,11 +295,11 @@ export async function uploadChatDocument(file: File): Promise<{ document: ChatDo
   });
 }
 
-export function installTextModel(modelId: string): Promise<TextRuntimeStatus> {
+export function installTextModel(modelId: string, repair = false): Promise<TextRuntimeStatus> {
   return requestJson("/api/text/models/install", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ modelId }),
+    body: JSON.stringify(repair ? { modelId, repair } : { modelId }),
   });
 }
 
