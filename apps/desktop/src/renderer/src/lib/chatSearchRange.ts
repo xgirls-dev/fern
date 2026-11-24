@@ -46,3 +46,12 @@ export function findChatSearchRange(text: string, pattern: RegExp, occurrence = 
   }
   return { start: originalBoundary(start, false), end: originalBoundary(end, true) };
 }
+
+export function chatSearchExcerpt(text: string | undefined, pattern: RegExp) {
+  if (!text) return;
+  const match = findChatSearchRange(text, pattern);
+  if (!match) return;
+  const start = Math.max(0, match.start - 45);
+  const end = match.end + 75;
+  return `${start > 0 ? "…" : ""}${text.slice(start, end)}${end < text.length ? "…" : ""}`;
+}

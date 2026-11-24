@@ -38,7 +38,8 @@ const target = panel.locator("[data-find-target]");
 const find = page.getByRole("searchbox", { name: "Search this chat" });
 const findbar = page.getByRole("search", { name: "Find in chat" });
 const parserUrl = /\/(?:assets\/chatSearch-[^/]+\.js|src\/lib\/chatSearch\.ts)(?:\?.*)?$/;
-const parserGate = Promise.withResolvers();
+const workerUrl = /\/(?:assets\/threadSearch\.worker-[^/]+\.js|src\/lib\/threadSearch\.worker\.ts)(?:\?.*)?$/;
+const workerGate = Promise.withResolvers();
 
 async function expectTarget(text) {
   await expect(row).toHaveAttribute("data-find-match", "true");
@@ -56,8 +57,9 @@ async function expectTarget(text) {
 try {
   await page.route("**/outputs/tile.png*", (route) => route.fulfill({ contentType: "image/svg+xml",
     body: '<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256"><rect width="256" height="256" fill="#71978a"/></svg>' }));
-  assert.equal(await page.evaluate((pattern) => performance.getEntriesByType("resource")
-    .some(({ name }) => new RegExp(pattern).test(name)), parserUrl.source), false, "Chat should open without loading the search parser");
+  assert.equal(await page.evaluate((patterns) => performance.getEntriesByType("resource")
+    .some(({ name }) => patterns.some((pattern) => new RegExp(pattern).test(name))), [parserUrl.source, workerUrl.source]),
+    false, "Chat should open without loading search code");
   await button("Text thread: Studio notebook").click();
   await expect(row).toHaveCount(0);
   await button("Find in chat").click();
@@ -105,17 +107,20 @@ try {
   await button("Text thread: Other chat").click();
   await page.reload();
   await expect(composer).toHaveValue("Keep the other draft");
-  await page.route(parserUrl, async (route) => {
-    await parserGate.promise;
+  await page.route(workerUrl, async (route) => {
+    await workerGate.promise;
     await route.continue();
   });
   await button("Search threads").click();
   const globalFind = page.getByRole("searchbox", { name: "Find a thread" });
+  await Promise.all([page.waitForRequest(workerUrl), globalFind.fill("Studio notebook")]);
+  await expect(page.locator(".thread-browser-open").filter({ hasText: "Studio notebook" })).toBeVisible();
+  await globalFind.press("Enter");
   await globalFind.fill("hidden kiln");
   await expect(page.getByRole("status").filter({ hasText: "Searching chat messages" })).toBeVisible();
   await globalFind.press("Enter");
   await expect(globalFind).toBeFocused();
-  parserGate.resolve();
+  workerGate.resolve();
   await expect(find).toHaveValue("hidden kiln");
   await expectTarget("The hidden kiln kept the sample dry.");
   await expect.poll(() => page.evaluate(() => [...CSS.highlights.get("fern-chat-find")][0].toString())).toBe("hidden kiln");
@@ -135,6 +140,6 @@ try {
   assert.deepEqual(errors, []);
   console.log("Saved prompts, reply variants, image descriptions, global search, virtualized navigation, and unchanged model context passed.");
 } finally {
-  parserGate.resolve();
+  workerGate.resolve();
   await close();
 }

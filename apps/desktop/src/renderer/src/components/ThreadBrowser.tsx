@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import type { ImageThread } from "../lib/threads";
-import { chatSearchPattern, findChatSearchRange } from "../lib/chatSearchRange";
-import { useChatSearch } from "../hooks/useChatSearch";
+import { chatSearchExcerpt, chatSearchPattern } from "../lib/chatSearchRange";
+import { useThreadSearch } from "../hooks/useThreadSearch";
 import type { TextMessage } from "../lib/textThreads";
 import { Dialog, DialogTitle } from "./ui/Dialog";
 import { SearchDialogField } from "./ui/SearchDialogField";
@@ -50,21 +50,16 @@ export function ThreadBrowser({
   const pattern = chatSearchPattern(needle);
   const includesQuery = (value: string | undefined) => value !== undefined && value.normalize().search(pattern) !== -1;
   const searchMessages = searching && (selectedKind === "All" || selectedKind === "Chat") && threads.some((thread) => thread.messages?.length);
-  const { search: parser, loading, failed } = useChatSearch(searchMessages);
-  const searchText = useMemo(() => new Map(parser && searchMessages ? threads.flatMap((thread) =>
-    thread.messages?.length ? [[thread.id, parser.chatSearchText(thread.messages)] as const] : []) : []), [parser, searchMessages, threads]);
+  const { matches, loading, failed } = useThreadSearch(threads, searchMessages ? needle : "");
   const filtered = threads.flatMap((thread) => {
     if (selectedKind !== "All" && threadKind(thread.id) !== selectedKind) return [];
     if (archivedOnly ? !thread.archived : scope && thread.archived && thread.id !== scope.currentId) return [];
-    const inside = needle ? searchText.get(thread.id)?.find(includesQuery) : undefined;
+    if (!needle) return [{ ...thread, messageQuery: undefined }];
+    const inside = matches?.get(thread.id);
     const messageQuery = inside ? needle : undefined;
-    const excerpt = inside ?? (includesQuery(thread.excerpt) ? thread.excerpt : undefined);
-    if (!needle || !excerpt) return !needle || (includesQuery(thread.title) || includesQuery(thread.folderPath)) ? [{ ...thread, messageQuery }] : [];
-    const match = findChatSearchRange(excerpt, pattern);
-    if (!match) return [{ ...thread, messageQuery, excerpt }];
-    const start = Math.max(0, match.start - 45);
-    const end = match.end + 75;
-    return [{ ...thread, messageQuery, excerpt: `${start > 0 ? "…" : ""}${excerpt.slice(start, end)}${end < excerpt.length ? "…" : ""}` }];
+    const excerpt = inside ?? chatSearchExcerpt(thread.excerpt, pattern);
+    if (excerpt) return [{ ...thread, messageQuery, excerpt }];
+    return includesQuery(thread.title) || includesQuery(thread.folderPath) ? [{ ...thread, messageQuery }] : [];
   });
   const hasFilters = Boolean(needle) || kind !== "All" || archivedOnly;
   const visibleCount = Math.min(filtered.length, limit);
