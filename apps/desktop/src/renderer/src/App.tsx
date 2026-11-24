@@ -508,6 +508,14 @@ export function App() {
     : connectionError
       ? "Fern’s local service is unavailable."
       : !studio.status ? "Connecting to Fern…" : null;
+  const chatPlaceholder = activeSection === "text" ? <div className="dashboard-loading">
+    {!text.storageReady && text.storageError ? <>
+      <span role="alert">{text.storageError}</span>
+      <Button variant="secondary" onClick={text.retryStorage}>Retry opening chats</Button>
+    </> : <span role="status">
+      <ProgressLabel>{text.storageReady ? "Opening chat…" : "Opening chats…"}</ProgressLabel>
+    </span>}
+  </div> : null;
   return (
     <div className="app-shell">
       <a className="skip-link" href="#main-content">
@@ -628,11 +636,24 @@ export function App() {
 
           {activeSection === "models" || activeSection === "preferences" ||
           activeSection === "storage" ? null : activeSection === "text" ? (
-            text.storageReady
-              ? <Suspense fallback={<div className="dashboard-loading" role="status"><ProgressLabel>Opening chat…</ProgressLabel></div>}><ChatWorkspace studio={text} sidebarCollapsed={sidebarIsCollapsed} onOpenThreadSearch={openChatThreadSearch} onSetupModels={openModelSetup} focusRequest={chatFocusRequest} findRequest={chatFindRequest} onFindRequestHandled={clearChatFindRequest} imageGpuAvailable={imageGpuAvailable} onOpenImage={openImage} onNewChat={newTextThread} onCreateImage={newThread} onCreateSpeech={newAudioThread} onOpenCompute={openComputePreferences} /></Suspense>
-              : <div className="dashboard-loading">
-                {text.storageError ? <><span role="alert">{text.storageError}</span><Button variant="secondary" onClick={text.retryStorage}>Retry opening chats</Button></> : <span role="status"><ProgressLabel>Opening chats…</ProgressLabel></span>}
-              </div>
+            <Suspense fallback={chatPlaceholder}>
+              <ChatWorkspace
+                studio={text}
+                storagePlaceholder={chatPlaceholder}
+                sidebarCollapsed={sidebarIsCollapsed}
+                onOpenThreadSearch={openChatThreadSearch}
+                onSetupModels={openModelSetup}
+                focusRequest={chatFocusRequest}
+                findRequest={chatFindRequest}
+                onFindRequestHandled={clearChatFindRequest}
+                imageGpuAvailable={imageGpuAvailable}
+                onOpenImage={openImage}
+                onNewChat={newTextThread}
+                onCreateImage={newThread}
+                onCreateSpeech={newAudioThread}
+                onOpenCompute={openComputePreferences}
+              />
+            </Suspense>
           ) : activeSection === "video" ? (
             <Suspense fallback={<div className="dashboard-loading" role="status">Opening video workspace…</div>}>
               <VideoWorkspace video={video} device={compute.device} busyElsewhere={studio.running || studio.submitting || audioBusy || text.busy}
