@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { TextMessage } from "../lib/textThreads";
-import type { ThreadSearchRequest, ThreadSearchResponse } from "../lib/threadSearch.worker";
+import type { ThreadSearchCancel, ThreadSearchRequest, ThreadSearchResponse } from "../lib/threadSearch.worker";
 
 type ThreadSearchSource = { id: string; messages?: readonly TextMessage[] };
 type SearchInput = { threads: readonly ThreadSearchSource[]; query: string };
@@ -12,6 +12,7 @@ export function useThreadSearch(threads: readonly ThreadSearchSource[], query: s
   const indexed = useRef(new Map<string, readonly TextMessage[]>());
   const requestId = useRef(0);
   const pending = useRef<{ id: number; input: SearchInput } | undefined>(undefined);
+  const inFlight = useRef<{ id: number; cancelRequested: boolean } | undefined>(undefined);
   const input = useMemo(() => query ? { threads, query } : undefined, [threads, query]);
 
   useEffect(() => () => {
@@ -19,39 +20,58 @@ export function useThreadSearch(threads: readonly ThreadSearchSource[], query: s
     worker.current = undefined;
     indexed.current.clear();
     pending.current = undefined;
+    inFlight.current = undefined;
   }, []);
 
-  useEffect(() => {
-    if (!input) {
-      pending.current = undefined;
-      return;
-    }
-    const id = ++requestId.current;
-    pending.current = { id, input };
+  const sendLatest = useCallback(function sendLatest() {
+    const latest = pending.current;
     const fail = () => {
       worker.current?.terminate();
       worker.current = undefined;
       indexed.current.clear();
+      inFlight.current = undefined;
       const request = pending.current;
       pending.current = undefined;
       if (request) setResult({ input: request.input });
     };
     try {
+      const active = inFlight.current;
+      if (active) {
+        if (latest?.id !== active.id && !active.cancelRequested) {
+          active.cancelRequested = true;
+          worker.current?.postMessage({ cancel: active.id } satisfies ThreadSearchCancel);
+        }
+        return;
+      }
+      if (!latest) return;
+      const { id, input } = latest;
       if (!worker.current) {
         const background = new Worker(new URL("../lib/threadSearch.worker.ts", import.meta.url), { type: "module" });
         worker.current = background;
         background.onmessage = ({ data }: MessageEvent<ThreadSearchResponse>) => {
+          if (worker.current !== background || data.id !== inFlight.current?.id) return;
+          inFlight.current = undefined;
+          if (data.cancelled) {
+            sendLatest();
+            return;
+          }
           if (!data.matches) {
             fail();
             return;
           }
           const request = pending.current;
-          if (request?.id !== data.id) return;
-          pending.current = undefined;
-          setResult({ input: request.input, matches: new Map(data.matches) });
+          if (request?.id === data.id) {
+            pending.current = undefined;
+            setResult({ input: request.input, matches: new Map(data.matches) });
+          } else {
+            sendLatest();
+          }
         };
-        background.onerror = fail;
-        background.onmessageerror = fail;
+        const onError = () => {
+          if (worker.current === background) fail();
+        };
+        background.onerror = onError;
+        background.onmessageerror = onError;
       }
       const next = new Map<string, readonly TextMessage[]>();
       const updated: ThreadSearchRequest["updated"] = [];
@@ -62,12 +82,19 @@ export function useThreadSearch(threads: readonly ThreadSearchSource[], query: s
       }
       const removed = [...indexed.current.keys()].filter((threadId) => !next.has(threadId));
       // Send changed histories once, then send only the query as the user types.
+      inFlight.current = { id, cancelRequested: false };
       worker.current.postMessage({ id, query: input.query, updated, removed } satisfies ThreadSearchRequest);
       indexed.current = next;
     } catch {
       fail();
     }
-  }, [input]);
+  }, []);
+
+  useEffect(() => {
+    // Drop intermediate queries and interrupt the active scan when it becomes stale.
+    pending.current = input ? { id: ++requestId.current, input } : undefined;
+    sendLatest();
+  }, [input, sendLatest]);
 
   const matches = input && result?.input === input ? result.matches : undefined;
   return { matches, loading: !!input && result?.input !== input, failed: !!input && result?.input === input && !matches };
