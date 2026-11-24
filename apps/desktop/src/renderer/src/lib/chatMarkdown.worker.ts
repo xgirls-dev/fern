@@ -6,6 +6,10 @@ type TablePrefix = BlockPrefix & { header: string; rowCount: number };
 const prefixes = new Map<string, { requestId: number; blocks?: BlockPrefix; table?: TablePrefix }>();
 const PREFIX_LIMIT = 8;
 
+// The live worker starts while the response still shows its loading row.
+// Initialize the streaming parser before the first large reply reaches it.
+if (self.name === "live") parsePreparedChatMarkdown("A **short** note.\n\n- One\n- Two", true, true);
+
 function parseTableTail(source: string, table: TablePrefix, preview: boolean, streaming: boolean) {
   if (!source.startsWith(table.source)) return;
   const tail = source.slice(table.source.length);
