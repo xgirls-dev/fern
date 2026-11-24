@@ -126,8 +126,9 @@ finally:
     def test_openvino_reuses_pipeline_for_system_prompt_and_sampling_changes(self):
         base = {"op": "generate", "messages": [{"role": "user", "content": "Hello."}],
                 "systemPrompt": "Keep it short.", "temperature": 0.8, "topP": 0.95, "maxNewTokens": 64}
+        document = {"name": "Workshop.txt", "location": "Section 1", "text": "The intake code is ZY-4179."}
         follow_up = {**base, "systemPrompt": "Explain the details.", "temperature": 0.25, "topP": 0.8,
-                     "maxNewTokens": 120, "sampling": {"topK": 16}}
+                     "maxNewTokens": 120, "sampling": {"topK": 16}, "contextSize": 4096, "documentPassages": [document]}
         stream = io.StringIO("".join(json.dumps(request) + "\n" for request in (base, follow_up, {"op": "shutdown"})))
         pipeline = Mock()
         pipeline.get_generation_config.side_effect = SimpleNamespace
@@ -148,6 +149,12 @@ finally:
         self.assertEqual([call.args[1].temperature for call in pipeline.generate.call_args_list], [0.8, 0.25])
         self.assertEqual([call.args[1].max_new_tokens for call in pipeline.generate.call_args_list], [64, 120])
         self.assertEqual(pipeline.generate.call_args.args[1].top_k, 16)
+        template = pipeline.get_tokenizer.return_value.apply_chat_template
+        self.assertIn(document["text"], template.call_args.args[0][-1]["content"])
+        results = [call.args[0] for call in emit.call_args_list if call.args[0]["type"] == "result"]
+        self.assertNotIn("documentSources", results[0])
+        self.assertEqual(results[-1]["documentSources"], [{"number": 1, "name": document["name"],
+                                                           "location": document["location"], "excerpt": document["text"]}])
         self.assertEqual([call.args[0]["type"] for call in emit.call_args_list].count("residency"), 1)
 
     def test_text_model_status_surfaces_fresh_install_disk_and_companion_requirements(self):
@@ -663,23 +670,32 @@ for line in sys.stdin:
         image = {"name": "teapot.png", "width": 512, "height": 512}
         image_settings = {"width": 768, "height": 512, "steps": 6, "guidance": 1, "seed": 19}
         metrics = {"device": "GPU", "text": "", "outputTokens": 8, "inputTokens": 12, "generationSeconds": 0.3}
+        initial_context = {"size": 4096, "compactedMessages": 0, "imageNames": ["selected.png"]}
+        review_context = {"size": 4096, "compactedMessages": 0, "imageNames": ["teapot.png"]}
         with patch.object(api, 'TEXT_MODEL_REGISTRY', self.registry), \
              patch.object(api.TEXT_GENERATION_WORKER, 'generate', side_effect=[
-                 {**metrics, "toolCalls": [call]}, {**metrics, "text": "The image is ready."},
+                 {**metrics, "toolCalls": [call], "context": initial_context},
+                 {**metrics, "text": "The image is ready.", "context": review_context},
              ]) as reply, patch.object(api.TEXT_GENERATION_WORKER, 'close') as close_text, \
              patch.object(api.GENERATION_WORKER, 'close') as close_image, \
              patch.object(api, 'generate_chat_image', return_value=image) as generate_image, \
              patch.dict(api.TEXT_JOB, {'id': 'test-tool', 'status': 'running', 'partialText': ''}, clear=True):
             api.run_text_generation({
                 "modelId": self.model["id"], "device": "AUTO", "imageModel": "4b-lora", "imageSettings": image_settings,
-                "threadId": "text-thread-test", "messages": [{"role": "user", "content": "Draw a teapot."}],
+                "threadId": "text-thread-test", "selectedImageName": "selected.png",
+                "unavailableImageNames": ["missing.png", "missing.png", "selected.png"],
+                "messages": [
+                    {"role": "user", "content": "Earlier image.", "imagePath": str(self.root / "older.png")},
+                    {"role": "assistant", "content": "Earlier response."},
+                    {"role": "user", "content": "Draw a teapot.", "imagePath": str(self.root / "selected.png")},
+                ],
                 "maxNewTokens": 512, "seed": 1, "temperature": 0, "topP": 0.9,
             }, "test-tool", event)
             self.assertEqual(api.TEXT_JOB["status"], "complete")
             self.assertEqual(api.TEXT_JOB["image"], image)
             self.assertEqual(api.TEXT_JOB["partialText"], "The image is ready.")
             generate_image.assert_called_once_with("4b-lora", "red teapot", "text-thread-test", "test-tool", event, image_settings,
-                                                   message_image=None, on_image=ANY)
+                                                   message_image=str(self.root / "selected.png"), on_image=ANY)
             first, resumed = (item.kwargs["request"] for item in reply.call_args_list)
             self.assertEqual(first["tools"][0]["function"]["name"], "generate_image")
             self.assertEqual(resumed["toolChoice"], "none")
@@ -687,6 +703,12 @@ for line in sys.stdin:
             self.assertEqual(resumed["messages"][-2]["tool_call_id"], "image-call")
             self.assertTrue(resumed["messages"][-1]["imagePath"].endswith("teapot.png"))
             self.assertTrue(api.TEXT_JOB["result"]["visionChecked"])
+            self.assertNotIn("selectedImageName", first)
+            self.assertNotIn("unavailableImageNames", first)
+            self.assertEqual(api.TEXT_JOB["result"]["context"], {
+                "size": 4096, "compactedMessages": 0, "imageNames": ["selected.png", "teapot.png"], "images": 2,
+                "omittedImages": 1, "unavailableImages": 1, "reusedImageName": "selected.png",
+            })
             close_text.assert_not_called()
             close_image.assert_not_called()
 
@@ -788,14 +810,16 @@ for line in sys.stdin:
         server = ThreadingHTTPServer(("127.0.0.1", 0), api.Handler)
         threading.Thread(target=server.serve_forever, daemon=True).start()
         thread_id = "text-thread-check"
-        model = {**self.model, "supportsVision": True}
+        model = {**self.model, "supportsVision": True, "format": "gguf"}
         library = {"selected.png": {"source": "chat", "threadId": thread_id}}
 
-        def submit(request_id, name, owner=thread_id, source=None):
+        missing_upload = "chat-image-" + "a" * 32 + ".png"
+
+        def submit(request_id, name, owner=thread_id, source=None, previous=()):
             payload = {"requestId": request_id, "threadId": owner, "modelId": model["id"],
-                       "messages": [{"role": "user", "content": "Describe the picture.", "includedImage": name}]}
+                       "messages": [*previous, {"role": "user", "content": "Describe the picture.", "includedImage": name}]}
             if source:
-                payload["messages"][0]["imageThreadId"] = source
+                payload["messages"][-1]["imageThreadId"] = source
             request = urllib.request.Request(
                 f"http://127.0.0.1:{server.server_port}/api/text/generate",
                 data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"},
@@ -808,6 +832,7 @@ for line in sys.stdin:
                  patch.object(api, "TEXT_MODEL_REGISTRY", self.registry), \
                  patch.object(api.gallery_store, "metadata_snapshot", return_value=library), \
                  patch.object(api, "text_runtime_snapshot", return_value={}), \
+                 patch.object(api, "gguf_runtime_supported", return_value=True), \
                  patch.object(api, "run_text_generation") as generate, \
                  patch.dict(api.TEXT_JOB, {"status": "idle"}, clear=True):
                 with self.assertRaisesRegex(urllib.error.HTTPError, "400"):
@@ -819,10 +844,18 @@ for line in sys.stdin:
                 with submit("valid", path.name, "text-thread-fork", thread_id) as response:
                     self.assertEqual(response.status, 202)
                 self.assertEqual(generate.call_args.args[0]["messages"][0]["imagePath"], str(path.resolve()))
+                self.assertEqual(generate.call_args.args[0]["selectedImageName"], path.name)
                 api.TEXT_JOB["status"] = "idle"
-                with submit("copy", path.name, "text-thread-copy", source=thread_id) as response:
+                with submit("copy", path.name, "text-thread-copy", source=thread_id, previous=[
+                    {"role": "user", "content": "Earlier upload.", "image": missing_upload},
+                    {"role": "assistant", "content": "Earlier reply."},
+                ]) as response:
                     self.assertEqual(response.status, 202)
-                self.assertEqual(generate.call_args.args[0]["messages"][0]["imagePath"], str(path.resolve()))
+                request = generate.call_args.args[0]
+                self.assertEqual(request["messages"][-1]["imagePath"], str(path.resolve()))
+                self.assertNotIn("imagePath", request["messages"][0])
+                self.assertEqual(request["selectedImageName"], path.name)
+                self.assertEqual(request["unavailableImageNames"], [missing_upload])
         finally:
             server.shutdown()
             server.server_close()

@@ -70,6 +70,35 @@ class GGUFCompletionTests(unittest.TestCase):
         self.assertEqual(waits, [0.05, 0.4])
         self.assertEqual(server.http.open.call_count, 3)
 
+    def test_image_context_names_match_the_encoded_model_request(self) -> None:
+        server = GGUFServer.__new__(GGUFServer)
+        server.context_size, server.device, server.backend = 4096, "GPU", "vulkan"
+        server.history, server.load_options = {}, {}
+        server._prompt_tokens = Mock(return_value=16)
+        server._completion = Mock(return_value=io.BytesIO(b"data: [DONE]\n"))
+
+        with tempfile.TemporaryDirectory() as directory:
+            paths = [Path(directory) / name for name in ("older.png", "recent.png", "selected.png")]
+            for path in paths:
+                path.write_bytes(path.name.encode())
+            history = [
+                {"role": "user", "content": "Previous image.", "imagePath": str(paths[0])},
+                {"role": "assistant", "content": "Previous reply.", "imagePath": str(paths[2])},
+                {"role": "user", "content": "Recent image.", "imagePath": str(paths[1])},
+                {"role": "assistant", "content": "Recent reply."},
+                {"role": "user", "content": "Use the selected image again.", "imagePath": str(paths[2])},
+            ]
+            document = {"name": "Poster notes.txt", "location": "Section 1", "text": "The print border is coral."}
+            report = server.generate({"messages": history, "maxNewTokens": 16, "temperature": 0,
+                                      "topP": 1, "seed": 0, "documentPassages": [document]}, Mock())
+        wire = server._completion.call_args.args[0]["messages"]
+        self.assertEqual([index for index, turn in enumerate(wire) if isinstance(turn["content"], list)], [2, 4])
+        self.assertEqual(report["context"]["imageNames"], ["recent.png", "selected.png"])
+        self.assertEqual(report["context"]["images"], 2)
+        self.assertIn(document["text"], wire[-1]["content"][1]["text"])
+        self.assertEqual(report["documentSources"], [{"number": 1, "name": document["name"],
+                                                      "location": document["location"], "excerpt": document["text"]}])
+
     def test_stream_result_retains_the_reported_finish_reason(self) -> None:
         server = GGUFServer.__new__(GGUFServer)
         server.context_size = 4096

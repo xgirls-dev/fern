@@ -92,7 +92,10 @@ export interface TextMessage {
     finishReason?: "length" | "stop";
     visionChecked?: boolean;
     documentSources?: ChatDocumentSource[];
-    context?: { size: number; compactedMessages: number; images: number; imageNames?: string[] };
+    context?: {
+      size: number; compactedMessages: number; images: number; imageNames?: string[];
+      omittedImages?: number; unavailableImages?: number; reusedImageName?: string;
+    };
   };
 }
 
@@ -342,8 +345,16 @@ export function textResponseMetrics(metrics: TextMessage["metrics"] | null): Tex
     .every((value) => typeof value === "number" && Number.isFinite(value) && value >= 0)) return;
   const { inputTokens, outputTokens, generationSeconds, tokensPerSecond, modelName, device, backend,
     mode, seed, temperature, topP, maxNewTokens, visionChecked, context, finishReason } = metrics;
+  const contextCount = (value: number | undefined) => typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined;
+  const imageNames = Array.isArray(context?.imageNames) ? context.imageNames.filter(isOutputImage) : undefined;
+  const requestContext = context && {
+    ...context, imageNames,
+    omittedImages: contextCount(context.omittedImages),
+    unavailableImages: contextCount(context.unavailableImages),
+    reusedImageName: isOutputImage(context.reusedImageName) && imageNames?.includes(context.reusedImageName) ? context.reusedImageName : undefined,
+  };
   return { inputTokens, outputTokens, generationSeconds, tokensPerSecond, modelName, device, backend,
-    mode, seed, temperature, topP, maxNewTokens, visionChecked, context, sampling: metrics.sampling, loadOptions: metrics.loadOptions,
+    mode, seed, temperature, topP, maxNewTokens, visionChecked, context: requestContext, sampling: metrics.sampling, loadOptions: metrics.loadOptions,
     documentSources: normalizeDocumentSources(metrics.documentSources),
     finishReason: finishReason === "length" || finishReason === "stop" ? finishReason : undefined };
 }

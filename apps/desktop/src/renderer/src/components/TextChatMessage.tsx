@@ -226,11 +226,15 @@ export const TextChatMessage = memo(function TextChatMessage({ message, selectio
   const showContextDetails = showDetails && detailsFor?.placement === "context";
   const requestContext = message.requestContext;
   const runtimeContext = message.metrics?.context;
-  const contextNotice = contextChanged ? [
-    requestContext?.omittedMessages ? "Some earlier messages were left out." : "",
-    requestContext?.shortenedMessages ? "Some messages were shortened." : "",
-    requestContext?.omittedAttachments ? "Some earlier image attachments were left out." : "",
-    runtimeContext?.compactedMessages ? "Earlier messages were summarized to fit this response." : "",
+  const reusedImage = !streaming && runtimeContext?.reusedImageName;
+  const contextNotice = contextChanged || reusedImage ? [
+    contextChanged && requestContext?.omittedMessages && "Some earlier messages were left out.",
+    contextChanged && requestContext?.shortenedMessages && "Some messages were shortened.",
+    contextChanged && requestContext?.omittedAttachments && "Some earlier image attachments were left out.",
+    contextChanged && runtimeContext?.compactedMessages && "Earlier messages were summarized to fit this response.",
+    contextChanged && runtimeContext?.omittedImages && "Some earlier images were left out of the model context.",
+    contextChanged && runtimeContext?.unavailableImages && "Some earlier images were unavailable.",
+    reusedImage && "The selected image was included.",
   ].filter(Boolean).join(" ") : "";
   const { copied, copy } = useClipboardCopy(streaming || editing ? undefined : message.content,
     "Could not copy the message. You can select and copy its text.", message.id);
@@ -281,13 +285,16 @@ export const TextChatMessage = memo(function TextChatMessage({ message, selectio
       <br />Temperature {message.metrics.temperature ?? "unknown"} · Top P {message.metrics.topP ?? "unknown"} · Seed {message.metrics.seed ?? "unknown"} · Max tokens {message.metrics.maxNewTokens ?? "unknown"}
       {runtimeContext && <><br />{runtimeContext.size.toLocaleString()} token context · {runtimeContext.images} {runtimeContext.images === 1 ? "image" : "images"}</>}
     </span>}
-    {(requestContext || !!runtimeContext?.compactedMessages) && <ul className="text-context-details-list">
+    {(requestContext || runtimeContext?.compactedMessages || runtimeContext?.omittedImages || runtimeContext?.unavailableImages || reusedImage) ? <ul className="text-context-details-list">
       {!!requestContext?.omittedMessages && <li>{describeContextCount(requestContext.omittedMessages, "earlier message", "left out of the request")}</li>}
       {!!requestContext?.shortenedMessages && <li>{describeContextCount(requestContext.shortenedMessages, "long message", "shortened in the request")}</li>}
       {!!requestContext?.unansweredPrompts && <li>{describeContextCount(requestContext.unansweredPrompts, "unanswered prompt", "left out of the request")}</li>}
       {!!requestContext?.omittedAttachments && <li>{describeContextCount(requestContext.omittedAttachments, "earlier image attachment", "left out of the request")}</li>}
       {!!runtimeContext?.compactedMessages && <li>{describeContextCount(runtimeContext.compactedMessages, "earlier message", "summarized by the model")}</li>}
-    </ul>}
+      {!!runtimeContext?.omittedImages && <li>{describeContextCount(runtimeContext.omittedImages, "earlier image", "left out of the model context")}</li>}
+      {!!runtimeContext?.unavailableImages && <li>{describeContextCount(runtimeContext.unavailableImages, "earlier image", "unavailable when this reply ran")}</li>}
+      {reusedImage && <li>{includedImageLabel ? `Selected image used for this reply · ${includedImageLabel}` : "The selected image was used for this reply."}</li>}
+    </ul> : null}
   </div> : null;
 
   const body = <>
