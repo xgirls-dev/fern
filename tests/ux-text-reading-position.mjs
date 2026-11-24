@@ -25,11 +25,8 @@ const { page, close, errors } = await fixture({
 const feed = page.getByRole("log", { name: "Conversation" });
 const button = (name) => page.getByRole("button", { name, exact: true });
 async function switchChat(title) {
-  const thread = button(`Text thread: ${title}`);
-  const expand = button("Expand sidebar");
-  await expect(thread.or(expand).first()).toBeVisible();
-  if (!(await thread.isVisible())) await expand.click();
-  await thread.click();
+  if (page.viewportSize().width <= 900) await button("Expand sidebar").click();
+  await button(`Text thread: ${title}`).click();
 }
 const marker = (label) => feed.getByText(label, { exact: true });
 const readOffset = (label) => marker(label).evaluate((node) => {
@@ -89,12 +86,26 @@ try {
   await expect(feed.locator(".text-reasoning")).toHaveAttribute("open", "");
   await nearTop(reasoning);
 
+  await page.reload();
+  await expect(feed.locator(".text-reasoning")).toHaveAttribute("open", "");
+  await nearTop(reasoning);
+  await expect(feed).not.toHaveAttribute("data-following", "true");
+
+  await readAt(answer);
+  await page.reload();
+  await expect(feed).not.toHaveAttribute("data-following", "true");
+  await nearTop(answer);
+
   await feed.focus();
   await feed.press("End");
+  await expect(feed).toHaveAttribute("data-following", "true");
+  await page.reload();
+  await expect(marker("Workshop marker 70")).toBeAttached();
+  await expect(feed).toHaveAttribute("data-following", "true");
   await button("Chat settings").click();
   await expect.poll(() => feed.evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThanOrEqual(2);
   assert.deepEqual(errors, []);
-  console.log("Chat settings, width changes, compact layouts, and thread switching preserve the same answer or reasoning line.");
+  console.log("Chat settings, width changes, thread switching, and reopening preserve the same answer or reasoning line, or follow the latest reply.");
 } finally {
   await close();
 }

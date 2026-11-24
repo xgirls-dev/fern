@@ -1,13 +1,10 @@
 import { useCallback, useLayoutEffect, useRef, useState, type FocusEvent, type KeyboardEvent } from "react";
+import { flushChatReadingPositions, getChatReadingPosition, readingLineFingerprint, saveChatReadingPosition,
+  type ReadingLine, type ReadingSection, type ScrollPosition } from "../lib/chatReadingPositions";
 import type { ChatSearchMatch } from "../lib/chatSearch";
 import { chatSearchPattern, findChatSearchRange, isChatSearchBlock } from "../lib/chatSearchRange";
 
-// The chat workspace unmounts when switching to another part of Fern.
-const readingSections = { answer: ".text-message-content", reasoning: ".text-reasoning > div" } as const;
-type ReadingSection = keyof typeof readingSections;
-type ReadingLine = { section: ReadingSection; path: number[]; character: number; sample: string; offset: number };
-type ScrollPosition = { top: number; following: boolean; anchor?: { id: string; offset: number; line?: ReadingLine } };
-const positions = new Map<string, ScrollPosition>();
+const readingSections: Record<ReadingSection, string> = { answer: ".text-message-content", reasoning: ".text-reasoning > div" };
 const findHighlight = "fern-chat-find";
 const horizontalScroller = "[data-chat-horizontal-scroll]";
 const conversationControl = `a[href], button, summary, input, textarea, select, ${horizontalScroller}[tabindex='0'], [contenteditable=true], [role=button]`;
@@ -109,8 +106,8 @@ function readingLine(row: Element, viewport: DOMRect): ReadingLine | undefined {
       for (let sibling = child.previousSibling; sibling; sibling = sibling.previousSibling) index += 1;
       path.push(index);
     }
-    const sample = text.data.slice(Math.max(0, character - 8), character + 12);
-    return { section, path: path.reverse(), character, sample, offset: line.top - viewport.top };
+    return { section, path: path.reverse(), character, fingerprint: readingLineFingerprint(text.data, character),
+      offset: line.top - viewport.top };
   }
 }
 
@@ -128,8 +125,7 @@ function restorePosition(feed: HTMLElement, position: ScrollPosition) {
     if (section?.querySelector("[data-chat-markdown-pending]")) return false;
     let text: Node | undefined = section ?? undefined;
     for (const index of line.path) text = text?.childNodes[index];
-    const sampleStart = Math.max(0, line.character - 8);
-    if (text instanceof Text && line.character < text.length && text.data.slice(sampleStart, sampleStart + line.sample.length) === line.sample) {
+    if (text instanceof Text && line.character < text.length && readingLineFingerprint(text.data, line.character) === line.fingerprint) {
       const bounds = characterBounds(text, line.character);
       if (bounds.height) {
         feed.scrollTop += bounds.top - viewport.top - line.offset;
@@ -142,19 +138,21 @@ function restorePosition(feed: HTMLElement, position: ScrollPosition) {
 }
 
 function rememberPosition(threadId: string, feed: HTMLElement, following: boolean, preferred?: Element) {
-  const position: ScrollPosition = { top: feed.scrollTop, following };
-  if (!following) {
-    const viewport = feed.getBoundingClientRect();
-    for (const row of preferred ? [preferred] : feed.querySelectorAll("[data-chat-message]")) {
-      const bounds = row.getBoundingClientRect();
-      const id = row.getAttribute("data-chat-message");
-      if (id && bounds.bottom > viewport.top && bounds.top < viewport.bottom) {
-        position.anchor = { id, offset: bounds.top - viewport.top, line: bounds.top < viewport.top ? readingLine(row, viewport) : undefined };
-        break;
-      }
+  if (following) {
+    saveChatReadingPosition(threadId);
+    return;
+  }
+  const position: ScrollPosition = { top: feed.scrollTop };
+  const viewport = feed.getBoundingClientRect();
+  for (const row of preferred ? [preferred] : feed.querySelectorAll("[data-chat-message]")) {
+    const bounds = row.getBoundingClientRect();
+    const id = row.getAttribute("data-chat-message");
+    if (id && bounds.bottom > viewport.top && bounds.top < viewport.bottom) {
+      position.anchor = { id, offset: bounds.top - viewport.top, line: bounds.top < viewport.top ? readingLine(row, viewport) : undefined };
+      break;
     }
   }
-  positions.set(threadId, position);
+  saveChatReadingPosition(threadId, position);
 }
 
 export function useTextScroll(threadId: string) {
@@ -168,7 +166,7 @@ export function useTextScroll(threadId: string) {
   const [canScroll, setCanScroll] = useState(false);
   const [restoredThread, setRestoredThread] = useState<string>();
   const pendingRestore = useRef<ScrollPosition | undefined>(undefined);
-  const restoreAnchor = restoredThread === threadId ? undefined : positions.get(threadId)?.anchor;
+  const restoreAnchor = restoredThread === threadId ? undefined : getChatReadingPosition(threadId)?.anchor;
 
   const cancelRestore = useCallback(() => {
     if (!pendingRestore.current) return;
@@ -284,7 +282,7 @@ export function useTextScroll(threadId: string) {
     const feed = feedRef.current;
     const transcript = transcriptRef.current;
     if (!feed || !transcript) return;
-    const saved = positions.get(threadId);
+    const saved = getChatReadingPosition(threadId);
     pendingRestore.current = undefined;
     const restore = (position: ScrollPosition) => {
       if (!restorePosition(feed, position)) {
@@ -296,7 +294,8 @@ export function useTextScroll(threadId: string) {
       pendingRestore.current = undefined;
       markdownObserver.disconnect();
       lastTop.current = feed.scrollTop;
-      positions.set(threadId, { ...position, top: feed.scrollTop });
+      // Reflow refines the pixel fallback while the saved line anchor stays valid.
+      position.top = feed.scrollTop;
       setRestoredThread(threadId);
     };
     const markdownObserver = new MutationObserver(() => {
@@ -304,7 +303,7 @@ export function useTextScroll(threadId: string) {
       if (position && feed.clientHeight) restore(position);
       else if (!position) markdownObserver.disconnect();
     });
-    following.current = saved?.following ?? true;
+    following.current = !saved;
     layout.current = { width: transcript.clientWidth, hidden: !feed.clientHeight };
     setHistoryVisible(!layout.current.hidden);
     if (!layout.current.hidden) {
@@ -331,7 +330,7 @@ export function useTextScroll(threadId: string) {
       if (wasHidden) setHistoryVisible(true);
       updateOverflow();
       if (!following.current) {
-        const position = pendingRestore.current ?? (reflowed && positions.get(threadId));
+        const position = pendingRestore.current ?? (reflowed && getChatReadingPosition(threadId));
         if (position) {
           restore(position);
           return;
@@ -362,6 +361,19 @@ export function useTextScroll(threadId: string) {
       document.removeEventListener("selectionchange", onSelection);
     };
   }, [onScroll, pauseFollowing, savePosition, threadId]);
+
+  useLayoutEffect(() => {
+    const flushWhenHidden = () => {
+      if (document.visibilityState === "hidden") flushChatReadingPositions();
+    };
+    window.addEventListener("pagehide", flushChatReadingPositions);
+    document.addEventListener("visibilitychange", flushWhenHidden);
+    return () => {
+      window.removeEventListener("pagehide", flushChatReadingPositions);
+      document.removeEventListener("visibilitychange", flushWhenHidden);
+      flushChatReadingPositions();
+    };
+  }, []);
 
   return { feedRef, transcriptRef, historyVisible, followingLatest, showScrollButton: canScroll && !followingLatest,
     restoreAnchorId: restoreAnchor?.id, restoreReasoningId: restoreAnchor?.line?.section === "reasoning" ? restoreAnchor.id : undefined,
