@@ -53,12 +53,32 @@ try {
   await page.route("**/api/text/job", (route) => route.fulfill({ json: state.textStatus.job }));
   const answer = "Go👩🏽‍💻 e\u0301 🇲🇽!";
   await page.emulateMedia({ reducedMotion: "no-preference" });
+
+  await observeReply("Keep the whole greeting visible while renderer callbacks are delayed.");
+  const restoreCallbacks = await page.evaluateHandle(() => {
+    const { requestAnimationFrame, setTimeout } = window;
+    let id = 0;
+    window.requestAnimationFrame = () => --id;
+    window.setTimeout = () => --id;
+    return () => Object.assign(window, { requestAnimationFrame, setTimeout });
+  });
+  try {
+    respond(answer);
+    await expect.poll(() => page.evaluate(() => document.querySelector(
+      ".text-message--streaming .text-message-content p",
+    )?.textContent)).toBe(answer);
+    assert.deepEqual(await page.evaluate(() => window.replyFrames), [answer]);
+  } finally {
+    await restoreCallbacks.evaluate((restore) => { restore(); });
+    await restoreCallbacks.dispose();
+  }
+  respond(answer, "complete");
+  await expect(stream).toHaveCount(0);
+
   await observeReply("Send a greeting with an emoji and an accent.");
   respond(answer);
   await expect(reply.locator("p")).toHaveText(answer);
-  const frames = await page.evaluate(() => window.replyFrames);
-  assert.equal(frames.length, 2, "A prose burst should appear as a prefix and then finish on the next frame");
-  assertCompleteCharacters(frames, answer);
+  assert.deepEqual(await page.evaluate(() => window.replyFrames), [answer]);
 
   const extended = `${answer} नमस्ते दुनिया!`;
   respond(extended);
@@ -88,26 +108,6 @@ try {
   respond(rich, "complete");
   await expect(stream).toHaveCount(0);
 
-  await observeReply("Keep the greeting moving while a frame is delayed.");
-  const restoreFrames = await page.evaluateHandle(() => {
-    const requestFrame = window.requestAnimationFrame;
-    let id = 0;
-    window.requestAnimationFrame = () => --id;
-    return () => { window.requestAnimationFrame = requestFrame; };
-  });
-  try {
-    respond(answer);
-    await expect.poll(() => page.evaluate(() => document.querySelector(
-      ".text-message--streaming .text-message-content p",
-    )?.textContent)).toBe(answer);
-    assertCompleteCharacters(await page.evaluate(() => window.replyFrames), answer);
-  } finally {
-    await restoreFrames.evaluate((restore) => restore());
-    await restoreFrames.dispose();
-  }
-  respond(answer, "complete");
-  await expect(stream).toHaveCount(0);
-
   await page.emulateMedia({ reducedMotion: "reduce" });
   await observeReply("Repeat the greeting with reduced motion.");
   respond(answer);
@@ -116,7 +116,7 @@ try {
   respond(answer, "complete");
   await expect(stream).toHaveCount(0);
   assert.deepEqual(errors, []);
-  console.log("Prose bursts catch up on the next frame, short updates render together, and Unicode and reduced motion stay intact.");
+  console.log("Complete prose updates stay visible during delayed callbacks. Unicode, Markdown, and reduced motion stay intact.");
 } finally {
   connection?.response.end();
   await close();

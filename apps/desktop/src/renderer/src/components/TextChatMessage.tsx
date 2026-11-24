@@ -11,8 +11,6 @@ import { useClipboardCopy } from "../hooks/useClipboardCopy";
 import { resolveAssetUrl } from "../lib/api";
 import type { ChatSearchMatch } from "../lib/chatSearch";
 import { notify } from "../lib/notifications";
-import { hasStreamingMarkdown } from "../lib/streamingMarkdown";
-import { segmentGraphemes } from "../lib/text";
 import { formatTextFailure } from "../lib/textFailure";
 import { replyVersions, type TextMessage } from "../lib/textThreads";
 import { ChatDocumentSources } from "./ChatDocuments";
@@ -29,75 +27,6 @@ export type TextReplyProgress = { kind: "status" | "reasoning" | "answer" | "ima
 
 function describeContextCount(count: number, subject: string, action: string) {
   return `${count.toLocaleString()} ${subject}${count === 1 ? " was" : "s were"} ${action}.`;
-}
-
-const reducedTextMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
-const SMALL_PROSE_UPDATE = 8;
-const STREAM_FRAME_DEADLINE_MS = 64;
-type PendingTextReveal = { frame: number; deadline: number };
-
-function cancelTextReveal(pending: { current: PendingTextReveal | null }) {
-  const reveal = pending.current;
-  if (!reveal) return;
-  pending.current = null;
-  window.cancelAnimationFrame(reveal.frame);
-  window.clearTimeout(reveal.deadline);
-}
-
-function useStreamedText(text: string, streaming: boolean) {
-  const displayed = useRef(text);
-  const [visible, setVisible] = useState(text);
-  const pendingReveal = useRef<PendingTextReveal | null>(null);
-  const latest = useRef(text);
-  const animating = useRef(false);
-  const animate = streaming && !reducedTextMotion.matches && text.length <= 16_000 && !hasStreamingMarkdown(text);
-  useLayoutEffect(() => () => cancelTextReveal(pendingReveal), []);
-  useLayoutEffect(() => {
-    latest.current = text;
-    const wasAnimating = animating.current;
-    animating.current = animate;
-    if (!animate) {
-      cancelTextReveal(pendingReveal);
-      // The render already used the full text. Keep it as the starting point
-      // if prose animation resumes, without scheduling another commit.
-      displayed.current = text;
-      return;
-    }
-    const show = (next: string) => {
-      if (wasAnimating && next === displayed.current) return;
-      displayed.current = next;
-      setVisible(next);
-    };
-
-    const appended = text.length - displayed.current.length;
-    if (appended <= SMALL_PROSE_UPDATE || !text.startsWith(displayed.current)) {
-      cancelTextReveal(pendingReveal);
-      show(text);
-      return;
-    }
-    if (pendingReveal.current) return;
-
-    // Start revealing a burst immediately. The next frame clears its entire
-    // remaining backlog, including chunks that arrive before that frame.
-    const midpoint = displayed.current.length + Math.ceil(appended / 2);
-    const grapheme = segmentGraphemes(text).containing(midpoint - 1);
-    const firstPart = grapheme ? text.slice(0, grapheme.index + grapheme.segment.length) : text;
-    show(firstPart);
-    if (firstPart === text) return;
-    const finishReveal = () => {
-      if (pendingReveal.current !== reveal) return;
-      cancelTextReveal(pendingReveal);
-      show(latest.current);
-    };
-    // A throttled frame must not hold back text the model has already sent.
-    const reveal: PendingTextReveal = {
-      frame: window.requestAnimationFrame(finishReveal),
-      deadline: window.setTimeout(finishReveal, STREAM_FRAME_DEADLINE_MS),
-    };
-    pendingReveal.current = reveal;
-  }, [animate, text]);
-  const previous = animating.current ? visible : displayed.current;
-  return animate && text.startsWith(previous) ? previous : text;
 }
 
 function useReplySelection(id: string, content: string, reasoning: string | undefined, streaming: boolean, preview: boolean) {
@@ -199,8 +128,9 @@ export const TextChatMessage = memo(function TextChatMessage({ message, selectio
   const reasoningExpanded = revealReasoning || reasoningOpen;
   const streaming = !!progress;
   const assistant = message.role === "assistant";
-  const animatedContent = useStreamedText(message.content, progress?.kind === "answer" && !previewWhileStreaming);
-  const { bodyRef, reasoningRef, onPointerDown, releaseSelection, holding, shown } = useReplySelection(selectionId ?? message.id, animatedContent, message.reasoning, streaming, previewWhileStreaming);
+  const { bodyRef, reasoningRef, onPointerDown, releaseSelection, holding, shown } = useReplySelection(
+    selectionId ?? message.id, message.content, message.reasoning, streaming, previewWhileStreaming,
+  );
   const { content, reasoning } = shown;
   const hasAnswer = !!content.trim();
   const showCursor = progress?.kind === "answer" && hasAnswer && shown.streaming;
