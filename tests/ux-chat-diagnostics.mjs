@@ -63,7 +63,7 @@ try {
   await page.getByRole("button", { name: `Text thread: ${prompt}`, exact: true }).click();
   await expect(failed).toBeVisible();
   await chooseMessageAction(failed, "Copy reply diagnostics");
-  assert.equal(await page.evaluate(() => window.copiedDiagnostics), expected);
+  await expect.poll(() => page.evaluate(() => window.copiedDiagnostics)).toBe(expected);
 
   await page.evaluate(() => { window.rejectDiagnosticCopy = true; });
   await chooseMessageAction(failed, "Copy reply diagnostics");
