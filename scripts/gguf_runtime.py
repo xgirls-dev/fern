@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterator
 
 from text_model_download import download_file
+from text_runtime_errors import TextRuntimeMemoryError, has_memory_failure
 from chat_context import DEFAULT_CONTEXT_SIZE, MAX_IMAGE_TOKENS, CompactedHistory, ContextBudgetError, fit_context, recent_images
 from chat_documents import add_document_context
 
@@ -299,10 +300,11 @@ class GGUFServer:
         deadline = started_at + 180
         while time.monotonic() < deadline:
             if self.process.poll() is not None:
-                with self.log_path.open("rb") as log:
-                    log.seek(max(0, self.log_path.stat().st_size - 2200))
-                    detail = log.read().decode("utf-8", errors="replace")
-                raise RuntimeError(f"Could not load the GGUF model on {self.backend} {self.device}. {detail[-1400:]}")
+                detail = self.runtime_log_tail()
+                message = f"Could not load the GGUF model on {self.backend} {self.device}. {detail[-1400:]}"
+                if has_memory_failure(detail):
+                    raise TextRuntimeMemoryError(message)
+                raise RuntimeError(message)
             try:
                 with self.http.open(self._request("/health"), timeout=2) as response:
                     if json.load(response).get("status") == "ok":
@@ -315,6 +317,14 @@ class GGUFServer:
                 delay = 0.05 if now - started_at < 5 else 0.4
                 time.sleep(min(delay, deadline - now))
         raise RuntimeError("The GGUF model did not start within three minutes.")
+
+    def runtime_log_tail(self, *, after: int = 0) -> str:
+        try:
+            with self.log_path.open("rb") as log:
+                log.seek(max(after, os.fstat(log.fileno()).st_size - 65536))
+                return log.read(65536).decode("utf-8", errors="replace")
+        except OSError:
+            return ""
 
     def _request(self, route: str, data: dict | None = None) -> urllib.request.Request:
         return urllib.request.Request(

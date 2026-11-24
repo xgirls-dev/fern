@@ -17,9 +17,30 @@ from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from gguf_runtime import CompletionCancellation, GGUFServer, VulkanDriverError, ensure_runtime, runtime_supported
+from text_runtime_errors import OUT_OF_MEMORY, TextRuntimeMemoryError, text_runtime_error_code
 
 
 class GGUFCompletionTests(unittest.TestCase):
+    def test_load_reports_memory_pressure_even_if_the_marker_is_outside_the_error_excerpt(self) -> None:
+        server = GGUFServer.__new__(GGUFServer)
+        server.process = Mock()
+        server.process.poll.return_value = 1
+        server.backend, server.device = "vulkan", "GPU"
+        with tempfile.TemporaryDirectory() as directory:
+            server.log_path = Path(directory) / "runtime.log"
+            server.log_path.write_text("vk::Device::allocateMemory: ErrorOutOfDeviceMemory\n" + "diagnostic\n" * 900)
+            with self.assertRaises(TextRuntimeMemoryError) as failure:
+                server._wait_ready()
+            self.assertEqual(text_runtime_error_code(failure.exception), OUT_OF_MEMORY)
+            self.assertNotIn("ErrorOutOfDeviceMemory", str(failure.exception))
+            server.log_path.write_text("The GGUF file is malformed.")
+            with self.assertRaisesRegex(RuntimeError, "GGUF file is malformed") as invalid_model:
+                server._wait_ready()
+            self.assertIsNone(text_runtime_error_code(invalid_model.exception))
+        self.assertEqual(text_runtime_error_code(MemoryError()), OUT_OF_MEMORY)
+        self.assertEqual(text_runtime_error_code(RuntimeError("CL_MEM_OBJECT_ALLOCATION_FAILURE")), OUT_OF_MEMORY)
+        self.assertIsNone(text_runtime_error_code(RuntimeError("CL_OUT_OF_RESOURCES")))
+
     def test_runtime_readiness_polls_quickly_then_backs_off(self) -> None:
         server = GGUFServer.__new__(GGUFServer)
         server.process = Mock()

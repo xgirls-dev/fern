@@ -13,6 +13,7 @@ from queue import SimpleQueue
 from typing import Any
 
 from chat_documents import add_document_context
+from text_runtime_errors import OUT_OF_MEMORY, has_memory_failure, text_runtime_error_code
 
 
 PREFIX = "FERN_TEXT_EVENT:"
@@ -71,6 +72,7 @@ def run_gguf(file: Path, device: str, projector: Path | None) -> int:
     try:
         while pending := requests.get():
             request, cancellation = pending
+            log_offset = None
             try:
                 if request.get("op") == "shutdown":
                     return 0
@@ -118,6 +120,10 @@ def run_gguf(file: Path, device: str, projector: Path | None) -> int:
                     )
                     load_timing["modelReadyMs"] = (time.perf_counter() - load_started) * 1000
                 emit({"type": "phase", "stage": "preparing-conversation"})
+                try:
+                    log_offset = server.log_path.stat().st_size
+                except OSError:
+                    pass
                 result = server.generate(request, emit, cancellation)
                 result["runtimeTiming"].update(load_timing)
                 emit(result)
@@ -128,7 +134,11 @@ def run_gguf(file: Path, device: str, projector: Path | None) -> int:
                     server = None
                 emit({"type": "cancelled"})
             except Exception as error:
-                emit({"type": "error", "error": str(error), "code": getattr(error, "code", None),
+                code = text_runtime_error_code(error)
+                if (not code and log_offset is not None and server is not None and server.process is not None
+                        and server.process.poll() is not None and has_memory_failure(server.runtime_log_tail(after=log_offset))):
+                    code = OUT_OF_MEMORY
+                emit({"type": "error", "error": str(error), "code": code,
                       "traceback": traceback.format_exc()})
         return 0
     finally:
@@ -146,7 +156,7 @@ def run(model_path: str, device: str, projector_path: str = "") -> int:
         emit({"type": "phase", "stage": "selecting-device"})
         device = resolve_text_device(device)
     except Exception as error:
-        emit({"type": "error", "error": str(error)})
+        emit({"type": "error", "error": str(error), "code": text_runtime_error_code(error)})
         return 1
 
     try:
@@ -154,7 +164,7 @@ def run(model_path: str, device: str, projector_path: str = "") -> int:
         emit({"type": "phase", "stage": "setting-up-runtime"})
         import openvino_genai as genai
     except Exception as error:
-        emit({"type": "error", "error": f"OpenVINO GenAI is unavailable: {error}"})
+        emit({"type": "error", "error": f"OpenVINO GenAI is unavailable: {error}", "code": text_runtime_error_code(error)})
         return 1
 
     pipeline = None
@@ -234,7 +244,8 @@ def run(model_path: str, device: str, projector_path: str = "") -> int:
                 "tokensPerSecond": output_tokens / elapsed,
             })
         except Exception as error:
-            emit({"type": "error", "error": str(error), "traceback": traceback.format_exc()})
+            emit({"type": "error", "error": str(error), "code": text_runtime_error_code(error),
+                  "traceback": traceback.format_exc()})
 
 
 if __name__ == "__main__":

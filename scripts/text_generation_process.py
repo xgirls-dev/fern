@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+from text_runtime_errors import OUT_OF_MEMORY, has_memory_failure
+
 
 EVENT_PREFIX = "FERN_TEXT_EVENT:"
 STOP_TIMEOUT = 0.8
@@ -161,6 +163,7 @@ class TextGenerationProcess:
                     raise _GenerationStopped("Generation stopped.")
                 self._active = active
             reset_worker = False
+            reported_memory_failure = False
             try:
                 process.stdin.write(json.dumps(request, ensure_ascii=False) + "\n")
                 process.stdin.flush()
@@ -169,9 +172,12 @@ class TextGenerationProcess:
                         self.request_stop(cancel_event)
                     raw = process.stdout.readline()
                     if not raw:
+                        if reported_memory_failure:
+                            raise TextWorkerError("The text runtime reported a memory allocation failure.", OUT_OF_MEMORY)
                         raise RuntimeError("The text worker exited before returning a result.")
                     line = raw.rstrip()
                     if not line.startswith(EVENT_PREFIX):
+                        reported_memory_failure |= has_memory_failure(line)
                         on_phase(line[:300])
                         continue
                     event = json.loads(line[len(EVENT_PREFIX):])
@@ -204,7 +210,8 @@ class TextGenerationProcess:
                         detail = str(event.get("error") or "Text generation failed.")
                         if event.get("traceback"):
                             on_phase(str(event["traceback"])[-5000:])
-                        raise TextWorkerError(detail, event.get("code"))
+                        code = event.get("code") or (OUT_OF_MEMORY if reported_memory_failure else None)
+                        raise TextWorkerError(detail, code)
                     else:
                         raise RuntimeError("The text worker sent an invalid response.")
             except _GenerationStopped:

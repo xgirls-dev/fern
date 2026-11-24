@@ -19,7 +19,7 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import api_server as api
 from text_model_registry import TextModelRegistry, REQUIRED_FILES
-from text_generation_process import TextGenerationProcess
+from text_generation_process import TextGenerationProcess, TextWorkerError
 from text_generation_worker import resolve_text_device
 
 
@@ -168,6 +168,36 @@ for line in sys.stdin:
                 with self.assertRaises((RuntimeError, OSError)):
                     request.result(timeout=8)
             self.assertEqual(generate()['text'], 'ok')
+        finally:
+            worker.close()
+
+    def test_worker_exit_with_memory_failure_retains_tokens_and_allows_a_fresh_request(self):
+        script = self.root / "memory_worker.py"
+        script.write_text(
+            "import json, sys\n"
+            "request = json.loads(sys.stdin.readline())\n"
+            "def emit(**event): print('FERN_TEXT_EVENT:' + json.dumps(event), flush=True)\n"
+            "if request['fail']:\n"
+            "    emit(type='token', text='A partial answer')\n"
+            "    print('OpenVINO: CL_MEM_OBJECT_ALLOCATION_FAILURE', flush=True)\n"
+            "    sys.exit(1)\n"
+            "emit(type='result', text='Recovered')\n",
+            encoding="utf-8",
+        )
+        worker = TextGenerationProcess()
+        tokens = []
+
+        def generate(fail):
+            return worker.generate(model_path=str(self.folder), device="GPU", command=[sys.executable, "-u", str(script)],
+                                   request={"fail": fail}, cwd=self.root, env=dict(os.environ),
+                                   on_token=tokens.append, on_phase=lambda _: None)
+
+        try:
+            with self.assertRaises(TextWorkerError) as error:
+                generate(True)
+            self.assertEqual(error.exception.code, "out-of-memory")
+            self.assertEqual(tokens, ["A partial answer"])
+            self.assertEqual(generate(False)["text"], "Recovered")
         finally:
             worker.close()
 

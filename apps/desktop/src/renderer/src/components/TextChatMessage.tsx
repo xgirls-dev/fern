@@ -155,7 +155,7 @@ function useReplySelection(id: string, content: string, reasoning: string | unde
     shown: holding ? committed.current : { content, reasoning, streaming: renderAsStream } };
 }
 
-export const TextChatMessage = memo(function TextChatMessage({ message, selectionId, initialReasoningOpen, contextVersionId, findMatch, progress, previewWhileStreaming = false, generatedImage, includedImageLabel, contextChanged, editor, promptVersions, editingAnother, onEdit, onBranch, onFork, canFork, onDelete, onDeleteRequested, canDelete, confirmDelete, deleteTurn, onRetry, canRetry, onContinue, canContinue, onSelectVersion, busy, latest }: {
+export const TextChatMessage = memo(function TextChatMessage({ message, selectionId, initialReasoningOpen, contextVersionId, findMatch, progress, previewWhileStreaming = false, generatedImage, includedImageLabel, contextChanged, editor, promptVersions, editingAnother, onEdit, onBranch, onFork, canFork, onDelete, onDeleteRequested, canDelete, confirmDelete, deleteTurn, onRetry, canRetry, memoryRecovery, onContinue, canContinue, onSelectVersion, busy, latest }: {
   message: TextMessage;
   selectionId?: string;
   initialReasoningOpen?: boolean;
@@ -180,6 +180,7 @@ export const TextChatMessage = memo(function TextChatMessage({ message, selectio
   deleteTurn?: boolean;
   onRetry?: () => void;
   canRetry?: boolean;
+  memoryRecovery?: { label: string; run: (trigger: HTMLButtonElement) => void };
   onContinue?: (id: string) => void;
   canContinue?: boolean;
   onSelectVersion?: (messageId: string, versionId: string) => void;
@@ -210,8 +211,10 @@ export const TextChatMessage = memo(function TextChatMessage({ message, selectio
   const stoppedNote = hasAnswer ? "Stopped · Partial response" : message.generatedImage ? "Stopped · Image saved"
     : message.reasoning ? "Stopped during reasoning" : "Stopped before any text was generated";
   const failed = message.status === "failed";
+  const memoryFailure = failed && message.errorCode === "out-of-memory";
   const showRetry = !!onRetry && (failed || message.status === "stopped");
-  const recoveryNote = failed ? message.error || "Generation failed."
+  const recoveryNote = memoryFailure ? "The model ran out of memory."
+    : failed ? message.error || "Generation failed."
     : message.status === "stopped" ? stoppedNote
     : message.status === "complete" && message.metrics?.finishReason === "length" ? "Reached the output limit" : null;
   const modelName = message.modelName ?? message.metrics?.modelName;
@@ -319,11 +322,13 @@ export const TextChatMessage = memo(function TextChatMessage({ message, selectio
       {assistant ? body : <div className="text-user-bubble">{body}</div>}
       {!!message.metrics?.documentSources?.length && <ChatDocumentSources sources={message.metrics.documentSources} />}
       {!streaming && recoveryNote && <InlineNotice className="text-reply-recovery" tone={failed ? "error" : "neutral"}
-        actions={(onContinue || showRetry) && <>
-          {onContinue && <Button variant="secondary" disabled={!canContinue} onClick={() => onContinue(message.id)}>Continue response</Button>}
-          {showRetry && <Button variant={onContinue ? "ghost" : "secondary"} disabled={!canRetry} onClick={onRetry}>Retry response</Button>}
+        actions={(memoryRecovery || onContinue || showRetry) && <>
+          {memoryRecovery && <Button variant="secondary" onClick={(event) => memoryRecovery.run(event.currentTarget)}>{memoryRecovery.label}</Button>}
+          {onContinue && <Button variant={memoryRecovery ? "ghost" : "secondary"} disabled={!canContinue} onClick={() => onContinue(message.id)}>Continue response</Button>}
+          {showRetry && <Button variant={memoryRecovery || onContinue ? "ghost" : "secondary"} disabled={!canRetry} onClick={onRetry}>Retry response</Button>}
         </>}>
         <span>{recoveryNote}</span>
+        {memoryFailure && <span> Close other apps or try a smaller model.</span>}
         {failed && message.errorCode === "intel-vulkan-driver" && window.studio.platform === "win32" && <>
           {" "}<a className="ui-link" href="https://www.intel.com/content/www/us/en/support/detect.html" target="_blank" rel="noreferrer">Get Intel graphics drivers</a>
         </>}
