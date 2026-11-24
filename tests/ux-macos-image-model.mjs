@@ -1,5 +1,6 @@
 import { chooseSelectOption } from "./select-option.mjs";
 import assert from "node:assert/strict";
+import { expect } from "@playwright/test";
 import { fixture } from "./ui-fixture.mjs";
 
 const model = {
@@ -28,7 +29,7 @@ try {
   await button("New thread").click();
   await menuItem("Create image").click();
   await button("Image model: Klein 4B · MLX").click();
-  assert.equal(await page.getByRole("menuitemradio").count(), 1);
+  await expect(page.getByRole("menuitemradio")).toHaveCount(1);
   await page.keyboard.press("Escape");
   await page.locator("#prompt").fill("A fox in winter");
   await button("Generate image").hover();

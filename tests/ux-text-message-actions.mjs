@@ -89,13 +89,16 @@ try {
   await expect(menu).toHaveCount(0);
   await expect(more("reply-one")).not.toBeFocused();
 
+  const readViewportHeight = () => conversation.evaluate((element) => element.clientHeight);
+  const previousHeight = await readViewportHeight();
   await page.setViewportSize({ width: 320, height: 500 });
+  await expect.poll(readViewportHeight).toBeLessThan(previousHeight);
   const jump = button("Jump to latest message");
   const latestActions = more("reply-two");
-  const viewportHeight = await conversation.evaluate((element) => element.clientHeight);
+  const viewportHeight = await readViewportHeight();
   await latestActions.focus();
   await expect(jump).toBeVisible();
-  assert.equal(await conversation.evaluate((element) => element.clientHeight), viewportHeight);
+  assert.equal(await readViewportHeight(), viewportHeight);
   const shelf = await jump.boundingBox();
   const transcript = await conversation.boundingBox();
   assert(shelf && transcript && shelf.y >= transcript.y + transcript.height,
@@ -114,7 +117,7 @@ try {
   await conversation.evaluate((element) => { element.scrollTop = element.scrollHeight; });
   await expect(jump).toHaveCount(0);
   await expect(page.getByRole("textbox", { name: "Message", exact: true })).toBeFocused();
-  assert.equal(await conversation.evaluate((element) => element.clientHeight), viewportHeight);
+  assert.equal(await readViewportHeight(), viewportHeight);
 
   await page.setViewportSize({ width: 390, height: 500 });
   await openMenu("reply-two");
