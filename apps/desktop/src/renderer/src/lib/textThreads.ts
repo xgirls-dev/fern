@@ -485,6 +485,7 @@ export function findChatImage(thread: Pick<TextThread, "messages">, name: string
 }
 
 export interface TextMessageDeletion {
+  snapshotId?: string;
   messages: TextMessage[];
   index: number;
   beforeId?: string;
@@ -554,6 +555,15 @@ function restoreDeletedReplyVersion(current: TextMessage, removed: TextMessage, 
 
 export function restoreTextMessages(thread: TextThread, deletion: TextMessageDeletion, updatedAt: number): TextThread {
   if (thread.pendingJobId) return thread;
+  if (!deletion.snapshotId) return restoreMessageDeletion(thread, deletion, updatedAt);
+  const snapshot = thread.versions?.find(({ id }) => id === deletion.snapshotId);
+  if (!snapshot) return thread;
+  const { messages } = restoreMessageDeletion({ ...thread, messages: snapshot.messages }, deletion, updatedAt);
+  if (messages === snapshot.messages) return thread;
+  return { ...thread, updatedAt, versions: thread.versions?.map((item) => item === snapshot ? { ...item, messages } : item) };
+}
+
+function restoreMessageDeletion(thread: TextThread, deletion: TextMessageDeletion, updatedAt: number): TextThread {
   const after = thread.messages.findIndex((message) => matchesTextMessage(message, deletion.afterId));
   const before = thread.messages.findIndex((message) => matchesTextMessage(message, deletion.beforeId));
   const removedReply = deletion.messages[0];
@@ -569,14 +579,7 @@ export function restoreTextMessages(thread: TextThread, deletion: TextMessageDel
   }
   const versionIndex = deletedVersion ? thread.messages.findIndex((message) =>
     matchesTextMessage(message, deletedVersion.survivingId) || matchesTextMessage(message, removedReply.id)) : -1;
-  if (deletedVersion && versionIndex < 0) {
-    // Restoring a saved conversation can move the affected reply into its history.
-    const snapshot = thread.versions?.find(({ messages }) => messages.some((message) => matchesTextMessage(message, deletedVersion.survivingId)));
-    if (!snapshot) return thread;
-    const messages = snapshot.messages.map((message) => matchesTextMessage(message, deletedVersion.survivingId)
-      ? restoreDeletedReplyVersion(message, removedReply, deletedVersion) : message);
-    return { ...thread, updatedAt, versions: thread.versions?.map((item) => item === snapshot ? { ...item, messages } : item) };
-  }
+  if (deletedVersion && versionIndex < 0) return thread;
   const index = versionIndex >= 0 ? versionIndex : after >= 0 ? after : before >= 0 ? before + 1 : Math.min(deletion.index, thread.messages.length);
   const replacement = thread.messages[index];
   // A retry can fill the slot of a deleted reply while Undo is available.
