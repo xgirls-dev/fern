@@ -27,7 +27,7 @@ export async function fixture({ builtRenderer = false, firstRun = false, imageCo
         resolve: { conditions: ["worker", ...defaultClientConditions] },
         server: address,
         optimizeDeps: {
-          entries: ["index.html", "src/components/TextMarkdown.tsx", "src/lib/textCodeHighlight.ts"],
+          entries: ["index.html", "src/components/TextMarkdown.tsx", "src/lib/textCodeHighlight.worker.ts"],
           include: ["react/jsx-dev-runtime"],
         },
       });

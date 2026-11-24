@@ -33,6 +33,7 @@ try {
         });
       }
       postMessage(data) {
+        if (typeof data.streaming !== "boolean") return super.postMessage(data);
         if (!data.streaming) window.finishedMarkdownRequests++;
         if (data.seedPrefix) window.markdownWorkerSeeds.push(data.seedPrefix.blockCount);
         if (window.holdMarkdownTail && data.content.endsWith(window.holdMarkdownTail)) {
@@ -264,6 +265,7 @@ try {
     };
     window.Worker = class extends NativeWorker {
       postMessage(data) {
+        if (typeof data.streaming !== "boolean") return super.postMessage(data);
         this.markdownHistory ??= !data.streaming;
         if (window.pendingFormattingTail && data.content.endsWith(window.pendingFormattingTail)) {
           window.releasePendingFormatting = () => super.postMessage(data);

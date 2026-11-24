@@ -16,6 +16,8 @@ assert(["renderer", "electron"].includes(mode), "Choose renderer or electron.");
 assert(["click", "enter"].includes(sendMethod), "Choose click or enter for FERN_BENCH_STREAM_SEND.");
 const visible = mode === "electron" && process.env.FERN_E2E_VISIBLE === "1";
 const trace = process.env.FERN_BENCH_STREAM_TRACE === "1";
+const codeLines = Number(process.env.FERN_BENCH_STREAM_CODE_LINES ?? 1);
+assert(Number.isInteger(codeLines) && codeLines > 0 && codeLines <= 350, "Choose 1–350 lines of code.");
 const sampleCount = 100;
 const appendIntervalMs = 50;
 const phase = "Waiting for the first token…";
@@ -121,7 +123,7 @@ try {
   const send = page.getByRole("button", { name: "Send message", exact: true });
   const browser = await page.evaluate(() => ({ userAgent: navigator.userAgent, width: innerWidth, height: innerHeight, devicePixelRatio }));
   await composer.fill("Draft workshop notes and end with a short table and code example.");
-  await (sendMethod === "enter" ? composer : send).evaluate((trigger, { sampleCount, markerPattern, sendMethod, eventsOrigin, trace }) => {
+  await (sendMethod === "enter" ? composer : send).evaluate((trigger, { sampleCount, markerPattern, sendMethod, eventsOrigin, trace, codeLines }) => {
     const marker = new RegExp(markerPattern, "g");
     const arrivals = new Map();
     const rendered = new Map();
@@ -154,15 +156,17 @@ try {
       window.Worker = class extends NativeWorker {
         constructor(url, options) {
           super(url, options);
-          if (!String(url).includes("chatMarkdown.worker")) return;
+          const worker = /(?:chatMarkdown|textCodeHighlight)\.worker/.exec(String(url))?.[0];
+          if (!worker) return;
           const post = this.postMessage;
           this.postMessage = function (input, ...args) {
-            workerEvents.push({ at: performance.now(), event: "sent", id: input.id, streaming: input.streaming,
-              length: input.content.length, lastMarker: input.content.match(marker)?.at(-1), queue: options?.name,
+            const content = input.content ?? input.source;
+            workerEvents.push({ at: performance.now(), event: "sent", worker, id: input.id, streaming: input.streaming,
+              length: content.length, lastMarker: content.match(marker)?.at(-1), queue: options?.name,
               seedLength: input.seedPrefix?.source.length, seedBlocks: input.seedPrefix?.blockCount });
             post.call(this, input, ...args);
           };
-          this.addEventListener("message", ({ data }) => workerEvents.push({ at: performance.now(), event: "received", id: data.id,
+          this.addEventListener("message", ({ data }) => workerEvents.push({ at: performance.now(), event: "received", worker, id: data.id,
             retainedBlocks: data.retained?.blockCount }));
         }
       };
@@ -223,7 +227,10 @@ try {
         let replyCommit;
         let firstFeedback;
         let firstVisible;
+        let formattedAt;
+        let firstSyntaxAt;
         let maxFrameGapMs = 0;
+        let syntaxMaxFrameGapMs = 0;
         observer = new MutationObserver(() => {
           if (!conversation.querySelector(".text-message--streaming")) return;
           replyCommit = performance.now();
@@ -237,20 +244,25 @@ try {
         const tick = () => {
           const now = performance.now();
           firstFrame ??= now;
-          maxFrameGapMs = Math.max(maxFrameGapMs, now - previous);
+          if (formattedAt === undefined) maxFrameGapMs = Math.max(maxFrameGapMs, now - previous);
+          else syntaxMaxFrameGapMs = Math.max(syntaxMaxFrameGapMs, now - previous);
           previous = now;
           const row = conversation.querySelector(".text-message--assistant");
           const body = row?.querySelector(".text-message-content");
           const stream = row?.classList.contains("text-message--streaming");
           if (stream) firstFeedback ??= now;
-          for (const name of body?.textContent.match(marker) ?? []) {
+          for (const name of (formattedAt === undefined ? body?.textContent.match(marker) : null) ?? []) {
             const received = arrivals.get(name);
             if (received === undefined || rendered.has(name)) continue;
             rendered.set(name, { marker: name, receiptToFrameMs: now - received });
             firstVisible ??= now;
           }
-          if (terminal !== undefined && row && !stream && body?.querySelector("table") && body.querySelector("pre code") &&
-              rendered.size === sampleCount) {
+          if (formattedAt === undefined && terminal !== undefined && row && !stream && body?.querySelector("table") &&
+              body.querySelector("pre code") && rendered.size === sampleCount) formattedAt = now;
+          const coloredLines = codeLines > 1 ? CSS.highlights.get("fern-code-keyword")?.size ?? 0 : 0;
+          if (formattedAt !== undefined && coloredLines > 0) firstSyntaxAt ??= now;
+          const colored = coloredLines >= codeLines;
+          if (formattedAt !== undefined && (codeLines === 1 || colored)) {
             clearTimeout(timeout);
             observer.disconnect();
             traceMutations?.disconnect();
@@ -262,11 +274,13 @@ try {
               sendToFirstEventMs: firstBackend - sent,
               sendToFirstVisibleTextMs: firstVisible - sent,
               firstTextReceiptToFrameMs: firstVisible - firstText,
-              terminalReceiptToFormattedFrameMs: now - terminal,
+              terminalReceiptToFormattedFrameMs: formattedAt - terminal,
+              ...(colored ? { formattedToFirstSyntaxFrameMs: firstSyntaxAt - formattedAt,
+                formattedToFullSyntaxFrameMs: now - formattedAt, syntaxMaxFrameGapMs } : {}),
               maxFrameGapMs,
               samples: [...rendered.values()],
               ...(trace ? { trace: { sentAt: sent, terminalAt: terminal, terminalCommittedAt: terminalCommitted ?? null,
-                settledAt: now, workerEvents, longTasks, longFrames,
+                settledAt: formattedAt, observedAt: now, workerEvents, longTasks, longFrames,
                 updates: [...rendered.values()].map((sample) => {
                   const received = arrivals.get(sample.marker);
                   return { marker: sample.marker, receivedAt: received, committedAt: committed.get(sample.marker) ?? null,
@@ -280,7 +294,7 @@ try {
         frame = requestAnimationFrame(tick);
       }, { once: true, capture: true });
     });
-  }, { sampleCount, markerPattern, sendMethod, eventsOrigin, trace });
+  }, { sampleCount, markerPattern, sendMethod, eventsOrigin, trace, codeLines });
 
   if (sendMethod === "enter") await composer.press("Enter");
   else await send.click();
@@ -299,8 +313,10 @@ try {
     emit({ append: { phase, text, reasoning: "" } });
   }
   const fence = String.fromCharCode(96).repeat(3);
+  const code = codeLines === 1 ? "const ready = true;" : Array.from({ length: codeLines }, (_, index) =>
+    `const line${index} = "A finished code snippet should remain easy to read."; // workshop`).join("\n");
   const formatting = "\n\n| Item | Status |\n| --- | --- |\n| Notes | Ready |\n\n" + fence +
-    "js\nconst ready = true;\n" + fence;
+    "js\n" + code + "\n" + fence;
   await delay(appendIntervalMs);
   emit({ append: { phase, text: formatting, reasoning: "" } });
   await delay(appendIntervalMs);
@@ -325,7 +341,7 @@ try {
   console.log(JSON.stringify({
     revision, mode, visible, sendMethod, browser, fixture: "deterministic server-sent events",
     host: { os: os.version(), arch: os.arch(), cpu: os.cpus()[0]?.model, memoryBytes: os.totalmem() },
-    sampleCount, appendIntervalMs, milestones,
+    sampleCount, appendIntervalMs, codeLines, milestones,
     receiptToFrameMs: summarize(samples.map(({ receiptToFrameMs }) => receiptToFrameMs)), samples,
     ...(frameTrace ? { trace: frameTrace } : {}),
   }, null, 2));

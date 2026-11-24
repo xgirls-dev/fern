@@ -8,6 +8,7 @@ import MoveHorizontal from "lucide-react/dist/esm/icons/move-horizontal.mjs";
 import WrapText from "lucide-react/dist/esm/icons/wrap-text.mjs";
 import { useChatMarkdown } from "../hooks/useChatMarkdown";
 import { useClipboardCopy } from "../hooks/useClipboardCopy";
+import { highlightChatCode } from "../lib/textCodeHighlight";
 import { Button } from "./ui/controls";
 import { ProgressLabel } from "./ui/ProgressLabel";
 import { Tooltip } from "./ui/Tooltip";
@@ -57,13 +58,8 @@ function CodeBlock({ children, "data-stream-tail": streamTail }: ComponentPropsW
 
   useEffect(() => {
     if (streaming || !language || !source || source.length > 32_000 || !CSS.highlights || typeof StaticRange !== "function") return;
-    let cancelled = false;
-    let clear: (() => void) | undefined;
-    void import("../lib/textCodeHighlight").then(({ highlightChatCode }) => {
-      const text = ref.current?.querySelector("code")?.firstChild;
-      if (!cancelled && text instanceof Text && text.data === source) clear = highlightChatCode(text, language.toLowerCase());
-    }).catch(() => { /* The same code stays readable when highlighting is unavailable. */ });
-    return () => { cancelled = true; clear?.(); };
+    const text = ref.current?.querySelector("code")?.firstChild;
+    if (text instanceof Text && text.data === source) return highlightChatCode(text, language.toLowerCase());
   }, [language, ref, source, streaming]);
   const scrollable = overflowing && !wrap;
   return <div className="text-code-block" data-wrapped={wrap || undefined} data-stream-tail={streamTail}>
