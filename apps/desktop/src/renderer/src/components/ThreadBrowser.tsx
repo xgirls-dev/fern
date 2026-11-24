@@ -53,7 +53,8 @@ export function ThreadBrowser({
   const pattern = chatSearchPattern(needle);
   const includesQuery = (value: string | undefined) => value !== undefined && value.normalize().search(pattern) !== -1;
   const searchMessages = searching && (selectedKind === "All" || selectedKind === "Chat") && threads.some((thread) => thread.messages?.length);
-  const { matches, loading, failed } = useThreadSearch(searchSession, threads, searchMessages ? needle : "");
+  const { matches, timing, loading, failed } = useThreadSearch(searchSession, threads, searchMessages ? needle : "");
+  const orderingStarted = timing ? performance.now() : 0;
   const filtered = threads.flatMap((thread) => {
     if (selectedKind !== "All" && threadKind(thread.id) !== selectedKind) return [];
     if (archivedOnly ? !thread.archived : scope && thread.archived && thread.id !== scope.currentId) return [];
@@ -64,6 +65,14 @@ export function ThreadBrowser({
     if (excerpt) return [{ ...thread, messageQuery, excerpt }];
     return includesQuery(thread.title) || includesQuery(thread.folderPath) ? [{ ...thread, messageQuery }] : [];
   });
+  const orderedAt = timing ? performance.now() : 0;
+  useLayoutEffect(() => {
+    if (!timing) return;
+    const committedAt = performance.now();
+    performance.mark("fern:thread-search-finished", { detail: {
+      ...timing, orderMs: orderedAt - orderingStarted, renderCommitMs: committedAt - orderedAt, committedAt,
+    } });
+  }, [timing, orderingStarted, orderedAt]);
   const hasFilters = Boolean(needle) || kind !== "All" || archivedOnly;
   const visibleCount = Math.min(filtered.length, limit);
   const focusResult = useCallback((index: number) => {

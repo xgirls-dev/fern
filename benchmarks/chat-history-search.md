@@ -37,6 +37,19 @@ Set `FERN_BENCH_SEARCH_REOPEN=1` to close and reopen the dialog before each warm
 - The report includes every sample, median, nearest-rank p95, and maximum. The default five fresh sessions produce five cold and 100 warm samples. Use the cold median and maximum with that sample size. For a quick check, set `FERN_BENCH_RUNS=1` and `FERN_BENCH_WARM_RUNS=2`.
 - Renderer runs serve the built assets and use fixture API responses. Electron runs use the real desktop window and backend but seed the same synthetic data. Compare results within the same mode, machine, viewport, and visibility. Use the same harness for both builds. Neither mode measures model inference, app launch, or physical display presentation.
 
+## Attribute search time
+
+Set `FERN_BENCH_SEARCH_TRACE=1` to collect timing for result delivery. Use the same input method and window visibility as the run you're investigating.
+
+```sh
+FERN_BENCH_SEARCH_TRACE=1 FERN_BENCH_SEARCH_REOPEN=1 FERN_E2E_VISIBLE=1 node benchmarks/chat-history-search.mjs electron
+```
+
+- **History preparation and postMessage** measure building the changed history list and copying it into the worker message. **Worker dispatch** includes waiting for worker startup and delivery after the post returns.
+- **Index update** measures applying changed history to the worker. **Worker scan** includes matching and pauses between slices. **Markdown** is the part of the scan used to parse fields into rendered text. The field count excludes cached results and fields skipped by the prefilter.
+- **Worker reply** measures delivery back to the renderer. **Result queue** includes creating the match map and waiting for React to render it. **Result order** measures selecting matches and excerpts in list order before pagination. **Result render and commit** ends when React commits those rows. **Frame after commit** measures the wait until the next animation frame that sees the results.
+- The timings describe the final query. Earlier prefixes can still contribute to elapsed time while typing. The trace records timestamps and counts. It adds measurement overhead and is off by default.
+
 ## Baseline at 1f175a0
 
 Measured November 23, 2026 on an Intel Core i5-8210Y Mac with 8 GiB RAM. There were five cold and 100 warm measurements per mode. The native app was a source build with a hidden window and a real backend.
@@ -74,3 +87,22 @@ On November 24, 2026, the same Intel Mac ran four fresh sessions and 32 reopen q
 | Reopen search frame gap, longest | 70 ms | 96 ms |
 
 The worker first loads on a message query. Subsequent searches reuse unchanged chat histories for one minute after the last search, apply changes before matching, and release the cache on local data reset. The fixture verifies that detail for edits, replies that finish while the dialog is open, deletions, Undo, and reload after migration. The native timings cover this synthetic history and this machine.
+
+## Search timing breakdown
+
+On November 24, 2026, the timing build based on `c5e02f8` ran five cold searches and 50 reopen searches in a visible source-built Electron window on the same Intel Mac. Each query matched one chat in the 100-chat fixture. The numbers include measurement overhead.
+
+| Stage (ms) | Cold median | Warm reopen p95 |
+| --- | ---: | ---: |
+| Post changed history | 8.7 | 0.4 |
+| Worker startup and delivery after post | 78.1 | 6.8 |
+| Apply history changes | 7.9 | 0.1 |
+| Scan history, including Markdown | 40.0 | 57.0 |
+| Markdown within scan | 23.4 | 13.6 |
+| Receive results and wait to render | 0.3 | 2.9 |
+| Select and order visible results | 0.2 | 1.2 |
+| Render and commit results | 1.0 | 3.1 |
+| Commit to next frame | 14.0 | 16.3 |
+| Input to complete frame | 154.6 | 79.3 |
+
+Cold search sent 99 histories and parsed one Markdown field per run. Warm reopen queries sent zero changed histories. The cold worker dispatch interval was longer than the scan in all five runs. Result ordering and React commit were smaller costs for this fixture. The longest frame gap was 31.8 ms cold and 33.1 ms warm.

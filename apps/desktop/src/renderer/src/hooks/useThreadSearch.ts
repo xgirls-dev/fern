@@ -5,8 +5,26 @@ import type { ThreadSearchCancel, ThreadSearchRequest, ThreadSearchResponse } fr
 type ThreadSearchSource = { id: string; messages?: readonly TextMessage[] };
 type SearchInput = { threads: readonly ThreadSearchSource[]; query: string };
 type SearchMatches = Map<string, string>;
-type SearchResult = { input: SearchInput; matches?: SearchMatches };
-type SearchRequest = { id: number; input: SearchInput; complete: (matches?: SearchMatches) => void };
+type SearchResult = { input: SearchInput; matches?: SearchMatches; timing?: SearchTiming };
+type SearchRequest = { id: number; input: SearchInput; complete: (matches?: SearchMatches, timing?: SearchTiming) => void };
+type SearchDispatchTiming = {
+  prepareMs: number;
+  postMs: number;
+  postedAt: number;
+  updatedThreads: number;
+};
+type SearchTiming = {
+  prepareMs: number;
+  postMs: number;
+  dispatchMs: number;
+  updatedThreads: number;
+  indexMs: number;
+  scanMs: number;
+  markdownMs: number;
+  markdownFields: number;
+  replyMs: number;
+  receivedAt: number;
+};
 
 const SEARCH_IDLE_MS = 60_000;
 
@@ -15,7 +33,7 @@ export function createThreadSearchSession() {
   let indexed = new Map<string, readonly TextMessage[]>();
   let requestId = 0;
   let pending: SearchRequest | undefined;
-  let inFlight: { id: number; cancelRequested: boolean } | undefined;
+  let inFlight: { id: number; cancelRequested: boolean; timing?: SearchDispatchTiming } | undefined;
   let idle: number | undefined;
 
   function clear() {
@@ -49,11 +67,15 @@ export function createThreadSearchSession() {
       }
       if (!latest) return;
       const { id, input } = latest;
+      // The benchmark enables sampling in a disposable profile.
+      const measure = performance.getEntriesByName("fern:measure-thread-search", "mark").length > 0;
+      const started = measure ? performance.now() : 0;
       if (!worker) {
         const background = new Worker(new URL("../lib/threadSearch.worker.ts", import.meta.url), { type: "module" });
         worker = background;
         background.onmessage = ({ data }: MessageEvent<ThreadSearchResponse>) => {
           if (worker !== background || data.id !== inFlight?.id) return;
+          const sent = inFlight.timing;
           inFlight = undefined;
           if (!data.cancelled && !data.matches) {
             fail();
@@ -62,7 +84,18 @@ export function createThreadSearchSession() {
           const request = pending;
           if (request?.id === data.id) {
             pending = undefined;
-            if (data.matches) request.complete(new Map(data.matches));
+            if (data.matches) {
+              const timing = sent && data.timing;
+              const receivedAt = timing ? performance.now() : 0;
+              request.complete(new Map(data.matches), timing && {
+                prepareMs: sent.prepareMs, postMs: sent.postMs,
+                dispatchMs: Math.max(0, timing.receivedAt - sent.postedAt),
+                updatedThreads: sent.updatedThreads,
+                indexMs: timing.indexMs, scanMs: timing.scanMs,
+                markdownMs: timing.markdownMs, markdownFields: timing.markdownFields,
+                replyMs: Math.max(0, performance.timeOrigin + receivedAt - timing.finishedAt), receivedAt,
+              });
+            }
           }
           sendLatest();
         };
@@ -82,7 +115,15 @@ export function createThreadSearchSession() {
       const removed = [...indexed.keys()].filter((threadId) => !next.has(threadId));
       // Apply history changes before searching, including after the dialog was closed.
       inFlight = { id, cancelRequested: false };
-      worker.postMessage({ id, query: input.query, updated, removed } satisfies ThreadSearchRequest);
+      const posting = measure ? performance.now() : 0;
+      worker.postMessage({ id, query: input.query, updated, removed, measure: measure ? true : undefined } satisfies ThreadSearchRequest);
+      if (measure) {
+        const posted = performance.now();
+        inFlight.timing = {
+          prepareMs: posting - started, postMs: posted - posting, postedAt: performance.timeOrigin + posted,
+          updatedThreads: updated.length,
+        };
+      }
       indexed = next;
     } catch {
       fail();
@@ -113,9 +154,10 @@ export function useThreadSearch(session: ThreadSearchSession | undefined, thread
 
   useEffect(() => {
     if (!session || !input) return;
-    return session.search(input, (matches) => setResult({ input, matches }));
+    return session.search(input, (matches, timing) => setResult({ input, matches, timing }));
   }, [session, input]);
 
-  const matches = input && result?.input === input ? result.matches : undefined;
-  return { matches, loading: !!input && result?.input !== input, failed: !!input && result?.input === input && !matches };
+  const currentResult = input && result?.input === input ? result : undefined;
+  return { matches: currentResult?.matches, timing: currentResult?.timing,
+    loading: !!input && !currentResult, failed: !!currentResult && !currentResult.matches };
 }
