@@ -146,6 +146,8 @@ TEXT_PENDING_STOP_SECONDS = 300
 TEXT_PENDING_STOP_LIMIT = 256
 # Serialize admission and cancellation across modalities.
 JOB_ADMISSION_LOCK = threading.RLock()
+CHAT_IMAGE_UPLOAD_SLOTS = threading.BoundedSemaphore(2)
+CHAT_IMAGE_STORAGE_REVISION = 0
 TEXT_CANCEL_EVENT: threading.Event | None = None
 TEXT_JOB: dict[str, Any] = {
     "id": None, "threadId": None, "modelId": None, "status": "idle",
@@ -1668,7 +1670,7 @@ def decode_flux_reference_image(value: Any) -> Image.Image | None:
         raise ValueError("Could not read the reference image.") from exc
 
 
-def store_chat_image(value: Any) -> str:
+def store_chat_image(value: Any, storage_revision: int) -> str:
     image = decode_flux_reference_image(value)
     if image is None:
         raise ValueError("Choose an image to attach.")
@@ -1678,12 +1680,20 @@ def store_chat_image(value: Any) -> str:
     content = buffer.getvalue()
     filename = f"chat-image-{hashlib.sha256(content).hexdigest()[:32]}.png"
     directory = DATA_DIR / "references"
-    directory.mkdir(parents=True, exist_ok=True)
     path = directory / filename
-    if not path.exists():
-        temporary = path.with_suffix(".upload")
-        temporary.write_bytes(content)
-        temporary.replace(path)
+    # Image decoding and encoding can take time. Serialize only publication so
+    # Stop and other panes do not wait for that work.
+    with JOB_ADMISSION_LOCK:
+        if storage_revision != CHAT_IMAGE_STORAGE_REVISION:
+            raise ValueError("Local data was cleared. Attach the image again.")
+        if not path.exists():
+            directory.mkdir(parents=True, exist_ok=True)
+            temporary = path.with_suffix(".upload")
+            try:
+                temporary.write_bytes(content)
+                temporary.replace(path)
+            finally:
+                temporary.unlink(missing_ok=True)
     return filename
 
 
@@ -2659,8 +2669,18 @@ class Handler(BaseHTTPRequestHandler):
         self.send_error(404)
 
     def do_POST(self) -> None:
-        if urllib.parse.urlparse(self.path).path == "/api/text/stop":
+        path = urllib.parse.urlparse(self.path).path
+        if path == "/api/text/stop":
             self.stop_text()
+            return
+        if path == "/api/text/images":
+            storage_revision = CHAT_IMAGE_STORAGE_REVISION
+            try:
+                with CHAT_IMAGE_UPLOAD_SLOTS:
+                    image = store_chat_image(self.read_json_body().get("image"), storage_revision)
+                self.send_json(201, {"image": image})
+            except Exception as error:
+                self.send_json(400, {"error": str(error)})
             return
         with JOB_ADMISSION_LOCK:
             self.handle_post()
@@ -2739,7 +2759,7 @@ class Handler(BaseHTTPRequestHandler):
         }, release_models)})
 
     def handle_post(self) -> None:
-        global FLUX_CANCEL_EVENT, TTS_CANCEL_EVENT
+        global CHAT_IMAGE_STORAGE_REVISION, FLUX_CANCEL_EVENT, TTS_CANCEL_EVENT
         parsed = urllib.parse.urlparse(self.path)
 
         if parsed.path in ("/api/video/generate", "/api/video/stop", "/api/video/remove"):
@@ -2785,14 +2805,6 @@ class Handler(BaseHTTPRequestHandler):
                     TEXT_MODEL_INSTALL.update(id=job_id, status="downloading", phase="Preparing download…", error=None, modelId=model_id)
                 threading.Thread(target=run_text_model_install, args=(model_id, job_id), daemon=True).start()
                 self.send_json(202, text_runtime_snapshot())
-            except Exception as error:
-                self.send_json(400, {"error": str(error)})
-            return
-
-        if parsed.path == "/api/text/images":
-            try:
-                image = store_chat_image(self.read_json_body().get("image"))
-                self.send_json(201, {"image": image})
             except Exception as error:
                 self.send_json(400, {"error": str(error)})
             return
@@ -3168,6 +3180,7 @@ class Handler(BaseHTTPRequestHandler):
                 cache_result = storage_manager.cleanup_cache(ROOT, CACHE_DIR, force=True)
                 VIDEO_JOBS.clear()
                 output_files, output_bytes = storage_manager.clear_directory(OUTPUTS)
+                CHAT_IMAGE_STORAGE_REVISION += 1
                 metadata_files, metadata_bytes = storage_manager.clear_directory(DATA_DIR)
                 mark_flux_job(
                     id=None,
