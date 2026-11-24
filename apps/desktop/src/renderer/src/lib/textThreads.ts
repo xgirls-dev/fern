@@ -205,7 +205,10 @@ export interface TextJob {
 export interface TextRuntimeStatus {
   registryError?: string | null;
   models: TextModel[];
-  recommendedModels?: Array<{ id: string; name: string; repo: string; bytes: number; installed: boolean; format?: string }>;
+  recommendedModels?: Array<{
+    id: string; name: string; repo: string; bytes: number; installed: boolean; format?: string;
+    minimumFreeBytes?: number; projectorBytes?: number;
+  }>;
   defaultModelId?: string;
   imageToolModels?: ChatImageModel[];
   modelInstall?: { id: string | null; modelId?: string | null; status: "idle" | "downloading" | "preparing" | "complete" | "failed"; phase: string | null; error: string | null };

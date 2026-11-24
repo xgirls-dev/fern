@@ -21,6 +21,7 @@ import api_server as api
 from text_model_registry import TextModelRegistry, REQUIRED_FILES
 from text_generation_process import TextGenerationProcess, TextWorkerError
 from text_generation_worker import resolve_text_device
+from text_model_download import MINIMUM_FREE_BYTES
 
 
 class TextThreadsTests(unittest.TestCase):
@@ -65,6 +66,15 @@ class TextThreadsTests(unittest.TestCase):
             self.assertTrue(api.text_runtime_snapshot()['runtimeAvailable'])
         with patch.object(api, 'TEXT_MODEL_REGISTRY', self.registry), patch.object(api.importlib.util, 'find_spec', return_value=None):
             self.assertFalse(api.text_runtime_snapshot()['runtimeAvailable'])
+
+    def test_text_model_status_surfaces_fresh_install_disk_and_companion_requirements(self):
+        with patch.object(api, "TEXT_MODEL_REGISTRY", self.registry), patch.object(api, "apple_silicon", return_value=False):
+            recommendations = {item["id"]: item for item in api.text_runtime_snapshot()["recommendedModels"]}
+        gemma = recommendations["gemma-4-e4b-gguf"]
+        self.assertEqual(gemma["bytes"], 5_150_682_240)
+        self.assertEqual(gemma["minimumFreeBytes"], gemma["bytes"] + MINIMUM_FREE_BYTES)
+        self.assertEqual(gemma["projectorBytes"], 559_874_848)
+        self.assertNotIn("projectorBytes", recommendations[api.DEFAULT_TEXT_MODEL_ID])
 
     def test_simultaneous_chat_image_uploads_share_one_file_without_blocking_stop(self):
         image = io.BytesIO()

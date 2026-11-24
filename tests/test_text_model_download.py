@@ -3,6 +3,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
@@ -30,6 +31,25 @@ class FakeResponse:
 
 
 class TextModelDownloadTests(unittest.TestCase):
+    def test_fresh_install_requirements_match_the_disk_check_and_projector_payload(self):
+        model_id = "gemma-4-e4b-gguf"
+        spec = download.model_spec(model_id)
+        requirements = download.model_download_details(spec)
+        projector = next(file for file in spec["files"] if file["path"] == spec["projectorFile"])
+        self.assertEqual(requirements["bytes"], sum(file["size"] for file in spec["files"]))
+        self.assertEqual(requirements["projectorBytes"], projector["size"])
+        self.assertNotIn("projectorBytes", download.model_download_details(download.model_spec(download.DEFAULT_MODEL_ID)))
+        with tempfile.TemporaryDirectory() as directory, patch.object(download, "download_file") as fetch:
+            with patch.object(download.shutil, "disk_usage", return_value=SimpleNamespace(free=requirements["minimumFreeBytes"] - 1)):
+                with self.assertRaisesRegex(RuntimeError, r"Free at least 5\.69 GB"):
+                    download._install_model(model_id, directory, lambda _: None)
+            fetch.assert_not_called()
+            fetch.side_effect = RuntimeError("First download started")
+            with patch.object(download.shutil, "disk_usage", return_value=SimpleNamespace(free=requirements["minimumFreeBytes"])):
+                with self.assertRaisesRegex(RuntimeError, "First download started"):
+                    download._install_model(model_id, directory, lambda _: None)
+            fetch.assert_called_once()
+
     def test_recommended_manifest_is_pinned_and_complete(self):
         spec = download.model_spec(download.DEFAULT_MODEL_ID)
         self.assertEqual(spec["repo"], "xgirls/Qwen3-4B-Instruct-2507-openvino")

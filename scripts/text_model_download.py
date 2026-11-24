@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -70,6 +71,16 @@ def model_spec(model_id: str) -> dict:
     if not set(required).issubset(seen):
         raise ValueError("The text model manifest is missing required files.")
     return spec
+
+
+def model_download_details(spec: dict) -> dict[str, int]:
+    files = spec["files"]
+    size = sum(file["size"] for file in files)
+    details = {"bytes": size, "minimumFreeBytes": size + MINIMUM_FREE_BYTES}
+    projector = next((file for file in files if file["path"] == spec.get("projectorFile")), None)
+    if projector:
+        details["projectorBytes"] = projector["size"]
+    return details
 
 
 def model_files(folder: Path, spec: dict) -> tuple[Path, Path | None]:
@@ -206,10 +217,11 @@ def _install_model(model_id: str, model_root: str | Path, progress: Callable[[st
                               else 0))
         for item in files if not verified(stage / item["path"], item)
     )
-    if shutil.disk_usage(root).free < required_missing + MINIMUM_FREE_BYTES:
-        needed_gb = (required_missing + MINIMUM_FREE_BYTES) / 1024**3
-        raise RuntimeError(f"Free at least {needed_gb:.1f} GiB before installing this text model.")
-    progress(f"Downloading {spec['name']} from {spec['repo']} · {sum(file['size'] for file in files) / 1024**3:.2f} GiB.")
+    required_free = required_missing + MINIMUM_FREE_BYTES
+    if shutil.disk_usage(root).free < required_free:
+        needed_gb = math.ceil(required_free / 10_000_000) / 100
+        raise RuntimeError(f"Free at least {needed_gb:.2f} GB before installing this text model.")
+    progress(f"Downloading {spec['name']} from {spec['repo']} · {sum(file['size'] for file in files) / 1e9:.2f} GB.")
     for file in files:
         url = f"https://huggingface.co/{spec['repo']}/resolve/{spec['revision']}/{file['path']}"
         download_file(url, stage / file["path"], file, progress)
