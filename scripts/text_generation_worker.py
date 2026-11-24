@@ -93,6 +93,7 @@ def run_gguf(file: Path, device: str, projector: Path | None) -> int:
                 gpu_projector = vision and (backend == "metal" or bool(request.get("requireGpuVision")))
                 if gpu_projector and backend not in ("vulkan", "metal"):
                     raise ValueError("This image conversation requires GPU vision. Select Available GPU in Preferences.")
+                load_timing = {}
                 if (
                     server is None or server.backend != backend or server.context_size != context_size
                     or server.gpu_projector != gpu_projector or server.load_options != load_options
@@ -101,13 +102,19 @@ def run_gguf(file: Path, device: str, projector: Path | None) -> int:
                         server.close()
                         server = None
                     phase = lambda text: emit({"type": "phase", "text": text})
+                    setup_started = time.perf_counter()
                     executable = ensure_runtime(runtime_root, backend, phase)
+                    load_timing["runtimeSetupMs"] = (time.perf_counter() - setup_started) * 1000
                     phase(f"Loading the GGUF model with {backend}…")
+                    load_started = time.perf_counter()
                     server = GGUFServer(
                         executable, file, projector if vision else None, target, backend, context_size,
                         gpu_projector=gpu_projector, load_options=load_options,
                     )
-                emit(server.generate(request, emit, cancellation))
+                    load_timing["modelReadyMs"] = (time.perf_counter() - load_started) * 1000
+                result = server.generate(request, emit, cancellation)
+                result["runtimeTiming"].update(load_timing)
+                emit(result)
             except InterruptedError:
                 # A disconnected prompt prefill can still hold the inference slot.
                 if server is not None and not cancellation.streaming:

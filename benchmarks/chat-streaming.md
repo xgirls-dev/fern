@@ -57,3 +57,18 @@ Three fresh source-built Electron 43.2 runs per opener on the same Intel Mac use
 | Terminal receipt to formatted reply, range | 21–93 ms | 19–42 ms |
 
 In all six runs the reply appeared on the first available frame after Send. The incremental p95 met the 100 ms target in this replay. The longest update delays still require investigation.
+
+## Collect a real GGUF trace
+
+Use the packaged Windows Intel GPU smoke test with the Gemma 4 E4B catalog files. From the repository root after `npm ci`, point `FERN_E2E_EXECUTABLE` at the tested build. Optionally point `FERN_E2E_TEXT_MODEL_ROOT` at an existing catalog model directory to reuse its model files.
+
+```powershell
+$env:FERN_E2E_EXECUTABLE = Resolve-Path 'apps/desktop/release/win-unpacked/Fern.exe'
+node apps/desktop/e2e/gguf-smoke.mjs
+```
+
+The report in `artifacts/release-test/gemma-4-e4b-gguf.json` records text and vision with Instant and Reasoning modes. Keep the package revision, hardware, and driver alongside the report. The smoke test verifies these journeys. Use repeated matched text-only runs for a performance comparison.
+
+- `rendererTiming` reports Send to the reply row, the first status event, the first answer text received over SSE, the first frame with answer text, the terminal event, and the settled reply frame. It also records the longest gap between frame opportunities. An unavailable SSE measurement is `null`. Frame callbacks are a presentation proxy.
+- `runtimeTiming` reports conversation preparation and receipt of the first output chunk by Fern's worker. A reasoning or tool chunk can arrive before answer text. When the model loads, `runtimeSetupMs` measures runtime provisioning and validation, and `modelReadyMs` measures GGUF server initialization through readiness.
+- `prefillMs`, `decodeMs`, `evaluatedPromptTokens`, and `cachedPromptTokens` come from the engine's final response when available. `generationSeconds` retains its existing request-to-terminal meaning. The model-load fields only accompany a new load, and the engine fields describe one model call. [Pinned llama.cpp timing fields](https://github.com/ggml-org/llama.cpp/blob/b12498/tools/server/server-common.cpp#L139-L151)

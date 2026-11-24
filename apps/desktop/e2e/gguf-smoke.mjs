@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { _electron as electron, expect } from "@playwright/test";
+import { observeChatReply } from "./chat-reply-timing.mjs";
 
 const desktop = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const scratch = await mkdtemp(path.join(os.tmpdir(), "fern-gguf-"));
@@ -113,7 +114,9 @@ try {
     }
     await page.getByLabel("Message", { exact: true }).fill(test.prompt);
     console.log(`Sending ${test.modality} ${test.mode}…`);
-    await page.getByRole("button", { name: "Send message", exact: true }).click();
+    const send = page.getByRole("button", { name: "Send message", exact: true });
+    const timing = await observeChatReply(send);
+    await send.click();
     const message = page.locator(".text-message--assistant").last();
     await expect(message.getByRole("button", { name: "More message actions", exact: true })).toBeVisible({ timeout: 360_000 });
     const response = await status();
@@ -128,8 +131,13 @@ try {
     await expect(message.locator("details.text-reasoning")).toHaveCount(test.mode === "reasoning" ? 1 : 0);
     assert.equal(Boolean(response.job.partialReasoning?.trim()), test.mode === "reasoning");
     if (test.color) await expect(page.getByAltText("Attached chat image")).toBeVisible();
-    const { backend, device, generationSeconds, tokensPerSecond } = response.job.result;
-    report.push({ modality: test.modality, mode: test.mode, backend, device, generationSeconds, tokensPerSecond, answer: response.job.partialText });
+    const { backend, device, generationSeconds, tokensPerSecond, inputTokens, outputTokens, runtimeTiming } = response.job.result;
+    const rendererTiming = await timing.evaluate(({ result }) => result);
+    await timing.dispose();
+    assert(!rendererTiming.error, rendererTiming.error);
+    assert(Number.isFinite(rendererTiming.firstAnswerFrameMs), "The renderer should show answer text in a frame.");
+    report.push({ modality: test.modality, mode: test.mode, backend, device, generationSeconds, tokensPerSecond,
+      inputTokens, outputTokens, runtimeTiming, rendererTiming, answer: response.job.partialText });
     console.log(JSON.stringify(report.at(-1)));
   }
   await expect(page.locator(".text-message--streaming")).toHaveCount(0);
