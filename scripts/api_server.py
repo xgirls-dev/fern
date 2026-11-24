@@ -61,6 +61,7 @@ from text_generation_process import TextGenerationProcess, TextWorkerError
 from text_model_registry import TextModelRegistry
 from text_model_download import DEFAULT_MODEL_ID as DEFAULT_TEXT_MODEL_ID
 from text_model_download import catalog as text_model_catalog, install_model as install_text_model, model_files as text_model_files
+from text_model_download import model_download_details as text_model_download_details
 from gguf_metadata import is_projector, read_metadata as read_gguf_metadata
 from gguf_runtime import RUNTIME_PLATFORM_ERROR, apple_silicon, runtime_supported as gguf_runtime_supported
 from chat_image_tools import CHAT_IMAGE_SIZE, IMAGE_MODEL_PRIORITY, IMAGE_TOOL, chat_image_overrides, image_tool_prompt
@@ -735,7 +736,7 @@ def text_runtime_snapshot() -> dict[str, Any]:
             "id": model_id,
             "name": spec["name"],
             "repo": spec["repo"],
-            "bytes": sum(file["size"] for file in spec["files"]),
+            **text_model_download_details(spec),
             "installed": bool(entry and entry.get("installed")),
             "format": spec["format"],
         })

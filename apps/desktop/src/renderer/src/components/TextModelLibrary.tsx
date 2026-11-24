@@ -1,12 +1,17 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import MessageSquare from "lucide-react/dist/esm/icons/message-square.mjs";
 import { Button, ErrorMessage, InlineConfirmation, ModelCard, ModelCardActions, ModelCardHeading, ModelStatus } from "./ui/controls";
 import type { useTextChat } from "../hooks/useTextChat";
 import { useReturnFocus } from "../hooks/useReturnFocus";
 
+function gigabytes(bytes: number) {
+  return `${(bytes / 1e9).toFixed(2)} GB`;
+}
+
 export function TextModelLibrary({ studio, recommendedId }: { studio: ReturnType<typeof useTextChat>; recommendedId?: string }) {
   const [removing, setRemoving] = useState<string | null>(null);
   const removalFocus = useReturnFocus();
+  const requirementsPrefix = useId();
   const { status, busy } = studio;
   const recommendations = status.recommendedModels ?? [];
   const ordered = recommendedId ? [...recommendations].sort((a, b) => Number(b.id === recommendedId) - Number(a.id === recommendedId)) : recommendations;
@@ -22,15 +27,32 @@ export function TextModelLibrary({ studio, recommendedId }: { studio: ReturnType
       {ordered.map((model) => {
         const install = status.modelInstall;
         const installing = install?.modelId === model.id && ["downloading", "preparing"].includes(install.status);
-        const unavailable = model.format === "gguf" && status.ggufAvailable !== true;
+        const gguf = model.format === "gguf";
+        const unavailable = gguf && status.ggufAvailable !== true;
+        const showRequirements = !model.installed && !unavailable;
+        const requirementsId = requirementsPrefix + model.id;
+        const device = studio.computeDevice === "CPU" ? "CPU" : gguf && window.studio.platform === "darwin" ? "Apple GPU" : "Intel GPU";
         return <ModelCard key={model.id}>
-          <ModelCardHeading icon={<MessageSquare size={17} />}><div className="model-card-heading"><h4>{model.name}</h4><span className="model-card-badge">Recommended</span></div></ModelCardHeading>
-          <p>{(model.bytes / 1e9).toFixed(2)} GB · {model.format === "gguf" ? "GGUF · Chat, vision and image tools" : "OpenVINO · Chat"}</p>
+          <ModelCardHeading icon={<MessageSquare size={17} />}><div className="model-card-heading"><h4>{model.name}</h4>
+            {model.id === recommendedId && <span className="model-card-badge">Recommended</span>}</div></ModelCardHeading>
+          <p>{!showRequirements && `${gigabytes(model.bytes)} · `}{gguf ? "GGUF · Chat, vision and image tools" : "OpenVINO · Chat"}</p>
+          {showRequirements && <dl className="text-model-requirements" id={requirementsId}>
+            <dt>Download</dt><dd>{gigabytes(model.bytes)}</dd>
+            <dt>Device</dt><dd>{device}</dd>
+            {model.minimumFreeBytes !== undefined && <><dt>Free space</dt>
+              <dd>{gigabytes(Math.ceil(model.minimumFreeBytes / 1e7) * 1e7)} for a fresh install</dd></>}
+            {model.projectorBytes !== undefined && <><dt>Includes</dt><dd>Vision projector · {model.projectorBytes < 1e9
+              ? `${Math.round(model.projectorBytes / 1e6)} MB` : gigabytes(model.projectorBytes)}</dd></>}
+            {!gguf && <><dt>Files</dt><dd>Fern prepares the tokenizer and detokenizer</dd></>}
+          </dl>}
+          {showRequirements && gguf && <p>Fern may download the GGUF runtime on first use.</p>}
           <ModelStatus installed={model.installed}>{model.installed ? "Installed" : installing ? install?.phase || "Installing…" : "Not installed"}</ModelStatus>
           {install?.modelId === model.id && install.status === "failed" ? <ErrorMessage>{install.error}</ErrorMessage> : null}
           {installing ? <progress aria-label="Text model installation" /> : null}
           {unavailable ? <p>{status.ggufUnavailableReason ?? "GGUF runtime availability is unknown."}</p> : null}
-          <ModelCardActions>{!model.installed && !unavailable ? <Button variant={model.id === recommendedId ? "primary" : "secondary"} disabled={busy || !studio.statusLoaded || Boolean(studio.statusError) || installing} onClick={() => void studio.installRecommendedModel(model.id)}>{installing ? "Installing…" : "Download"}</Button> : null}</ModelCardActions>
+          <ModelCardActions>{showRequirements ? <Button variant={model.id === recommendedId ? "primary" : "secondary"}
+            aria-describedby={requirementsId} disabled={busy || !studio.statusLoaded || Boolean(studio.statusError) || installing}
+            onClick={() => void studio.installRecommendedModel(model.id)}>{installing ? "Installing…" : "Download"}</Button> : null}</ModelCardActions>
         </ModelCard>;
       })}
     </div>

@@ -1,5 +1,6 @@
 import { chooseSelectOption } from "./select-option.mjs";
 import assert from "node:assert/strict";
+import { expect } from "@playwright/test";
 import { fixture } from "./ui-fixture.mjs";
 
 const platform = process.env.FERN_TEST_PLATFORM || "linux";
@@ -11,8 +12,10 @@ const { page, state, errors, dir, close } = await fixture({
 });
 const button = (name) => page.getByRole("button", { name, exact: true });
 try {
-  const klein = { id: "4b", label: "Klein 4B", bytes: 4e9, downloaded: 0, installed: false, state: "not-installed" };
-  const gemma = { id: "gemma", name: "Gemma", format: "gguf", bytes: 5e9, installed: false };
+  const klein = { id: platform === "darwin" ? "klein-4b-mlx" : "4b", label: "Klein 4B", bytes: 4e9,
+    category: "image", downloaded: 0, installed: false, state: "not-installed" };
+  const gemma = { id: "gemma", name: "Gemma", format: "gguf", bytes: 5e9, minimumFreeBytes: 5_536_870_912,
+    projectorBytes: 560e6, installed: false };
   state.textStatus.ggufAvailable = true;
   state.textStatus.recommendedModels.push(gemma);
   await page.route("**/api/models", (route) => route.fulfill({ json: { models: [klein] } }));
@@ -68,7 +71,15 @@ try {
   await button("Set up images in chat").click();
   await page.getByText("Gemma · 5.00 GB download", { exact: true }).waitFor();
   await page.getByText("Klein 4B · Installed", { exact: true }).waitFor();
-  await page.locator("article").filter({ hasText: "Gemma" }).getByRole("button", { name: "Download", exact: true }).click();
+  const gemmaCard = page.getByRole("article").filter({ has: page.getByRole("heading", { name: "Gemma", exact: true }) });
+  await expect(gemmaCard.locator("dl")).toContainText(platform === "darwin" ? "Apple GPU" : "Intel GPU");
+  await expect(gemmaCard.locator("dl")).toContainText("5.54 GB for a fresh install");
+  await expect(gemmaCard.locator("dl")).toContainText("Vision projector · 560 MB");
+  if (platform !== "darwin") {
+    await expect(page.getByRole("article").filter({ hasText: "Qwen3 4B Instruct 2507" }))
+      .toContainText("Fern prepares the tokenizer and detokenizer");
+  }
+  await gemmaCard.getByRole("button", { name: "Download", exact: true }).click();
   await button("Use models in draft").click();
   assert.equal(await message.inputValue(), draft);
   assert.equal(state.textRequests.length, 0);

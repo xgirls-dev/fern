@@ -6,7 +6,8 @@ import { fixture } from "./ui-fixture.mjs";
 const draftId = "text-thread-first-draft";
 const oldId = "text-thread-model-removed";
 const automaticId = "text-thread-default-choice";
-const river = { id: "river", name: "River 3B", format: "gguf", bytes: 2e9, installed: false };
+const river = { id: "river", name: "River 3B", format: "gguf", bytes: 2e9, minimumFreeBytes: 2_536_870_912,
+  projectorBytes: 256e6, installed: false };
 const spruce = { id: "spruce", name: "Spruce 4B", format: "gguf", installed: true };
 const retired = { id: "old", name: "Alpine 7B", format: "gguf", installed: false, error: "Model files moved outside Fern." };
 const draft = "Help me write a short introduction.";
@@ -58,6 +59,23 @@ try {
   await expect(button("Browse models")).toBeVisible();
   await button("Browse models").click();
   await expect(setup).toBeVisible();
+  const download = button("Download");
+  await expect(download).toHaveAccessibleDescription(/Download\s+2\.00 GB\s+Device\s+Intel GPU/);
+  await expect(download).toHaveAccessibleDescription(/Free space\s+2\.54 GB for a fresh install/);
+  await expect(download).toHaveAccessibleDescription(/Vision projector\s+·\s+256 MB/);
+  assert.equal(state.textStatus.modelInstall, undefined, "Opening model setup should leave downloading to the user");
+  await page.setViewportSize({ width: 800, height: 640 });
+  await expect.poll(() => download.locator("xpath=ancestor::article").evaluate((card) => {
+    const details = card.querySelector("dl");
+    return details.scrollWidth <= details.clientWidth && card.scrollWidth <= card.clientWidth;
+  })).toBe(true);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await button("Preferences").click();
+  await chooseSelectOption(page.getByLabel("Generation device", { exact: true }), "CPU");
+  await button("Text thread: First draft").click();
+  await expect(message).toHaveValue(draft);
+  await button("Browse models").click();
+  await expect(download).toHaveAccessibleDescription(/Device\s+CPU/);
   await button("Download").click();
   await expect(page.getByRole("progressbar", { name: "Text model installation" })).toBeVisible();
   await button("Return to draft").click();
@@ -123,6 +141,7 @@ try {
   await page.keyboard.press("Escape");
   await button("Send message").click();
   await expect.poll(() => state.textRequests.map((request) => request.modelId)).toEqual([spruce.id]);
+  assert.equal(state.textRequests[0].device, "CPU");
   assert.deepEqual(errors, []);
   console.log("Model checking and failed downloads are recoverable, drafts survive setup, and model choice stays scoped to its chat.");
 } finally {
