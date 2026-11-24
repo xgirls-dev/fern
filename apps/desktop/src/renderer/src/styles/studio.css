@@ -261,7 +261,7 @@ body {
 .text-composer { position: relative; padding: 14px 12px 10px; border: 1px solid var(--border-strong); border-radius: var(--ui-composer-radius); background: var(--composer-bg); box-shadow: var(--ui-composer-shadow); }
 .text-latest-reply-link { position: absolute; z-index: 2; inset-inline-end: 12px; inset-block-start: 8px; }
 .text-latest-reply-link:not(:focus) { clip-path: inset(50%); pointer-events: none; }
-.text-composer:has(> textarea:focus-visible),
+.text-composer:not(.is-file-over):has(> textarea:focus-visible),
 .prompt-composer:has(#prompt:focus-visible) {
   outline: var(--ui-focus-ring);
   outline-offset: 2px;

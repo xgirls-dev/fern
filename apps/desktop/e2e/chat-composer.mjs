@@ -73,6 +73,9 @@ export async function verifyChatComposer(page) {
     await expect(button("Attach chat image")).toBeDisabled();
     await expect(attach).toBeEnabled();
 
+    await composer.press("ArrowLeft");
+    const outlineColor = () => composeForm.evaluate((form) => getComputedStyle(form).outlineColor);
+    const focusColor = await outlineColor();
     const area = await composer.boundingBox();
     if (!area) throw new Error("The chat composer needs to be onscreen for the drop.");
     const drop = { x: area.x + area.width / 2, y: area.y + area.height / 2,
@@ -80,10 +83,14 @@ export async function verifyChatComposer(page) {
     await session.send("Input.dispatchDragEvent", { type: "dragEnter", ...drop });
     await session.send("Input.dispatchDragEvent", { type: "dragOver", ...drop });
     await expect(composeForm).toHaveClass(/\bis-file-over\b/);
+    const dropColor = await composeForm.evaluate((form) => getComputedStyle(form).borderTopColor);
+    expect(dropColor).not.toBe(focusColor);
+    await expect.poll(outlineColor).toBe(dropColor);
     await session.send("Input.dispatchDragEvent", { type: "drop", ...drop });
     await expect(composeForm).not.toHaveClass(/\bis-file-over\b/);
     await expect(documents).toContainText("Color notes.md");
     await expect(composer).toBeFocused();
+    await expect.poll(outlineColor).toBe(focusColor);
     await expect(composer).toHaveValue(draft);
     await expect.poll(async () => (await readActive())?.documents?.length).toBe(2);
     await page.reload();
