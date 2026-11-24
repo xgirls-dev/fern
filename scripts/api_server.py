@@ -62,6 +62,7 @@ from text_model_registry import TextModelRegistry
 from text_model_download import DEFAULT_MODEL_ID as DEFAULT_TEXT_MODEL_ID
 from text_model_download import catalog as text_model_catalog, install_model as install_text_model, model_files as text_model_files
 from text_model_download import model_download_details as text_model_download_details
+from text_model_download import PREPARING_MODEL_FILES, TextModelDownloadPaused, check_download_pause, has_partial_download
 from gguf_metadata import is_projector, read_metadata as read_gguf_metadata
 from gguf_runtime import RUNTIME_PLATFORM_ERROR, apple_silicon, runtime_supported as gguf_runtime_supported
 from chat_image_tools import CHAT_IMAGE_SIZE, IMAGE_MODEL_PRIORITY, IMAGE_TOOL, chat_image_overrides, image_tool_prompt
@@ -98,6 +99,7 @@ TEXT_MODEL_REGISTRY = TextModelRegistry(Path(os.environ.get("FERN_TEXT_MODEL_REG
 TEXT_MODEL_ROOT = Path(os.environ.get("FERN_TEXT_MODEL_ROOT", MODELS_DIR / "text")).resolve()
 TEXT_MODEL_INSTALL_LOCK = threading.Lock()
 TEXT_MODEL_INSTALL: dict[str, Any] = {"id": None, "status": "idle", "phase": None, "error": None}
+TEXT_MODEL_DOWNLOAD_PAUSE: threading.Event | None = None
 QWEN_TURBO_MODEL_ID = "qwen21-turbo"
 QWEN_TURBO_MODEL_ROOT = Path(os.environ.get("FERN_QWEN_TURBO_MODEL_ROOT", MODELS_DIR / "qwen-image-2.1-turbo-openvino-int8")).resolve()
 QWEN_TURBO_PARTIAL_ROOT = QWEN_TURBO_MODEL_ROOT.with_name(QWEN_TURBO_MODEL_ROOT.name + ".partial")
@@ -159,24 +161,30 @@ TEXT_JOB: dict[str, Any] = {
 
 def text_model_install_running() -> bool:
     with TEXT_MODEL_INSTALL_LOCK:
-        return TEXT_MODEL_INSTALL.get("status") in ("downloading", "preparing")
+        return TEXT_MODEL_INSTALL.get("status") in ("downloading", "pausing", "preparing")
 
 
-def run_text_model_install(model_id: str, job_id: str) -> None:
+def run_text_model_install(model_id: str, job_id: str, pause: threading.Event) -> None:
     def progress(phase: str) -> None:
         with TEXT_MODEL_INSTALL_LOCK:
             if TEXT_MODEL_INSTALL.get("id") == job_id:
-                TEXT_MODEL_INSTALL.update(status="preparing" if phase.startswith("Converting") else "downloading", phase=phase)
+                check_download_pause(pause)
+                preparing = phase == PREPARING_MODEL_FILES or TEXT_MODEL_INSTALL["status"] == "preparing"
+                TEXT_MODEL_INSTALL.update(status="preparing" if preparing else "downloading", phase=phase)
     try:
+        check_download_pause(pause)
         TEXT_GENERATION_WORKER.close()
-        folder = install_text_model(model_id, TEXT_MODEL_ROOT, progress)
+        folder = install_text_model(model_id, TEXT_MODEL_ROOT, progress, pause=pause)
         model_path, projector_path = text_model_files(folder, text_model_catalog()[model_id])
         model = TEXT_MODEL_REGISTRY.add(str(model_path), str(projector_path) if projector_path else None)
-        with TEXT_MODEL_INSTALL_LOCK:
-            TEXT_MODEL_INSTALL.update(status="complete", phase="Installed and verified.", error=None, modelId=model["id"])
+        fields = {"status": "complete", "phase": "Installed and verified.", "error": None, "modelId": model["id"]}
+    except TextModelDownloadPaused:
+        fields = {"status": "paused", "phase": "Download paused.", "error": None}
     except Exception as error:
-        with TEXT_MODEL_INSTALL_LOCK:
-            TEXT_MODEL_INSTALL.update(status="failed", phase=None, error=str(error)[:1000])
+        fields = {"status": "failed", "phase": None, "error": str(error)[:1000]}
+    with TEXT_MODEL_INSTALL_LOCK:
+        if TEXT_MODEL_INSTALL.get("id") == job_id:
+            TEXT_MODEL_INSTALL.update(fields)
 QWEN_JOB_LOCK = threading.Lock()
 QWEN_PROCESS_LOCK = threading.Lock()
 QWEN_ACTIVE_PROCESS: subprocess.Popen[str] | None = None
@@ -732,12 +740,14 @@ def text_runtime_snapshot() -> dict[str, Any]:
         folder = TEXT_MODEL_ROOT / spec["folder"]
         model_path, _ = text_model_files(folder, spec)
         entry = next((model for model in models if Path(model.get("path", "")).resolve() == model_path), None)
+        installed = bool(entry and entry.get("installed"))
         recommended.append({
             "id": model_id,
             "name": spec["name"],
             "repo": spec["repo"],
             **text_model_download_details(spec),
-            "installed": bool(entry and entry.get("installed")),
+            "installed": installed,
+            "hasPartialDownload": not installed and has_partial_download(TEXT_MODEL_ROOT, spec),
             "format": spec["format"],
         })
     gguf_available = gguf_runtime_supported()
@@ -2694,6 +2704,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/text/stop":
             self.stop_text()
             return
+        if path == "/api/text/models/install/pause":
+            self.pause_text_model_download()
+            return
         if path == "/api/text/images":
             storage_revision = CHAT_IMAGE_STORAGE_REVISION
             try:
@@ -2705,6 +2718,21 @@ class Handler(BaseHTTPRequestHandler):
             return
         with JOB_ADMISSION_LOCK:
             self.handle_post()
+
+    def pause_text_model_download(self) -> None:
+        try:
+            job_id = self.read_json_body().get("jobId")
+            if not isinstance(job_id, str) or not 1 <= len(job_id) <= 100:
+                raise ValueError("Choose the text model download to pause.")
+        except ValueError as error:
+            self.send_json(400, {"error": str(error)})
+            return
+        with TEXT_MODEL_INSTALL_LOCK:
+            if TEXT_MODEL_INSTALL["id"] == job_id and TEXT_MODEL_INSTALL["status"] == "downloading" and TEXT_MODEL_DOWNLOAD_PAUSE:
+                TEXT_MODEL_DOWNLOAD_PAUSE.set()
+                TEXT_MODEL_INSTALL.update(status="pausing", phase="Pausing download…")
+            snapshot = dict(TEXT_MODEL_INSTALL)
+        self.send_json(202, {"modelInstall": snapshot})
 
     def stop_text(self) -> None:
         try:
@@ -2805,6 +2833,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if parsed.path == "/api/text/models/install":
+            global TEXT_MODEL_DOWNLOAD_PAUSE
             try:
                 payload = self.read_json_body()
                 model_id = payload.get("modelId")
@@ -2822,9 +2851,11 @@ class Handler(BaseHTTPRequestHandler):
                 if audio_busy or image_busy or text_job_running() or tts_job_running() or qwen_turbo_setup_running() or text_model_install_running():
                     raise ValueError("Finish the active generation or model setup before installing a text model.")
                 job_id = str(uuid.uuid4())
+                pause = threading.Event()
                 with TEXT_MODEL_INSTALL_LOCK:
+                    TEXT_MODEL_DOWNLOAD_PAUSE = pause
                     TEXT_MODEL_INSTALL.update(id=job_id, status="downloading", phase="Preparing download…", error=None, modelId=model_id)
-                threading.Thread(target=run_text_model_install, args=(model_id, job_id), daemon=True).start()
+                threading.Thread(target=run_text_model_install, args=(model_id, job_id, pause), daemon=True).start()
                 self.send_json(202, text_runtime_snapshot())
             except Exception as error:
                 self.send_json(400, {"error": str(error)})

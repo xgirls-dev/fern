@@ -3,6 +3,7 @@ import MessageSquare from "lucide-react/dist/esm/icons/message-square.mjs";
 import { Button, ErrorMessage, InlineConfirmation, ModelCard, ModelCardActions, ModelCardHeading, ModelStatus } from "./ui/controls";
 import type { useTextChat } from "../hooks/useTextChat";
 import { useReturnFocus } from "../hooks/useReturnFocus";
+import { isTextModelInstalling } from "../lib/textThreads";
 
 function gigabytes(bytes: number) {
   return `${(bytes / 1e9).toFixed(2)} GB`;
@@ -25,11 +26,16 @@ export function TextModelLibrary({ studio, recommendedId }: { studio: ReturnType
     {!studio.statusLoaded ? <p role="status">Checking text models…</p> : null}
     <div className="model-library-grid">
       {ordered.map((model) => {
-        const install = status.modelInstall;
-        const installing = install?.modelId === model.id && ["downloading", "preparing"].includes(install.status);
+        const install = status.modelInstall?.modelId === model.id ? status.modelInstall : undefined;
+        const installing = isTextModelInstalling(install);
+        const paused = install?.status === "paused";
+        const pausing = install?.status === "pausing";
+        const pauseId = install?.status === "downloading" ? install.id : null;
+        const canResume = paused || model.hasPartialDownload;
         const gguf = model.format === "gguf";
         const unavailable = gguf && status.ggufAvailable !== true;
         const showRequirements = !model.installed && !unavailable;
+        const canDownload = showRequirements && !installing;
         const requirementsId = requirementsPrefix + model.id;
         const device = studio.computeDevice === "CPU" ? "CPU" : gguf && window.studio.platform === "darwin" ? "Apple GPU" : "Intel GPU";
         return <ModelCard key={model.id}>
@@ -37,7 +43,7 @@ export function TextModelLibrary({ studio, recommendedId }: { studio: ReturnType
             {model.id === recommendedId && <span className="model-card-badge">Recommended</span>}</div></ModelCardHeading>
           <p>{!showRequirements && `${gigabytes(model.bytes)} · `}{gguf ? "GGUF · Chat, vision and image tools" : "OpenVINO · Chat"}</p>
           {showRequirements && <dl className="text-model-requirements" id={requirementsId}>
-            <dt>Download</dt><dd>{gigabytes(model.bytes)}</dd>
+            <dt>{canResume ? "Full download" : "Download"}</dt><dd>{gigabytes(model.bytes)}</dd>
             <dt>Device</dt><dd>{device}</dd>
             {model.minimumFreeBytes !== undefined && <><dt>Free space</dt>
               <dd>{gigabytes(Math.ceil(model.minimumFreeBytes / 1e7) * 1e7)} for a fresh install</dd></>}
@@ -46,13 +52,22 @@ export function TextModelLibrary({ studio, recommendedId }: { studio: ReturnType
             {!gguf && <><dt>Files</dt><dd>Fern prepares the tokenizer and detokenizer</dd></>}
           </dl>}
           {showRequirements && gguf && <p>Fern may download the GGUF runtime on first use.</p>}
-          <ModelStatus installed={model.installed}>{model.installed ? "Installed" : installing ? install?.phase || "Installing…" : "Not installed"}</ModelStatus>
-          {install?.modelId === model.id && install.status === "failed" ? <ErrorMessage>{install.error}</ErrorMessage> : null}
+          <ModelStatus installed={model.installed} role="status">{model.installed ? "Installed" : paused ? "Download paused" :
+            installing ? install?.phase || "Installing…" : "Not installed"}</ModelStatus>
+          {paused ? <p>Downloaded files are kept for when you resume.</p> : null}
+          {install?.status === "failed" ? <ErrorMessage>{install.error}</ErrorMessage> : null}
           {installing ? <progress aria-label="Text model installation" /> : null}
           {unavailable ? <p>{status.ggufUnavailableReason ?? "GGUF runtime availability is unknown."}</p> : null}
-          <ModelCardActions>{showRequirements ? <Button variant={model.id === recommendedId ? "primary" : "secondary"}
-            aria-describedby={requirementsId} disabled={busy || !studio.statusLoaded || Boolean(studio.statusError) || installing}
-            onClick={() => void studio.installRecommendedModel(model.id)}>{installing ? "Installing…" : "Download"}</Button> : null}</ModelCardActions>
+          <ModelCardActions>
+            {pauseId || pausing || canDownload ? <Button variant={canDownload && model.id === recommendedId ? "primary" : "secondary"}
+              aria-describedby={canDownload ? requirementsId : undefined}
+              aria-disabled={pausing || (!!pauseId && !!studio.modelAction) || undefined}
+              disabled={canDownload && (busy || !studio.statusLoaded || Boolean(studio.statusError))}
+              onClick={() => {
+                if (pauseId && !studio.modelAction) void studio.pauseRecommendedModel(pauseId);
+                else if (canDownload) void studio.installRecommendedModel(model.id);
+              }}>{pausing ? "Pausing…" : pauseId ? "Pause download" : canResume ? "Resume download" : "Download"}</Button> : null}
+          </ModelCardActions>
         </ModelCard>;
       })}
     </div>

@@ -303,6 +303,15 @@ export function installTextModel(modelId: string): Promise<TextRuntimeStatus> {
   });
 }
 
+export function pauseTextModelDownload(jobId: string): Promise<{ modelInstall: NonNullable<TextRuntimeStatus["modelInstall"]> }> {
+  return requestJson("/api/text/models/install/pause", {
+    method: "POST",
+    signal: AbortSignal.timeout(10_000),
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ jobId }),
+  });
+}
+
 export function removeTextModel(modelId: string): Promise<{ models: TextModel[] }> {
   return requestJson("/api/text/models/remove", {
     method: "POST",

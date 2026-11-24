@@ -12,6 +12,7 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path, PurePosixPath
+from threading import Event
 from typing import Callable
 
 from text_model_registry import inspect_model
@@ -28,6 +29,16 @@ REQUIRED_MODEL_FILES = (
     "vocab.json",
 )
 MINIMUM_FREE_BYTES = 512 * 1024 * 1024
+PREPARING_MODEL_FILES = "Preparing downloaded model files…"
+
+
+class TextModelDownloadPaused(Exception):
+    pass
+
+
+def check_download_pause(pause: Event | None) -> None:
+    if pause is not None and pause.is_set():
+        raise TextModelDownloadPaused()
 
 
 def catalog() -> dict:
@@ -89,28 +100,45 @@ def model_files(folder: Path, spec: dict) -> tuple[Path, Path | None]:
     return folder, None
 
 
-def digest(path: Path, file: dict) -> str:
+def has_partial_download(root: Path, spec: dict) -> bool:
+    stage = root / (spec["folder"] + ".download")
+    try:
+        if stage.is_dir():
+            for file in spec["files"]:
+                target = stage / file["path"]
+                partial = target.with_name(target.name + ".part")
+                if target.is_file() or partial.is_file() and partial.stat().st_size > 0:
+                    return True
+    except OSError:
+        pass
+    return False
+
+
+def digest(path: Path, file: dict, pause: Event | None = None) -> str:
     algorithm = file["algorithm"]
     hasher = hashlib.sha256() if algorithm == "sha256" else hashlib.sha1()
     if algorithm == "git-sha1":
         hasher.update(f"blob {file['size']}\0".encode("ascii"))
     with path.open("rb") as stream:
         for block in iter(lambda: stream.read(4 * 1024 * 1024), b""):
+            check_download_pause(pause)
             hasher.update(block)
     return hasher.hexdigest()
 
 
-def verified(path: Path, file: dict) -> bool:
+def verified(path: Path, file: dict, pause: Event | None = None) -> bool:
+    check_download_pause(pause)
     try:
-        return path.is_file() and path.stat().st_size == file["size"] and digest(path, file) == file["digest"]
+        return path.is_file() and path.stat().st_size == file["size"] and digest(path, file, pause) == file["digest"]
     except OSError:
         return False
 
 
-def download_file(url: str, target: Path, file: dict, progress: Callable[[str], None]) -> None:
+def download_file(url: str, target: Path, file: dict, progress: Callable[[str], None], *, pause: Event | None = None) -> None:
+    check_download_pause(pause)
     target.parent.mkdir(parents=True, exist_ok=True)
     partial = target.with_name(target.name + ".part")
-    if verified(target, file):
+    if verified(target, file, pause):
         return
     if target.exists():
         target.unlink()
@@ -119,7 +147,7 @@ def download_file(url: str, target: Path, file: dict, progress: Callable[[str], 
         partial.unlink()
         offset = 0
     if offset == file["size"]:
-        if verified(partial, file):
+        if verified(partial, file, pause):
             os.replace(partial, target)
             return
         partial.unlink()
@@ -129,10 +157,13 @@ def download_file(url: str, target: Path, file: dict, progress: Callable[[str], 
         headers["Range"] = f"bytes={offset}-"
     request = urllib.request.Request(url, headers=headers)
     try:
-        response = urllib.request.urlopen(request, timeout=90)
+        # Interactive downloads yield promptly if the peer stops sending data.
+        response = urllib.request.urlopen(request, timeout=10 if pause is not None else 90)
     except (OSError, urllib.error.URLError) as error:
+        check_download_pause(pause)
         raise RuntimeError(f"Could not download {file['path']}: {error}. Retry to resume.") from error
     with response:
+        check_download_pause(pause)
         status = response.getcode()
         if status == 200:
             offset = 0
@@ -146,7 +177,18 @@ def download_file(url: str, target: Path, file: dict, progress: Callable[[str], 
         downloaded = offset
         last_update = 0.0
         with partial.open("ab" if offset else "wb") as stream:
-            while block := response.read(1024 * 1024):
+            read = response.read1 if pause is not None else response.read
+            while True:
+                check_download_pause(pause)
+                try:
+                    block = read(1024 * 1024)
+                except OSError as error:
+                    if pause is None:
+                        raise
+                    check_download_pause(pause)
+                    raise RuntimeError(f"Download of {file['path']} was interrupted. Retry to resume.") from error
+                if not block:
+                    break
                 downloaded += len(block)
                 if downloaded > file["size"]:
                     raise RuntimeError(f"Download exceeded the expected size for {file['path']}.")
@@ -155,10 +197,11 @@ def download_file(url: str, target: Path, file: dict, progress: Callable[[str], 
                 if now - last_update >= 1.5:
                     progress(f"Downloading {file['path']} · {downloaded / file['size']:.0%}")
                     last_update = now
+    check_download_pause(pause)
     if partial.stat().st_size != file["size"]:
         raise RuntimeError(f"Download of {file['path']} was interrupted. Retry to resume.")
     progress(f"Verifying {file['path']}…")
-    if not verified(partial, file):
+    if not verified(partial, file, pause):
         partial.unlink(missing_ok=True)
         raise RuntimeError(f"Checksum verification failed for {file['path']}. Retry the download.")
     os.replace(partial, target)
@@ -188,7 +231,8 @@ def convert_tokenizers(folder: Path, progress: Callable[[str], None]) -> None:
         raise RuntimeError(f"Could not prepare this export's tokenizer for OpenVINO GenAI: {error}") from error
 
 
-def _install_model(model_id: str, model_root: str | Path, progress: Callable[[str], None]) -> Path:
+def _install_model(model_id: str, model_root: str | Path, progress: Callable[[str], None], *, pause: Event | None = None) -> Path:
+    check_download_pause(pause)
     spec = model_spec(model_id)
     root = Path(model_root).resolve()
     root.mkdir(parents=True, exist_ok=True)
@@ -205,26 +249,31 @@ def _install_model(model_id: str, model_root: str | Path, progress: Callable[[st
                 inspect_model(model, projector_path=projector)
                 if projector and any((folder / item["path"]).stat().st_size != item["size"] for item in spec["files"]):
                     raise ValueError("An installed GGUF file has an unexpected length.")
+                progress(PREPARING_MODEL_FILES)
                 progress("Recommended text model is already installed.")
                 return folder
         except (OSError, ValueError, json.JSONDecodeError):
             pass
     stage.mkdir(exist_ok=True)
     files = spec["files"]
+    needed = [item for item in files if not verified(stage / item["path"], item, pause)]
     required_missing = sum(
         max(0, item["size"] - ((stage / item["path"]).with_name(Path(item["path"]).name + ".part").stat().st_size
                               if (stage / item["path"]).with_name(Path(item["path"]).name + ".part").is_file()
                               else 0))
-        for item in files if not verified(stage / item["path"], item)
+        for item in needed
     )
     required_free = required_missing + MINIMUM_FREE_BYTES
     if shutil.disk_usage(root).free < required_free:
         needed_gb = math.ceil(required_free / 10_000_000) / 100
         raise RuntimeError(f"Free at least {needed_gb:.2f} GB before installing this text model.")
-    progress(f"Downloading {spec['name']} from {spec['repo']} · {sum(file['size'] for file in files) / 1e9:.2f} GB.")
-    for file in files:
+    action = "Resuming" if has_partial_download(root, spec) else "Downloading"
+    progress(f"{action} {spec['name']} from {spec['repo']} · {sum(file['size'] for file in files) / 1e9:.2f} GB.")
+    for file in needed:
         url = f"https://huggingface.co/{spec['repo']}/resolve/{spec['revision']}/{file['path']}"
-        download_file(url, stage / file["path"], file, progress)
+        download_file(url, stage / file["path"], file, progress, pause=pause)
+    check_download_pause(pause)
+    progress(PREPARING_MODEL_FILES)
     model, projector = model_files(stage, spec)
     if not projector:
         convert_tokenizers(stage, progress)
@@ -256,7 +305,8 @@ def _install_model(model_id: str, model_root: str | Path, progress: Callable[[st
     return folder
 
 
-def install_model(model_id: str, model_root: str | Path, progress: Callable[[str], None] = print) -> Path:
+def install_model(model_id: str, model_root: str | Path, progress: Callable[[str], None] = print, *, pause: Event | None = None) -> Path:
+    check_download_pause(pause)
     spec = model_spec(model_id)
     root = Path(model_root).resolve()
     root.mkdir(parents=True, exist_ok=True)
@@ -277,7 +327,7 @@ def install_model(model_id: str, model_root: str | Path, progress: Callable[[str
         except (OSError, ImportError) as error:
             raise RuntimeError("This text model is already being installed by another Fern process.") from error
         try:
-            return _install_model(model_id, root, progress)
+            return _install_model(model_id, root, progress, pause=pause)
         finally:
             if sys.platform == "win32":
                 import msvcrt

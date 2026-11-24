@@ -6,6 +6,7 @@ import {
   fetchTextStatus,
   inspectChatImage,
   installTextModel,
+  pauseTextModelDownload,
   recoverChatImage,
   removeTextModel,
   startTextGeneration,
@@ -39,6 +40,7 @@ import {
   finishTextReply,
   hasTextThreadWork,
   isChatImage,
+  isTextModelInstalling,
   keepStreamedText,
   latestTextPrompt,
   pendingTextReply,
@@ -365,7 +367,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
   const watchedThreadId = watchedJobId ? status.job.threadId : null;
   const attachmentReady = ready && storageReady;
   const savingAttachment = [...attachmentStates.values()].some((attachment) => attachment.status === "saving");
-  const busy = !!modelAction || attachingDocument || submitting || responding || ["downloading", "preparing"].includes(status.modelInstall?.status ?? "");
+  const busy = !!modelAction || attachingDocument || submitting || responding || isTextModelInstalling(status.modelInstall);
 
   useEffect(() => {
     let mounted = true;
@@ -954,6 +956,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     setActionError(null);
     try {
       const result = await installTextModel(id);
+      invalidatePoll();
       setStatus(result);
       setStatusError(null);
       setRefreshKey((value) => value + 1);
@@ -963,7 +966,27 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
       modelActionRef.current = false;
       setModelAction(null);
     }
-  }, [setStatus]);
+  }, [invalidatePoll, setStatus]);
+
+  const pauseRecommendedModel = useCallback(async (jobId: string) => {
+    if (modelActionRef.current) return;
+    modelActionRef.current = true;
+    setModelAction("Pausing download…");
+    setActionError(null);
+    try {
+      const { modelInstall } = await pauseTextModelDownload(jobId);
+      invalidatePoll();
+      setStatus((current) => modelInstall.id === jobId && current.modelInstall?.id === jobId &&
+        isTextModelInstalling(current.modelInstall) ? { ...current, modelInstall } : current);
+      setStatusError(null);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Could not pause the text model download.");
+    } finally {
+      setRefreshKey((value) => value + 1);
+      modelActionRef.current = false;
+      setModelAction(null);
+    }
+  }, [invalidatePoll, setStatus]);
 
   const generateReply = useCallback(async (thread: TextThread, input: string, { retry = false, sourceId, revision, continueFrom, rewriteId }: {
     retry?: boolean; sourceId?: string; revision?: { messageId: string; version: TextPromptVersion }; continueFrom?: string; rewriteId?: string;
@@ -1284,6 +1307,6 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
         && (status.job.id === stoppingId || status.job.phase === "Stopping generation…"),
     newThread, selectThread, copyThread, exportTranscript, resetWorkspace, renameThread, archiveThread, deleteThread, deleteMessage,
     messageDeletions, undoMessageDeletion, dismissMessageDeletion,
-    updateThread, importModel, deleteModel, installRecommendedModel, attachImages, clearAttachment, send, retry, continueReply, retryInspection, selectReply, revisePrompt, restorePromptVersion, stop, refresh, selectModel, setDevice,
+    updateThread, importModel, deleteModel, installRecommendedModel, pauseRecommendedModel, attachImages, clearAttachment, send, retry, continueReply, retryInspection, selectReply, revisePrompt, restorePromptVersion, stop, refresh, selectModel, setDevice,
   };
 }
