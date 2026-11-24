@@ -1,74 +1,73 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { TextMessage } from "../lib/textThreads";
 import type { ThreadSearchCancel, ThreadSearchRequest, ThreadSearchResponse } from "../lib/threadSearch.worker";
 
 type ThreadSearchSource = { id: string; messages?: readonly TextMessage[] };
 type SearchInput = { threads: readonly ThreadSearchSource[]; query: string };
-type SearchResult = { input: SearchInput; matches?: Map<string, string> };
+type SearchMatches = Map<string, string>;
+type SearchResult = { input: SearchInput; matches?: SearchMatches };
+type SearchRequest = { id: number; input: SearchInput; complete: (matches?: SearchMatches) => void };
 
-export function useThreadSearch(threads: readonly ThreadSearchSource[], query: string) {
-  const [result, setResult] = useState<SearchResult>();
-  const worker = useRef<Worker | undefined>(undefined);
-  const indexed = useRef(new Map<string, readonly TextMessage[]>());
-  const requestId = useRef(0);
-  const pending = useRef<{ id: number; input: SearchInput } | undefined>(undefined);
-  const inFlight = useRef<{ id: number; cancelRequested: boolean } | undefined>(undefined);
-  const input = useMemo(() => query ? { threads, query } : undefined, [threads, query]);
+const SEARCH_IDLE_MS = 60_000;
 
-  useEffect(() => () => {
-    worker.current?.terminate();
-    worker.current = undefined;
-    indexed.current.clear();
-    pending.current = undefined;
-    inFlight.current = undefined;
-  }, []);
+export function createThreadSearchSession() {
+  let worker: Worker | undefined;
+  let indexed = new Map<string, readonly TextMessage[]>();
+  let requestId = 0;
+  let pending: SearchRequest | undefined;
+  let inFlight: { id: number; cancelRequested: boolean } | undefined;
+  let idle: number | undefined;
 
-  const sendLatest = useCallback(function sendLatest() {
-    const latest = pending.current;
-    const fail = () => {
-      worker.current?.terminate();
-      worker.current = undefined;
-      indexed.current.clear();
-      inFlight.current = undefined;
-      const request = pending.current;
-      pending.current = undefined;
-      if (request) setResult({ input: request.input });
-    };
+  function clear() {
+    window.clearTimeout(idle);
+    worker?.terminate();
+    worker = undefined;
+    indexed.clear();
+    pending = undefined;
+    inFlight = undefined;
+  }
+
+  function fail() {
+    const request = pending;
+    clear();
+    request?.complete();
+  }
+
+  function sendLatest() {
+    const latest = pending;
     try {
-      const active = inFlight.current;
-      if (active) {
-        if (latest?.id !== active.id && !active.cancelRequested) {
-          active.cancelRequested = true;
-          worker.current?.postMessage({ cancel: active.id } satisfies ThreadSearchCancel);
+      if (!latest && worker) {
+        window.clearTimeout(idle);
+        idle = window.setTimeout(clear, SEARCH_IDLE_MS);
+      }
+      if (inFlight) {
+        if (latest?.id !== inFlight.id && !inFlight.cancelRequested) {
+          inFlight.cancelRequested = true;
+          worker?.postMessage({ cancel: inFlight.id } satisfies ThreadSearchCancel);
         }
         return;
       }
       if (!latest) return;
       const { id, input } = latest;
-      if (!worker.current) {
+      if (!worker) {
         const background = new Worker(new URL("../lib/threadSearch.worker.ts", import.meta.url), { type: "module" });
-        worker.current = background;
+        worker = background;
         background.onmessage = ({ data }: MessageEvent<ThreadSearchResponse>) => {
-          if (worker.current !== background || data.id !== inFlight.current?.id) return;
-          inFlight.current = undefined;
-          if (data.cancelled) {
-            sendLatest();
-            return;
-          }
-          if (!data.matches) {
+          if (worker !== background || data.id !== inFlight?.id) return;
+          inFlight = undefined;
+          if (!data.cancelled && !data.matches) {
             fail();
             return;
           }
-          const request = pending.current;
+          const request = pending;
           if (request?.id === data.id) {
-            pending.current = undefined;
-            setResult({ input: request.input, matches: new Map(data.matches) });
-          } else {
-            sendLatest();
+            pending = undefined;
+            if (data.matches) request.complete(new Map(data.matches));
           }
+          sendLatest();
         };
         const onError = () => {
-          if (worker.current === background) fail();
+          if (worker === background) fail();
         };
         background.onerror = onError;
         background.onmessageerror = onError;
@@ -78,23 +77,44 @@ export function useThreadSearch(threads: readonly ThreadSearchSource[], query: s
       for (const thread of input.threads) {
         if (!thread.messages?.length) continue;
         next.set(thread.id, thread.messages);
-        if (indexed.current.get(thread.id) !== thread.messages) updated.push({ id: thread.id, messages: thread.messages });
+        if (indexed.get(thread.id) !== thread.messages) updated.push({ id: thread.id, messages: thread.messages });
       }
-      const removed = [...indexed.current.keys()].filter((threadId) => !next.has(threadId));
-      // Send changed histories once, then send only the query as the user types.
-      inFlight.current = { id, cancelRequested: false };
-      worker.current.postMessage({ id, query: input.query, updated, removed } satisfies ThreadSearchRequest);
-      indexed.current = next;
+      const removed = [...indexed.keys()].filter((threadId) => !next.has(threadId));
+      // Apply history changes before searching, including after the dialog was closed.
+      inFlight = { id, cancelRequested: false };
+      worker.postMessage({ id, query: input.query, updated, removed } satisfies ThreadSearchRequest);
+      indexed = next;
     } catch {
       fail();
     }
-  }, []);
+  }
+
+  return {
+    clear,
+    search(input: SearchInput, complete: SearchRequest["complete"]) {
+      window.clearTimeout(idle);
+      const id = ++requestId;
+      pending = { id, input, complete };
+      sendLatest();
+      return () => {
+        if (pending?.id !== id) return;
+        pending = undefined;
+        sendLatest();
+      };
+    },
+  };
+}
+
+export type ThreadSearchSession = ReturnType<typeof createThreadSearchSession>;
+
+export function useThreadSearch(session: ThreadSearchSession | undefined, threads: readonly ThreadSearchSource[], query: string) {
+  const [result, setResult] = useState<SearchResult>();
+  const input = useMemo(() => session && query ? { threads, query } : undefined, [session, threads, query]);
 
   useEffect(() => {
-    // Drop intermediate queries and interrupt the active scan when it becomes stale.
-    pending.current = input ? { id: ++requestId.current, input } : undefined;
-    sendLatest();
-  }, [input, sendLatest]);
+    if (!session || !input) return;
+    return session.search(input, (matches) => setResult({ input, matches }));
+  }, [session, input]);
 
   const matches = input && result?.input === input ? result.matches : undefined;
   return { matches, loading: !!input && result?.input !== input, failed: !!input && result?.input === input && !matches };

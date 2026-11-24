@@ -12,6 +12,7 @@ import { readReference } from "./lib/reference";
 import Clapperboard from "lucide-react/dist/esm/icons/clapperboard.mjs";
 import { useQwen3Tts } from "./hooks/useQwen3Tts";
 import { useTextChat } from "./hooks/useTextChat";
+import { createThreadSearchSession } from "./hooks/useThreadSearch";
 import { useSidebarLayout } from "./hooks/useSidebarLayout";
 import { useComputePreference } from "./hooks/useComputePreference";
 import { ActivityTerminal } from "./components/ActivityTerminal";
@@ -53,6 +54,8 @@ export function App() {
   const imageGpuAvailable = studio.status?.model.adapters?.find((adapter) => adapter.id === imageGpu)?.available;
   const tts = useQwen3Tts(studio.ready, compute.device);
   const text = useTextChat(studio.ready, compute.device, imageGpuAvailable);
+  const [threadSearchSession] = useState(createThreadSearchSession);
+  useEffect(() => threadSearchSession.clear, [threadSearchSession]);
   const [threadSearch, setThreadSearch] = useState<{ query: string; scope?: ThreadBrowserScope } | null>(null);
   const [inspectorView, setInspectorView] = useState<
     "settings" | "info" | null
@@ -587,7 +590,15 @@ export function App() {
             active={activeSection === "storage"}
             running={studio.running || audioBusy || text.busy || text.savingAttachment || video.running}
             onOpenModels={openModels}
-            onResetLocalData={async () => { await studio.resetLocalData(); await text.resetWorkspace(); tts.resetWorkspace(); video.reset(); saveModelSetup(null); setModelSetup(null); }}
+            onResetLocalData={async () => {
+              await studio.resetLocalData();
+              await text.resetWorkspace();
+              threadSearchSession.clear();
+              tts.resetWorkspace();
+              video.reset();
+              saveModelSetup(null);
+              setModelSetup(null);
+            }}
           /></Suspense> : null}
           {activeSection === "preferences" ? <Suspense fallback={<div className="dashboard-loading" role="status">Opening preferences…</div>}><PreferencesView
             active={activeSection === "preferences"}
@@ -957,6 +968,7 @@ export function App() {
       {threadSearch ? <Suspense fallback={null}>
         <ThreadBrowser
           threads={searchableThreads}
+          searchSession={threadSearchSession}
           initialQuery={threadSearch.query}
           scope={threadSearch.scope}
           onOpen={(id, query) => {
