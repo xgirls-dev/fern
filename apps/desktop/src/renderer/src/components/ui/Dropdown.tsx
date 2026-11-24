@@ -10,7 +10,7 @@ export function useDropdownActions({ dismissOnResize = false, trigger: externalT
   const internalTrigger = useRef<HTMLButtonElement>(null);
   const trigger = externalTrigger ?? internalTrigger;
   const dismissedByScroll = useRef(false);
-  const pendingAction = useRef<(() => void) | null>(null);
+  const pendingAction = useRef<{ action: () => void; anchor: HTMLButtonElement | null } | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -30,7 +30,7 @@ export function useDropdownActions({ dismissOnResize = false, trigger: externalT
 
   return {
     trigger,
-    choose: (action: () => void) => { pendingAction.current = action; },
+    choose: (action: () => void) => { pendingAction.current = { action, anchor: trigger.current }; },
     menuProps: {
       open,
       onOpenChange: (next: boolean) => {
@@ -40,12 +40,12 @@ export function useDropdownActions({ dismissOnResize = false, trigger: externalT
       finalFocus: () => !dismissedByScroll.current,
       onOpenChangeComplete: (next: boolean) => {
         if (next || !pendingAction.current) return;
-        const action = pendingAction.current;
+        const { action, anchor } = pendingAction.current;
         pendingAction.current = null;
         // Finish the menu's focus handoff before opening a dialog or editor.
         requestAnimationFrame(() => {
-          if (!trigger.current?.isConnected) return;
-          trigger.current.focus({ preventScroll: true });
+          if (!anchor?.isConnected) return;
+          anchor.focus({ preventScroll: true });
           action();
         });
       },
@@ -78,15 +78,27 @@ export function Dropdown({
   }, [side, trigger, triggerTooltip, triggerTooltipSide]);
   return <Menu.Root modal={false} open={open} onOpenChange={onOpenChange} onOpenChangeComplete={onOpenChangeComplete}>
     {menuTrigger}
-    <Menu.Portal container={portalContainer}>
-      <Menu.Positioner className="ui-popup-positioner" align={align} side={side} sideOffset={5}
-        collisionPadding={collisionPadding}>
-        <Menu.Popup className={`ui-popup ui-dropdown-popup ${className}`} aria-label={label} finalFocus={finalFocus}>
-          {children}
-        </Menu.Popup>
-      </Menu.Positioner>
-    </Menu.Portal>
+    <DropdownPopup {...{ portalContainer, align, side, collisionPadding, className, label, finalFocus }}>{children}</DropdownPopup>
   </Menu.Root>;
+}
+
+export function DropdownPopup({ portalContainer, align = "start", side = "bottom", collisionPadding, className = "", label, finalFocus, children }: {
+  portalContainer?: ComponentProps<typeof Menu.Portal>["container"];
+  align?: ComponentProps<typeof Menu.Positioner>["align"];
+  side?: ComponentProps<typeof Menu.Positioner>["side"];
+  collisionPadding?: ComponentProps<typeof Menu.Positioner>["collisionPadding"];
+  className?: string;
+  label: string;
+  finalFocus?: ComponentProps<typeof Menu.Popup>["finalFocus"];
+  children: ReactNode;
+}) {
+  return <Menu.Portal container={portalContainer}>
+    <Menu.Positioner className="ui-popup-positioner" align={align} side={side} sideOffset={5} collisionPadding={collisionPadding}>
+      <Menu.Popup className={`ui-popup ui-dropdown-popup ${className}`} aria-label={label} finalFocus={finalFocus}>
+        {children}
+      </Menu.Popup>
+    </Menu.Positioner>
+  </Menu.Portal>;
 }
 
 export function DropdownItem({ className = "", destructive, ...props }: ComponentProps<typeof Menu.Item> & {

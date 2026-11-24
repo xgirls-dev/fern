@@ -1,10 +1,10 @@
 import { trashName } from "../lib/trash";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import Check from "lucide-react/dist/esm/icons/check.mjs";
 import { resolveAssetUrl } from "../lib/api";
 import type { ImageRecord } from "../lib/types";
 import { notify } from "../lib/notifications";
-import { ImageActions } from "./ImageActions";
+import { GalleryImageActions, GalleryImageActionTrigger, ImageActions } from "./ImageActions";
 import { Button, IconButton, Input, Select, SegmentedControl } from "./ui/controls";
 import { Dialog, DialogDescription, DialogTitle } from "./ui/Dialog";
 interface Props {
@@ -100,6 +100,8 @@ export function OutputWorkspace({
     return () => window.removeEventListener("fern-show-preview", show);
   }, []);
   const scroll = useRef<HTMLDivElement>(null);
+  const scrollTop = useRef(view.scroll);
+  const resetScroll = useRef(false);
   const search = useRef<HTMLInputElement>(null);
   const [retry, setRetry] = useState(0);
   const [failed, setFailed] = useState(false);
@@ -118,11 +120,17 @@ export function OutputWorkspace({
     setFailed(false);
   }, [url]);
   useEffect(() => {
-    views.set(stateKey, view);
+    views.set(stateKey, { ...view, scroll: scrollTop.current });
   }, [stateKey, view]);
-  useEffect(() => {
-    if (scroll.current) scroll.current.scrollTop = view.scroll;
-  }, [stateKey, view.gallery]);
+  useLayoutEffect(() => {
+    if (!scroll.current || (!scrollTop.current && !resetScroll.current)) return;
+    scroll.current.scrollTop = scrollTop.current;
+    resetScroll.current = false;
+  }, [stateKey, view.gallery, view.query, view.sort]);
+  const resetGalleryScroll = () => {
+    scrollTop.current = 0;
+    resetScroll.current = true;
+  };
   const gallery = mode === "library" || view.gallery;
   const sorted = useMemo(() => gallery ? [...images].sort((a, b) =>
     view.sort === "newest" ? b.mtime - a.mtime : a.mtime - b.mtime,
@@ -223,7 +231,7 @@ export function OutputWorkspace({
                   <ImageActions
                     image={preview}
                     onRemix={(image) => {
-                      setView((v) => ({ ...v, gallery: false }));
+                      setView((current) => ({ ...current, gallery: false }));
                       onRemix(image);
                     }}
                     onRemixInNewThread={onRemixInNewThread}
@@ -268,26 +276,24 @@ export function OutputWorkspace({
                 aria-label="Filter images"
                 placeholder="Search images…"
                 value={view.query}
-                onChange={(event) =>
+                onChange={(event) => {
+                  resetGalleryScroll();
                   setView((v) => ({
                     ...v,
                     query: event.target.value,
                     limit: 48,
-                    scroll: 0,
-                  }))
-                }
+                  }));
+                }}
               />
               <Select<View["sort"]>
                 aria-label="Sort images"
                 value={view.sort}
                 options={[{ value: "newest", label: "Newest" }, { value: "oldest", label: "Oldest" }]}
-                onChange={(sort) =>
-                  setView((v) => ({
-                    ...v,
-                    sort,
-                    scroll: 0,
-                  }))
-                }
+                onChange={(sort) => {
+                  if (view.sort === sort) return;
+                  resetGalleryScroll();
+                  setView((v) => ({ ...v, sort }));
+                }}
               />
             </div>
           </div> : null}
@@ -295,8 +301,8 @@ export function OutputWorkspace({
             className="gallery-panel-body"
             ref={scroll}
             onScroll={(event) => {
-              const top = event.currentTarget.scrollTop;
-              views.set(stateKey, { ...view, scroll: top });
+              scrollTop.current = event.currentTarget.scrollTop;
+              views.set(stateKey, { ...view, scroll: scrollTop.current });
             }}
           >
             {!filtered.length ? (
@@ -305,38 +311,37 @@ export function OutputWorkspace({
                 <p>{images.length ? "Try another search to find an image." : mode === "library" ? "Images you create will appear here." : "Images created in this thread will appear here."}</p>
                 {!images.length && onCreateImage ? <Button variant="primary" onClick={onCreateImage}>Create an image</Button> : images.length && view.query ? (
                   <Button
-                    onClick={() => { setView((v) => ({ ...v, query: "" })); search.current?.focus(); }}
+                    onClick={() => { resetGalleryScroll(); setView((v) => ({ ...v, query: "" })); search.current?.focus(); }}
                   >
                     Clear search
                   </Button>
                 ) : null}
               </div>
             ) : (
-              <div className="history-grid">
-                {filtered.slice(0, view.limit).map((image, index) => (
-                  <ImageCard
-                    key={`${image.name}:${image.mtime}`}
-                    image={image}
-                    ordinal={index + 1}
-                    selecting={mode === "library" && selecting}
-                    selected={selected.has(image.name)}
-                    onToggleSelect={() => setSelected((previous) => { const next = new Set(previous); if (next.has(image.name)) next.delete(image.name); else next.add(image.name); return next; })}
-                    onOpen={() => {
-                      if (onOpenImage) onOpenImage(image, filtered);
-                      else {
-                        onSelectPreview(image);
-                        setView((v) => ({ ...v, gallery: false }));
-                      }
-                    }}
-                    onRemix={(image) => {
-                      setView((v) => ({ ...v, gallery: false }));
-                      onRemix(image);
-                    }}
-                    onRemixInNewThread={onRemixInNewThread}
-                    onDelete={onDelete}
-                  />
-                ))}
-              </div>
+              <GalleryImageActions onRemix={(image) => {
+                setView((current) => ({ ...current, gallery: false }));
+                onRemix(image);
+              }} onRemixInNewThread={onRemixInNewThread} onDelete={onDelete}>
+                <div className="history-grid">
+                  {filtered.slice(0, view.limit).map((image, index) => (
+                    <ImageCard
+                      key={`${image.name}:${image.mtime}`}
+                      image={image}
+                      ordinal={index + 1}
+                      selecting={mode === "library" && selecting}
+                      selected={selected.has(image.name)}
+                      onToggleSelect={() => setSelected((previous) => { const next = new Set(previous); if (next.has(image.name)) next.delete(image.name); else next.add(image.name); return next; })}
+                      onOpen={() => {
+                        if (onOpenImage) onOpenImage(image, filtered);
+                        else {
+                          onSelectPreview(image);
+                          setView((v) => ({ ...v, gallery: false }));
+                        }
+                      }}
+                    />
+                  ))}
+                </div>
+              </GalleryImageActions>
             )}
             {filtered.length > view.limit ? (
               <Button
@@ -384,9 +389,6 @@ function ImageCard({
   selected,
   onToggleSelect,
   onOpen,
-  onRemix,
-  onRemixInNewThread,
-  onDelete,
 }: {
   image: ImageRecord;
   ordinal: number;
@@ -394,9 +396,6 @@ function ImageCard({
   selected: boolean;
   onToggleSelect: () => void;
   onOpen: () => void;
-  onRemix: (image: ImageRecord) => void;
-  onRemixInNewThread: (image: ImageRecord) => void;
-  onDelete: (image: ImageRecord) => Promise<void>;
 }) {
   const [failed, setFailed] = useState(false);
   const [retry, setRetry] = useState(0);
@@ -454,13 +453,7 @@ function ImageCard({
             </svg>
           </IconButton>
         </div>
-        {!selecting ? <ImageActions
-          compact
-          image={image}
-          onRemix={onRemix}
-          onRemixInNewThread={onRemixInNewThread}
-          onDelete={onDelete}
-        /> : null}
+        {!selecting && <GalleryImageActionTrigger image={image} />}
       </div>
       {failed ? (
         <Button
