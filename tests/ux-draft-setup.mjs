@@ -13,7 +13,10 @@ const { page, state, errors, dir, close } = await fixture({
 const button = (name) => page.getByRole("button", { name, exact: true });
 try {
   const klein = { id: platform === "darwin" ? "klein-4b-mlx" : "4b", label: "Klein 4B", bytes: 4e9,
-    category: "image", downloaded: 0, installed: false, state: "not-installed" };
+    category: "image", downloaded: 0, installed: false, state: "not-installed",
+    minimumFreeBytes: 4e9 + 2 * 1024 ** 3,
+    generationDevices: platform === "darwin" ? ["APPLE_GPU"] : ["INTEL_GPU", "NVIDIA_GPU", "CPU"],
+    downloadIncludes: ["Text encoder", "VAE"] };
   const gemma = { id: "gemma", name: "Gemma", format: "gguf", bytes: 5e9, minimumFreeBytes: 5_536_870_912,
     projectorBytes: 560e6, supportsTools: true, installed: false };
   state.textStatus.ggufAvailable = true;
@@ -55,9 +58,29 @@ try {
   await page.reload();
   await button("Return to draft").waitFor();
   await page.getByText("Klein 4B · 4.00 GB download", { exact: true }).waitFor();
+  const kleinCard = page.getByRole("article").filter({ has: page.getByRole("heading", { name: "Klein 4B", exact: true }) });
+  const install = kleinCard.getByRole("button", { name: "Install", exact: true });
+  await expect(kleinCard.getByText("Recommended", { exact: true })).toBeVisible();
+  await expect(install).toHaveAccessibleDescription(/Klein 4B\s+Download\s+4\.00 GB\s+Device/);
+  await expect(install).toHaveAccessibleDescription(platform === "darwin" ? /Apple GPU/ : /Intel GPU, NVIDIA GPU.*CPU/);
+  await expect(install).toHaveAccessibleDescription(/Free space\s+At least 6\.15 GB for a fresh install/);
+  await expect(install).toHaveAccessibleDescription(/Includes\s+Text encoder, VAE/);
   await page.screenshot({ path: `${dir}/image-model-setup-${platform}-fixture-light-1440x920.png` });
-  await button("Install").click();
-  await button("Use model in draft").click();
+  await install.click();
+  const useModel = button("Use model in draft");
+  await expect(useModel).toBeVisible();
+  if (platform === "darwin") {
+    const setDevice = (device) => page.evaluate((selection) => localStorage.setItem(
+      "fern-compute-preference:v1", JSON.stringify({ allowCpu: true, device: selection }),
+    ), device);
+    await setDevice("CPU");
+    await page.reload();
+    await expect(page.getByText("Select Available GPU in Preferences to use this image model.")).toBeVisible();
+    await expect(useModel).toHaveCount(0);
+    await setDevice("GPU");
+    await page.reload();
+  }
+  await useModel.click();
   assert.equal(await page.locator("#prompt").inputValue(), draft);
   await page.waitForFunction(() => document.activeElement?.id === "prompt");
   assert.equal(state.payloads.length, 0);

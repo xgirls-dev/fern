@@ -1,4 +1,4 @@
-import sys, tempfile, unittest, hashlib, io, time
+import sys, tempfile, unittest, hashlib, io, time, threading
 from pathlib import Path
 from unittest.mock import patch, Mock
 
@@ -95,6 +95,53 @@ class ModelsTests(unittest.TestCase):
             self.assertTrue((Path(tmp) / "model4/.fern-model.json").exists())
             self.assertFalse((Path(tmp) / "model4.download").exists())
 
+    def test_download_disk_requirement_matches_fresh_and_resumed_files(self):
+        data = b"fixture image model"
+        spec = {
+            "id": "4b", "label": "Klein 4B", "repo": "test/repo",
+            "folder": "model4", "revision": "a" * 40,
+            "files": [{"path": "weights.bin", "size": len(data),
+                       "sha256": hashlib.sha256(data).hexdigest(), "blob": ""}],
+        }
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(mm.MODEL_CATALOG, {"4b": spec}):
+            manager = mm.ModelManager(tmp)
+            model = next(item for item in manager.snapshot() if item["id"] == "4b")
+            self.assertEqual(model["minimumFreeBytes"], len(data) + mm.DOWNLOAD_RESERVE_BYTES)
+            manager.jobs["4b"] = {"state": "downloading", "downloaded": 0}
+            with (
+                patch.object(mm.shutil, "disk_usage", return_value=Mock(free=model["minimumFreeBytes"] - 1)),
+                patch.object(mm.urllib.request, "urlopen") as download,
+            ):
+                manager._download("4b", threading.Event())
+            self.assertEqual(manager.jobs["4b"]["state"], "failed")
+            self.assertIn("Free at least 2.15 GB", manager.jobs["4b"]["error"])
+            download.assert_not_called()
+
+            staged_weights = manager.folder("4b", staging=True) / "weights.bin"
+            staged_weights.write_bytes(data + b"invalid")
+            with (
+                patch.object(mm.shutil, "disk_usage", return_value=Mock(free=model["minimumFreeBytes"] - 1)),
+                patch.object(mm.urllib.request, "urlopen") as download,
+            ):
+                manager._download("4b", threading.Event())
+            self.assertFalse(staged_weights.exists())
+            self.assertEqual(manager.jobs["4b"]["state"], "failed")
+            download.assert_not_called()
+
+            partial = 4
+            staged_weights.write_bytes(data[:partial])
+            response = Response(data[partial:])
+            response.status = 206
+            manager.jobs["4b"] = {"state": "downloading", "downloaded": 0}
+            with (
+                patch.object(mm.shutil, "disk_usage", return_value=Mock(free=model["minimumFreeBytes"] - partial)),
+                patch.object(mm.urllib.request, "urlopen", return_value=response) as download,
+            ):
+                manager._download("4b", threading.Event())
+            self.assertEqual(download.call_args.args[0].get_header("Range"), "bytes=4-")
+            self.assertEqual(manager.jobs["4b"]["state"], "installed")
+            self.assertEqual((manager.folder("4b") / "weights.bin").read_bytes(), data)
+
     def test_bad_checksum_never_installed(self):
         data = b"broken"
         spec = {
@@ -169,8 +216,6 @@ class ModelsTests(unittest.TestCase):
                 self.assertFalse(flux.model_status("INTEL_GPU", "9b")["runtimeReady"])
 
     def test_pause_and_resume_keeps_verified_install_atomic(self):
-        import threading
-
         data = b"x" * (2 * 1024 * 1024)
         spec = {
             "id": "4b",

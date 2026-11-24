@@ -55,7 +55,7 @@ export function TextModelLibrary({ studio, recommendedId }: { studio: ReturnType
           <ModelCardHeading icon={<MessageSquare size={17} />}><div className="model-card-heading"><h4 id={modelNameId}>{model.name}</h4>
             {model.id === recommendedId && <span className="model-card-badge">{needsRepair ? "Current chat" : "Recommended"}</span>}</div></ModelCardHeading>
           <p>{!showRequirements && `${gigabytes(model.bytes)} · `}{gguf ? "GGUF" : "OpenVINO"} · {capabilities}</p>
-          {showRequirements && <dl className="text-model-requirements" id={requirementsId}>
+          {showRequirements && <dl className="model-download-requirements" id={requirementsId}>
             <dt>{canResume || needsRepair ? "Full download" : "Download"}</dt><dd>{gigabytes(model.bytes)}</dd>
             <dt>Device</dt><dd>{device}</dd>
             {model.minimumFreeBytes !== undefined && <><dt>Free space</dt>
