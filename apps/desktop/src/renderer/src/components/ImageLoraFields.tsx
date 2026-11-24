@@ -3,7 +3,8 @@ import Plus from "lucide-react/dist/esm/icons/plus.mjs";
 import X from "lucide-react/dist/esm/icons/x.mjs";
 import { getApiBaseUrl } from "../lib/api";
 import type { LoraSelection } from "../lib/types";
-import { Button, Checkbox, IconButton, Input } from "./ui/controls";
+import { Button, Checkbox, Input } from "./ui/controls";
+import { TooltipIconButton } from "./ui/Tooltip";
 
 function loraDisplayName(path: string): string {
   const parts = path.split(/[\\/]/).filter(Boolean);
@@ -91,9 +92,9 @@ export function ImageLoraFields({ loras, onChange, disabled, error }: {
             <span>{lora.label || loraDisplayName(lora.path)}</span>
           </label>
           <label className="lora-control-strength"><span className="sr-only">Strength</span>
-            <Input type="number" min={-4} max={4} step={0.1} value={lora.strength} title="LoRA strength" aria-label={`Strength for ${lora.path.split(/[\\/]/).pop()}`} onChange={(event) => onChange(loras.map((item, i) => i === index ? { ...item, strength: Number(event.target.value) } : item))} />
+            <Input type="number" min={-4} max={4} step={0.1} value={lora.strength} aria-label={`Strength for ${lora.path.split(/[\\/]/).pop()}`} onChange={(event) => onChange(loras.map((item, i) => i === index ? { ...item, strength: Number(event.target.value) } : item))} />
           </label>
-          <IconButton onClick={() => onChange(loras.filter((_, i) => i !== index))} aria-label={`Remove ${lora.path.split(/[\\/]/).pop()}`} title="Remove LoRA"><X size={15} aria-hidden="true" /></IconButton>
+          <TooltipIconButton onClick={() => onChange(loras.filter((_, i) => i !== index))} aria-label={`Remove ${lora.path.split(/[\\/]/).pop()}`} tooltip="Remove LoRA"><X size={15} aria-hidden="true" /></TooltipIconButton>
         </div>
       </div>
     ))}

@@ -31,6 +31,8 @@ try {
   assert.equal(await page.getByRole("menuitemradio").count(), 1);
   await page.keyboard.press("Escape");
   await page.locator("#prompt").fill("A fox in winter");
+  await button("Generate image").hover();
+  await page.getByRole("tooltip").filter({ hasText: "Generate image · Cmd Enter" }).waitFor();
   const rendered = page.waitForRequest((request) => request.url().endsWith("/api/flux2/generate"));
   await button("Generate image").click();
   const image = (await rendered).postDataJSON();

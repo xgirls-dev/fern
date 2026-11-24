@@ -23,6 +23,18 @@ const options = page.getByRole("listbox");
 const composer = page.getByRole("textbox", { name: "Message", exact: true });
 
 try {
+  const sidebarToggle = button("Collapse sidebar");
+  const commands = page.getByRole("button", { name: "Commands Ctrl K", exact: true });
+  await sidebarToggle.hover();
+  await expect(page.getByRole("tooltip").filter({ hasText: "Toggle sidebar · Ctrl B" })).toBeVisible();
+  await page.mouse.move(0, 0);
+  await sidebarToggle.press("Tab");
+  await expect(commands).toBeFocused();
+  await expect(page.getByRole("tooltip").filter({ hasText: "Open command palette · Ctrl K" })).toBeVisible();
+  await page.keyboard.press("Tab");
+  await expect(button("Toggle theme")).toBeFocused();
+  await expect(page.getByRole("tooltip").filter({ hasText: "Switch to dark theme" })).toBeVisible();
+  await expect(page.locator(".titlebar button[title]")).toHaveCount(0);
   await expect(mode).toHaveText("Instant");
   await mode.focus();
   await page.keyboard.press("ArrowDown");

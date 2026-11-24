@@ -144,6 +144,10 @@ export function App() {
     }
     setCommandPaletteOpen(true);
   }, [sidebarOverlayOpen, sidebarToggleRef, closeSidebarOverlay]);
+  const theme = studio.settings.theme;
+  const toggleTheme = useCallback(() => {
+    studio.updateSettings({ theme: theme === "dark" ? "light" : "dark" });
+  }, [studio.updateSettings, theme]);
 
   const onSidebarNavigate = useCallback(() => {
     if (sidebarOverlayOpen) closeSidebarOverlay("workspace");
@@ -507,12 +511,8 @@ export function App() {
         sidebarCollapsed={sidebarIsCollapsed}
         sidebarToggleRef={sidebarToggleRef}
         onToggleSidebar={toggleSidebar}
-        theme={studio.settings.theme}
-        onToggleTheme={() =>
-          studio.updateSettings({
-            theme: studio.settings.theme === "dark" ? "light" : "dark",
-          })
-        }
+        theme={theme}
+        onToggleTheme={toggleTheme}
         onOpenCommands={openCommands}
       />
 

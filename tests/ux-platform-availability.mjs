@@ -16,7 +16,10 @@ try {
     { id: "4b", label: "Klein 4B", bytes: 4e9, downloaded: 0, installed: false, state: "not-installed" },
   ] } }));
   await page.reload();
-  await page.getByRole("button", { name: "Maximize", exact: true }).press("Enter");
+  const maximize = page.getByRole("button", { name: "Maximize", exact: true });
+  await maximize.hover();
+  await page.getByRole("tooltip").filter({ hasText: "Maximize" }).waitFor();
+  await maximize.press("Enter");
   await page.getByRole("button", { name: "Restore window", exact: true }).waitFor();
   await page.evaluate(() => window.studio.toggleMaximizeWindow());
   await page.getByRole("button", { name: "Maximize", exact: true }).waitFor();

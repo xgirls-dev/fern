@@ -13,6 +13,7 @@ import { readReference, type ReferenceAttachment } from "../lib/reference";
 import type { StudioSettings } from "../lib/types";
 import { Button, IconButton, Input, Textarea } from "./ui/controls";
 import { Popover } from "./ui/Popover";
+import { TooltipIconButton, TooltipScope } from "./ui/Tooltip";
 
 interface PromptComposerProps {
   onReferenceBusy: (busy: boolean) => void;
@@ -54,6 +55,7 @@ export function PromptComposer({
   const composerToolbar = useRef<HTMLDivElement>(null);
   const seedInput = useRef<HTMLInputElement>(null);
   const referenceImage = referenceImages[0]?.dataUrl;
+  const generateModifier = window.studio.platform === "darwin" ? "Cmd" : "Ctrl";
   const maxReferences = maxReferenceImages(settings.model);
   const referencesInvalid = referenceImages.length > maxReferences;
   useEffect(() => setSeedDraft(String(settings.seed)), [settings.seed]);
@@ -84,7 +86,7 @@ export function PromptComposer({
   };
 
   return (
-    <div className="composer-dock">
+    <TooltipScope><div className="composer-dock">
       <form
         className={`prompt-composer${dragging ? " is-dragging" : ""}`}
         aria-label="Create an image"
@@ -134,17 +136,17 @@ export function PromptComposer({
               <small title={reference.label}>{reference.label}</small>
             </span>
             {referenceImages.length > 1 ? <div className="composer-reference-order">
-              <IconButton disabled={index === 0 || loadingReference} aria-label={`Move reference ${index + 1} earlier`} title="Move earlier" onClick={() => { const next = [...referenceImages]; [next[index - 1], next[index]] = [next[index], next[index - 1]]; onReferencesChange(next); }}><ArrowLeft size={12} aria-hidden="true" /></IconButton>
-              <IconButton disabled={index === referenceImages.length - 1 || loadingReference} aria-label={`Move reference ${index + 1} later`} title="Move later" onClick={() => { const next = [...referenceImages]; [next[index + 1], next[index]] = [next[index], next[index + 1]]; onReferencesChange(next); }}><ArrowRight size={12} aria-hidden="true" /></IconButton>
+              <TooltipIconButton disabled={index === 0 || loadingReference} aria-label={`Move reference ${index + 1} earlier`} tooltip="Move earlier" onClick={() => { const next = [...referenceImages]; [next[index - 1], next[index]] = [next[index], next[index - 1]]; onReferencesChange(next); }}><ArrowLeft size={12} aria-hidden="true" /></TooltipIconButton>
+              <TooltipIconButton disabled={index === referenceImages.length - 1 || loadingReference} aria-label={`Move reference ${index + 1} later`} tooltip="Move later" onClick={() => { const next = [...referenceImages]; [next[index + 1], next[index]] = [next[index], next[index + 1]]; onReferencesChange(next); }}><ArrowRight size={12} aria-hidden="true" /></TooltipIconButton>
             </div> : null}
-            <IconButton
+            <TooltipIconButton
               aria-label={`Remove reference ${index + 1}`}
-              title="Remove reference"
+              tooltip="Remove reference"
               disabled={loadingReference}
               onClick={() => onReferencesChange(referenceImages.filter((_, itemIndex) => index !== itemIndex))}
             >
               <X size={14} aria-hidden="true" />
-            </IconButton>
+            </TooltipIconButton>
           </div>)}
           {maxReferences > 0 ? <p className="composer-reference-hint">{referenceImages.length} of {maxReferences} reference images. {maxReferences > 1 ? "Use Image 1, Image 2, and so on in your prompt." : ""}</p> : null}
         </div> : null}
@@ -184,30 +186,31 @@ export function PromptComposer({
                     event.target.value = "";
                   }}
                 />
-                <IconButton
+                <TooltipIconButton
                   className="composer-tool"
-                  title={`Add reference images (${referenceImages.length}/${maxReferences})`}
+                  tooltip={`Add reference images (${referenceImages.length}/${maxReferences})`}
                   aria-label="Add reference image"
                   disabled={loadingReference || referenceImages.length >= maxReferences}
                   onClick={() => fileInput.current?.click()}
                 >
                   <ImagePlus size={17} aria-hidden="true" />
-                </IconButton>
+                </TooltipIconButton>
               </>
             ) : null}
-            <IconButton
+            <TooltipIconButton
               className="composer-tool"
               onClick={onToggleInspector}
               aria-expanded={inspectorOpen}
               aria-controls="generation-inspector"
-              title="Image settings"
+              tooltip="Image settings"
               aria-label="Image settings"
             >
               <SlidersHorizontal size={14} aria-hidden="true" />
-            </IconButton>
+            </TooltipIconButton>
             <div className="seed-popover-anchor">
               <Popover label="Seed settings" className="seed-popover" side="top" anchor={composerToolbar}
                 open={seedPopoverOpen} onOpenChange={setSeedPopoverOpen} initialFocus={seedInput}
+                triggerTooltip="Seed settings"
                 trigger={<IconButton className="composer-settings" aria-label="Seed settings">
                   <Dices size={17} aria-hidden="true" />
                 </IconButton>}
@@ -246,8 +249,8 @@ export function PromptComposer({
                     onBlur={() => setSeedDraft(String(settings.seed))}
                   />
                 </label>
-                <IconButton
-                  title="Randomize seed"
+                <TooltipIconButton
+                  tooltip="Randomize seed"
                   aria-label="Randomize seed"
                   onClick={() =>
                     onSettingsChange({
@@ -257,7 +260,7 @@ export function PromptComposer({
                   }
                 >
                   <Dices size={15} aria-hidden="true" />
-                </IconButton>
+                </TooltipIconButton>
               </Popover>
             </div>
           </div>
@@ -341,7 +344,7 @@ export function PromptComposer({
               }}
               onOpen={() => setSeedPopoverOpen(false)}
             />
-            <IconButton
+            <TooltipIconButton
               type="submit"
               variant="primary"
               shape="circle"
@@ -362,14 +365,15 @@ export function PromptComposer({
                     ? "Starting generation"
                     : "Generate image"
               }
-              title={ready ? "Generate image · Ctrl Enter" : "Generate image"}
+              tooltip={running ? "Generation in progress" : submitting ? "Starting generation"
+                : ready ? `Generate image · ${generateModifier} Enter` : "Generate image"}
             >
               {running || submitting ? (
                 <span className="spinner" aria-hidden="true" />
               ) : (
                 <ArrowUp size={20} aria-hidden="true" />
               )}
-            </IconButton>
+            </TooltipIconButton>
           </div>
         </div>
       </form>
@@ -384,9 +388,9 @@ export function PromptComposer({
           {busyElsewhere ? "Another thread is rendering on this device" : running ? "" : "Your prompts and images stay on this device"}
         </span>
         {ready && !running && !busyElsewhere ? (
-          <span className="composer-keyboard-hint">Ctrl ↵ to generate</span>
+          <span className="composer-keyboard-hint">{generateModifier} ↵ to generate</span>
         ) : null}
       </div>
-    </div>
+    </div></TooltipScope>
   );
 }

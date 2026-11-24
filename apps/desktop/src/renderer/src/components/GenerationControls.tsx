@@ -419,7 +419,6 @@ export function GenerationControls({
                   <Button
                     variant="secondary"
                     onClick={removeSelectedRecipe}
-                    title="Remove this saved recipe"
                   >
                     Remove
                   </Button>

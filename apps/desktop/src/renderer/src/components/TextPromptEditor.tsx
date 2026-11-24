@@ -71,7 +71,7 @@ export function TextPromptEditor({ draftKey, content, original, replaceLatest, f
         <Button variant="ghost" onClick={onCancel}>Cancel</Button>
         <Button variant="secondary" disabled={!canApply} onClick={() => onApply(false)}>Open branch draft</Button>
         {onResend && <Button variant="secondary" disabled={!canSend} onClick={onResend}>Resend</Button>}
-        <Button type="submit" variant="primary" disabled={!canSend} title={sendUnavailable || sendLabel}><Send size={15} aria-hidden="true" />{sendLabel}</Button>
+        <Button type="submit" variant="primary" disabled={!canSend} aria-describedby={sendUnavailable ? statusId : undefined}><Send size={15} aria-hidden="true" />{sendLabel}</Button>
       </div>
       {sendUnavailable && <span id={statusId} className="text-prompt-editor-status" role="status">{sendUnavailable}</span>}
       {!sendUnavailable && replaceLatest && <span className="text-prompt-editor-status">The previous prompt and reply stay in Prompt versions.</span>}

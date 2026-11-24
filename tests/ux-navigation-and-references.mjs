@@ -90,7 +90,10 @@ try {
   const red = await png("red"), blue = await png("blue");
   await page.getByLabel("Reference image file").setInputFiles([{ name: "red.png", mimeType: "image/png", buffer: red }, { name: "blue.png", mimeType: "image/png", buffer: blue }]);
   await expect(page.locator(".composer-reference")).toHaveCount(2);
-  await button("Move reference 2 earlier").click();
+  const moveEarlier = button("Move reference 2 earlier");
+  await moveEarlier.hover();
+  await expect(page.getByRole("tooltip").filter({ hasText: "Move earlier" })).toBeVisible();
+  await moveEarlier.click();
   await expect(page.locator(".composer-reference small").first()).toHaveText("blue.png");
   await page.getByLabel("Reference image file").setInputFiles([{ name: "third.png", mimeType: "image/png", buffer: red }, { name: "fourth.png", mimeType: "image/png", buffer: blue }]);
   await expect(page.locator(".composer-reference")).toHaveCount(4);
