@@ -88,6 +88,26 @@ try {
   respond(rich, "complete");
   await expect(stream).toHaveCount(0);
 
+  await observeReply("Keep the greeting moving while a frame is delayed.");
+  const restoreFrames = await page.evaluateHandle(() => {
+    const requestFrame = window.requestAnimationFrame;
+    let id = 0;
+    window.requestAnimationFrame = () => --id;
+    return () => { window.requestAnimationFrame = requestFrame; };
+  });
+  try {
+    respond(answer);
+    await expect.poll(() => page.evaluate(() => document.querySelector(
+      ".text-message--streaming .text-message-content p",
+    )?.textContent)).toBe(answer);
+    assertCompleteCharacters(await page.evaluate(() => window.replyFrames), answer);
+  } finally {
+    await restoreFrames.evaluate((restore) => restore());
+    await restoreFrames.dispose();
+  }
+  respond(answer, "complete");
+  await expect(stream).toHaveCount(0);
+
   await page.emulateMedia({ reducedMotion: "reduce" });
   await observeReply("Repeat the greeting with reduced motion.");
   respond(answer);
