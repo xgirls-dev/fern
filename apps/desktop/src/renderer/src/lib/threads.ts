@@ -164,22 +164,37 @@ function referencesDatabase(): Promise<IDBDatabase> {
   });
 }
 
-export async function readThreadReferences(id: string): Promise<ReferenceAttachment[]> {
+function restoreReferences(value: unknown): ReferenceAttachment[] {
+  if (typeof value === "string") return value ? [{ dataUrl: value, label: "Reference image" }] : [];
+  return Array.isArray(value)
+    ? value.filter((item): item is ReferenceAttachment => item && typeof item.dataUrl === "string" && typeof item.label === "string").slice(0, 4)
+    : [];
+}
+
+export async function readWorkspaceReferences(ids: readonly string[]): Promise<Map<string, ReferenceAttachment[]>> {
+  if (!ids.length) return new Map();
   await referenceWrites.catch(() => undefined);
   const db = await referencesDatabase();
   return new Promise((resolve, reject) => {
     const transaction = db.transaction("images", "readonly");
-    const request = transaction.objectStore("images").get(id);
+    const store = transaction.objectStore("images");
+    const requests = ids.map((id) => store.get(id));
     transaction.oncomplete = () => {
       db.close();
-      const value: unknown = request.result;
-      resolve(typeof value === "string" ? value ? [{ dataUrl: value, label: "Reference image" }] : [] : Array.isArray(value) ? value.filter((item): item is ReferenceAttachment => item && typeof item.dataUrl === "string" && typeof item.label === "string").slice(0, 4) : []);
+      resolve(new Map(requests.flatMap((request, index) => {
+        const references = restoreReferences(request.result);
+        return references.length ? [[ids[index], references]] : [];
+      })));
     };
     transaction.onabort = () => {
       db.close();
-      reject(transaction.error);
+      reject(transaction.error ?? new Error("Could not read image references."));
     };
   });
+}
+
+export async function readThreadReferences(id: string): Promise<ReferenceAttachment[]> {
+  return (await readWorkspaceReferences([id])).get(id) ?? [];
 }
 
 async function persistReference(

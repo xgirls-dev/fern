@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { expect } from "@playwright/test";
 import { fixture } from "./ui-fixture.mjs";
 
 const { page, errors, close } = await fixture();
@@ -22,6 +23,21 @@ try {
   });
   await page.getByRole("button", { name: "Local data", exact: true }).click();
   const trigger = page.getByRole("button", { name: "Clear Local Data", exact: true });
+  await page.evaluate(() => {
+    window.studio.saveWorkspaceBackup = (snapshot) => new Promise((resolve) => {
+      window.backupSnapshot = JSON.parse(snapshot);
+      window.finishBackup = resolve;
+    });
+  });
+  const backup = page.getByRole("button", { name: "Save Backup…", exact: true });
+  await backup.click();
+  await expect(page.getByRole("status").filter({ hasText: "Saving workspace backup…" })).toBeVisible();
+  await expect(backup).toBeDisabled();
+  await expect(trigger).toBeDisabled();
+  assert.equal(await page.evaluate(() => window.backupSnapshot.version), 1);
+  await page.evaluate(() => window.finishBackup(true));
+  await expect(page.getByText("Workspace backup saved.", { exact: true })).toBeVisible();
+
   await trigger.scrollIntoViewIfNeeded();
   const before = await trigger.boundingBox();
   assert(before);

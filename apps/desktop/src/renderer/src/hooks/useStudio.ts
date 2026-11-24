@@ -1138,6 +1138,7 @@ export function useStudio(computeDevice: "GPU" | "CPU" = "GPU") {
 
   return {
     threads,
+    workspaceSnapshot: () => workspaceRef.current,
     searchThreads,
     activeThread,
     threadImages,

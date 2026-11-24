@@ -1308,6 +1308,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
 
   return {
     sidebarThreads,
+    workspaceSnapshot: () => workspaceRef.current,
     threads: storageReady ? threads : [], activeThread, status, statusLoaded, modelAction, submitting, draftAttachments: attachmentStates, attachingDocument, attachmentReady, savingAttachment, statusError, actionError, dismissActionError, storageReady, storageError, retryStorage, busy, computeDevice,
     pendingReplyOutput: (thread: TextThread) => pendingTextReply(thread, liveJobRef.current),
     primaryThread, secondaryThread, activePane, splitPercent: workspace.splitPercent ?? 50, compareThread, closePane, resizePanes, focusPane,

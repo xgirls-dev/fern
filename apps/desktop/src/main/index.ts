@@ -15,6 +15,7 @@ import { PythonBackend } from "./python-backend";
 import { resolveDataProfile } from "./data-profile";
 import { installEditorContextMenu } from "./editor-context-menu";
 import { ensureFirstRunSetup, RuntimeSetupCancelled } from "./first-run-setup";
+import { saveWorkspaceBackup } from "./workspace-backup";
 import { publishWallpaperConnection } from "./wallpaper-connection";
 import { getAppIconPath, getOutputsDir, resolveProjectRoot } from "./paths";
 
@@ -296,6 +297,13 @@ function registerIpc(): void {
     } finally {
       await rm(temporary, { recursive: true, force: true }).catch(() => undefined);
     }
+  });
+
+  ipcMain.handle("studio:save-workspace-backup", (event, snapshot: unknown) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== event.sender.mainFrame) {
+      throw new Error("Open Fern to create a workspace backup.");
+    }
+    return saveWorkspaceBackup(mainWindow, snapshot);
   });
 
   ipcMain.handle("studio:clear-web-cache", async (event) => {

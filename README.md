@@ -120,6 +120,8 @@ On Intel Iris Xe, SANA-Sprint reached visible output in **76.9 seconds on the fi
 
 Inference runs on your device. Prompts, conversations, reference media, and generated files stay in your local workspace. An internet connection is used to fetch model files and additional engines. Once those files are installed, generation can run offline.
 
+In **Local data**, choose **Save Backup** to write a `.fern-backup` file with your saved chats, drafts, conversation versions, image references, documents, generated media, and preferences. Keep the backup with your other private files. It contains conversation and attachment content.
+
 **Local data** shows disk usage. **Clear Cache** removes compiled generation files, which Fern rebuilds on demand. **Clear Local Data** clears creative history, outputs, and preferences and keeps installed models and runtimes. Fern prunes old cache files automatically. Save copies of outputs you want to keep before clearing local data.
 
 ## Development

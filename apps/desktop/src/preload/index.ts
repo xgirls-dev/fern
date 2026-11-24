@@ -129,6 +129,7 @@ const studioApi: StudioApi = {
   copyText: (text) => ipcRenderer.invoke("studio:copy-text", text),
   readFileAsDataUrl: (filePath) =>
     ipcRenderer.invoke("studio:read-file-as-data-url", filePath),
+  saveWorkspaceBackup: (snapshot) => ipcRenderer.invoke("studio:save-workspace-backup", snapshot),
   clearWebCache: () => ipcRenderer.invoke("studio:clear-web-cache"),
 };
 

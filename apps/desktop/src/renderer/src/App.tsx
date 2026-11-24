@@ -589,6 +589,11 @@ export function App() {
           {activeSection === "storage" ? <Suspense fallback={<div className="dashboard-loading" role="status">Opening storage…</div>}><StorageView
             active={activeSection === "storage"}
             running={studio.running || audioBusy || text.busy || text.savingAttachment || video.running}
+            backupReady={text.storageReady && !studio.submitting && !text.attachingDocument && !video.pending}
+            captureBackup={() => ({
+              chats: text.workspaceSnapshot(), images: studio.workspaceSnapshot(),
+              speech: tts.workspace, settings: studio.settings,
+            })}
             onOpenModels={openModels}
             onResetLocalData={async () => {
               await studio.resetLocalData();
