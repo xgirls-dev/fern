@@ -43,6 +43,7 @@ function waitForApiBaseUrl(timeoutMs = 90_000): Promise<string> {
 
 const studioApi: StudioApi = {
   platform: process.platform,
+  hasWorkspaceSeed: process.argv.includes("--fern-workspace-seed"),
   architecture: process.arch,
   appVersion: process.argv.find((argument) => argument.startsWith("--fern-app-version="))?.slice("--fern-app-version=".length),
   getApiBaseUrl: () => waitForApiBaseUrl(),
@@ -130,6 +131,13 @@ const studioApi: StudioApi = {
   readFileAsDataUrl: (filePath) =>
     ipcRenderer.invoke("studio:read-file-as-data-url", filePath),
   saveWorkspaceBackup: (snapshot) => ipcRenderer.invoke("studio:save-workspace-backup", snapshot),
+  listWorkspaces: () => ipcRenderer.invoke("studio:list-workspaces"),
+  chooseWorkspaceBackup: () => ipcRenderer.invoke("studio:choose-workspace-backup"),
+  restoreWorkspaceBackup: (token) => ipcRenderer.invoke("studio:restore-workspace-backup", token),
+  switchWorkspace: (id) => ipcRenderer.invoke("studio:switch-workspace", id),
+  readWorkspaceSeed: () => ipcRenderer.invoke("studio:read-workspace-seed"),
+  finishWorkspaceSeed: () => ipcRenderer.invoke("studio:finish-workspace-seed"),
+  returnFromFailedRestore: () => ipcRenderer.invoke("studio:return-from-failed-restore"),
   clearWebCache: () => ipcRenderer.invoke("studio:clear-web-cache"),
 };
 

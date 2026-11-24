@@ -23,9 +23,9 @@ export function getStoredProjectRoot(): string | null {
   return projectRoot;
 }
 
-export async function resolveProjectRoot(): Promise<string> {
+export async function resolveProjectRoot(workspaceRoot?: string): Promise<string> {
   if (!projectRoot) {
-    projectRoot = resolveRoot();
+    projectRoot = workspaceRoot ?? resolveRoot();
     createDataFolders(projectRoot);
   }
   return projectRoot;

@@ -257,6 +257,11 @@ function recoverExitCheckpoint(workspace: TextThreadWorkspace, raw: string | nul
   return { ...workspace, activeId, threads: [...newThreads, ...threads] };
 }
 
+export async function seedTextWorkspace(workspace: TextThreadWorkspace): Promise<void> {
+  const previous = await readDatabase();
+  await writeDatabase(workspace, previous?.workspace, previous?.membershipRevision);
+}
+
 export function createTextThreadStorage() {
   let saved: TextThreadWorkspace | undefined;
   let membershipRevision: string | undefined;
