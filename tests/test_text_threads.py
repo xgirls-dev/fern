@@ -21,6 +21,7 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import api_server as api
+import chat_documents
 import text_model_download as download
 from text_model_registry import TextModelRegistry, REQUIRED_FILES
 from text_generation_process import TextGenerationProcess, TextWorkerError
@@ -461,16 +462,80 @@ finally:
                 server.shutdown()
                 worker.join(timeout=5)
 
-    def test_upload_admitted_before_a_local_data_reset_cannot_publish_after_it(self):
-        revision = api.CHAT_IMAGE_STORAGE_REVISION
+    def test_document_extraction_does_not_block_stop(self):
+        extracting = threading.Event()
+        resume_extraction = threading.Event()
+        cancel = threading.Event()
+        read_parts = chat_documents._document_parts
+        note = base64.b64encode(b"Review the glaze under daylight.").decode("ascii")
+        identity = {"requestId": "document-running", "threadId": "text-thread-document", "jobOnly": True}
+
+        def read_later(data, suffix):
+            extracting.set()
+            if not resume_extraction.wait(8):
+                raise TimeoutError("Timed out waiting for Stop.")
+            return read_parts(data, suffix)
+
+        with ThreadingHTTPServer(("127.0.0.1", 0), api.Handler) as server:
+            worker = threading.Thread(target=server.serve_forever, daemon=True)
+            worker.start()
+
+            def post(endpoint, payload):
+                url = f"http://127.0.0.1:{server.server_port}/api/text/{endpoint}"
+                request = urllib.request.Request(url, data=json.dumps(payload).encode(),
+                                                 headers={"Content-Type": "application/json"})
+                with urllib.request.urlopen(request, timeout=5) as response:
+                    return response.status, json.load(response)
+
+            try:
+                with (
+                    patch.object(api, "DATA_DIR", self.root),
+                    patch.object(chat_documents, "_document_parts", side_effect=read_later),
+                    patch.dict(api.TEXT_JOB, {"id": identity["requestId"], "threadId": identity["threadId"], "status": "running"}),
+                    patch.object(api, "TEXT_CANCEL_EVENT", cancel),
+                    patch.object(api.TEXT_GENERATION_WORKER, "request_stop") as request_stop,
+                    patch.object(api.INTEL_MEDIA, "interrupt"),
+                    ThreadPoolExecutor(max_workers=1) as uploads,
+                ):
+                    attached = uploads.submit(post, "documents", {"name": "Notes.txt", "content": note})
+                    try:
+                        self.assertTrue(extracting.wait(5))
+                        status, receipt = post("stop", identity)
+                        self.assertEqual(status, 202, receipt)
+                        self.assertTrue(cancel.is_set())
+                        request_stop.assert_called_once_with(cancel)
+                        self.assertFalse(attached.done())
+                    finally:
+                        resume_extraction.set()
+                    status, result = attached.result()
+                    self.assertEqual(status, 201, result)
+                    document = result["document"]
+                    self.assertTrue((self.root / "chat-documents" / (document["id"] + ".json")).is_file())
+            finally:
+                server.shutdown()
+                worker.join(timeout=5)
+
+    def test_chat_image_admitted_before_local_reset_cannot_publish_after_it(self):
+        revision = api.CHAT_ATTACHMENT_STORAGE_REVISION
         with (
             patch.object(api, "DATA_DIR", self.root),
             patch.object(api, "decode_flux_reference_image", return_value=Image.new("RGB", (16, 16), "green")),
-            patch.object(api, "CHAT_IMAGE_STORAGE_REVISION", revision + 1),
+            patch.object(api, "CHAT_ATTACHMENT_STORAGE_REVISION", revision + 1),
             self.assertRaisesRegex(ValueError, "Local data was cleared"),
         ):
             api.store_chat_image("fixture", revision)
         self.assertFalse((self.root / "references").exists())
+
+    def test_chat_document_admitted_before_local_reset_cannot_publish_after_it(self):
+        revision = api.CHAT_ATTACHMENT_STORAGE_REVISION
+        directory = self.root / "chat-documents"
+        content = base64.b64encode(b"Review the glaze under daylight.").decode("ascii")
+        with (
+            patch.object(api, "CHAT_ATTACHMENT_STORAGE_REVISION", revision + 1),
+            self.assertRaisesRegex(ValueError, "Local data was cleared. Attach the document again."),
+        ):
+            api.store_document(directory, "Notes.txt", content, storage_guard=api.publish_chat_attachment(revision, "document"))
+        self.assertFalse(directory.exists())
 
     def test_subprocess_reuse_switch_and_interrupt(self):
         script = self.root / 'fake_worker.py'

@@ -10,6 +10,7 @@ import re
 import tempfile
 import zipfile
 from collections import Counter, deque
+from contextlib import AbstractContextManager, nullcontext
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
@@ -130,7 +131,8 @@ def _read(path: Path, missing: bool = False) -> dict[str, Any] | None:
         raise ValueError("An attached document is unreadable. Remove it from the chat and attach it again.") from error
 
 
-def store_document(directory: Path, name: Any, encoded: Any) -> dict[str, Any]:
+def store_document(directory: Path, name: Any, encoded: Any, *,
+                   storage_guard: AbstractContextManager[None] | None = None) -> dict[str, Any]:
     if not isinstance(name, str) or not 1 <= len(name) <= 255 or any(char in name for char in "/\\\0\r\n"):
         raise ValueError("Choose a document with a valid filename.")
     suffix = Path(name).suffix.lower()
@@ -148,8 +150,10 @@ def store_document(directory: Path, name: Any, encoded: Any) -> dict[str, Any]:
     digest = hashlib.sha256(name.encode("utf-8") + b"\0" + data).hexdigest()
     document_id = f"doc-{digest}"
     path = _path(directory, document_id)
+    guard = storage_guard if storage_guard is not None else nullcontext()
     if record := _read(path, missing=True):
-        return record["document"]
+        with guard:
+            return record["document"]
 
     passages = []
     count = 0
@@ -162,16 +166,18 @@ def store_document(directory: Path, name: Any, encoded: Any) -> dict[str, Any]:
     if not passages:
         raise ValueError("This document has no selectable text. Attach an OCR copy or a text export.")
     document = {"id": document_id, "name": name, "bytes": len(data)}
-    directory.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=directory, suffix=".tmp", delete=False) as handle:
-        temporary = Path(handle.name)
-        try:
-            json.dump({"document": document, "passages": passages}, handle, ensure_ascii=False)
-            handle.close()
-            temporary.replace(path)
-        finally:
-            handle.close()
-            temporary.unlink(missing_ok=True)
+    record_text = json.dumps({"document": document, "passages": passages}, ensure_ascii=False)
+    with guard:
+        directory.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=directory, suffix=".tmp", delete=False) as handle:
+            temporary = Path(handle.name)
+            try:
+                handle.write(record_text)
+                handle.close()
+                temporary.replace(path)
+            finally:
+                handle.close()
+                temporary.unlink(missing_ok=True)
     return document
 
 
