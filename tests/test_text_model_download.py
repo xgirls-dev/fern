@@ -2,8 +2,10 @@ import hashlib
 import sys
 import tempfile
 import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
+from threading import Event, Thread
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
@@ -29,6 +31,8 @@ class FakeResponse:
         body, self.body = self.body, b""
         return body
 
+    read1 = read
+
 
 class TextModelDownloadTests(unittest.TestCase):
     def test_fresh_install_requirements_match_the_disk_check_and_projector_payload(self):
@@ -49,6 +53,73 @@ class TextModelDownloadTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "First download started"):
                     download._install_model(model_id, directory, lambda _: None)
             fetch.assert_called_once()
+
+    def test_paused_download_keeps_partial_bytes_and_resumes_at_the_saved_range(self):
+        content = b"abcdef"
+        filename = "small.bin"
+        file = {"path": filename, "size": len(content), "algorithm": "sha256", "digest": hashlib.sha256(content).hexdigest()}
+        spec = {"folder": "fixture", "files": [file]}
+        pause = Event()
+        ranges = []
+
+        class DownloadHandler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                requested = self.headers.get("Range")
+                ranges.append(requested)
+                self.send_response(206 if requested else 200)
+                self.send_header("Content-Length", "3" if requested else "6")
+                if requested:
+                    self.send_header("Content-Range", "bytes 3-5/6")
+                self.end_headers()
+                self.wfile.write(content[3:] if requested else content[:3])
+
+            def log_message(self, *_args):
+                pass
+
+        with tempfile.TemporaryDirectory() as tmp, ThreadingHTTPServer(("127.0.0.1", 0), DownloadHandler) as server:
+            serving = Thread(target=server.serve_forever, daemon=True)
+            serving.start()
+            url = f"http://127.0.0.1:{server.server_port}/file"
+            try:
+                root = Path(tmp)
+                target = root / "fixture.download" / filename
+                partial = target.with_name(filename + ".part")
+                partial.parent.mkdir()
+                partial.touch()
+                self.assertFalse(download.has_partial_download(root, spec))
+                with self.assertRaises(download.TextModelDownloadPaused):
+                    download.download_file(url, target, file, lambda _: pause.set(), pause=pause)
+                self.assertEqual(partial.read_bytes(), b"abc")
+                self.assertTrue(download.has_partial_download(root, spec))
+                self.assertFalse(target.exists())
+                download.download_file(url, target, file, lambda _: None, pause=Event())
+                self.assertEqual(ranges, [None, "bytes=3-"])
+                self.assertEqual(target.read_bytes(), content)
+                self.assertTrue(download.verified(target, file))
+                self.assertFalse(partial.exists())
+            finally:
+                server.shutdown()
+                serving.join(5)
+
+    def test_timeout_after_pause_is_not_a_failed_download(self):
+        content = b"abcdef"
+        file = {"path": "small.bin", "size": len(content), "algorithm": "sha256", "digest": hashlib.sha256(content).hexdigest()}
+        pause = Event()
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / file["path"]
+            partial = target.with_name(target.name + ".part")
+            partial.write_bytes(content[:3])
+            response = FakeResponse(b"", 206, {"Content-Range": "bytes 3-5/6"})
+
+            def timeout(_size):
+                pause.set()
+                raise TimeoutError("peer stopped sending")
+
+            response.read1 = timeout
+            with patch.object(download.urllib.request, "urlopen", return_value=response):
+                with self.assertRaises(download.TextModelDownloadPaused):
+                    download.download_file("https://example.invalid/file", target, file, lambda _: None, pause=pause)
+            self.assertEqual(partial.read_bytes(), content[:3])
 
     def test_recommended_manifest_is_pinned_and_complete(self):
         spec = download.model_spec(download.DEFAULT_MODEL_ID)

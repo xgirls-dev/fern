@@ -47,7 +47,7 @@ import { notify } from "../lib/notifications";
 import { canContinueTextReply, countTextPromptCharacters, findChatImage, latestTextPrompt, matchesTextMessage, replyVersions, resolveTextModel, savedVersionForDeletedReply, showReplyVersion, TEXT_MESSAGE_CHARACTER_LIMIT, textPromptExceedsLimit, textRuntimeIssue, type GeneratedChatImage, type TextMessage } from "../lib/textThreads";
 import { chatImageErrors, chatImageSettings, MAX_IMAGE_PROMPT_SUFFIX, type ChatImageSettings } from "../lib/chatImageSettings";
 import { isKleinLoraModel, maxReferenceImages } from "../lib/imageModels";
-import { chatTokenLimits, ggufLoadOptions, KV_CACHE_TYPES, type ChatPane, type GgufLoadOptions, type TextMode, type TextSamplingSettings, type TextThread } from "../lib/textThreads";
+import { chatTokenLimits, ggufLoadOptions, isTextModelInstalling, KV_CACHE_TYPES, type ChatPane, type GgufLoadOptions, type TextMode, type TextSamplingSettings, type TextThread } from "../lib/textThreads";
 import type { SetupTask } from "../lib/modelSetup";
 import type { ImageRecord } from "../lib/types";
 
@@ -366,7 +366,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   const checking = !studio.statusLoaded && !statusError;
   const catalogError = statusError ?? status.registryError;
   const install = status.modelInstall;
-  const installing = install?.status === "downloading" || install?.status === "preparing";
+  const installing = isTextModelInstalling(install);
   const installName = status.recommendedModels?.find((model) => model.id === install?.modelId)?.name
     ?? models.find((model) => model.id === install?.modelId)?.name;
   const availableAlternatives = installedModels.filter((model) => model.id !== selectedModel && !textRuntimeIssue(status, model));
@@ -411,6 +411,8 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
         action: { label: "Retry checking models", run: () => { void studio.refresh(); } } }
     : install?.status === "failed" && !modelAvailable && (!selectedModel || selectedModel === install.modelId)
       ? { label: "Model download failed.", detail: install.error, tone: "error", action: { label: "Open model setup", run: openModels } }
+    : install?.status === "paused" && !modelAvailable
+      ? { label: "Model download paused.", detail: "Downloaded files are kept.", action: { label: "Resume model download", run: openModels } }
     : selectedModel && !modelAvailable ? { label: modelRecord ? `${modelRecord.name} is unavailable.` : "This chat’s model is unavailable.",
         detail: modelRecord?.error, tone: "error", action: modelSetupAction }
     : !modelAvailable ? { label: "Download a local model to start chatting.", action: { label: "Browse models", run: openModels } }

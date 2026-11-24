@@ -5,6 +5,7 @@ import json
 import sys
 import tempfile
 import threading
+import time
 import unittest
 import urllib.request
 import urllib.error
@@ -22,6 +23,7 @@ from text_model_registry import TextModelRegistry, REQUIRED_FILES
 from text_generation_process import TextGenerationProcess, TextWorkerError
 from text_generation_worker import resolve_text_device
 from text_model_download import MINIMUM_FREE_BYTES
+from text_model_download import PREPARING_MODEL_FILES, check_download_pause
 
 
 class TextThreadsTests(unittest.TestCase):
@@ -75,6 +77,91 @@ class TextThreadsTests(unittest.TestCase):
         self.assertEqual(gemma["minimumFreeBytes"], gemma["bytes"] + MINIMUM_FREE_BYTES)
         self.assertEqual(gemma["projectorBytes"], 559_874_848)
         self.assertNotIn("projectorBytes", recommendations[api.DEFAULT_TEXT_MODEL_ID])
+
+    def test_pause_is_job_scoped_and_finishes_before_resume_or_local_install(self):
+        downloading = threading.Event()
+        allow_pause = threading.Event()
+        preparing = threading.Event()
+        allow_install = threading.Event()
+        pauses = []
+
+        def install(_model, _root, progress, *, pause):
+            pauses.append(pause)
+            if len(pauses) == 1:
+                progress("Downloading model weights…")
+                downloading.set()
+                if not allow_pause.wait(5):
+                    raise RuntimeError("The pause fixture did not release.")
+                check_download_pause(pause)
+                raise AssertionError("The first install should be paused.")
+            progress(PREPARING_MODEL_FILES)
+            preparing.set()
+            if not allow_install.wait(5):
+                raise RuntimeError("The install fixture did not release.")
+            return self.folder
+
+        def await_status(expected):
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                with api.TEXT_MODEL_INSTALL_LOCK:
+                    if api.TEXT_MODEL_INSTALL["status"] == expected:
+                        return
+                time.sleep(0.01)
+            self.fail(f"Expected the download to reach {expected}.")
+
+        with ThreadingHTTPServer(("127.0.0.1", 0), api.Handler) as server:
+            serving = threading.Thread(target=server.serve_forever, daemon=True)
+            serving.start()
+            base = f"http://127.0.0.1:{server.server_port}/api/text/models/install"
+
+            def post(payload, suffix=""):
+                request = urllib.request.Request(base + suffix, data=json.dumps(payload).encode(),
+                                                 headers={"Content-Type": "application/json"})
+                try:
+                    with urllib.request.urlopen(request, timeout=5) as response:
+                        return response.status, json.load(response)
+                except urllib.error.HTTPError as error:
+                    with error:
+                        return error.code, json.load(error)
+
+            with (patch.object(api, "TEXT_MODEL_REGISTRY", self.registry),
+                  patch.object(self.registry, "add", return_value=self.model) as register,
+                  patch.object(api, "TEXT_MODEL_ROOT", self.root),
+                  patch.object(api, "apple_silicon", return_value=False),
+                  patch.object(api, "TEXT_MODEL_DOWNLOAD_PAUSE", None),
+                  patch.object(api, "install_text_model", side_effect=install),
+                  patch.object(api.TEXT_GENERATION_WORKER, "close"),
+                  patch.dict(api.TEXT_MODEL_INSTALL, {"id": None, "status": "idle", "phase": None, "error": None}, clear=True)):
+                try:
+                    model = {"modelId": api.DEFAULT_TEXT_MODEL_ID}
+                    code, initial = post(model)
+                    self.assertEqual(code, 202)
+                    self.assertTrue(downloading.wait(5))
+                    first = initial["modelInstall"]["id"]
+                    self.assertEqual(post({"jobId": "older-job"}, "/pause")[1]["modelInstall"]["status"], "downloading")
+                    self.assertEqual(post({"jobId": first}, "/pause")[1]["modelInstall"]["status"], "pausing")
+                    self.assertEqual(post(model)[0], 400)
+                    register.assert_not_called()
+                    allow_pause.set()
+                    await_status("paused")
+                    self.assertFalse(api.text_model_install_running())
+                    register.assert_not_called()
+
+                    code, resumed = post(model)
+                    self.assertEqual(code, 202)
+                    self.assertTrue(preparing.wait(5))
+                    second = resumed["modelInstall"]["id"]
+                    self.assertNotEqual(first, second)
+                    self.assertEqual(post({"jobId": second}, "/pause")[1]["modelInstall"]["status"], "preparing")
+                    self.assertFalse(pauses[-1].is_set())
+                    allow_install.set()
+                    await_status("complete")
+                    register.assert_called_once()
+                finally:
+                    allow_pause.set()
+                    allow_install.set()
+                    server.shutdown()
+                    serving.join(5)
 
     def test_simultaneous_chat_image_uploads_share_one_file_without_blocking_stop(self):
         image = io.BytesIO()

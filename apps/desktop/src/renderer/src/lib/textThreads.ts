@@ -202,16 +202,29 @@ export interface TextJob {
   errorCode?: string | null;
   failureDiagnostics?: TextFailureDiagnostics | null;
 }
+export interface TextModelInstall {
+  id: string | null;
+  modelId?: string | null;
+  status: "idle" | "downloading" | "pausing" | "paused" | "preparing" | "complete" | "failed";
+  phase: string | null;
+  error: string | null;
+}
+
+export function isTextModelInstalling(install: TextModelInstall | undefined):
+  install is TextModelInstall & { status: "downloading" | "pausing" | "preparing" } {
+  return install?.status === "downloading" || install?.status === "pausing" || install?.status === "preparing";
+}
+
 export interface TextRuntimeStatus {
   registryError?: string | null;
   models: TextModel[];
   recommendedModels?: Array<{
     id: string; name: string; repo: string; bytes: number; installed: boolean; format?: string;
-    minimumFreeBytes?: number; projectorBytes?: number;
+    minimumFreeBytes?: number; projectorBytes?: number; hasPartialDownload?: boolean;
   }>;
   defaultModelId?: string;
   imageToolModels?: ChatImageModel[];
-  modelInstall?: { id: string | null; modelId?: string | null; status: "idle" | "downloading" | "preparing" | "complete" | "failed"; phase: string | null; error: string | null };
+  modelInstall?: TextModelInstall;
   runtimeAvailable: boolean;
   runtimeError: string | null;
   ggufAvailable?: boolean;
