@@ -50,8 +50,8 @@ export function ModelMenu({ label, value, options, disabled, triggerLabel, class
     data-model-option={option.value} label={option.label} aria-label={option.label}
     aria-description={option.description} disabled={option.disabled}>
     <span className="ui-popup-label">{option.label}</span>
-    {option.description ? <span className="ui-model-menu-note" aria-hidden="true">{option.description}</span>
-      : option.value === value ? <Check size={14} aria-hidden="true" /> : null}
+    {option.description ? <span className="ui-model-menu-note" aria-hidden="true">{option.description}</span> : null}
+    {option.value === value && !option.disabled ? <Check size={14} aria-hidden="true" /> : null}
   </DropdownRadioItem>;
 
   return <Dropdown label={label} className={`ui-model-menu ${className}`} side="top" align="end" triggerTooltip={name}

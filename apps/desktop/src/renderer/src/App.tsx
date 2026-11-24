@@ -609,6 +609,9 @@ export function App() {
             sidebarCollapsed={wideSidebarCollapsed}
             compactLayout={compactLayout}
             modelStatus={studio.status?.model ?? null}
+            chatRuntime={{ status: text.status, thread: text.activeThread, loaded: text.statusLoaded, error: text.statusError }}
+            onRefreshChatModels={text.refreshModels}
+            onOpenTextModels={() => openModelSetup("chat")}
             computeDevice={compute.device}
             onComputeDeviceChange={(device) => compute.updatePreference({ device, allowCpu: device === "CPU" })}
             onToggleTheme={() =>

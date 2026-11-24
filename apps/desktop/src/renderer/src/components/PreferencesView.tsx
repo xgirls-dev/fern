@@ -7,6 +7,7 @@ import PanelLeft from "lucide-react/dist/esm/icons/panel-left.mjs";
 import Sun from "lucide-react/dist/esm/icons/sun.mjs";
 import type { ModelStatus } from "../lib/types";
 import type { ComputePreference } from "../hooks/useComputePreference";
+import { resolveTextModel, textModelReadiness, type TextRuntimeStatus, type TextThread } from "../lib/textThreads";
 import { Button, ChoiceCard, PageHeader, Select, ToggleRow } from "./ui/controls";
 import { shortcutLabel, shortcuts } from "../lib/workspaceNavigation";
 
@@ -18,6 +19,9 @@ interface PreferencesViewProps {
   sidebarCollapsed: boolean;
   compactLayout: boolean;
   modelStatus: ModelStatus | null;
+  chatRuntime: { status: TextRuntimeStatus; thread: TextThread; loaded: boolean; error: string | null };
+  onRefreshChatModels: () => Promise<void>;
+  onOpenTextModels: () => void;
   computeDevice: ComputePreference;
   onComputeDeviceChange: (device: ComputePreference) => void;
   onToggleTheme: () => void;
@@ -47,6 +51,12 @@ function adapterState(
   return "Ready";
 }
 
+function chatEngineLabel(resident: NonNullable<TextRuntimeStatus["residentModel"]>): string {
+  const device = resident.device === "CPU" ? "CPU" : resident.backend === "metal" ? "Apple GPU" : "Intel GPU";
+  const backend = { openvino: "OpenVINO", metal: "Metal", vulkan: "Vulkan" }[resident.backend];
+  return backend ? `${device} · ${backend}` : device;
+}
+
 export function PreferencesView({
   active,
   computeFocusRequest,
@@ -55,6 +65,9 @@ export function PreferencesView({
   sidebarCollapsed,
   compactLayout,
   modelStatus,
+  chatRuntime,
+  onRefreshChatModels,
+  onOpenTextModels,
   computeDevice,
   onComputeDeviceChange,
   onToggleTheme,
@@ -64,8 +77,21 @@ export function PreferencesView({
   useEffect(() => {
     if (active && computeFocusRequest) device.current?.focus();
   }, [active, computeFocusRequest]);
+  useEffect(() => { if (active) void onRefreshChatModels(); }, [active, onRefreshChatModels]);
 
   if (!active) return null;
+
+  const { status, thread, loaded, error } = chatRuntime;
+  const chatModelId = resolveTextModel(status, thread);
+  const chatModel = status.models.find((model) => model.id === chatModelId);
+  const readiness = chatModel && textModelReadiness({
+    ...status, runningModelId: status.job.status === "running" ? status.job.modelId : null,
+  }, chatModel);
+  const catalogError = error ?? status.registryError;
+  const chatStatus = catalogError ? "Could not check chat models" : !loaded ? "Checking chat models…"
+    : readiness?.label ?? (chatModelId ? "Files unavailable" : "Choose a chat model");
+  const resident = readiness?.resident;
+  const chatDetail = catalogError ?? readiness?.detail ?? (resident ? chatEngineLabel(resident) : null);
 
   return (
     <section
@@ -166,6 +192,15 @@ export function PreferencesView({
           </label>
           {computeDevice === "CPU" ? <p className="model-library-note">Image creation in chat is unavailable with CPU selected.</p> : null}
           {onReturnToChat && <Button variant="ghost" onClick={onReturnToChat}>Return to chat</Button>}
+          <section aria-labelledby="preferences-chat-runtime">
+            <h4 id="preferences-chat-runtime">Chat runtime</h4>
+            <div className="preferences-runtime-grid">
+              <div><span>Current chat model</span><strong title={chatModel?.name}>{chatModel?.name ?? (chatModelId ? "Unavailable model" : "No model selected")}</strong></div>
+              <div><span>Status</span><strong role="status">{chatStatus}</strong></div>
+            </div>
+            {chatDetail ? <p className="model-library-note">{chatDetail}</p> : null}
+            <Button variant="ghost" onClick={onOpenTextModels}>Manage text models</Button>
+          </section>
           <h4>Image workspace runtime</h4>
           <div className="preferences-runtime-grid">
             <div>

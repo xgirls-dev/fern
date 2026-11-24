@@ -259,6 +259,8 @@ export function inspectChatImage(payload: {
   image: string;
   imageThreadId?: string;
   device: "AUTO" | "GPU" | "CPU";
+  contextSize?: number;
+  loadOptions?: GgufLoadOptions;
 }): Promise<TextJobAcceptance> {
   return submitTextJob("/api/text/inspect-image", payload);
 }

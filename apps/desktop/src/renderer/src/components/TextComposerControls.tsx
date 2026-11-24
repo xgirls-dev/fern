@@ -15,7 +15,7 @@ const RESPONSE_MODES = [{ value: "instant", label: "Instant" }, { value: "reason
 // Reply chunks change the transcript without changing these action controls.
 export const TextComposerControls = memo(function TextComposerControls({
   busy, canAttach, canSend, documentCount, imageTooltip, mode, model, models, responding, sendTooltip, stopping,
-  onAttachDocuments, onAttachImage, onChangeMode, onChangeModel, onManageModels, onStop, stopRef,
+  onAttachDocuments, onAttachImage, onChangeMode, onChangeModel, onManageModels, onOpenModelPicker, onStop, stopRef,
 }: {
   busy: boolean;
   canAttach: boolean;
@@ -33,6 +33,7 @@ export const TextComposerControls = memo(function TextComposerControls({
   onChangeMode: (mode: TextMode) => void;
   onChangeModel: (id: string) => void;
   onManageModels: () => void;
+  onOpenModelPicker: () => void;
   onStop: () => void;
   stopRef: (button: HTMLButtonElement | null) => void;
 }) {
@@ -63,7 +64,7 @@ export const TextComposerControls = memo(function TextComposerControls({
     </div>
     <div className="composer-send-tools">
       <ModelMenu label="Text model" className="text-model-dropdown" triggerClassName="text-menu-trigger"
-        value={model} disabled={busy} options={models} onManageModels={onManageModels} onChange={onChangeModel} />
+        value={model} disabled={busy} options={models} onManageModels={onManageModels} onChange={onChangeModel} onOpen={onOpenModelPicker} />
       {responding ? <TooltipIconButton key="stop" ref={stopRef} variant="danger" shape="circle"
         className="composer-submit is-stop" disabled={stopping} onClick={onStop} aria-label="Stop generation"
         tooltip={stopping ? "Stopping generation…" : "Stop generation · Esc in composer"}>

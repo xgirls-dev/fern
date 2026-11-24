@@ -69,6 +69,7 @@ def run_gguf(file: Path, device: str, projector: Path | None) -> int:
 
     threading.Thread(target=read_requests, daemon=True).start()
     server = None
+    loaded_projector = None
     try:
         while pending := requests.get():
             request, cancellation = pending
@@ -95,14 +96,17 @@ def run_gguf(file: Path, device: str, projector: Path | None) -> int:
                     target, backend = resolve_text_device(device), "openvino"
                 emit({"type": "runtime", "backend": backend, "device": target})
                 gpu_projector = vision and (backend == "metal" or bool(request.get("requireGpuVision")))
+                requested_projector = projector if vision else None
                 if gpu_projector and backend not in ("vulkan", "metal"):
                     raise ValueError("This image conversation requires GPU vision. Select Available GPU in Preferences.")
                 load_timing = {}
                 if (
-                    server is None or server.backend != backend or server.context_size != context_size
-                    or server.gpu_projector != gpu_projector or server.load_options != load_options
+                    server is None or server.process is None or server.process.poll() is not None
+                    or server.backend != backend or server.context_size != context_size or server.load_options != load_options
+                    or (vision and (loaded_projector != requested_projector or server.gpu_projector != gpu_projector))
                 ):
                     if server is not None:
+                        emit({"type": "residency", "model": None})
                         server.close()
                         server = None
                     def setup_progress(text: str) -> None:
@@ -115,9 +119,14 @@ def run_gguf(file: Path, device: str, projector: Path | None) -> int:
                     emit({"type": "phase", "stage": "loading-model", "text": f"Loading the GGUF model with {backend}…"})
                     load_started = time.perf_counter()
                     server = GGUFServer(
-                        executable, file, projector if vision else None, target, backend, context_size,
+                        executable, file, requested_projector, target, backend, context_size,
                         gpu_projector=gpu_projector, load_options=load_options,
                     )
+                    loaded_projector = requested_projector
+                    emit({"type": "residency", "model": {
+                        "backend": backend, "device": target, "enginePid": server.process.pid,
+                        "gguf": {"contextSize": server.context_size, "loadOptions": server.load_options},
+                    }})
                     load_timing["modelReadyMs"] = (time.perf_counter() - load_started) * 1000
                 emit({"type": "phase", "stage": "preparing-conversation"})
                 try:
@@ -130,6 +139,7 @@ def run_gguf(file: Path, device: str, projector: Path | None) -> int:
             except InterruptedError:
                 # A disconnected prompt prefill can still hold the inference slot.
                 if server is not None and not cancellation.streaming:
+                    emit({"type": "residency", "model": None})
                     server.close(force=True)
                     server = None
                 emit({"type": "cancelled"})
@@ -185,6 +195,7 @@ def run(model_path: str, device: str, projector_path: str = "") -> int:
                 emit({"type": "phase", "stage": "loading-model", "text": "Loading the OpenVINO model…"})
                 pipeline = genai.LLMPipeline(str(folder), device)
                 tokenizer = pipeline.get_tokenizer()
+                emit({"type": "residency", "model": {"backend": "openvino", "device": device}})
                 preparing["text"] = "Model ready. Preparing the conversation…"
 
             emit(preparing)

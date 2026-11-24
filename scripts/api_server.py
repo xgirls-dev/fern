@@ -156,7 +156,7 @@ TEXT_CANCEL_EVENT: threading.Event | None = None
 TEXT_JOB: dict[str, Any] = {
     "id": None, "threadId": None, "modelId": None, "status": "idle",
     "phase": None, "partialText": "", "partialReasoning": "", "startedAt": None, "finishedAt": None,
-    "result": None, "image": None, "error": None, "errorCode": None, "failureDiagnostics": None,
+    "result": None, "image": None, "error": None, "errorCode": None, "failureDiagnostics": None, "residentModel": None,
 }
 
 
@@ -700,7 +700,7 @@ def text_job_changed() -> None:
 
 
 def finish_text_job(**fields: Any) -> None:
-    TEXT_JOB.update(**fields)
+    TEXT_JOB.update(residentModel=TEXT_GENERATION_WORKER.resident_model(), **fields)
     text_job_changed()
 
 
@@ -754,6 +754,7 @@ def text_runtime_snapshot() -> dict[str, Any]:
             "repo": spec["repo"],
             **text_model_download_details(spec),
             "installed": installed,
+            "registeredModelId": entry["id"] if entry else None,
             "hasPartialDownload": (not installed or repair_model_id is not None) and has_partial_download(TEXT_MODEL_ROOT, spec),
             "repairModelId": repair_model_id,
             "format": spec["format"],
@@ -769,6 +770,7 @@ def text_runtime_snapshot() -> dict[str, Any]:
         "imageToolModels": chat_image_catalog(),
         "defaultModelId": "gemma-4-e4b-gguf" if apple_silicon() else DEFAULT_TEXT_MODEL_ID,
         "modelInstall": model_install,
+        "residentModel": TEXT_GENERATION_WORKER.resident_model(),
         "registryError": registry_error,
         "runtimeAvailable": runtime_available,
         "runtimeError": runtime_error,
@@ -857,7 +859,7 @@ def start_text_job(payload: dict[str, Any], request_id: Any, admit_before: Any =
             startedAt=time.time(), finishedAt=None, result=None, image=payload.get("inspectionImage"),
             images=[],
             inspection=payload.get("inspectionImage") is not None,
-            error=None, errorCode=None, failureDiagnostics=None,
+            error=None, errorCode=None, failureDiagnostics=None, residentModel=None,
         )
         text_job_changed()
     threading.Thread(target=run_text_generation, args=(payload, job_id, cancel_event), daemon=True).start()
@@ -2328,8 +2330,13 @@ def prepare_image_inspection(payload: dict[str, Any]) -> dict[str, Any]:
     model = next((item for item in TEXT_MODEL_REGISTRY.snapshot() if item["id"] == model_id), None)
     if not model or not model.get("installed") or not model.get("supportsVision"):
         raise ValueError("Choose an installed vision model before checking this image.")
-    if model.get("format") == "gguf" and not gguf_runtime_supported():
+    gguf = model.get("format") == "gguf"
+    if gguf and not gguf_runtime_supported():
         raise ValueError(RUNTIME_PLATFORM_ERROR)
+    context_size = validate_context_size(payload.get("contextSize"), model.get("maxContextSize")) if gguf else DEFAULT_CONTEXT_SIZE
+    load_options = validate_gguf_load_options(payload.get("loadOptions"), context_size)
+    if load_options and not gguf:
+        raise ValueError("These load settings require a GGUF model.")
     metadata = gallery_store.get_image_metadata(filename)
     if not metadata or metadata.get("threadId") != chat_image_owner(thread_id, payload.get("imageThreadId")) or metadata.get("source") != "chat":
         raise ValueError("Choose a saved image from this conversation.")
@@ -2344,7 +2351,7 @@ def prepare_image_inspection(payload: dict[str, Any]) -> dict[str, Any]:
         "modelId": model_id, "threadId": thread_id, "device": device, "inspectionImage": artifact,
         "requireGpuVision": metadata.get("model") in INTEL_MEDIA_CATALOG or metadata.get("model") == APPLE_IMAGE_ID,
         "messages": [{"role": "user", "content": prompt, "imagePath": str(path)}],
-        "mode": "instant", "toolChoice": "none", "contextSize": DEFAULT_CONTEXT_SIZE,
+        "mode": "instant", "toolChoice": "none", "contextSize": context_size, "loadOptions": load_options,
         "systemPrompt": "", "temperature": 0.2, "topP": 0.9, "maxNewTokens": 96, "seed": 0,
     }
 
@@ -3252,7 +3259,7 @@ class Handler(BaseHTTPRequestHandler):
                 TEXT_GENERATION_WORKER.close()
                 with TEXT_JOB_LOCK:
                     TEXT_JOB.update(id=None, threadId=None, status="idle", partialText="", partialReasoning="", result=None, image=None, error=None,
-                                    errorCode=None, failureDiagnostics=None)
+                                    errorCode=None, failureDiagnostics=None, residentModel=None)
                     text_job_changed()
                 INTEL_MEDIA.close()
                 flux2.release_pipeline()
