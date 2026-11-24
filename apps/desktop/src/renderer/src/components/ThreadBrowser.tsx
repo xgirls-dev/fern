@@ -1,6 +1,7 @@
-import { useCallback, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import type { ImageThread } from "../lib/threads";
-import { chatSearchPattern, chatSearchText, findChatSearchRange } from "../lib/chatSearch";
+import { chatSearchPattern, findChatSearchRange } from "../lib/chatSearchRange";
+import { useChatSearch } from "../hooks/useChatSearch";
 import type { TextMessage } from "../lib/textThreads";
 import { Dialog, DialogTitle } from "./ui/Dialog";
 import { SearchDialogField } from "./ui/SearchDialogField";
@@ -36,6 +37,7 @@ export function ThreadBrowser({
   const showMore = useRef<HTMLButtonElement>(null);
   const focusAfterLoad = useRef<number | undefined>(undefined);
   const focusDestination = useRef(false);
+  const confirmAfterSearch = useRef(false);
   const [query, setQuery] = useState(initialQuery);
   const [kind, setKind] = useState<typeof THREAD_TYPES[number]>("All");
   const [archivedOnly, setArchivedOnly] = useState(false);
@@ -47,8 +49,10 @@ export function ThreadBrowser({
   const searching = !!needle;
   const pattern = chatSearchPattern(needle);
   const includesQuery = (value: string | undefined) => value !== undefined && value.normalize().search(pattern) !== -1;
-  const searchText = useMemo(() => new Map(searching && (selectedKind === "All" || selectedKind === "Chat") ? threads.flatMap((thread) =>
-    thread.messages ? [[thread.id, chatSearchText(thread.messages)] as const] : []) : []), [searching, selectedKind, threads]);
+  const searchMessages = searching && (selectedKind === "All" || selectedKind === "Chat") && threads.some((thread) => thread.messages?.length);
+  const { search: parser, loading, failed } = useChatSearch(searchMessages);
+  const searchText = useMemo(() => new Map(parser && searchMessages ? threads.flatMap((thread) =>
+    thread.messages?.length ? [[thread.id, parser.chatSearchText(thread.messages)] as const] : []) : []), [parser, searchMessages, threads]);
   const filtered = threads.flatMap((thread) => {
     if (selectedKind !== "All" && threadKind(thread.id) !== selectedKind) return [];
     if (archivedOnly ? !thread.archived : scope && thread.archived && thread.id !== scope.currentId) return [];
@@ -93,6 +97,11 @@ export function ThreadBrowser({
     onOpen(thread.id, thread.messageQuery);
     onClose();
   };
+  useEffect(() => {
+    if (loading || !confirmAfterSearch.current) return;
+    confirmAfterSearch.current = false;
+    if (filtered[0]) open(filtered[0]);
+  }, [filtered, loading, open]);
   return (
     <Dialog variant="search" className="thread-browser" onClose={onClose} initialFocus={search} finalFocus={() => !focusDestination.current}>
       <DialogTitle className="sr-only">{onNewChat ? "Choose a chat" : `Search ${noun}s`}</DialogTitle>
@@ -104,13 +113,18 @@ export function ThreadBrowser({
           placeholder={`Search ${noun}s…`}
           value={query}
           onChange={(event) => {
+            confirmAfterSearch.current = false;
             setQuery(event.target.value);
             setLimit(PAGE_SIZE);
           }}
+          onBlur={() => { confirmAfterSearch.current = false; }}
           onKeyDown={(event) => {
-            if (event.nativeEvent.isComposing || !filtered.length) return;
-            if (event.key === "Enter") { event.preventDefault(); open(filtered[0]); }
-            else if ((event.key === "ArrowDown" || event.key === "ArrowUp") &&
+            if (event.nativeEvent.isComposing) return;
+            if (event.key === "Enter") {
+              event.preventDefault();
+              if (loading) confirmAfterSearch.current = true;
+              else if (filtered[0]) open(filtered[0]);
+            } else if ((event.key === "ArrowDown" || event.key === "ArrowUp") && filtered.length &&
                 !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
               event.preventDefault();
               focusResult(event.key === "ArrowDown" ? 0 : visibleCount - 1);
@@ -152,7 +166,9 @@ export function ThreadBrowser({
             if (event.detail === 0) focusAfterLoad.current = visibleCount;
             setLimit((value) => value + PAGE_SIZE);
           }}>Show more threads</Button>}
-        {!filtered.length ? <div className="thread-browser-empty">
+        {loading || failed ? <div className="thread-browser-empty" role="status">
+          <p>{loading ? "Searching chat messages…" : "Chat messages couldn’t be searched."}</p>
+        </div> : !filtered.length ? <div className="thread-browser-empty">
           <p role="status">{hasFilters ? `No matching ${noun}s` : onNewChat ? "No other chats" : `No ${noun}s yet`}</p>
           {hasFilters ? <><small>Try a different search or clear the filters.</small><Button variant="ghost" onClick={() => { setQuery(""); setKind("All"); setArchivedOnly(false); setLimit(PAGE_SIZE); search.current?.focus(); }}>Clear filters</Button></> : null}
         </div> : null}

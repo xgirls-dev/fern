@@ -4,7 +4,8 @@ import ChevronDown from "lucide-react/dist/esm/icons/chevron-down.mjs";
 import X from "lucide-react/dist/esm/icons/x.mjs";
 import { IconButton, Input } from "./ui/controls";
 import { Tooltip } from "./ui/Tooltip";
-import { chatSearchEntries, liveChatSearchEntry, matchingChatOccurrences, type ChatSearchMatch } from "../lib/chatSearch";
+import { useChatSearch } from "../hooks/useChatSearch";
+import type { ChatSearchMatch } from "../lib/chatSearch";
 import type { TextMessage } from "../lib/textThreads";
 
 export function TextFindBar({ input, messages, liveMessage, initialQuery, onMatch, onClose }: {
@@ -17,15 +18,16 @@ export function TextFindBar({ input, messages, liveMessage, initialQuery, onMatc
 }) {
   const [query, setQuery] = useState(initialQuery);
   const [selected, setSelected] = useState<ChatSearchMatch>();
+  const { search, loading, failed } = useChatSearch(true);
   const needle = query.trim();
   const searching = !!needle;
-  const entries = useMemo(() => searching ? chatSearchEntries(messages) : [], [messages, searching]);
-  const savedMatches = useMemo(() => matchingChatOccurrences(entries, needle), [entries, needle]);
+  const entries = useMemo(() => searching && search ? search.chatSearchEntries(messages) : [], [messages, search, searching]);
+  const savedMatches = useMemo(() => search?.matchingChatOccurrences(entries, needle) ?? [], [entries, needle, search]);
   const deferredLive = useDeferredValue(liveMessage);
   // Ignore the deferred preview immediately when its reply settles or another one starts.
   const live = deferredLive?.id === liveMessage?.id ? deferredLive : null;
-  const liveEntry = useMemo(() => searching && live ? [liveChatSearchEntry(live)] : [], [live, searching]);
-  const matches = useMemo(() => [...savedMatches, ...matchingChatOccurrences(liveEntry, needle)], [liveEntry, needle, savedMatches]);
+  const liveEntry = useMemo(() => searching && search && live ? [search.liveChatSearchEntry(live)] : [], [live, search, searching]);
+  const matches = useMemo(() => search ? [...savedMatches, ...search.matchingChatOccurrences(liveEntry, needle)] : [], [liveEntry, needle, savedMatches, search]);
   const selectedIndex = selected ? matches.findIndex((match) => match.versionId === selected.versionId &&
     match.savedPromptId === selected.savedPromptId && match.section === selected.section && match.occurrence === selected.occurrence) : -1;
   const index = Math.max(0, selectedIndex);
@@ -35,6 +37,8 @@ export function TextFindBar({ input, messages, liveMessage, initialQuery, onMatc
   const savedPromptId = active?.savedPromptId;
   const section = active?.section;
   const occurrence = active?.occurrence;
+  const searchStatus = !needle ? "" : loading ? "Searching…" : failed ? "Chat search couldn’t open"
+    : matches.length ? `${index + 1} of ${matches.length}${savedPromptId ? " · Saved version" : ""}` : "No matches";
 
   useEffect(() => { input.current?.focus(); }, []);
   useEffect(() => { if (active && selectedIndex < 0) setSelected(active); }, [active, selectedIndex]);
@@ -55,7 +59,7 @@ export function TextFindBar({ input, messages, liveMessage, initialQuery, onMatc
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f") { event.preventDefault(); input.current?.select(); }
     }}>
       <Input ref={input} type="search" aria-label="Search this chat" placeholder="Find in chat…" value={query} onChange={(event) => { setQuery(event.target.value); setSelected(undefined); }} />
-      <span role="status">{needle ? matches.length ? `${index + 1} of ${matches.length}${savedPromptId ? " · Saved version" : ""}` : "No matches" : ""}</span>
+      <span role="status">{searchStatus}</span>
       <Tooltip content="Previous match · Shift + Enter">
         <IconButton aria-label="Previous match" disabled={!matches.length} onClick={() => step(-1)}><ChevronUp size={16} aria-hidden="true" /></IconButton>
       </Tooltip>

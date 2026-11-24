@@ -33,6 +33,7 @@ export default defineConfig({
     resolve: { conditions: ["worker", ...defaultClientConditions] },
     optimizeDeps: { entries: ["index.html", "src/components/TextMarkdown.tsx", "src/lib/textCodeHighlight.ts"] },
     build: {
+      minify: true,
       rollupOptions: {
         input: {
           index: resolve(__dirname, "src/renderer/index.html"),

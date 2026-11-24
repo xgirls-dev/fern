@@ -1,5 +1,6 @@
 import { useCallback, useLayoutEffect, useRef, useState, type FocusEvent, type KeyboardEvent } from "react";
-import { chatSearchPattern, findChatSearchRange, isChatSearchBlock, type ChatSearchMatch } from "../lib/chatSearch";
+import type { ChatSearchMatch } from "../lib/chatSearch";
+import { chatSearchPattern, findChatSearchRange, isChatSearchBlock } from "../lib/chatSearchRange";
 
 // The chat workspace unmounts when switching to another part of Fern.
 const readingSections = { answer: ".text-message-content", reasoning: ".text-reasoning > div" } as const;
