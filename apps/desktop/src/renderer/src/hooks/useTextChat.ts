@@ -57,6 +57,7 @@ import {
   type TextJob,
   type TextMessage,
   type TextMessageDeletion,
+  type TextModelRemoval,
   type TextPromptVersion,
   type TextRuntimeStatus,
   type TextThread,
@@ -931,17 +932,21 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     }
   };
 
-  const deleteModel = useCallback(async (id: string) => {
+  const deleteModel = useCallback(async (id: string, action: TextModelRemoval) => {
     if (modelActionRef.current) return false;
     modelActionRef.current = true;
-    setModelAction("Removing model…");
+    setModelAction(action === "remove-download" ? "Removing download…" : "Unlinking model…");
     setActionError(null);
     try {
-      const result = await removeTextModel(id);
-      setStatus((current) => ({ ...current, models: result.models }));
+      const result = await removeTextModel(id, action);
+      activePoll.current = null;
+      setStatus((current) => ({ ...current, models: result.models,
+        recommendedModels: result.recommendedModels ?? current.recommendedModels }));
+      setRefreshKey((value) => value + 1);
       return true;
     } catch (error) {
       setActionError(error instanceof Error ? error.message : "Could not remove this model from Fern.");
+      setRefreshKey((value) => value + 1);
       return false;
     } finally {
       modelActionRef.current = false;

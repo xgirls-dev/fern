@@ -63,6 +63,7 @@ from text_model_download import DEFAULT_MODEL_ID as DEFAULT_TEXT_MODEL_ID
 from text_model_download import catalog as text_model_catalog, install_model as install_text_model, model_files as text_model_files
 from text_model_download import model_download_details as text_model_download_details
 from text_model_download import PREPARING_MODEL_FILES, TextModelDownloadPaused, check_download_pause, has_partial_download
+from text_model_download import managed_download_id, remove_download as remove_text_model_download
 from gguf_metadata import is_projector, read_metadata as read_gguf_metadata
 from gguf_runtime import RUNTIME_PLATFORM_ERROR, apple_silicon, runtime_supported as gguf_runtime_supported
 from chat_image_tools import CHAT_IMAGE_SIZE, IMAGE_MODEL_PRIORITY, IMAGE_TOOL, chat_image_overrides, image_tool_prompt
@@ -725,8 +726,12 @@ def text_runtime_snapshot() -> dict[str, Any]:
         runtime_available = False
         runtime_error = str(error).splitlines()[-1][:300]
     job = text_job_snapshot()
+    specs = text_model_catalog()
     try:
-        models = TEXT_MODEL_REGISTRY.snapshot()
+        models = [
+            {**model, "ownership": "managed" if managed_download_id(TEXT_MODEL_ROOT, model, specs) else "linked"}
+            for model in TEXT_MODEL_REGISTRY.snapshot()
+        ]
         registry_error = None
     except ValueError as error:
         models = []
@@ -734,7 +739,7 @@ def text_runtime_snapshot() -> dict[str, Any]:
     with TEXT_MODEL_INSTALL_LOCK:
         model_install = dict(TEXT_MODEL_INSTALL)
     recommended = []
-    for model_id, spec in text_model_catalog().items():
+    for model_id, spec in specs.items():
         if apple_silicon() and spec["format"] != "gguf":
             continue
         folder = TEXT_MODEL_ROOT / spec["folder"]
@@ -2902,12 +2907,21 @@ class Handler(BaseHTTPRequestHandler):
                     model_id = payload.get("modelId")
                     if not isinstance(model_id, str) or len(model_id) > 64:
                         raise ValueError("Choose a model to remove from the library.")
-                    model = next((item for item in TEXT_MODEL_REGISTRY.snapshot() if item["id"] == model_id), None)
+                    action = payload.get("action", "unlink")
+                    if action not in ("unlink", "remove-download"):
+                        raise ValueError("Choose how to remove this model.")
+                    registered = TEXT_MODEL_REGISTRY.snapshot()
+                    model = next((item for item in registered if item["id"] == model_id), None)
                     if model is None:
                         raise ValueError("That text model is no longer in the library.")
                     TEXT_GENERATION_WORKER.close()
-                    TEXT_MODEL_REGISTRY.remove(model_id)
-                self.send_json(200, {"model": model, "models": TEXT_MODEL_REGISTRY.snapshot()})
+                    if action == "remove-download":
+                        remove_text_model_download(TEXT_MODEL_ROOT, model, registered, TEXT_MODEL_REGISTRY.remove)
+                    else:
+                        TEXT_MODEL_REGISTRY.remove(model_id)
+                snapshot = text_runtime_snapshot()
+                self.send_json(200, {"model": model, "models": snapshot["models"],
+                                     "recommendedModels": snapshot["recommendedModels"]})
             except Exception as error:
                 self.send_json(400, {"error": str(error)})
             return

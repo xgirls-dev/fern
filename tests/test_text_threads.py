@@ -22,7 +22,7 @@ import api_server as api
 from text_model_registry import TextModelRegistry, REQUIRED_FILES
 from text_generation_process import TextGenerationProcess, TextWorkerError
 from text_generation_worker import resolve_text_device
-from text_model_download import MINIMUM_FREE_BYTES
+from text_model_download import INSTALL_MARKER, MINIMUM_FREE_BYTES, model_spec
 from text_model_download import PREPARING_MODEL_FILES, check_download_pause
 
 
@@ -77,6 +77,72 @@ class TextThreadsTests(unittest.TestCase):
         self.assertEqual(gemma["minimumFreeBytes"], gemma["bytes"] + MINIMUM_FREE_BYTES)
         self.assertEqual(gemma["projectorBytes"], 559_874_848)
         self.assertNotIn("projectorBytes", recommendations[api.DEFAULT_TEXT_MODEL_ID])
+
+    def test_managed_removal_and_legacy_unlink_through_the_api(self):
+        root = (self.root / "downloads").resolve()
+        spec = model_spec(api.DEFAULT_TEXT_MODEL_ID)
+        downloaded = root / spec["folder"]
+        downloaded.mkdir(parents=True)
+        for name in set(REQUIRED_FILES).union(file["path"] for file in spec["files"]):
+            source = self.folder / name
+            (downloaded / name).write_bytes(source.read_bytes() if source.exists() else b"fixture")
+        marker = {"modelId": api.DEFAULT_TEXT_MODEL_ID, "verifiedChecksums": True,
+                  **{key: spec[key] for key in ("name", "repo", "revision", "format")}}
+        marker_path = downloaded / INSTALL_MARKER
+        marker_path.write_text(json.dumps(marker), encoding="utf-8")
+        extra = downloaded / "my-notes.txt"
+        extra.write_text("Personal notes", encoding="utf-8")
+        managed = self.registry.add(str(downloaded))
+
+        with (
+            patch.object(api, "TEXT_MODEL_ROOT", root),
+            patch.object(api, "TEXT_MODEL_REGISTRY", self.registry),
+            patch.object(api, "apple_silicon", return_value=False),
+            patch.object(api.TEXT_GENERATION_WORKER, "close") as close_worker,
+            ThreadingHTTPServer(("127.0.0.1", 0), api.Handler) as server,
+        ):
+            worker = threading.Thread(target=server.serve_forever, daemon=True)
+            worker.start()
+            base = f"http://127.0.0.1:{server.server_port}/api/text"
+
+            def remove(model_id, **options):
+                request = urllib.request.Request(f"{base}/models/remove",
+                    data=json.dumps({"modelId": model_id, **options}).encode(),
+                    headers={"Content-Type": "application/json"})
+                with urllib.request.urlopen(request, timeout=5) as response:
+                    return json.load(response)
+
+            try:
+                with urllib.request.urlopen(f"{base}/status", timeout=5) as response:
+                    status = json.load(response)
+                self.assertEqual({item["id"]: item["ownership"] for item in status["models"]},
+                                 {self.model["id"]: "linked", managed["id"]: "managed"})
+                with self.assertRaises(urllib.error.HTTPError) as refused:
+                    remove(self.model["id"], action="remove-download")
+                with refused.exception as response:
+                    self.assertEqual(response.code, 400)
+                    self.assertIn("could not verify this download", json.load(response)["error"])
+                self.assertTrue((self.folder / "openvino_model.bin").is_file())
+                marker_path.write_text(json.dumps({**marker, "revision": "0" * 40}), encoding="utf-8")
+                with self.assertRaises(urllib.error.HTTPError) as mismatched:
+                    remove(managed["id"], action="remove-download")
+                with mismatched.exception as response:
+                    self.assertEqual(response.code, 400)
+                self.assertTrue((downloaded / "openvino_model.bin").is_file())
+                marker_path.write_text(json.dumps(marker), encoding="utf-8")
+                close_worker.reset_mock()
+                deleted = remove(managed["id"], action="remove-download")
+                close_worker.assert_called_once()
+                self.assertEqual([item["id"] for item in deleted["models"]], [self.model["id"]])
+                recommendation = next(item for item in deleted["recommendedModels"] if item["id"] == api.DEFAULT_TEXT_MODEL_ID)
+                self.assertFalse(recommendation["installed"])
+                self.assertEqual(list(downloaded.iterdir()), [extra])
+                self.assertEqual(extra.read_text(encoding="utf-8"), "Personal notes")
+                self.assertEqual(remove(self.model["id"])["models"], [])
+                self.assertTrue(all((self.folder / name).is_file() for name in REQUIRED_FILES))
+            finally:
+                server.shutdown()
+                worker.join(timeout=5)
 
     def test_pause_is_job_scoped_and_finishes_before_resume_or_local_install(self):
         downloading = threading.Event()

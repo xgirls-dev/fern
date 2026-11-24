@@ -181,9 +181,11 @@ export interface TextModel {
   supportsReasoning?: boolean;
   supportsTools?: boolean;
   maxContextSize?: number | null;
+  ownership?: "managed" | "linked";
   installed: boolean;
   error?: string | null;
 }
+export type TextModelRemoval = "unlink" | "remove-download";
 export interface TextJob {
   id: string | null;
   threadId: string | null;
