@@ -34,7 +34,7 @@ try {
   await expect(page.getByRole("status").filter({ hasText: "Saving workspace backup…" })).toBeVisible();
   await expect(backup).toBeDisabled();
   await expect(trigger).toBeDisabled();
-  assert.equal(await page.evaluate(() => window.backupSnapshot.version), 1);
+  await expect.poll(() => page.evaluate(() => window.backupSnapshot?.version)).toBe(1);
   await page.evaluate(() => window.finishBackup(true));
   await expect(page.getByText("Workspace backup saved.", { exact: true })).toBeVisible();
 
