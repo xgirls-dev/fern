@@ -604,7 +604,7 @@ export function draftContextImageOwner(thread: TextThread): string | undefined {
   return thread.draftContextImageThreadId ?? findChatImage(thread, thread.draftContextImage)?.originThreadId;
 }
 
-export function copyTextHistory(thread: TextThread, messages: TextMessage[]): TextMessage[] {
+export function copyTextHistory(thread: Pick<TextThread, "id" | "messages">, messages = thread.messages): TextMessage[] {
   const copy = (message: TextMessage): TextMessage => ({
     ...message,
     inspectionJobId: undefined,

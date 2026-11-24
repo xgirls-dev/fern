@@ -196,7 +196,9 @@ function copyChat(source: TextThread, messageId?: string, revision?: string, for
     ...source, id: createTextThread().id, title: source.title.slice(0, 80 - suffix.length) + suffix,
     archived: false, renamed: true, updatedAt: Date.now(), pendingJobId: null, pendingPreview: undefined, pendingContext: undefined,
     messages: copyTextHistory(source, prefix),
-    versions: messageId === undefined ? source.versions : undefined,
+    versions: messageId === undefined ? source.versions?.map((version) => ({
+      ...version, messages: copyTextHistory({ id: source.id, messages: version.messages }),
+    })) : undefined,
     sourceThreadId: messageId === undefined ? undefined : source.id,
     promptEdit: undefined,
     draft: revision ?? (messageId === undefined ? source.draft : ""),
