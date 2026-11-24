@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import ctypes
+import http.client
 import json
 import os
 import platform
@@ -13,12 +14,14 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import threading
 import time
-import urllib.error
+import urllib.parse
 import urllib.request
 import zipfile
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
 from text_model_download import download_file
 from chat_context import DEFAULT_CONTEXT_SIZE, MAX_IMAGE_TOKENS, CompactedHistory, ContextBudgetError, fit_context, recent_images
@@ -44,6 +47,38 @@ _LINUX_DRIVER_HELP = "On Omarchy, run sudo pacman -Syu vulkan-intel vulkan-icd-l
 
 class VulkanDriverError(RuntimeError):
     code = "intel-vulkan-driver"
+
+
+class CompletionCancellation:
+    def __init__(self) -> None:
+        self._requested = threading.Event()
+        self._lock = threading.Lock()
+        self._socket: socket.socket | None = None
+        self.streaming = False
+
+    def cancel(self) -> None:
+        self._requested.set()
+        with self._lock:
+            if self._socket is not None:
+                try:
+                    self._socket.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass  # The completion may have closed the socket already.
+
+    def check(self) -> None:
+        if self._requested.is_set():
+            raise InterruptedError("Generation stopped.")
+
+    @contextmanager
+    def watch(self, connection: socket.socket) -> Iterator[None]:
+        with self._lock:
+            self.check()
+            self._socket = connection
+        try:
+            yield
+        finally:
+            with self._lock:
+                self._socket = None
 
 
 def apple_silicon() -> bool:
@@ -287,9 +322,12 @@ class GGUFServer:
             headers={"Authorization": f"Bearer {self.key}", "Content-Type": "application/json"},
         )
 
-    def close(self) -> None:
+    def close(self, *, force: bool = False) -> None:
         if self.process is not None and self.process.poll() is None:
-            self.process.terminate()
+            if force:
+                self.process.kill()
+            else:
+                self.process.terminate()
             try:
                 self.process.wait(timeout=5)
             except subprocess.TimeoutExpired:
@@ -333,7 +371,36 @@ class GGUFServer:
             raise RuntimeError("The local model could not compact the earlier conversation. Choose a larger context.")
         return summary
 
-    def generate(self, request: dict[str, Any], emit: Callable[[dict], None]) -> dict[str, Any]:
+    @contextmanager
+    def _completion(self, body: dict, emit: Callable[[dict], None],
+                    cancellation: CompletionCancellation) -> Iterator[http.client.HTTPResponse]:
+        connection = http.client.HTTPConnection(urllib.parse.urlsplit(self.base).netloc, timeout=180)
+        try:
+            connection.connect()
+            assert connection.sock is not None
+            # Shutdown wakes a blocked response read and tells llama.cpp to cancel this request.
+            with cancellation.watch(connection.sock):
+                emit({"type": "cancellable"})
+                emit({"type": "phase", "text": "Waiting for the first token…"})
+                connection.request("POST", "/v1/chat/completions", json.dumps(body).encode("utf-8"), {
+                    "Authorization": f"Bearer {self.key}", "Content-Type": "application/json", "Connection": "close",
+                })
+                with connection.getresponse() as response:
+                    if not 200 <= response.status < 300:
+                        detail = response.read(8192).decode("utf-8", errors="replace")
+                        raise RuntimeError(f"The GGUF runtime rejected this request (HTTP {response.status}). {detail}")
+                    yield response
+            cancellation.check()
+        except (OSError, http.client.HTTPException) as error:
+            cancellation.check()
+            raise RuntimeError("The GGUF runtime disconnected during the response.") from error
+        finally:
+            connection.close()
+
+    def generate(self, request: dict[str, Any], emit: Callable[[dict], None],
+                 cancellation: CompletionCancellation | None = None) -> dict[str, Any]:
+        cancellation = cancellation or CompletionCancellation()
+        cancellation.check()
         reasoning = request.get("mode") == "reasoning"
         options: dict[str, Any] = {"chat_template_kwargs": {"enable_thinking": reasoning}}
         if request.get("tools"):
@@ -412,43 +479,41 @@ class GGUFServer:
         finished = False
         finish_reason = None
         started = time.perf_counter()
-        emit({"type": "phase", "text": "Waiting for the first token…"})
-        try:
-            with self.http.open(self._request("/v1/chat/completions", body), timeout=180) as response:
-                for raw in response:
-                    if not raw.startswith(b"data:"):
-                        continue
-                    line = raw[5:].strip()
-                    if line == b"[DONE]":
-                        finished = True
-                        break
-                    event = json.loads(line)
-                    if event.get("error"):
-                        raise RuntimeError(event["error"].get("message", "GGUF inference failed."))
-                    if event.get("usage"):
-                        usage = event["usage"]
-                    for choice in event.get("choices", []):
-                        finish_reason = choice.get("finish_reason") or finish_reason
-                        delta = choice.get("delta", {})
-                        if token := delta.get("content"):
-                            text.append(token)
-                            emit({"type": "token", "text": token})
-                        if reasoning and (token := delta.get("reasoning_content")):
-                            thoughts.append(token)
-                            emit({"type": "reasoning", "text": token})
-                        for change in delta.get("tool_calls", []):
-                            index = change.get("index", 0)
-                            call = calls.setdefault(index, {"id": "", "type": "function", "function": {"name": "", "arguments": ""}})
-                            if change.get("id"):
-                                call["id"] = change["id"]
-                            if change.get("type"):
-                                call["type"] = change["type"]
-                            for key, value in change.get("function", {}).items():
-                                if key in call["function"]:
-                                    call["function"][key] += value
-        except urllib.error.HTTPError as error:
-            detail = error.read(8192).decode("utf-8", errors="replace")
-            raise RuntimeError(f"The GGUF runtime rejected this request (HTTP {error.code}). {detail}") from error
+        with self._completion(body, emit, cancellation) as response:
+            for raw in response:
+                cancellation.check()
+                if not raw.startswith(b"data:"):
+                    continue
+                line = raw[5:].strip()
+                if line == b"[DONE]":
+                    finished = True
+                    break
+                event = json.loads(line)
+                if event.get("error"):
+                    raise RuntimeError(event["error"].get("message", "GGUF inference failed."))
+                if event.get("usage"):
+                    usage = event["usage"]
+                for choice in event.get("choices", []):
+                    finish_reason = choice.get("finish_reason") or finish_reason
+                    delta = choice.get("delta", {})
+                    if delta.get("content") or delta.get("reasoning_content") or delta.get("tool_calls"):
+                        cancellation.streaming = True
+                    if token := delta.get("content"):
+                        text.append(token)
+                        emit({"type": "token", "text": token})
+                    if reasoning and (token := delta.get("reasoning_content")):
+                        thoughts.append(token)
+                        emit({"type": "reasoning", "text": token})
+                    for change in delta.get("tool_calls", []):
+                        index = change.get("index", 0)
+                        call = calls.setdefault(index, {"id": "", "type": "function", "function": {"name": "", "arguments": ""}})
+                        if change.get("id"):
+                            call["id"] = change["id"]
+                        if change.get("type"):
+                            call["type"] = change["type"]
+                        for key, value in change.get("function", {}).items():
+                            if key in call["function"]:
+                                call["function"][key] += value
         if not finished:
             raise RuntimeError("The GGUF runtime disconnected during the response.")
         if calls and finish_reason != "tool_calls":

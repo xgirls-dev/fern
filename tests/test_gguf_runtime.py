@@ -7,13 +7,16 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import threading
 import unittest
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from gguf_runtime import GGUFServer, VulkanDriverError, ensure_runtime, runtime_supported
+from gguf_runtime import CompletionCancellation, GGUFServer, VulkanDriverError, ensure_runtime, runtime_supported
 
 
 class GGUFCompletionTests(unittest.TestCase):
@@ -54,24 +57,76 @@ class GGUFCompletionTests(unittest.TestCase):
         server.backend = "cpu"
         server.history = {}
         server._prompt_tokens = Mock(return_value=16)
-        server._request = Mock()
-        server.http = Mock()
+        server._completion = Mock()
         request = {"messages": [{"role": "user", "content": "Explain."}], "maxNewTokens": 64,
                    "temperature": 0.5, "topP": 0.9, "seed": 11}
 
         for reason in ("length", "stop", None):
             with self.subTest(reason=reason):
                 chunks = [
+                    {"choices": [{"delta": {"role": "assistant"}}]},
                     {"choices": [{"delta": {"content": "The answer"}}]},
                     {"choices": [{"delta": {}, "finish_reason": reason}]},
                     {"choices": [], "usage": {"prompt_tokens": 16, "completion_tokens": 64}},
                 ]
                 encoded = b"".join(b"data: " + json.dumps(chunk).encode() + b"\n\n" for chunk in chunks)
-                server.http.open.return_value = io.BytesIO(encoded + b"data: [DONE]\n\n")
-                result = server.generate(request, Mock())
+                server._completion.return_value = io.BytesIO(encoded + b"data: [DONE]\n\n")
+                cancellation = CompletionCancellation()
+                result = server.generate(request, Mock(), cancellation)
+                self.assertTrue(cancellation.streaming)
                 self.assertEqual(result["text"], "The answer")
                 self.assertEqual(result["outputTokens"], 64)
                 self.assertEqual(result["finishReason"], reason)
+
+
+    def test_cancel_disconnects_a_completion_waiting_for_more_tokens(self) -> None:
+        streaming = threading.Event()
+        release = threading.Event()
+
+        class DelayedCompletion(BaseHTTPRequestHandler):
+            def do_POST(self):
+                self.rfile.read(int(self.headers["Content-Length"]))
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.end_headers()
+                release.wait(5)
+
+        with ThreadingHTTPServer(("127.0.0.1", 0), DelayedCompletion) as upstream:
+            serving = threading.Thread(target=upstream.serve_forever, daemon=True)
+            serving.start()
+            server = GGUFServer.__new__(GGUFServer)
+            server.base = f"http://127.0.0.1:{upstream.server_port}"
+            server.key = "test"
+            cancellation = CompletionCancellation()
+
+            def stream():
+                with server._completion({}, Mock(), cancellation) as response:
+                    streaming.set()
+                    return response.read()
+
+            try:
+                with ThreadPoolExecutor(1) as pool:
+                    result = pool.submit(stream)
+                    try:
+                        self.assertTrue(streaming.wait(3))
+                        cancellation.cancel()
+                        with self.assertRaises(InterruptedError):
+                            result.result(timeout=2)
+                    finally:
+                        release.set()
+            finally:
+                upstream.shutdown()
+                serving.join()
+
+    def test_force_close_kills_the_runtime_without_waiting_for_graceful_shutdown(self) -> None:
+        server = GGUFServer.__new__(GGUFServer)
+        server.process = Mock()
+        server.process.poll.return_value = None
+        server.diagnostics = Mock()
+        server.close(force=True)
+        server.process.kill.assert_called_once_with()
+        server.process.terminate.assert_not_called()
+        server.diagnostics.cleanup.assert_called_once_with()
 
 
 class VulkanRuntimeTests(unittest.TestCase):
@@ -80,16 +135,15 @@ class VulkanRuntimeTests(unittest.TestCase):
         server.backend, server.device, server.context_size = "vulkan", "GPU", 4096
         server.history, server.load_options = {}, {}
         server._prompt_tokens = Mock()
-        server._request = Mock()
-        server.http = Mock()
+        server._completion = Mock()
         request = {"messages": [{"role": "user", "content": "Hello."}],
                    "temperature": 0, "topP": 1, "seed": 0}
         for prompt, requested, expected in ((768, 512, 512), (768, 2450, 2450), (768, 4096, 3072), (2200, 4096, 1640)):
             with self.subTest(prompt=prompt, requested=requested):
                 server._prompt_tokens.return_value = prompt
-                server.http.open.return_value = io.BytesIO(b"data: [DONE]\n")
+                server._completion.return_value = io.BytesIO(b"data: [DONE]\n")
                 result = server.generate({**request, "maxNewTokens": requested}, Mock())
-                self.assertEqual(server._request.call_args.args[1]["max_tokens"], expected)
+                self.assertEqual(server._completion.call_args.args[0]["max_tokens"], expected)
                 self.assertEqual(result["maxNewTokens"], expected)
 
     def test_download_reuse_and_repair_missing_backend_dll(self) -> None:

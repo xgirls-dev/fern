@@ -94,6 +94,69 @@ for line in sys.stdin:
         finally:
             worker.close()
 
+    def test_stream_stop_preserves_worker_and_falls_back_for_a_stall(self):
+        script = self.root / "cancellable_worker.py"
+        script.write_text('''import json, sys, time
+def emit(kind, **fields):
+    print("FERN_TEXT_EVENT:" + json.dumps({"type": kind, **fields}), flush=True)
+for line in sys.stdin:
+    mode = json.loads(line).get("mode")
+    if mode in ("cancel", "stall", "prefill"):
+        if mode != "prefill":
+            emit("cancellable")
+        emit("phase", text="ready to cancel")
+        if mode != "cancel":
+            time.sleep(60)
+        else:
+            assert json.loads(sys.stdin.readline()) == {"op": "cancel"}
+            emit("token", text="Ignore this late token.")
+            emit("cancelled")
+            continue
+    if mode == "after-stop":
+        time.sleep(1.1)
+    emit("result", text="ok")
+''')
+        worker = TextGenerationProcess()
+        ready = threading.Event()
+        tokens = []
+
+        def generate(mode, cancel_event=None):
+            return worker.generate(
+                model_path=str(self.folder), device="GPU", command=[sys.executable, "-u", str(script)],
+                request={"mode": mode}, cwd=self.root, env=dict(os.environ), cancel_event=cancel_event,
+                on_token=tokens.append, on_phase=lambda phase: ready.set() if phase == "ready to cancel" else None,
+            )
+
+        try:
+            self.assertEqual(generate("warmup")["text"], "ok")
+            first = worker._process
+            with ThreadPoolExecutor(1) as pool:
+                for mode, error in (("cancel", InterruptedError), ("stall", RuntimeError), ("prefill", RuntimeError)):
+                    ready.clear()
+                    cancel = threading.Event()
+                    future = pool.submit(generate, mode, cancel)
+                    try:
+                        self.assertTrue(ready.wait(5))
+                        worker.request_stop(threading.Event())
+                        self.assertFalse(future.done())
+                        cancel.set()
+                        worker.request_stop(cancel)
+                        worker.request_stop(cancel)
+                        with self.assertRaises(error):
+                            future.result(timeout=6)
+                    finally:
+                        if not future.done():
+                            worker.interrupt()
+                    if mode == "cancel":
+                        self.assertEqual(generate("after-stop")["text"], "ok")
+                        self.assertIs(worker._process, first)
+                        self.assertEqual(tokens, [])
+            self.assertIsNotNone(first.poll())
+            self.assertEqual(generate("next")["text"], "ok")
+            self.assertIsNot(worker._process, first)
+        finally:
+            worker.close()
+
     def test_corrupt_registry_is_not_silently_overwritten(self):
         self.registry.path.write_text('broken')
         with self.assertRaisesRegex(ValueError, "preserved"):
@@ -307,17 +370,17 @@ for line in sys.stdin:
         try:
             with patch.dict(api.TEXT_JOB, {"id": "running", "threadId": "text-thread-running", "status": "running", "partialText": "Partial"}, clear=True), \
                  patch.object(api, "TEXT_CANCEL_EVENT", cancel), \
-                 patch.object(api.TEXT_GENERATION_WORKER, "interrupt") as interrupt, \
+                 patch.object(api.TEXT_GENERATION_WORKER, "request_stop") as request_stop, \
                  patch.object(api.INTEL_MEDIA, "interrupt"), \
                  patch.object(api, "text_runtime_snapshot", side_effect=AssertionError("Job polling must skip the catalog")):
                 with urllib.request.urlopen(f"{base}/job") as response:
                     self.assertEqual(json.load(response)["partialText"], "Partial")
                 self.assertEqual(stop("stale")["id"], "running")
                 self.assertFalse(cancel.is_set())
-                interrupt.assert_not_called()
+                request_stop.assert_not_called()
                 self.assertEqual(stop("running", threadId="text-thread-running")["phase"], "Stopping generation…")
                 self.assertTrue(cancel.is_set())
-                interrupt.assert_called_once()
+                request_stop.assert_called_once_with(cancel)
         finally:
             server.shutdown()
             server.server_close()
@@ -340,7 +403,7 @@ for line in sys.stdin:
                  patch.dict(api.TEXT_PENDING_STOPS, clear=True), \
                  patch.object(api, "TEXT_MODEL_REGISTRY", self.registry), \
                  patch.object(api, "run_text_generation") as generate, \
-                 patch.object(api.TEXT_GENERATION_WORKER, "interrupt") as interrupt, \
+                 patch.object(api.TEXT_GENERATION_WORKER, "request_stop") as request_stop, \
                  patch.object(api.INTEL_MEDIA, "interrupt") as interrupt_media:
                 with api.JOB_ADMISSION_LOCK:
                     self.assertEqual(post("stop", identity), {"cancelledBeforeStart": True})
@@ -351,7 +414,7 @@ for line in sys.stdin:
                                      (identity["requestId"], identity["threadId"], "stopped"))
                 self.assertEqual(api.text_job_snapshot(), other_job)
                 generate.assert_not_called()
-                interrupt.assert_not_called()
+                request_stop.assert_not_called()
                 interrupt_media.assert_not_called()
         finally:
             server.shutdown()

@@ -5,17 +5,32 @@ import json
 import os
 import subprocess
 import threading
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
 
 EVENT_PREFIX = "FERN_TEXT_EVENT:"
+STOP_TIMEOUT = 0.8
 
 
 class TextWorkerError(RuntimeError):
     def __init__(self, message: str, code: str | None = None) -> None:
         super().__init__(message)
         self.code = code
+
+
+class _GenerationStopped(InterruptedError):
+    pass
+
+
+@dataclass
+class _ActiveRequest:
+    process: subprocess.Popen[str]
+    cancel_event: threading.Event | None
+    cancellable: bool = False
+    stopping: bool = False
+    timeout: threading.Timer | None = None
 
 
 def terminate_tree(process: subprocess.Popen[str] | None) -> None:
@@ -42,6 +57,8 @@ def terminate_tree(process: subprocess.Popen[str] | None) -> None:
 class TextGenerationProcess:
     def __init__(self) -> None:
         self._lock = threading.Lock()
+        self._control_lock = threading.Lock()
+        self._active: _ActiveRequest | None = None
         self._process: subprocess.Popen[str] | None = None
         self._key: tuple[str, str, tuple[str, ...]] | None = None
 
@@ -70,6 +87,31 @@ class TextGenerationProcess:
     def interrupt(self) -> None:
         # Terminating before acquiring _lock releases a request blocked on stdout.
         terminate_tree(self._process)
+
+    def request_stop(self, cancel_event: threading.Event) -> None:
+        with self._control_lock:
+            active = self._active
+            if active is None or active.cancel_event is not cancel_event or active.stopping:
+                return
+            active.stopping = True
+            if active.cancellable:
+                try:
+                    assert active.process.stdin is not None
+                    active.process.stdin.write('{"op":"cancel"}\n')
+                    active.process.stdin.flush()
+                except (OSError, ValueError):
+                    pass
+                else:
+                    active.timeout = threading.Timer(STOP_TIMEOUT, self._force_stop, (active,))
+                    active.timeout.daemon = True
+                    active.timeout.start()
+                    return
+            terminate_tree(active.process)
+
+    def _force_stop(self, active: _ActiveRequest) -> None:
+        with self._control_lock:
+            if self._active is active:
+                terminate_tree(active.process)
 
     def generate(
         self,
@@ -110,16 +152,18 @@ class TextGenerationProcess:
                 on_phase("Starting the text worker…")
 
             assert process is not None and process.stdin is not None and process.stdout is not None
-            try:
+            active = _ActiveRequest(process, cancel_event)
+            with self._control_lock:
                 if cancel_event is not None and cancel_event.is_set():
-                    self._stop_unlocked()
-                    raise InterruptedError("Generation stopped.")
+                    raise _GenerationStopped("Generation stopped.")
+                self._active = active
+            reset_worker = False
+            try:
                 process.stdin.write(json.dumps(request, ensure_ascii=False) + "\n")
                 process.stdin.flush()
                 while True:
                     if cancel_event is not None and cancel_event.is_set():
-                        self._stop_unlocked()
-                        raise InterruptedError("Generation stopped.")
+                        self.request_stop(cancel_event)
                     raw = process.stdout.readline()
                     if not raw:
                         raise RuntimeError("The text worker exited before returning a result.")
@@ -129,14 +173,24 @@ class TextGenerationProcess:
                         continue
                     event = json.loads(line[len(EVENT_PREFIX):])
                     kind = event.get("type")
-                    if kind == "token":
+                    cancelled = cancel_event is not None and cancel_event.is_set()
+                    if cancelled and kind in ("token", "reasoning", "phase"):
+                        continue
+                    if kind == "cancellable":
+                        with self._control_lock:
+                            active.cancellable = True
+                    elif kind == "token":
                         on_token(str(event.get("text", "")))
                     elif kind == "reasoning" and on_reasoning is not None:
                         on_reasoning(str(event.get("text", "")))
                     elif kind == "phase":
                         on_phase(str(event.get("text", "")))
                     elif kind == "result":
+                        if cancelled:
+                            raise _GenerationStopped("Generation stopped.")
                         return event
+                    elif kind == "cancelled" and cancelled:
+                        raise _GenerationStopped("Generation stopped.")
                     elif kind == "error":
                         detail = str(event.get("error") or "Text generation failed.")
                         if event.get("traceback"):
@@ -144,9 +198,15 @@ class TextGenerationProcess:
                         raise TextWorkerError(detail, event.get("code"))
                     else:
                         raise RuntimeError("The text worker sent an invalid response.")
-            except (BrokenPipeError, OSError, json.JSONDecodeError):
-                self._stop_unlocked()
+            except _GenerationStopped:
                 raise
-            except RuntimeError:
-                self._stop_unlocked()
+            except (OSError, json.JSONDecodeError, RuntimeError):
+                reset_worker = True
                 raise
+            finally:
+                with self._control_lock:
+                    self._active = None
+                    if active.timeout is not None:
+                        active.timeout.cancel()
+                if reset_worker:
+                    self._stop_unlocked()

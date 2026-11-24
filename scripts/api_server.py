@@ -2656,6 +2656,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         with JOB_ADMISSION_LOCK, TEXT_ADMISSION_LOCK:
+            cancel_event = None
             with TEXT_JOB_LOCK:
                 running = (TEXT_JOB.get("status") == "running"
                            and (request_id is None or request_id == TEXT_JOB.get("id"))
@@ -2663,10 +2664,12 @@ class Handler(BaseHTTPRequestHandler):
                 if running:
                     TEXT_JOB["phase"] = "Stopping generation…"
                     text_job_changed()
-                    if TEXT_CANCEL_EVENT is not None:
-                        TEXT_CANCEL_EVENT.set()
+                    cancel_event = TEXT_CANCEL_EVENT
+                    if cancel_event is not None:
+                        cancel_event.set()
             if running:
-                TEXT_GENERATION_WORKER.interrupt()
+                if cancel_event is not None:
+                    TEXT_GENERATION_WORKER.request_stop(cancel_event)
                 INTEL_MEDIA.interrupt()
             receipt = text_job_receipt(payload)
         self.send_json(202, receipt)

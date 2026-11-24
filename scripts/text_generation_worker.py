@@ -5,9 +5,11 @@ import json
 import os
 import signal
 import sys
+import threading
 import time
 import traceback
 from pathlib import Path
+from queue import SimpleQueue
 from typing import Any
 
 from chat_documents import add_document_context
@@ -36,14 +38,40 @@ def emit(payload: dict[str, Any]) -> None:
 
 def run_gguf(file: Path, device: str, projector: Path | None) -> int:
     from chat_context import DEFAULT_CONTEXT_SIZE
-    from gguf_runtime import GGUFServer, ensure_runtime
+    from gguf_runtime import CompletionCancellation, GGUFServer, ensure_runtime
 
     runtime_root = Path(os.environ["FERN_GGUF_RUNTIME_ROOT"])
+    requests: SimpleQueue[tuple[dict[str, Any], CompletionCancellation] | None] = SimpleQueue()
+
+    def read_requests() -> None:
+        cancellation = None
+        try:
+            for line in sys.stdin:
+                try:
+                    request = json.loads(line)
+                except json.JSONDecodeError:
+                    request = {}
+                if not isinstance(request, dict):
+                    request = {}
+                if request.get("op") == "cancel":
+                    if cancellation is not None:
+                        cancellation.cancel()
+                else:
+                    cancellation = CompletionCancellation()
+                    requests.put((request, cancellation))
+                    if request.get("op") == "shutdown":
+                        return
+        finally:
+            if cancellation is not None:
+                cancellation.cancel()
+            requests.put(None)
+
+    threading.Thread(target=read_requests, daemon=True).start()
     server = None
     try:
-        while line := sys.stdin.readline():
+        while pending := requests.get():
+            request, cancellation = pending
             try:
-                request = json.loads(line)
                 if request.get("op") == "shutdown":
                     return 0
                 if request.get("op") != "generate":
@@ -79,7 +107,13 @@ def run_gguf(file: Path, device: str, projector: Path | None) -> int:
                         executable, file, projector if vision else None, target, backend, context_size,
                         gpu_projector=gpu_projector, load_options=load_options,
                     )
-                emit(server.generate(request, emit))
+                emit(server.generate(request, emit, cancellation))
+            except InterruptedError:
+                # A disconnected prompt prefill can still hold the inference slot.
+                if server is not None and not cancellation.streaming:
+                    server.close(force=True)
+                    server = None
+                emit({"type": "cancelled"})
             except Exception as error:
                 emit({"type": "error", "error": str(error), "code": getattr(error, "code", None),
                       "traceback": traceback.format_exc()})
@@ -186,7 +220,7 @@ def run(model_path: str, device: str, projector_path: str = "") -> int:
 if __name__ == "__main__":
     if len(sys.argv) not in (3, 4):
         raise SystemExit("Usage: text_generation_worker.py MODEL_PATH DEVICE [PROJECTOR_PATH]")
-    if sys.platform == "linux":
+    if os.name != "nt":
         def exit_on_terminate(_signal, _frame):
             raise SystemExit(0)
 
