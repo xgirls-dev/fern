@@ -42,7 +42,7 @@ The preview is unnotarized. If macOS blocks the first launch, open **System Sett
 
 ### Start a session
 
-- **Chat.** Go to **Models → Text**, install **Gemma 4 E4B · GGUF**, then choose **New thread → Chat**. The download includes the language model and its matching vision projector.
+- **Chat.** Open **New thread → Chat**, write a draft, and choose **Browse models** if you need a local model. Fern recommends the smallest compatible download in its catalog. Attach an image and choose a vision model to ask about it. **Gemma 4 E4B · GGUF** includes its matching vision projector.
 - **Create an image.** Go to **Models → Image** and install a model available for your device. **Klein 4B** is the smaller FLUX.2 option. Choose **New thread → Create image**, select the model, and enter a prompt.
 - **Make an image in Chat.** Install Gemma 4 E4B and a compatible image model such as Klein 4B. Keep **Preferences → Compute → Generation device** set to **Available GPU**. In a Gemma chat, choose **Auto** or the installed model under **Chat settings → Image generation**. Try “Create a crisp wildlife photograph of a red fox in fresh snow,” then “What works well in this shot?”
 

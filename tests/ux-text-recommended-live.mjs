@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { mkdtemp, readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { expect } from '@playwright/test';
 import { chooseMessageAction, fixture } from './ui-fixture.mjs';
 
 const root = resolve('.');
@@ -46,7 +47,9 @@ async function apiJson(path, data) {
 try {
   const before = await apiJson('/api/text/status');
   assert.equal(before.defaultModelId, 'qwen3-4b-instruct-2507');
-  assert.equal(before.recommendedModels[0].installed, false);
+  const startupModel = before.recommendedModels.find((model) => model.id === before.defaultModelId);
+  assert(startupModel, "The default chat model is missing from the catalog.");
+  assert.equal(startupModel.installed, false);
   browser = await fixture();
   const { page, errors } = browser;
   await page.route('**/api/text/**', async route => {
@@ -55,19 +58,26 @@ try {
     catch (error) { console.error(`API proxy failure: ${path}`, error); await route.abort().catch(() => {}); }
   });
 
-  await page.locator('.sidebar-new-menu > button').click();
+  await page.getByRole('button', { name: 'New thread', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Chat', exact: true }).click();
+  const composer = page.getByRole('textbox', { name: 'Message', exact: true });
+  const draft = 'What is two plus two? Answer briefly.';
+  await composer.fill(draft);
   await page.getByRole('button', { name: 'Browse models', exact: true }).click();
-  await page.getByRole('button', { name: 'Download', exact: true }).click();
-  await page.getByText('Installed', { exact: true }).waitFor({ timeout: 30000 });
-  await page.locator('.sidebar-text-threads .sidebar-thread-button').first().click();
-  await page.getByRole('button', { name: /^Text model:/ }).waitFor();
+  const card = page.getByRole('article').filter({ has: page.getByRole('heading', { name: startupModel.name, exact: true }) });
+  await card.getByText('Recommended', { exact: true }).waitFor();
+  await card.getByRole('button', { name: 'Download', exact: true }).click();
+  const useModel = page.getByRole('button', { name: 'Use model in draft', exact: true });
+  await useModel.waitFor({ timeout: 30000 });
+  await useModel.click();
+  await expect(composer).toHaveValue(draft);
+  await expect(composer).toBeFocused();
   const installed = await apiJson('/api/text/status');
-  assert.equal(installed.recommendedModels[0].installed, true);
+  assert.equal(installed.recommendedModels.find((model) => model.id === startupModel.id)?.installed, true);
+  assert.equal(installed.job.status, 'idle');
   assert.equal(installed.models.length, 1);
   assert.match(installed.models[0].name, /Qwen3(?:-| )4B(?:-| )Instruct(?:-| )2507/i);
 
-  await page.getByLabel('Message', { exact: true }).fill('What is two plus two? Answer briefly.');
   await page.getByRole('button', { name: 'Send message', exact: true }).click();
   await page.getByRole('button', { name: 'Regenerate response', exact: true }).waitFor({ timeout: 180000 });
   assert.match(await page.locator('.text-message--assistant .text-message-content').last().textContent(), /four|4/i);

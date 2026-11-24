@@ -9,12 +9,14 @@ const automaticId = "text-thread-default-choice";
 const river = { id: "river", name: "River 3B", format: "gguf", bytes: 2e9, minimumFreeBytes: 2_536_870_912,
   projectorBytes: 256e6, installed: false };
 const spruce = { id: "spruce", name: "Spruce 4B", format: "gguf", installed: true };
+const largerDownload = { ...spruce, installed: false, bytes: 3e9 };
+const unsupportedDownload = { id: "no-runtime", name: "OpenVINO 1B", bytes: 1e9, installed: false };
 const retired = { id: "old", name: "Alpine 7B", format: "gguf", installed: false, error: "Model files moved outside Fern." };
 const draft = "Help me write a short introduction.";
 const { page, state, errors, close } = await fixture({
   firstRun: true, builtRenderer: process.env.FERN_READINESS_BUILT === "1",
-  textStatus: { models: [], ggufAvailable: true, runtimeAvailable: false, defaultModelId: river.id,
-    recommendedModels: [river], job: { status: "idle", id: null } },
+  textStatus: { models: [], ggufAvailable: true, runtimeAvailable: false, defaultModelId: largerDownload.id,
+    recommendedModels: [largerDownload, unsupportedDownload, river], job: { status: "idle", id: null } },
   legacyTextWorkspace: { activeId: draftId, threads: [
     { id: draftId, title: "First draft", messages: [] },
     { id: oldId, title: "Existing chat", modelId: retired.id, draft: "Keep this follow-up.", messages: [
@@ -59,7 +61,13 @@ try {
   await expect(button("Browse models")).toBeVisible();
   await button("Browse models").click();
   await expect(setup).toBeVisible();
-  const download = button("Download");
+  const cardFor = (name) => page.getByRole("article").filter({ has: page.getByRole("heading", { name, exact: true }) });
+  const download = cardFor(river.name).getByRole("button", { name: "Download", exact: true });
+  await expect(setup).toContainText("River 3B · 2.00 GB download");
+  await expect(cardFor(river.name)).toContainText("Recommended");
+  await expect(cardFor(largerDownload.name)).not.toContainText("Recommended");
+  await expect(cardFor(unsupportedDownload.name)).toContainText("The OpenVINO text runtime is unavailable.");
+  await expect(cardFor(unsupportedDownload.name).getByRole("button", { name: "Download", exact: true })).toHaveCount(0);
   await expect(download).toHaveAccessibleDescription(/Download\s+2\.00 GB\s+Device\s+Intel GPU/);
   await expect(download).toHaveAccessibleDescription(/Free space\s+2\.54 GB for a fresh install/);
   await expect(download).toHaveAccessibleDescription(/Vision projector\s+·\s+256 MB/);
@@ -76,7 +84,7 @@ try {
   await expect(message).toHaveValue(draft);
   await button("Browse models").click();
   await expect(download).toHaveAccessibleDescription(/Device\s+CPU/);
-  await button("Download").click();
+  await download.click();
   await expect(page.getByRole("progressbar", { name: "Text model installation" })).toBeVisible();
   await button("Return to draft").click();
   await expect(message).toHaveValue(draft);
@@ -93,11 +101,12 @@ try {
   state.textStatus.modelInstall = { ...state.textStatus.modelInstall, status: "failed", error: "The download was interrupted." };
   await expect(modelReadiness.getByRole("alert")).toContainText("The download was interrupted.");
   await button("Open model setup").click();
-  await button("Download").click();
+  await download.click();
   await expect(page.getByRole("progressbar", { name: "Text model installation" })).toBeVisible();
   await button("Return to draft").click();
   await button("View model download").focus();
   await expect(button("View model download")).toBeFocused();
+  state.textStatus.defaultModelId = river.id;
   state.textStatus.recommendedModels = [{ ...river, installed: true }];
   state.textStatus.models = [{ ...river, installed: true }, spruce, retired];
   state.textStatus.modelInstall = { ...state.textStatus.modelInstall, status: "complete" };

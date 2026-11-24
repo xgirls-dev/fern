@@ -6,7 +6,7 @@ import type { useQwen3Tts } from "../hooks/useQwen3Tts";
 import { ModelLibrary, type InstalledModel } from "./ModelLibrary";
 import { TextModelLibrary } from "./TextModelLibrary";
 import type { ModelSetup, SetupSelection } from "../lib/modelSetup";
-import { textModelReadiness } from "../lib/textThreads";
+import { recommendedTextModelIssue, textModelReadiness } from "../lib/textThreads";
 
 export type ModelCategory = "image" | "text" | "audio" | "video";
 export function ModelsView({ category: tab, onCategoryChange, text, audio, setup, onReturnToDraft, imageGpuAvailable }: {
@@ -21,12 +21,14 @@ export function ModelsView({ category: tab, onCategoryChange, text, audio, setup
   const body = useRef<HTMLDivElement>(null);
   const [imageCatalog, setImageCatalog] = useState<InstalledModel[]>([]);
   const [textSelection, setTextSelection] = useState<{ setup: ModelSetup; modelId: string }>();
-  const needsVision = setup?.task === "chat-image";
-  const needsText = setup?.task !== "image";
-  const needsImage = setup?.task !== "chat";
-  const compatibleText = text.status.models.filter((model) => textModelReadiness(text.status, model).usable &&
-    (!needsVision || (model.supportsVision && model.supportsTools)));
   const setupThread = setup && text.threads.find((thread) => thread.id === setup.threadId);
+  const needsImageTools = setup?.task === "chat-image";
+  const needsVision = needsImageTools || setup?.task === "chat-vision" ||
+    !!(setupThread?.draftImage || setupThread?.draftContextImage);
+  const needsText = setup?.task !== "image";
+  const needsImage = needsImageTools || setup?.task === "image";
+  const compatibleText = text.status.models.filter((model) => textModelReadiness(text.status, model).usable &&
+    (!needsVision || model.supportsVision) && (!needsImageTools || model.supportsTools));
   const chosenTextId = textSelection?.setup === setup ? textSelection?.modelId : undefined;
   const installedText = compatibleText.find((model) => model.id === chosenTextId)
     ?? compatibleText.find((model) => model.id === setupThread?.modelId)
@@ -36,24 +38,32 @@ export function ModelsView({ category: tab, onCategoryChange, text, audio, setup
     ...text.status, residentModel: text.statusError ? undefined : text.status.residentModel,
     runningModelId: text.status.job.status === "running" ? text.status.job.modelId : null,
   }, installedText);
-  const repairTarget = setupThread && !text.status.models.some((model) => model.id === setupThread.modelId && model.installed)
-    ? text.status.recommendedModels?.find((model) => model.repairModelId === setupThread.modelId && model.repairModelId)
-    : undefined;
-  const recommendedText = repairTarget ?? text.status.recommendedModels?.find((model) =>
-    needsVision ? model.format === "gguf" && text.status.ggufAvailable === true : model.id === text.status.defaultModelId);
+  const compatibleDownloads = text.status.recommendedModels?.filter((model) => !model.installed &&
+    !recommendedTextModelIssue(text.status, model) && (!needsVision || !!model.projectorBytes) &&
+    (!needsImageTools || model.supportsTools)) ?? [];
+  const repairTarget = setupThread?.modelId
+    ? compatibleDownloads.find((model) => model.repairModelId === setupThread.modelId) : undefined;
+  const install = text.status.modelInstall;
+  const unfinishedDownload = compatibleDownloads.find((model) =>
+    model.id === install?.modelId && install.status !== "idle" && install.status !== "complete");
+  const recommendedText = repairTarget ?? (!installedText
+    ? unfinishedDownload ?? compatibleDownloads.sort((a, b) => a.bytes - b.bytes ||
+      Number(b.id === text.status.defaultModelId) - Number(a.id === text.status.defaultModelId))[0]
+    : undefined);
   const installedTool = text.status.imageToolModels?.[0];
-  const installedImage = needsVision ? installedTool : imageCatalog.find((model) => model.installed && (["4b", "9b"].includes(model.id) || (model.category === "image" && !model.setupUnavailableReason)));
+  const installedImage = needsImageTools ? installedTool : imageCatalog.find((model) => model.installed && (["4b", "9b"].includes(model.id) || (model.category === "image" && !model.setupUnavailableReason)));
   const recommendedImage = imageCatalog.find((model) =>
     model.id === (window.studio.platform === "darwin" ? "klein-4b-mlx" : "4b") && !model.setupUnavailableReason
   );
-  const visionBlock = needsVision && (text.computeDevice === "CPU"
+  const imageToolBlock = needsImageTools && (text.computeDevice === "CPU"
     ? "Select GPU in Preferences to generate images in chat."
     : imageGpuAvailable === false ? `Image generation in chat requires an available ${window.studio.platform === "darwin" ? "Apple" : "Intel"} GPU.` : null);
   const selection = {
     textModelId: needsText ? installedText?.id : undefined,
     imageModelId: needsImage ? installedImage?.id : undefined,
   };
-  const setupReady = (!needsText || !!selection.textModelId) && (!needsImage || !!selection.imageModelId) && !visionBlock;
+  const setupReady = (!needsText || (!!selection.textModelId && text.statusLoaded && !text.statusError))
+    && (!needsImage || !!selection.imageModelId) && !imageToolBlock;
   useEffect(() => heading.current?.focus(), []);
   useLayoutEffect(() => { if (body.current) body.current.scrollTop = 0; }, [tab]);
   return <section className="shell-page models-view" aria-labelledby="models-view-title">
@@ -66,28 +76,29 @@ export function ModelsView({ category: tab, onCategoryChange, text, audio, setup
     />
     {setup ? <section className="model-setup-summary" aria-label="Draft setup">
       <div className="model-setup-summary-copy">
-        <strong>{needsVision ? "Images in chat" : needsText ? "Chat model" : "Image generation"}</strong>
+        <strong>{needsImageTools ? "Images in chat" : needsVision ? "Chat about an image" : needsText ? "Chat model" : "Image generation"}</strong>
         {needsText && <div className="model-setup-requirement">
-          {needsVision && <span className="model-setup-role">Chat and vision</span>}
+          {needsImageTools && <span className="model-setup-role">Chat and vision</span>}
           {installedText && compatibleText.length > 1 ? <Select aria-label="Chat model" className="model-setup-text-choice" value={installedText.id}
             onChange={(modelId) => setTextSelection({ setup, modelId })}
             options={compatibleText.map(({ id, name }) => ({ value: id, label: name }))} /> : <span>{installedText ? `${installedText.name} · ${selectedTextReadiness?.label}` :
             repairTarget ? `${repairTarget.name} · Needs repair` :
             recommendedText ? `${recommendedText.name} · ${(recommendedText.bytes / 1e9).toFixed(2)} GB download` :
-            text.statusLoaded ? "Choose a compatible chat model." : "Checking chat models…"}</span>}
+            !text.statusLoaded ? "Checking chat models…" :
+            needsVision ? "Choose a chat model with vision." : "Choose a compatible chat model."}</span>}
         </div>}
         {needsImage && <div className="model-setup-requirement">
-          {needsVision && <span className="model-setup-role">Image creation</span>}
+          {needsImageTools && <span className="model-setup-role">Image creation</span>}
           <span>{installedImage ? `${installedImage.label} · Installed` :
             recommendedImage ? `${recommendedImage.label} · ${(recommendedImage.bytes / 1e9).toFixed(2)} GB download` :
             "Choose an image model."}</span>
         </div>}
-        {visionBlock ? <span>{visionBlock}</span> : null}
+        {imageToolBlock && <span>{imageToolBlock}</span>}
       </div>
       <div className="model-setup-summary-actions">
-        {needsVision && !installedText && tab !== "text" && <Button variant="ghost" onClick={() => onCategoryChange("text")}>Choose chat model</Button>}
-        {needsVision && installedText && !installedImage && tab !== "image" && <Button variant="ghost" onClick={() => onCategoryChange("image")}>Choose image model</Button>}
-        {setupReady ? <Button variant="primary" onClick={() => onReturnToDraft(selection)}>Use {needsVision ? "models" : "model"} in draft</Button> : null}
+        {needsText && !installedText && tab !== "text" && <Button variant="ghost" onClick={() => onCategoryChange("text")}>Choose chat model</Button>}
+        {needsImageTools && installedText && !installedImage && tab !== "image" && <Button variant="ghost" onClick={() => onCategoryChange("image")}>Choose image model</Button>}
+        {setupReady ? <Button variant="primary" onClick={() => onReturnToDraft(selection)}>Use {needsImageTools ? "models" : "model"} in draft</Button> : null}
         <Button variant="secondary" onClick={() => onReturnToDraft()}>Return to draft</Button>
       </div>
     </section> : null}

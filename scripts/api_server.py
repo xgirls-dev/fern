@@ -753,6 +753,7 @@ def text_runtime_snapshot() -> dict[str, Any]:
             "name": spec["name"],
             "repo": spec["repo"],
             **text_model_download_details(spec),
+            "supportsTools": spec.get("supportsTools") is True,
             "installed": installed,
             "registeredModelId": entry["id"] if entry else None,
             "hasPartialDownload": (not installed or repair_model_id is not None) and has_partial_download(TEXT_MODEL_ROOT, spec),

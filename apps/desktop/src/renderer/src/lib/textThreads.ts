@@ -226,14 +226,16 @@ export function isTextModelInstalling(install: TextModelInstall | undefined):
   return install?.status === "downloading" || install?.status === "pausing" || install?.status === "preparing";
 }
 
+export interface RecommendedTextModel {
+  id: string; name: string; repo: string; bytes: number; installed: boolean; format?: string;
+  minimumFreeBytes?: number; projectorBytes?: number; supportsTools?: boolean;
+  hasPartialDownload?: boolean; repairModelId?: string | null; registeredModelId?: string | null;
+}
+
 export interface TextRuntimeStatus {
   registryError?: string | null;
   models: TextModel[];
-  recommendedModels?: Array<{
-    id: string; name: string; repo: string; bytes: number; installed: boolean; format?: string;
-    minimumFreeBytes?: number; projectorBytes?: number; hasPartialDownload?: boolean; repairModelId?: string | null;
-    registeredModelId?: string | null;
-  }>;
+  recommendedModels?: RecommendedTextModel[];
   defaultModelId?: string;
   imageToolModels?: ChatImageModel[];
   modelInstall?: TextModelInstall;
@@ -399,7 +401,7 @@ type TextRuntimeAvailability = Pick<TextRuntimeStatus, "ggufAvailable" | "ggufUn
 
 export function textRuntimeIssue(
   status: TextRuntimeAvailability,
-  model: TextModel | undefined,
+  model: Pick<RecommendedTextModel, "format"> | undefined,
 ): string | null {
   if (model?.format === "gguf") {
     return status.ggufAvailable === false
@@ -407,6 +409,11 @@ export function textRuntimeIssue(
       : null;
   }
   return status.runtimeAvailable ? null : status.runtimeError ?? "The OpenVINO text runtime is unavailable.";
+}
+
+export function recommendedTextModelIssue(status: TextRuntimeAvailability, model: RecommendedTextModel) {
+  if (model.format === "gguf" && status.ggufAvailable === undefined) return "Checking GGUF runtime availability…";
+  return textRuntimeIssue(status, model);
 }
 
 export function textModelReadiness(
