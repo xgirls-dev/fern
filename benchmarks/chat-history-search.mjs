@@ -15,6 +15,7 @@ const visible = mode === "electron" && process.env.FERN_E2E_VISIBLE === "1";
 const runs = positiveInteger("FERN_BENCH_RUNS", 5);
 const warmRuns = positiveInteger("FERN_BENCH_WARM_RUNS", 20);
 const reopen = process.env.FERN_BENCH_SEARCH_REOPEN === "1";
+const trace = process.env.FERN_BENCH_SEARCH_TRACE === "1";
 const opener = process.env.FERN_BENCH_SEARCH_OPENER ?? "pointer";
 const input = process.env.FERN_BENCH_SEARCH_INPUT ?? "fill";
 assert(["pointer", "keyboard"].includes(opener), "Choose pointer or keyboard for FERN_BENCH_SEARCH_OPENER.");
@@ -113,8 +114,9 @@ async function openElectron(scratch) {
 
 async function measure(field, query) {
   // Browser timestamps sample paint opportunities from the first input event.
-  await field.evaluate((input, { expectedTitle, phrase }) => {
+  await field.evaluate((input, { expectedTitle, phrase, trace }) => {
     const list = document.querySelector(".thread-browser-list");
+    if (trace) performance.clearMarks("fern:thread-search-finished");
     window.fernHistoryMeasurement = new Promise((resolve) => {
       let frame;
       let start;
@@ -142,8 +144,21 @@ async function measure(field, query) {
             if (!list.querySelector(".thread-browser-empty[role=status]")) {
               clearTimeout(timeout);
               cleanup();
+              const timing = trace && performance.getEntriesByName("fern:thread-search-finished", "mark").at(-1)?.detail;
+              if (trace && (!timing || timing.committedAt < enteredAt)) {
+                resolve({ error: "The final search did not report a commit timing." });
+                return;
+              }
               resolve({ firstFrameMs, firstResultFrameMs, completeFrameMs: now - start, maxFrameGapMs,
-                enterQueryMs: enteredAt - start, completeAfterQueryMs: now - enteredAt });
+                enterQueryMs: enteredAt - start, completeAfterQueryMs: now - enteredAt,
+                ...(timing ? {
+                  historyPrepareMs: timing.prepareMs, historyPostMessageMs: timing.postMs, workerDispatchMs: timing.dispatchMs,
+                  historyThreadsPosted: timing.updatedThreads, indexUpdateMs: timing.indexMs, workerScanMs: timing.scanMs,
+                  markdownMs: timing.markdownMs, markdownFields: timing.markdownFields, workerReplyMs: timing.replyMs,
+                  resultQueueMs: timing.committedAt - timing.renderCommitMs - timing.orderMs - timing.receivedAt,
+                  resultOrderMs: timing.orderMs, resultRenderCommitMs: timing.renderCommitMs,
+                  resultFrameAfterCommitMs: now - timing.committedAt,
+                } : {}) });
               return;
             }
           }
@@ -160,11 +175,15 @@ async function measure(field, query) {
       };
       input.addEventListener("input", onInput, true);
     });
-  }, { expectedTitle: title(query.chat), phrase: query.phrase });
+  }, { expectedTitle: title(query.chat), phrase: query.phrase, trace });
   if (input === "keys") await field.pressSequentially(query.phrase);
   else await field.fill(query.phrase);
   const sample = await field.page().evaluate(() => window.fernHistoryMeasurement);
   assert(!sample.error, sample.error);
+  if (trace) {
+    for (const [name, value] of Object.entries(sample)) assert(Number.isFinite(value) && value >= 0, `${name}: ${value}`);
+    assert(sample.markdownMs <= sample.workerScanMs + 0.001, "Markdown timing exceeded the enclosing search scan.");
+  }
   return sample;
 }
 
@@ -190,6 +209,7 @@ try {
     const { page, errors, close } = mode === "renderer" ? await openRenderer() : await openElectron(path.join(scratch, String(run)));
     try {
       userAgent ??= await page.evaluate(() => navigator.userAgent);
+      if (trace) await page.evaluate(() => performance.mark("fern:measure-thread-search"));
       await expect(page.getByRole("textbox", { name: "Message", exact: true })).toHaveValue(retainedDraft);
       const openSearch = page.getByRole("button", { name: "Search threads", exact: true });
       const open = () => opener === "keyboard" ? openSearch.press("Enter") : openSearch.click();
@@ -220,7 +240,7 @@ try {
   }
   console.log(JSON.stringify({
     mode: mode === "renderer" ? mode : executable ? "packaged-electron" : "built-electron",
-    revision, startedAt, visible, userAgent, opener, input, reopen,
+    revision, startedAt, visible, userAgent, opener, input, reopen, trace,
     host: { os: os.version(), arch: os.arch(), cpu: os.cpus()[0]?.model, cores: os.availableParallelism(), memoryBytes: os.totalmem() },
     fixture: { threads: threads.length, messages: threads.reduce((count, thread) => count + thread.messages.length, 0) },
     summary: { cold: summarize(cold), warm: summarize(warm) }, cold, warm,

@@ -41,13 +41,16 @@ function readRenderedText(node: RenderedNode): string {
   return tagName && isChatSearchBlock(tagName) ? `\n${children}\n` : children;
 }
 
-function renderedMarkdown(text: string | undefined, streaming: boolean) {
+function renderedMarkdown(text: string | undefined, streaming: boolean, recordParse?: (elapsed: number) => void) {
   if (!text) return text;
   const structured = hasStreamingMarkdown(text);
   if (!structured && !text.includes("&")) return text;
   const preview = streaming && structured;
   const processor = preview ? streamingMarkdown : settledMarkdown;
-  return readRenderedText(processor.runSync(processor.parse(preview ? previewMarkdown(text) : text)));
+  const started = recordParse ? performance.now() : 0;
+  const rendered = readRenderedText(processor.runSync(processor.parse(preview ? previewMarkdown(text) : text)));
+  if (recordParse) recordParse(performance.now() - started);
+  return rendered;
 }
 
 function searchFields(message: TextMessage, streaming = false): SearchField[] {
@@ -63,12 +66,12 @@ function searchFields(message: TextMessage, streaming = false): SearchField[] {
   return fields;
 }
 
-function renderedField(field: SearchField) {
+function renderedField(field: SearchField, recordParse?: (elapsed: number) => void) {
   const [, source, mode] = field;
   if (!source || !mode) return source;
   const cached = rendered.get(field);
   if (cached !== undefined) return cached;
-  const text = renderedMarkdown(source, mode === "streaming") ?? "";
+  const text = renderedMarkdown(source, mode === "streaming", recordParse) ?? "";
   rendered.set(field, text);
   return text;
 }
@@ -130,7 +133,7 @@ function couldMatchMarkdown(source: string, characters: string) {
   return true;
 }
 
-export function threadSearchMatcher(query: string) {
+export function threadSearchMatcher(query: string, recordParse?: (elapsed: number) => void) {
   const pattern = chatSearchPattern(query);
   // Limit the prefilter to characters with predictable decomposition and case folding.
   const characters = query.normalize().toLowerCase().replace(/[^a-z\p{Unified_Ideograph}]/gu, "");
@@ -139,7 +142,7 @@ export function threadSearchMatcher(query: string) {
       for (const field of fields) {
         const [, source, mode] = field;
         if (!source || (mode && !rendered.has(field) && !couldMatchMarkdown(source, characters))) continue;
-        const excerpt = chatSearchExcerpt(renderedField(field)?.replace(/\s+/g, " ").trim(), pattern);
+        const excerpt = chatSearchExcerpt(renderedField(field, recordParse)?.replace(/\s+/g, " ").trim(), pattern);
         if (excerpt) return excerpt;
       }
     }
