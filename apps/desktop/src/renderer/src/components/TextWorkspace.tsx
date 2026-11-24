@@ -779,6 +779,34 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
     return renderRow(row, transcript.length - 1, { progress: replyProgress, previous: showPreviousReply });
   }, [liveKey, liveMessageId, renderRow, replyProgress, retryRow, showPreviousReply, streamingMessage, transcript.length]);
 
+  const inlinePhase = historyVisible && liveReply &&
+    (replyProgress.kind === "status" || replyProgress.kind === "reasoning")
+    ? `${liveKey}:${replyProgress.label}` : null;
+  const [phaseVisibility, setPhaseVisibility] = useState<{ phase: string; visible: boolean }>();
+  useEffect(() => {
+    if (!inlinePhase) return;
+    const feed = feedRef.current;
+    const stage = feed?.querySelector(".text-message--streaming .text-reply-stage");
+    if (!feed || !stage) return;
+    const threshold = 0.98;
+    const observer = new IntersectionObserver((entries) => {
+      const entry = entries.at(-1);
+      if (!entry) return;
+      const visible = entry.isIntersecting && entry.intersectionRatio >= threshold;
+      setPhaseVisibility((previous) => previous?.phase === inlinePhase && previous.visible === visible
+        ? previous : { phase: inlinePhase, visible });
+    }, { root: feed, threshold });
+    observer.observe(stage);
+    return () => observer.disconnect();
+  }, [feedRef, inlinePhase]);
+  // The footer still announces phases and keeps them visible when reading elsewhere.
+  const showPhaseInReply = inlinePhase !== null &&
+    (phaseVisibility?.phase === inlinePhase ? phaseVisibility.visible : followingLatest);
+  const showDraftCount = !draftTooLong && draftCharacters !== undefined && draftCharacters >= PROMPT_COUNT_THRESHOLD;
+  const composerHint = showDraftCount ? `${draftCharacters.toLocaleString()} / ${TEXT_MESSAGE_CHARACTER_LIMIT.toLocaleString()}`
+    : responseHere ? stopping ? "" : "Esc to stop"
+    : busy || attachingImage || modelNotice || incompatibleImages || draftTooLong ? "" : "Enter to send · Shift + Enter for newline";
+
   return (
     <section className={`text-workspace${empty ? " text-workspace--empty" : ""}`} aria-label={split ? pane === "primary" ? "Left chat" : "Right chat" : "Text conversation"}>
       <header className="workspace-header text-header">
@@ -983,10 +1011,9 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
         {draftTooLong && <p id={draftLimitId} role="status" className="text-composer-limit">{PROMPT_LIMIT_MESSAGE} Shorten the draft or choose a GGUF model.</p>}
         <div className="text-composer-hint">
           <div className="text-composer-hint-copy">
-            <span role="status" aria-atomic="true">{modelNotice ? "" : activity || unavailableReason}</span>
+            <span className={showPhaseInReply ? "sr-only" : undefined} role="status" aria-atomic="true">{modelNotice ? "" : activity || unavailableReason}</span>
             {otherResponseThread && <Button variant="ghost" className="text-open-running" onClick={() => studio.selectThread(otherResponseThread.id)}>Open running chat</Button>}
-            <span className="text-keyboard-hint">{!draftTooLong && draftCharacters !== undefined && draftCharacters >= PROMPT_COUNT_THRESHOLD
-              ? `${draftCharacters.toLocaleString()} / ${TEXT_MESSAGE_CHARACTER_LIMIT.toLocaleString()}` : "Enter to send · Shift + Enter for newline"}</span>
+            {composerHint && <span className="text-keyboard-hint">{composerHint}</span>}
           </div>
           {showScrollButton && <TooltipIconButton ref={bindScrollLatestControl} shape="circle" className="text-scroll-latest"
             aria-label="Jump to latest message" tooltip="Jump to latest message" onClick={() => {
