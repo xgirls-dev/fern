@@ -582,6 +582,7 @@ export function App() {
           className={`dashboard dashboard--${activeSection}`}
         >
           <h1 className="sr-only">Fern workspace</h1>
+          <Notifications inChat={activeSection === "text"} />
           {activeSection === "models" ? <Suspense fallback={<div className="dashboard-loading" role="status">Opening models…</div>}><ModelsView category={modelCategory} onCategoryChange={setModelCategory} text={text} audio={tts} setup={modelSetup} onReturnToDraft={returnToDraft} imageGpuAvailable={imageGpuAvailable} /></Suspense> : null}
           {activeSection === "storage" ? <Suspense fallback={<div className="dashboard-loading" role="status">Opening storage…</div>}><StorageView
             active={activeSection === "storage"}
@@ -953,7 +954,6 @@ export function App() {
           onClose={() => setLightboxImage(null)}
         />
       )}
-      <Notifications />
       {threadSearch ? <Suspense fallback={null}>
         <ThreadBrowser
           threads={searchableThreads}

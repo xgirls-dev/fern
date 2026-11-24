@@ -54,7 +54,7 @@ function Toast({
     </div>
   );
 }
-export function Notifications() {
+export function Notifications({ inChat }: { inChat: boolean }) {
   const [items, setItems] = useState<Notification[]>([]);
   const [dismiss] = useState(
     () => (id: number) =>
@@ -72,9 +72,10 @@ export function Notifications() {
     window.addEventListener("fern-notification", receive);
     return () => window.removeEventListener("fern-notification", receive);
   }, []);
+  if (!items.length) return null;
   return (
     <aside className="notifications" aria-label="Notifications">
-      {items.map((item) => (
+      {(inChat ? [...items].reverse() : items).map((item) => (
         <Toast key={item.id} item={item} dismiss={dismiss} />
       ))}
     </aside>

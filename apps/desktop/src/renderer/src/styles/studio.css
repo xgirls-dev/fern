@@ -18,8 +18,9 @@ body {
 .sidebar-brand-copy span { font-size: 11px; }
 
 
-.dashboard.dashboard--text { display: block; min-height: 0; padding: 0; overflow: hidden; }
-.chat-split-shell { display: flex; flex-direction: column; height: 100%; min-height: 0; container: chat-workspace / inline-size; }
+.dashboard.dashboard--text { display: flex; flex-direction: column; min-height: 0; padding: 0; overflow: hidden; }
+.dashboard--text > .dashboard-loading { flex: 1; }
+.chat-split-shell { display: flex; flex: 1; flex-direction: column; min-height: 0; container: chat-workspace / inline-size; }
 .chat-split-layout { position: relative; display: grid; flex: 1; min-height: 0; grid-template-columns: minmax(0, 1fr); }
 .chat-split-layout.is-split { grid-template-columns: minmax(0, var(--chat-split-width)) 8px minmax(0, 1fr); }
 .chat-pane { min-width: 0; min-height: 0; overflow: hidden; }
@@ -2282,6 +2283,26 @@ code {
   max-height: min(60vh, 380px);
   overflow: auto;
   overscroll-behavior: contain;
+}
+.dashboard--text > .notifications {
+  position: static;
+  z-index: auto;
+  flex: 0 0 auto;
+  flex-flow: row wrap;
+  align-content: flex-start;
+  align-items: flex-start;
+  justify-content: flex-end;
+  width: auto;
+  max-height: min(25dvh, 180px);
+  margin: 8px 12px;
+  pointer-events: auto;
+}
+.dashboard--text > .notifications > .notification {
+  flex: 0 1 min(100%, clamp(300px, 32%, 430px));
+  min-width: 0;
+}
+@media (max-width: 600px) {
+  .dashboard--text > .notifications > .notification { flex-basis: 100%; }
 }
 .notification {
   flex: 0 0 auto;
