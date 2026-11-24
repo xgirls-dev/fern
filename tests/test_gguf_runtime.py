@@ -79,6 +79,67 @@ class GGUFCompletionTests(unittest.TestCase):
                 self.assertEqual(result["finishReason"], reason)
 
 
+    def test_stream_reports_engine_timings_without_counting_the_role_header_as_output(self) -> None:
+        server = GGUFServer.__new__(GGUFServer)
+        server.context_size, server.backend, server.device = 4096, "cpu", "CPU"
+        server.history, server.load_options = {}, {}
+        server._prompt_tokens = Mock(return_value=16)
+        request = {"messages": [{"role": "user", "content": "Explain."}], "maxNewTokens": 32,
+                   "temperature": 0, "topP": 1, "seed": 0}
+        chunks = [
+            {"choices": [{"delta": {"role": "assistant"}}]},
+            {"choices": [{"delta": {"content": "A reply"}}]},
+            {"choices": [{"delta": {}, "finish_reason": "stop"}]},
+            {"choices": [], "usage": {"prompt_tokens": 16, "completion_tokens": 3},
+             "timings": {"prompt_ms": 95.5, "predicted_ms": 200, "prompt_n": 6, "cache_n": 10}},
+        ]
+        invalid_timing = {"prompt_ms": -1, "predicted_ms": float("inf"), "prompt_n": 6.5, "cache_n": True}
+
+        for raw, expected in (
+            (chunks[-1]["timings"], {"prefillMs": 95.5, "decodeMs": 200, "evaluatedPromptTokens": 6, "cachedPromptTokens": 10}),
+            (invalid_timing, {}),
+            (None, {}),
+        ):
+            with self.subTest(raw=raw):
+                chunks[-1]["timings"] = raw
+                encoded = b"".join(b"data: " + json.dumps(chunk).encode() + b"\n\n" for chunk in chunks)
+                server._completion = Mock(return_value=io.BytesIO(encoded + b"data: [DONE]\n\n"))
+                with patch("gguf_runtime.time.perf_counter", side_effect=[10, 10.25, 10.75, 11]):
+                    result = server.generate(request, Mock())
+                self.assertEqual(result["runtimeTiming"], {
+                    "contextPreparationMs": 250, "firstOutputChunkMs": 500, **expected,
+                })
+                self.assertEqual(result["generationSeconds"], 0.75)
+                self.assertEqual(result["outputTokens"], 3)
+
+    def test_worker_reports_setup_and_model_ready_only_when_loading(self) -> None:
+        from text_generation_worker import run_gguf
+        requests = [
+            {"op": "generate", "contextSize": 4096, "messages": [{"role": "user", "content": "Hello."}]}
+            for _ in range(2)
+        ]
+        requests.append({"op": "shutdown"})
+        stream = io.StringIO("".join(json.dumps(request) + "\n" for request in requests))
+        phases = []
+        engine = Mock(backend="cpu" if sys.platform == "darwin" else "openvino",
+                      context_size=4096, gpu_projector=False, load_options={})
+        engine.generate.side_effect = lambda *_args: {"type": "result", "runtimeTiming": {"prefillMs": 10}}
+        with (
+            patch.dict(os.environ, {"FERN_GGUF_RUNTIME_ROOT": "scratch"}),
+            patch("text_generation_worker.sys.stdin", stream),
+            patch("text_generation_worker.resolve_text_device", return_value="CPU"),
+            patch("text_generation_worker.emit", side_effect=phases.append),
+            patch("text_generation_worker.time.perf_counter", side_effect=[10, 10.125, 10.25, 10.875]),
+            patch("gguf_runtime.ensure_runtime", return_value=Path("llama-server")) as setup,
+            patch("gguf_runtime.GGUFServer", return_value=engine),
+        ):
+            self.assertEqual(run_gguf(Path("model.gguf"), "CPU", None), 0)
+        setup.assert_called_once()
+        self.assertEqual([event["runtimeTiming"] for event in phases if event["type"] == "result"], [
+            {"prefillMs": 10, "runtimeSetupMs": 125, "modelReadyMs": 625},
+            {"prefillMs": 10},
+        ])
+
     def test_cancel_disconnects_a_completion_waiting_for_more_tokens(self) -> None:
         streaming = threading.Event()
         release = threading.Event()

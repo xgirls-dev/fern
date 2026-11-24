@@ -977,6 +977,8 @@ def run_text_generation(payload: dict[str, Any], job_id: str, cancel_event: thre
             for field in ("inputTokens", "outputTokens", "generationSeconds"):
                 result[field] += continuation[field]
             result["tokensPerSecond"] = result["outputTokens"] / max(result["generationSeconds"], 0.001)
+            # The displayed reply now combines separate model calls and an image job.
+            result.pop("runtimeTiming", None)
             result["visionChecked"] = True
             result["context"] = continuation.get("context")
             result["finishReason"] = continuation.get("finishReason")

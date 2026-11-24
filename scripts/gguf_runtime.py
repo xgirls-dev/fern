@@ -401,6 +401,7 @@ class GGUFServer:
                  cancellation: CompletionCancellation | None = None) -> dict[str, Any]:
         cancellation = cancellation or CompletionCancellation()
         cancellation.check()
+        preparing = time.perf_counter()
         reasoning = request.get("mode") == "reasoning"
         options: dict[str, Any] = {"chat_template_kwargs": {"enable_thinking": reasoning}}
         if request.get("tools"):
@@ -476,6 +477,8 @@ class GGUFServer:
         text, thoughts = [], []
         calls = {}
         usage = {}
+        engine_timing = {}
+        first_chunk = None
         finished = False
         finish_reason = None
         started = time.perf_counter()
@@ -493,10 +496,15 @@ class GGUFServer:
                     raise RuntimeError(event["error"].get("message", "GGUF inference failed."))
                 if event.get("usage"):
                     usage = event["usage"]
+                # llama.cpp includes these slot counters on the final stream chunk.
+                if isinstance(event.get("timings"), dict):
+                    engine_timing = event["timings"]
                 for choice in event.get("choices", []):
                     finish_reason = choice.get("finish_reason") or finish_reason
                     delta = choice.get("delta", {})
                     if delta.get("content") or delta.get("reasoning_content") or delta.get("tool_calls"):
+                        if first_chunk is None:
+                            first_chunk = time.perf_counter()
                         cancellation.streaming = True
                     if token := delta.get("content"):
                         text.append(token)
@@ -520,6 +528,17 @@ class GGUFServer:
             raise RuntimeError("The chat model did not finish its tool call. Increase Maximum output in Chat settings and retry.")
         elapsed = max(time.perf_counter() - started, 0.001)
         output_tokens = usage.get("completion_tokens", 0)
+        runtime_timing = {"contextPreparationMs": (started - preparing) * 1000}
+        if first_chunk is not None:
+            runtime_timing["firstOutputChunkMs"] = (first_chunk - started) * 1000
+        for key, label in (("prompt_ms", "prefillMs"), ("predicted_ms", "decodeMs")):
+            value = engine_timing.get(key)
+            if type(value) in (float, int) and 0 <= value < float("inf"):
+                runtime_timing[label] = value
+        for key, label in (("prompt_n", "evaluatedPromptTokens"), ("cache_n", "cachedPromptTokens")):
+            value = engine_timing.get(key)
+            if type(value) is int and value >= 0:
+                runtime_timing[label] = value
         return {
             "type": "result", "device": self.device,
             "backend": {"openvino": "OpenVINO", "vulkan": "Vulkan", "metal": "Metal", "cpu": "llama.cpp CPU"}[self.backend],
@@ -537,4 +556,5 @@ class GGUFServer:
             "inputTokens": usage.get("prompt_tokens", 0), "outputTokens": output_tokens,
             "finishReason": finish_reason,
             "generationSeconds": elapsed, "tokensPerSecond": output_tokens / elapsed,
+            "runtimeTiming": runtime_timing,
         }
