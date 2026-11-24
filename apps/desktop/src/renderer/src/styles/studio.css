@@ -1490,6 +1490,13 @@ code {
   min-height: var(--ui-control-height);
   font-size: 12px;
 }
+.storage-body .data-actions .confirm-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.storage-workspace-select { width: min(190px, 100%); }
+.storage-restore-dialog p { overflow-wrap: anywhere; }
+.storage-restore-dialog .confirm-actions { margin-top: var(--ui-space-3); flex-wrap: wrap; }
 .storage-body .dialog-error {
   margin: 12px 0;
   display: flex;

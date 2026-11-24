@@ -86,6 +86,13 @@ const browserStudio: StudioApi = {
   writeImageFile: async () => "",
   saveChatTranscript: async () => false,
   saveWorkspaceBackup: async () => false,
+  listWorkspaces: async () => ({ active: "original", items: [{ id: "original", name: "Original workspace" }] }),
+  chooseWorkspaceBackup: async () => null,
+  restoreWorkspaceBackup: async () => undefined,
+  switchWorkspace: async () => undefined,
+  readWorkspaceSeed: async () => "",
+  finishWorkspaceSeed: async () => undefined,
+  returnFromFailedRestore: async () => undefined,
   copyText: async (text) => {
     await navigator.clipboard.writeText(text);
   },

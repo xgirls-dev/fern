@@ -38,6 +38,20 @@ try {
   await page.evaluate(() => window.finishBackup(true));
   await expect(page.getByText("Workspace backup saved.", { exact: true })).toBeVisible();
 
+  await page.evaluate(() => {
+    window.studio.chooseWorkspaceBackup = async () => ({
+      token: "backup", name: "My workspace", createdAt: "2026-11-24T00:00:00Z", fileCount: 4, size: 2000,
+    });
+    window.studio.restoreWorkspaceBackup = async () => { throw new Error("Restore requires explicit confirmation"); };
+  });
+  await page.getByRole("button", { name: "Restore Backup…", exact: true }).click();
+  const restore = page.getByRole("dialog", { name: "Restore workspace", exact: true });
+  await expect(restore).toContainText("My workspace");
+  await expect(restore.getByRole("button", { name: "Cancel", exact: true })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(restore).toHaveCount(0);
+
+
   await trigger.scrollIntoViewIfNeeded();
   const before = await trigger.boundingBox();
   assert(before);
