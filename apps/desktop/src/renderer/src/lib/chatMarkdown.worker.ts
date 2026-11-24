@@ -42,7 +42,7 @@ self.addEventListener("message", (event: MessageEvent<ChatMarkdownRequest>) => {
     const candidate = prefixes.get(view);
     // Only omit nodes from a reply the renderer has acknowledged.
     const acknowledged = independent && candidate?.requestId === previousId ? candidate : undefined;
-    const prior = acknowledged?.blocks ?? (!acknowledged && streaming && independent ? seedPrefix : undefined);
+    const prior = acknowledged?.blocks ?? (!acknowledged && independent ? seedPrefix : undefined);
     const prefix = prior && source.startsWith(prior.source) ? prior : undefined;
     const table = acknowledged?.table;
     const delta = table && parseTableTail(source, table, preview, streaming);
