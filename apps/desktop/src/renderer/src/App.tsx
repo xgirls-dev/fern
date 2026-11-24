@@ -25,7 +25,7 @@ import { RuntimeLoadingDialog } from "./components/RuntimeLoadingDialog";
 import { StudioSidebar } from "./components/StudioSidebar";
 import { TitleBar } from "./components/TitleBar";
 import { WorkspaceThreadTitle } from "./components/WorkspaceThreadTitle";
-import type { ThreadBrowserScope } from "./components/ThreadBrowser";
+import { ThreadBrowser, type ThreadBrowserScope } from "./components/ThreadBrowser";
 import { Button, IconButton, PageHeader } from "./components/ui/controls";
 import { ProgressLabel } from "./components/ui/ProgressLabel";
 
@@ -44,7 +44,6 @@ const PreferencesView = lazy(() => import("./components/PreferencesView").then((
 const Qwen3TtsWorkspace = lazy(() => import("./components/Qwen3TtsWorkspace").then((module) => ({ default: module.Qwen3TtsWorkspace })));
 const VideoWorkspace = lazy(() => import("./components/VideoWorkspace").then((module) => ({ default: module.VideoWorkspace })));
 const ChatWorkspace = lazy(() => import("./components/ChatWorkspace").then((module) => ({ default: module.ChatWorkspace })));
-const ThreadBrowser = lazy(() => import("./components/ThreadBrowser").then((module) => ({ default: module.ThreadBrowser })));
 const ModelsView = lazy(() => import("./components/ModelsView").then((module) => ({ default: module.ModelsView })));
 
 export function App() {
@@ -968,20 +967,18 @@ export function App() {
           onClose={() => setLightboxImage(null)}
         />
       )}
-      {threadSearch ? <Suspense fallback={null}>
-        <ThreadBrowser
-          threads={searchableThreads}
-          searchSession={threadSearchSession}
-          initialQuery={threadSearch.query}
-          scope={threadSearch.scope}
-          onOpen={(id, query) => {
-            onSidebarNavigate();
-            openThread(id);
-            setChatFindRequest(query && id.startsWith("text-thread-") ? { threadId: id, query } : null);
-          }}
-          onClose={() => setThreadSearch(null)}
-        />
-      </Suspense> : null}
+      {threadSearch ? <ThreadBrowser
+        threads={searchableThreads}
+        searchSession={threadSearchSession}
+        initialQuery={threadSearch.query}
+        scope={threadSearch.scope}
+        onOpen={(id, query) => {
+          onSidebarNavigate();
+          openThread(id);
+          setChatFindRequest(query && id.startsWith("text-thread-") ? { threadId: id, query } : null);
+        }}
+        onClose={() => setThreadSearch(null)}
+      /> : null}
       {runtimeDismissed && !studio.running && (connectionError || showImageRuntimeStatus) ? (
         <div className="runtime-banner" role="status">
           <span>
