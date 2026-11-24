@@ -71,13 +71,20 @@ try {
   const compact = await redCard.evaluate((card) => {
     const image = card.querySelector("img").getBoundingClientRect();
     const caption = card.querySelector("figcaption").getBoundingClientRect();
-    const conversation = card.closest(".text-conversation").getBoundingClientRect();
+    const conversation = card.closest(".text-conversation");
     const composer = document.querySelector(".text-composer").getBoundingClientRect();
-    return { width: image.width, height: image.height, left: image.left, captionLeft: caption.left, composerGap: composer.top - conversation.bottom };
+    conversation.scrollTop = conversation.scrollHeight;
+    const lastReply = conversation.querySelector('[data-chat-message="a-2"]').getBoundingClientRect();
+    return {
+      width: image.width, height: image.height, left: image.left, captionLeft: caption.left,
+      scrollportGap: composer.top - conversation.getBoundingClientRect().bottom,
+      replyGap: composer.top - lastReply.bottom,
+    };
   });
   assert(Math.abs(compact.width - compact.height) < 1, "The compact image frame should match the square output");
   assert(Math.abs(compact.left - compact.captionLeft) < 1, "The caption should align with the actual image");
-  assert(compact.composerGap >= 12, "Messages at the lower edge of the scrollport should have space above the composer");
+  assert(compact.scrollportGap >= 0 && compact.replyGap >= 12,
+    `The last reply should clear the composer when scrolled to the bottom: ${JSON.stringify(compact)}`);
   await page.getByRole("button", { name: "Duplicate chat", exact: true }).click();
   await page.getByRole("heading", { name: "Poster (copy)", exact: true }).waitFor();
   await redCard.getByRole("button", { name: "Include this image again" }).click();
