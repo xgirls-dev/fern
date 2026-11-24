@@ -29,6 +29,7 @@ import type {
 } from "../lib/types";
 
 import { notify } from "../lib/notifications";
+import { reuseUnchangedStatus } from "../lib/statusSnapshot";
 import type { ReferenceAttachment } from "../lib/reference";
 import { imageDimensionLimits } from "../lib/imageDimensions";
 import { APPLE_IMAGE_MODEL, fixedImagePreset, isKleinLoraModel, maxReferenceImages, selectedKleinLoras } from "../lib/imageModels";
@@ -564,7 +565,7 @@ export function useStudio(computeDevice: "GPU" | "CPU" = "GPU") {
         refreshQueuedRef.current = true;
         return false;
       }
-      setStatus(data);
+      setStatus((current) => reuseUnchangedStatus(current, data));
       setConnectionError(null);
 
       const selected = workspaceRef.current.threads.find(

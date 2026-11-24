@@ -20,6 +20,7 @@ import { EMPTY_CHAT_FOLDERS, organizeChats, revealChatFolder, type ChatOrganizat
 import { isChatDocument, MAX_CHAT_DOCUMENTS, validateChatDocument } from "../lib/chatDocuments";
 
 import { notify } from "../lib/notifications";
+import { reuseUnchangedStatus } from "../lib/statusSnapshot";
 import { createTextThreadStorage } from "../lib/textThreadStorage";
 import { formatTextTranscript, type TranscriptDestination } from "../lib/textTranscript";
 import {
@@ -440,7 +441,9 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
       // A matching live job can confirm a send before its HTTP receipt arrives.
       if (pending && confirmed) finishSubmission(pending);
       if (snapshot) {
-        setStatus((current) => ({ ...snapshot, job: confirmed ? reconcileRunningTextJob(current.job, job) : current.job }));
+        setStatus((current) => reuseUnchangedStatus(current, {
+          ...snapshot, job: confirmed ? reconcileRunningTextJob(current.job, job) : current.job,
+        }));
         setStatusLoaded(true);
       } else if (confirmed) {
         setStatus((current) => {
