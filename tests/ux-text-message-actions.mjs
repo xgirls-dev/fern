@@ -6,7 +6,7 @@ const id = "text-thread-message-actions";
 const otherId = "text-thread-message-actions-other";
 const reply = (id, content, createdAt) => ({ id, role: "assistant", content, createdAt, status: "complete", modelName: "Local model",
   metrics: { inputTokens: 25, outputTokens: 12, generationSeconds: 1, tokensPerSecond: 12, backend: "Vulkan" } });
-const { page, close, errors } = await fixture({
+const { page, close, dir, errors } = await fixture({
   builtRenderer: process.env.FERN_MESSAGE_ACTIONS_BUILT === "1",
   firstRun: true,
   viewport: { width: 864, height: 600 },
@@ -42,7 +42,8 @@ try {
   await expect(olderCopy).toHaveCSS("opacity", "0");
   await expect(more("reply-two")).toHaveCSS("opacity", "1");
   const quietRow = await row("reply-one").boundingBox();
-  await row("reply-one").hover();
+  assert(quietRow);
+  await page.mouse.move(quietRow.x + quietRow.width / 2, quietRow.y + quietRow.height / 2);
   await expect(olderCopy).toHaveCSS("opacity", "1");
   assert.deepEqual(await row("reply-one").boundingBox(), quietRow, "Revealing actions should keep the transcript layout stable");
   await page.mouse.move(0, 0);
@@ -87,6 +88,33 @@ try {
   await page.keyboard.press("Tab");
   await expect(menu).toHaveCount(0);
   await expect(more("reply-one")).not.toBeFocused();
+
+  await page.setViewportSize({ width: 320, height: 500 });
+  const jump = button("Jump to latest message");
+  const latestActions = more("reply-two");
+  const viewportHeight = await conversation.evaluate((element) => element.clientHeight);
+  await latestActions.focus();
+  await expect(jump).toBeVisible();
+  assert.equal(await conversation.evaluate((element) => element.clientHeight), viewportHeight);
+  const shelf = await jump.boundingBox();
+  const transcript = await conversation.boundingBox();
+  assert(shelf && transcript && shelf.y >= transcript.y + transcript.height,
+    "Jump to latest should sit outside the transcript and leave reply controls clickable");
+  await openMenu("reply-two");
+  await page.keyboard.press("Escape");
+  await expect(latestActions).toBeFocused();
+  await page.screenshot({ path: `${dir}/chat-narrow-jump-to-latest.png` });
+  await jump.focus();
+  const gap = () => conversation.evaluate((element) => element.scrollHeight - element.clientHeight - element.scrollTop);
+  await conversation.evaluate((element) => new Promise((resolve) => {
+    element.addEventListener("scroll", () => resolve(), { once: true });
+    element.scrollTop = element.scrollHeight - element.clientHeight - 64;
+  }));
+  await expect.poll(gap).toBeGreaterThan(24);
+  await conversation.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+  await expect(jump).toHaveCount(0);
+  await expect(page.getByRole("textbox", { name: "Message", exact: true })).toBeFocused();
+  assert.equal(await conversation.evaluate((element) => element.clientHeight), viewportHeight);
 
   await page.setViewportSize({ width: 390, height: 500 });
   await openMenu("reply-two");

@@ -251,6 +251,11 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
     if (!button && stopControl.current === document.activeElement) inputRef.current?.focus({ preventScroll: true });
     stopControl.current = button;
   }, []);
+  const scrollLatestControl = useRef<HTMLButtonElement | null>(null);
+  const bindScrollLatestControl = useCallback((button: HTMLButtonElement | null) => {
+    if (!button && scrollLatestControl.current === document.activeElement) inputRef.current?.focus({ preventScroll: true });
+    scrollLatestControl.current = button;
+  }, [inputRef]);
   const undoButton = useRef<HTMLButtonElement>(null);
   const focusUndoFor = useRef<string | undefined>(undefined);
   const [focusJump, setFocusJump] = useState<{ threadId: string; messageId: string; block?: "start" } | null>(null);
@@ -840,7 +845,6 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
       </div>
 
       <footer className="text-composer-area">
-        {showScrollButton && <TooltipIconButton shape="circle" className="text-scroll-latest" aria-label="Jump to latest message" tooltip="Jump to latest message" onClick={() => { jumpToLatest(); inputRef.current?.focus({ preventScroll: true }); }}><ArrowDown size={16} aria-hidden="true" /></TooltipIconButton>}
         {studio.storageError && <InlineNotice tone="error" announce
           actions={<Button variant="secondary" onClick={studio.retryStorage}>Retry saving chats</Button>}>
           {studio.storageError}
@@ -971,8 +975,19 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
             onChangeModel={changeModel} onManageModels={openModels} onStop={stopFromComposer} />
         </form>
         {draftTooLong && <p id={draftLimitId} role="status" className="text-composer-limit">{PROMPT_LIMIT_MESSAGE} Shorten the draft or choose a GGUF model.</p>}
-        <div className="text-composer-hint"><span role="status" aria-atomic="true">{modelNotice ? "" : activity || unavailableReason}</span>{otherResponseThread && <Button variant="ghost" className="text-open-running" onClick={() => studio.selectThread(otherResponseThread.id)}>Open running chat</Button>}<span className="text-keyboard-hint">{!draftTooLong && draftCharacters !== undefined && draftCharacters >= PROMPT_COUNT_THRESHOLD
-          ? `${draftCharacters.toLocaleString()} / ${TEXT_MESSAGE_CHARACTER_LIMIT.toLocaleString()}` : "Enter to send · Shift + Enter for newline"}</span></div>
+        <div className="text-composer-hint">
+          <div className="text-composer-hint-copy">
+            <span role="status" aria-atomic="true">{modelNotice ? "" : activity || unavailableReason}</span>
+            {otherResponseThread && <Button variant="ghost" className="text-open-running" onClick={() => studio.selectThread(otherResponseThread.id)}>Open running chat</Button>}
+            <span className="text-keyboard-hint">{!draftTooLong && draftCharacters !== undefined && draftCharacters >= PROMPT_COUNT_THRESHOLD
+              ? `${draftCharacters.toLocaleString()} / ${TEXT_MESSAGE_CHARACTER_LIMIT.toLocaleString()}` : "Enter to send · Shift + Enter for newline"}</span>
+          </div>
+          {showScrollButton && <TooltipIconButton ref={bindScrollLatestControl} shape="circle" className="text-scroll-latest"
+            aria-label="Jump to latest message" tooltip="Jump to latest message" onClick={() => {
+              jumpToLatest();
+              inputRef.current?.focus({ preventScroll: true });
+            }}><ArrowDown size={16} aria-hidden="true" /></TooltipIconButton>}
+        </div>
         <TextReplyAnnouncement key={activeThread.id} jobId={displayJobId} inspectionMessageId={inspectionMessageId} messages={activeThread.messages} conversation={feedRef} />
         {empty && <div className="text-empty-actions" role="group" aria-label="Creation workspaces">
           <Button variant="ghost" onClick={onCreateImage}><ImagePlus size={15} aria-hidden="true" /> Create image</Button>
