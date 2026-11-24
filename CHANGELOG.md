@@ -6,6 +6,14 @@ lands directly on `main` instead of through labeled pull requests.
 
 ## [Unreleased]
 
+### Added
+
+- Save workspace backups from Local data. Restore a backup into a separate workspace and switch back to the original with its chats and media.
+
+### Improved
+
+- Find text in saved conversation versions from Search threads. Open the matching message in a preview that keeps the active conversation intact.
+
 ### Fixed
 
 - Resume typing at the same caret after attaching a document. The chat composer shows when it can accept a document drop even if a conversation image is already selected.

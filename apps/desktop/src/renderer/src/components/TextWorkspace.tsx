@@ -19,7 +19,7 @@ import { TextComposerControls } from "./TextComposerControls";
 import { TextPromptEditor } from "./TextPromptEditor";
 import { TextPromptVersions } from "./TextPromptVersions";
 import { TextReplyAnnouncement } from "./TextReplyAnnouncement";
-import { TEXT_TRANSCRIPT_WINDOW_THRESHOLD, TextTranscriptWindow } from "./TextTranscriptWindow";
+import { TEXT_TRANSCRIPT_WINDOW_THRESHOLD, TextTranscriptWindow, estimateTextRowHeight } from "./TextTranscriptWindow";
 import { TextFindBar } from "./TextFindBar";
 import { Button, IconButton, SegmentedControl, Select, Textarea } from "./ui/controls";
 import { Slider } from "./ui/Slider";
@@ -140,13 +140,6 @@ function chatImageRecord(image: GeneratedChatImage, mtime: number): ImageRecord 
 
 function messageImages(message: TextMessage): GeneratedChatImage[] {
   return message.generatedImages?.length ? message.generatedImages : message.generatedImage ? [message.generatedImage] : [];
-}
-
-function estimateRowHeight(message: TextMessage) {
-  const sample = message.content.slice(0, 30_000);
-  const lines = sample.split("\n").reduce((total, line) => total + Math.max(1, Math.ceil(line.length / 84)), 0);
-  const illustration = message.generatedImage ? 420 : message.image ? 220 : 0;
-  return 64 + lines * 25 + illustration + (message.reasoning ? 26 : 0) + (message.error ? 24 : 0);
 }
 
 function ChatImage({ image, ordinal, checked, checkStatus, onOpen, onRetryCheck, canRetryCheck, contextLabel, onInclude, showFindCaption }: {
@@ -512,7 +505,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
         previouslyUnavailableImages = unavailableImages;
       }
       const versionAnchor = message.alternatives?.length ? replyVersions(message)[0].id : message.id;
-      return { message, messageId: stored.id, contextChanged, key: `${activeThread.id}:${versionAnchor}`, estimatedHeight: estimateRowHeight(message) };
+      return { message, messageId: stored.id, contextChanged, key: `${activeThread.id}:${versionAnchor}`, estimatedHeight: estimateTextRowHeight(message) };
     });
   }, [activeThread.id, activeThread.messages, displayMessages]);
   // Retry leaves the selected answer in history until its replacement settles.

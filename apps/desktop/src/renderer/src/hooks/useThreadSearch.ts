@@ -1,10 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import type { TextMessage } from "../lib/textThreads";
-import type { ThreadSearchCancel, ThreadSearchRequest, ThreadSearchResponse } from "../lib/threadSearch.worker";
+import type { ThreadSearchCancel, ThreadSearchMatch, ThreadSearchRequest, ThreadSearchResponse, ThreadSearchSource } from "../lib/threadSearch.worker";
 
-type ThreadSearchSource = { id: string; messages?: readonly TextMessage[] };
 type SearchInput = { threads: readonly ThreadSearchSource[]; query: string };
-type SearchMatches = Map<string, string>;
+type SearchMatches = Map<string, ThreadSearchMatch>;
 type SearchResult = { input: SearchInput; matches?: SearchMatches; timing?: SearchTiming };
 type SearchRequest = { id: number; input: SearchInput; complete: (matches?: SearchMatches, timing?: SearchTiming) => void };
 type SearchDispatchTiming = {
@@ -30,7 +28,7 @@ const SEARCH_IDLE_MS = 60_000;
 
 export function createThreadSearchSession() {
   let worker: Worker | undefined;
-  let indexed = new Map<string, readonly TextMessage[]>();
+  let indexed = new Map<string, ThreadSearchSource>();
   let requestId = 0;
   let pending: SearchRequest | undefined;
   let inFlight: { id: number; cancelRequested: boolean; timing?: SearchDispatchTiming } | undefined;
@@ -111,12 +109,19 @@ export function createThreadSearchSession() {
       const measure = performance.getEntriesByName("fern:measure-thread-search", "mark").length > 0;
       const started = measure ? performance.now() : 0;
       const background = startWorker();
-      const next = new Map<string, readonly TextMessage[]>();
+      const next = new Map<string, ThreadSearchSource>();
       const updated: ThreadSearchRequest["updated"] = [];
       for (const thread of input.threads) {
-        if (!thread.messages?.length) continue;
-        next.set(thread.id, thread.messages);
-        if (indexed.get(thread.id) !== thread.messages) updated.push({ id: thread.id, messages: thread.messages });
+        if (!thread.messages?.length && !thread.versions?.length) continue;
+        const previous = indexed.get(thread.id);
+        next.set(thread.id, thread);
+        const messagesChanged = previous?.messages !== thread.messages;
+        const versionsChanged = previous?.versions !== thread.versions;
+        if (messagesChanged || versionsChanged) updated.push({
+          id: thread.id,
+          ...(messagesChanged && { messages: thread.messages ?? null }),
+          ...(versionsChanged && { versions: thread.versions ?? null }),
+        });
       }
       const removed = [...indexed.keys()].filter((threadId) => !next.has(threadId));
       // Apply history changes before searching, including after the dialog was closed.

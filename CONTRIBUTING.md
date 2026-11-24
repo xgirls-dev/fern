@@ -38,6 +38,12 @@ selection and cancellation, and file drops. On each supported OS, also try
 candidate selection and cancellation with an installed input method, paste text
 and an image, and attach a document using the system file picker.
 
+## Verify workspace backup and search
+
+Run `npm run build`, then `node apps/desktop/e2e/workspace-backup.mjs`. The test uses disposable profiles and verifies backup, restore, and search in the original and recovered workspaces.
+
+Set `FERN_E2E_EXECUTABLE` to run against the packaged app. To check an upgrade, set `FERN_E2E_PREVIOUS_EXECUTABLE` to a prior package with Save Backup, or set `FERN_E2E_PREVIOUS_SOURCE_ENTRY` to that checkout’s built `apps/desktop/out/main/index.js`. The test opens the same profile on the new build before restoring the archive.
+
 ## Release notes
 
 Add user-visible changes to `CHANGELOG.md` under **Unreleased** as they land.

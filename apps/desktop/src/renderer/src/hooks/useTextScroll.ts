@@ -156,7 +156,7 @@ function rememberPosition(threadId: string, feed: HTMLElement, following: boolea
   saveChatReadingPosition(threadId, position);
 }
 
-export function useTextScroll(threadId: string) {
+export function useTextScroll(threadId: string, persistPosition = true) {
   const feedRef = useRef<HTMLDivElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const following = useRef(true);
@@ -167,7 +167,7 @@ export function useTextScroll(threadId: string) {
   const [canScroll, setCanScroll] = useState(false);
   const [restoredThread, setRestoredThread] = useState<string>();
   const pendingRestore = useRef<ScrollPosition | undefined>(undefined);
-  const restoreAnchor = restoredThread === threadId ? undefined : getChatReadingPosition(threadId)?.anchor;
+  const restoreAnchor = !persistPosition || restoredThread === threadId ? undefined : getChatReadingPosition(threadId)?.anchor;
 
   const cancelRestore = useCallback(() => {
     if (!pendingRestore.current) return;
@@ -177,9 +177,9 @@ export function useTextScroll(threadId: string) {
 
   const savePosition = useCallback((feed: HTMLElement, preferred?: Element) => {
     lastTop.current = feed.scrollTop;
-    rememberPosition(threadId, feed, following.current, preferred);
+    if (persistPosition) rememberPosition(threadId, feed, following.current, preferred);
     setFollowingLatest(following.current);
-  }, [threadId]);
+  }, [persistPosition, threadId]);
 
   const pauseFollowing = useCallback((feed: HTMLElement) => {
     if (!following.current) return;
@@ -283,7 +283,7 @@ export function useTextScroll(threadId: string) {
     const feed = feedRef.current;
     const transcript = transcriptRef.current;
     if (!feed || !transcript) return;
-    const saved = getChatReadingPosition(threadId);
+    const saved = persistPosition ? getChatReadingPosition(threadId) : undefined;
     pendingRestore.current = undefined;
     const restore = (position: ScrollPosition) => {
       if (!restorePosition(feed, position)) {
@@ -331,7 +331,7 @@ export function useTextScroll(threadId: string) {
       if (wasHidden) setHistoryVisible(true);
       updateOverflow();
       if (!following.current) {
-        const position = pendingRestore.current ?? (reflowed && getChatReadingPosition(threadId));
+        const position = pendingRestore.current ?? (reflowed && persistPosition && getChatReadingPosition(threadId));
         if (position) {
           restore(position);
           return;
@@ -361,9 +361,10 @@ export function useTextScroll(threadId: string) {
       markdownObserver.disconnect();
       document.removeEventListener("selectionchange", onSelection);
     };
-  }, [onScroll, pauseFollowing, savePosition, threadId]);
+  }, [onScroll, pauseFollowing, persistPosition, savePosition, threadId]);
 
   useLayoutEffect(() => {
+    if (!persistPosition) return;
     const flushWhenHidden = () => {
       if (document.visibilityState === "hidden") flushChatReadingPositions();
     };
@@ -374,7 +375,7 @@ export function useTextScroll(threadId: string) {
       document.removeEventListener("visibilitychange", flushWhenHidden);
       flushChatReadingPositions();
     };
-  }, []);
+  }, [persistPosition]);
 
   return { feedRef, transcriptRef, historyVisible, followingLatest, showScrollButton: canScroll && !followingLatest,
     restoreAnchorId: restoreAnchor?.id, restoreReasoningId: restoreAnchor?.line?.section === "reasoning" ? restoreAnchor.id : undefined,
