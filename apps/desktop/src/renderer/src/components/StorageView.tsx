@@ -6,7 +6,9 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { clearGenerationCache, fetchStorageStatus } from "../lib/api";
 import { notify } from "../lib/notifications";
 import { saveWorkspaceBackup, type WorkspaceBackupSnapshot } from "../lib/workspaceBackup";
+import type { WorkspaceBackupPreview, WorkspaceList } from "../../../preload/types";
 import type { StorageStatus } from "../lib/types";
+import { Dialog, DialogDescription, DialogTitle } from "./ui/Dialog";
 import { Button, PageHeader } from "./ui/controls";
 
 interface StorageViewProps {
@@ -58,7 +60,11 @@ export function StorageView({
 }: StorageViewProps) {
   const [storage, setStorage] = useState<StorageStatus | null>(null);
   const [loading, setLoading] = useState(false);
-  const [action, setAction] = useState<"backup" | "cache" | "reset" | null>(null);
+  const [action, setAction] = useState<"backup" | "inspect" | "restore" | "switch" | "cache" | "reset" | null>(null);
+  const [preview, setPreview] = useState<WorkspaceBackupPreview | null>(null);
+  const [workspaces, setWorkspaces] = useState<WorkspaceList | null>(null);
+  const [selectedWorkspace, setSelectedWorkspace] = useState("");
+  const restoreCancel = useRef<HTMLButtonElement>(null);
   const [confirmingReset, setConfirmingReset] = useState(false);
   const resetTrigger = useRef<HTMLButtonElement>(null);
   const resetConfirmation = useRef<HTMLDivElement>(null);
@@ -84,6 +90,13 @@ export function StorageView({
     if (!active) return;
     setConfirmingReset(false);
     void refreshStorage();
+    let current = true;
+    void window.studio.listWorkspaces().then((list) => {
+      if (!current || !list) return;
+      setWorkspaces(list);
+      setSelectedWorkspace(list.active);
+    }).catch(() => undefined);
+    return () => { current = false; };
   }, [active, refreshStorage]);
 
   useLayoutEffect(() => {
@@ -103,14 +116,44 @@ export function StorageView({
     return () => window.removeEventListener("keydown", dismiss, true);
   }, [confirmingReset, action]);
 
+  const workspaceError = (cause: unknown, fallback: string) => {
+    const message = cause instanceof Error ? cause.message.replace(/^Error invoking remote method '[^']+': Error: /, "") : "";
+    notify(message || fallback, "error");
+  };
+
   const createBackup = async () => {
     setAction("backup");
     try {
       if (await saveWorkspaceBackup(captureBackup())) notify("Workspace backup saved.");
     } catch (cause) {
-      const message = cause instanceof Error ? cause.message.replace(/^Error invoking remote method '[^']+': Error: /, "") : "";
-      notify(message || "Could not save the workspace backup.", "error");
+      workspaceError(cause, "Could not save the workspace backup.");
     } finally {
+      setAction(null);
+    }
+  };
+
+  const chooseBackup = async () => {
+    setAction("inspect");
+    try { setPreview(await window.studio.chooseWorkspaceBackup()); }
+    catch (cause) { workspaceError(cause, "Could not open this workspace backup."); }
+    finally { setAction(null); }
+  };
+
+  const restoreBackup = async () => {
+    if (!preview) return;
+    setAction("restore");
+    try { await window.studio.restoreWorkspaceBackup(preview.token); }
+    catch (cause) {
+      workspaceError(cause, "Could not restore this workspace.");
+      setAction(null);
+    }
+  };
+
+  const openWorkspace = async () => {
+    setAction("switch");
+    try { await window.studio.switchWorkspace(selectedWorkspace); }
+    catch (cause) {
+      workspaceError(cause, "Could not switch workspaces.");
       setAction(null);
     }
   };
@@ -263,13 +306,47 @@ export function StorageView({
           <div>
             <strong>Workspace Backup</strong>
             <p>Save chats, drafts, reply versions, saved attachments, media, and preferences in one file.</p>
-            {running && <small>Finish active jobs before backing up.</small>}
+            {running && <small>Finish active jobs before backing up or restoring.</small>}
+            {workspaces?.error && <p role="alert">{workspaces.error}</p>}
             {action === "backup" && <small role="status">Saving workspace backup…</small>}
           </div>
-          <Button variant="secondary" disabled={!backupReady || running || Boolean(action)} onClick={() => void createBackup()}>
-            Save Backup…
-          </Button>
+          <div className="confirm-actions">
+            <Button variant="secondary" disabled={!backupReady || running || Boolean(action)} onClick={() => void createBackup()}>
+              Save Backup…
+            </Button>
+            <Button variant="secondary" disabled={running || Boolean(action) || Boolean(workspaces?.error)} onClick={() => void chooseBackup()}>
+              {action === "inspect" ? "Opening backup…" : "Restore Backup…"}
+            </Button>
+          </div>
         </div>
+
+        {workspaces && workspaces.items.length > 1 && <div className="data-actions">
+          <div>
+            <strong>Workspaces</strong>
+            <p>Open another workspace with its own conversations, media, and model setup.</p>
+          </div>
+          <div className="confirm-actions">
+            <select className="ui-field storage-workspace-select" aria-label="Workspace to open" value={selectedWorkspace}
+              disabled={running || Boolean(action)} onChange={(event) => setSelectedWorkspace(event.target.value)}>
+              {workspaces.items.map(({ id, name }) => <option key={id} value={id}>{name}</option>)}
+            </select>
+            <Button variant="secondary" disabled={running || Boolean(action) || workspaces.active === selectedWorkspace}
+              onClick={() => void openWorkspace()}>{action === "switch" ? "Opening…" : "Open Workspace"}</Button>
+          </div>
+        </div>}
+
+        {preview && <Dialog className="storage-restore-dialog" initialFocus={restoreCancel}
+          onClose={() => { if (action !== "restore") setPreview(null); }}>
+          <DialogTitle>Restore workspace</DialogTitle>
+          <p><strong>{preview.name}</strong> · {formatBytes(preview.size)} · {preview.fileCount.toLocaleString()} saved files</p>
+          <p>Saved {new Date(preview.createdAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}</p>
+          <DialogDescription>Fern will open this backup in a separate workspace. You can return to your current workspace from Local data.</DialogDescription>
+          {action === "restore" && <p role="status">Checking and unpacking the backup…</p>}
+          <div className="confirm-actions">
+            <Button ref={restoreCancel} variant="secondary" disabled={action === "restore"} onClick={() => setPreview(null)}>Cancel</Button>
+            <Button variant="primary" disabled={running || Boolean(action)} onClick={() => void restoreBackup()}>Restore and Restart</Button>
+          </div>
+        </Dialog>}
 
         <div className="data-actions">
           <div>

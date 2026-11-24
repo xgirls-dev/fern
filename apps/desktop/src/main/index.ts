@@ -15,7 +15,8 @@ import { PythonBackend } from "./python-backend";
 import { resolveDataProfile } from "./data-profile";
 import { installEditorContextMenu } from "./editor-context-menu";
 import { ensureFirstRunSetup, RuntimeSetupCancelled } from "./first-run-setup";
-import { saveWorkspaceBackup } from "./workspace-backup";
+import { registerWorkspaceIpc } from "./workspace-backup";
+import { WorkspaceProfiles } from "./workspace-profiles";
 import { publishWallpaperConnection } from "./wallpaper-connection";
 import { getAppIconPath, getOutputsDir, resolveProjectRoot } from "./paths";
 
@@ -24,6 +25,7 @@ let mainWindow: BrowserWindow | null = null;
 let backend: PythonBackend | null = null;
 let backendReady = false;
 let isShuttingDown = false;
+let workspaces: WorkspaceProfiles;
 let removeWallpaperConnection: (() => void) | undefined;
 
 async function allocatePort(): Promise<number> {
@@ -88,7 +90,11 @@ function createWindow(apiBaseUrl?: string): BrowserWindow {
       : {}),
     webPreferences: {
       preload: resolvePreloadPath(),
-      additionalArguments: [`--fern-app-version=${app.getVersion()}`],
+      ...(workspaces.active ? { partition: `persist:fern-workspace-${workspaces.active.id}` } : {}),
+      additionalArguments: [
+        `--fern-app-version=${app.getVersion()}`,
+        ...(workspaces.active?.previous ? ["--fern-workspace-seed"] : []),
+      ],
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
@@ -299,12 +305,7 @@ function registerIpc(): void {
     }
   });
 
-  ipcMain.handle("studio:save-workspace-backup", (event, snapshot: unknown) => {
-    if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== event.sender.mainFrame) {
-      throw new Error("Open Fern to create a workspace backup.");
-    }
-    return saveWorkspaceBackup(mainWindow, snapshot);
-  });
+  registerWorkspaceIpc(workspaces, () => mainWindow);
 
   ipcMain.handle("studio:clear-web-cache", async (event) => {
     await Promise.all([
@@ -589,7 +590,14 @@ async function bootstrap(): Promise<void> {
 
   let setupWindow: BrowserWindow | null = null;
   try {
-    await resolveProjectRoot();
+    workspaces = new WorkspaceProfiles(app.getPath("userData"));
+    try {
+      await workspaces.load();
+    } catch (error) {
+      console.warn("Could not load recovered workspaces:", error);
+      workspaces.keepOriginalAvailable();
+    }
+    await resolveProjectRoot(workspaces.directory);
     // Pacman installs Linux's runtime in place; Windows extracts it per profile.
     if (app.isPackaged && process.platform === "win32") {
       setupWindow = await ensureFirstRunSetup();

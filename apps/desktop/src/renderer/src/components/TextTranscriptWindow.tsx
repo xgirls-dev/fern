@@ -1,5 +1,14 @@
 import { memo, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from "react";
 
+import type { TextMessage } from "../lib/textThreads";
+
+export function estimateTextRowHeight(message: TextMessage) {
+  const sample = message.content.slice(0, 30_000);
+  const lines = sample.split("\n").reduce((total, line) => total + Math.max(1, Math.ceil(line.length / 84)), 0);
+  const illustration = message.generatedImage ? 420 : message.image ? 220 : 0;
+  return 64 + lines * 25 + illustration + (message.reasoning ? 26 : 0) + (message.error ? 24 : 0);
+}
+
 const PAGE_SIZE = 24;
 export const TEXT_TRANSCRIPT_WINDOW_THRESHOLD = 72;
 const OVERSCAN = "640px 0px";

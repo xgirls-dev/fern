@@ -1,6 +1,21 @@
 export type ThemeMode = "light" | "dark" | "system";
 
+export interface WorkspaceList {
+  active: string;
+  error?: string;
+  items: Array<{ id: string; name: string }>;
+}
+
+export interface WorkspaceBackupPreview {
+  token: string;
+  name: string;
+  createdAt: string;
+  fileCount: number;
+  size: number;
+}
+
 export interface StudioApi {
+  hasWorkspaceSeed?: boolean;
   platform: NodeJS.Platform;
   architecture?: string;
   appVersion?: string;
@@ -36,6 +51,13 @@ export interface StudioApi {
   copyText: (text: string) => Promise<void>;
   readFileAsDataUrl: (filePath: string) => Promise<string>;
   saveWorkspaceBackup: (snapshot: string) => Promise<boolean>;
+  listWorkspaces: () => Promise<WorkspaceList>;
+  chooseWorkspaceBackup: () => Promise<WorkspaceBackupPreview | null>;
+  restoreWorkspaceBackup: (token: string) => Promise<void>;
+  switchWorkspace: (id: string) => Promise<void>;
+  readWorkspaceSeed: () => Promise<string | null>;
+  finishWorkspaceSeed: () => Promise<void>;
+  returnFromFailedRestore: () => Promise<void>;
   clearWebCache: () => Promise<void>;
 }
 

@@ -1,17 +1,20 @@
 import { chatSearchEntries, threadSearchMatcher } from "./chatSearch";
-import type { TextMessage } from "./textThreads";
+import type { TextMessage, TextVersion } from "./textThreads";
+
+export type ThreadSearchSource = { id: string; messages?: readonly TextMessage[]; versions?: readonly TextVersion[] };
+export type ThreadSearchMatch = { excerpt: string; snapshotId?: string };
 
 export interface ThreadSearchRequest {
   id: number;
   query: string;
-  updated: Array<{ id: string; messages: readonly TextMessage[] }>;
+  updated: Array<{ id: string; messages?: readonly TextMessage[] | null; versions?: readonly TextVersion[] | null }>;
   removed: string[];
   measure?: true;
 }
 
 export interface ThreadSearchResponse {
   id: number;
-  matches?: Array<[threadId: string, excerpt: string]>;
+  matches?: Array<[threadId: string, match: ThreadSearchMatch]>;
   cancelled?: true;
   timing?: ThreadSearchWorkerTiming;
 }
@@ -29,7 +32,8 @@ export interface ThreadSearchCancel {
   cancel: number;
 }
 
-const index = new Map<string, ReturnType<typeof chatSearchEntries>>();
+type SearchTranscript = { entries: ReturnType<typeof chatSearchEntries>; snapshotId?: string };
+const index = new Map<string, { current: SearchTranscript[]; saved: SearchTranscript[] }>();
 const work = new MessageChannel();
 const sliceMs = 8;
 let nextStepScheduled = false;
@@ -43,13 +47,19 @@ let active: SearchTask | undefined;
 
 function* scanHistory(query: string, matches: SearchTask["matches"], recordParse?: (elapsed: number) => void) {
   const match = threadSearchMatcher(query, recordParse);
-  for (const [threadId, entries] of index) {
-    // A single long chat can also need to yield between groups of messages.
-    for (let start = 0; start < entries.length; start += 16) {
-      const excerpt = match(entries.slice(start, start + 16));
-      if (excerpt) matches.push([threadId, excerpt]);
-      yield;
-      if (excerpt) break;
+  for (const [threadId, transcripts] of index) {
+    // Prefer the current conversation when the same content exists in an earlier snapshot.
+    const groups = transcripts.saved.length ? [...transcripts.current, ...transcripts.saved] : transcripts.current;
+    searchThread: for (const { entries, snapshotId } of groups) {
+      for (let start = 0; start < entries.length; start += 16) {
+        const excerpt = match(entries.slice(start, start + 16));
+        if (excerpt) {
+          matches.push([threadId, { excerpt, snapshotId }]);
+          yield;
+          break searchThread;
+        }
+        yield;
+      }
     }
   }
 }
@@ -98,7 +108,15 @@ self.addEventListener("message", ({ data }: MessageEvent<ThreadSearchRequest | T
   const started = measure ? performance.now() : 0;
   try {
     for (const threadId of removed) index.delete(threadId);
-    for (const thread of updated) index.set(thread.id, chatSearchEntries(thread.messages));
+    for (const { id: threadId, messages, versions } of updated) {
+      const previous = index.get(threadId);
+      const current = messages === undefined ? previous?.current ?? []
+        : messages?.length ? [{ entries: chatSearchEntries(messages) }] : [];
+      const saved = versions === undefined ? previous?.saved ?? []
+        : (versions ?? []).flatMap(({ id: snapshotId, messages: savedMessages }) =>
+          savedMessages.length ? [{ snapshotId, entries: chatSearchEntries(savedMessages) }] : []);
+      index.set(threadId, { current, saved });
+    }
     const timing = measure ? {
       receivedAt: performance.timeOrigin + started,
       finishedAt: 0, indexMs: performance.now() - started, scanMs: 0, markdownMs: 0, markdownFields: 0,
