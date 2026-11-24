@@ -108,9 +108,32 @@ try {
   assert.equal(state.textRequests[0].messages.find((message) => message.generatedImage === "red-poster.png").imageThreadId, "text-thread-review");
 
   const copyId = state.textRequests[0].threadId;
-  state.textStatus.job = { ...state.textStatus.job, status: "complete", partialText: "The current copy works.", finishedAt: Date.now() / 1000 };
-  await expect(page.getByText("The current copy works.", { exact: true })).toBeVisible();
+  const context = { size: 4096, compactedMessages: 0, images: 2, imageNames: ["green-poster.png", "red-poster.png"],
+    omittedImages: 1, unavailableImages: 1, reusedImageName: "red-poster.png" };
+  state.textStatus.job = { ...state.textStatus.job, status: "complete", partialText: "The current copy works.", finishedAt: Date.now() / 1000,
+    result: { inputTokens: 50, outputTokens: 8, generationSeconds: 1, tokensPerSecond: 8, modelName: "Gemma",
+      device: "GPU", backend: "gguf", seed: 42, temperature: 0.7, topP: 0.9, maxNewTokens: 1024, context } };
+  const latestReply = page.getByRole("article", { name: "Model response" }).last();
+  const contextButton = latestReply.getByRole("button", { name: "Context details", exact: true });
+  const responseDetails = latestReply.getByRole("region", { name: "Response details" });
+  await expect(latestReply).toContainText("The current copy works.");
+  await expect(latestReply).toContainText("Some earlier images were left out of the model context.");
+  await expect(latestReply).toContainText("Some earlier images were unavailable.");
+  await expect(latestReply).toContainText("The selected image was included.");
+  await contextButton.click();
+  await expect(responseDetails).toContainText("1 earlier image was left out of the model context.");
+  await expect(responseDetails).toContainText("1 earlier image was unavailable when this reply ran.");
+  await expect(responseDetails).toContainText("Selected image used for this reply · Red circle poster");
+  await expect.poll(async () => (await savedTextWorkspace(page)).threads.find((thread) => thread.id === copyId)?.messages.at(-1)?.metrics?.context)
+    .toEqual(context);
   await page.setViewportSize({ width: 1440, height: 920 });
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Poster (copy)", exact: true })).toBeVisible();
+  await contextButton.click();
+  await expect(responseDetails).toContainText("Selected image used for this reply · Red circle poster");
+  await latestReply.getByText("The current copy works.", { exact: true }).scrollIntoViewIfNeeded();
+  await expect(responseDetails).toBeInViewport({ ratio: 1 });
+  await page.screenshot({ path: `${dir}/chat-image-context-win32-fixture-light-1440x920.png` });
   await chooseSelectOption(page.getByLabel("Conversation versions", { exact: true }), "Early poster");
   await expect.poll(async () => (await savedTextWorkspace(page)).threads.find((thread) => thread.id === copyId)?.messages[1]?.id)
     .toBe("archive-poster");

@@ -905,6 +905,22 @@ def validate_text_sampling(options: Any) -> dict[str, Any]:
     return options
 
 
+def record_text_image_context(result: dict[str, Any], request: dict[str, Any]) -> None:
+    context = result.get("context")
+    if not isinstance(context, dict) or not isinstance(context.get("imageNames"), list):
+        return
+    used = set(context["imageNames"])
+    available = {Path(turn["imagePath"]).name for turn in request["messages"] if turn.get("imagePath")}
+    unavailable = set(request.get("unavailableImageNames", ())) - available - used
+    if omitted := available - used:
+        context["omittedImages"] = len(omitted)
+    if unavailable:
+        context["unavailableImages"] = len(unavailable)
+    selected = request.get("selectedImageName")
+    if selected in used:
+        context["reusedImageName"] = selected
+
+
 def run_text_generation(payload: dict[str, Any], job_id: str, cancel_event: threading.Event) -> None:
     diagnostics = {"stage": "preparing-conversation", "requestedDevice": payload.get("device")}
     try:
@@ -973,8 +989,11 @@ def run_text_generation(payload: dict[str, Any], job_id: str, cancel_event: thre
                 cancel_event=cancel_event,
             )
 
-        request = {**payload, **({"tools": [IMAGE_TOOL]} if image_model else {}),
-                   **({"documentPassages": passages} if passages else {})}
+        request = {key: value for key, value in payload.items() if key not in ("selectedImageName", "unavailableImageNames")}
+        if image_model:
+            request["tools"] = [IMAGE_TOOL]
+        if passages:
+            request["documentPassages"] = passages
         result = generate(request)
         diagnostics["stage"] = "checking-reply"
         calls = result.pop("toolCalls", [])
@@ -1036,8 +1055,16 @@ def run_text_generation(payload: dict[str, Any], job_id: str, cancel_event: thre
             # The displayed reply now combines separate model calls and an image job.
             result.pop("runtimeTiming", None)
             result["visionChecked"] = True
-            result["context"] = continuation.get("context")
+            review_context = continuation.get("context")
+            if review_context is not None:
+                earlier_names = (result.get("context") or {}).get("imageNames", [])
+                if "imageNames" in review_context:
+                    # The reply used both calls, including the image created during review.
+                    names = list(dict.fromkeys([*earlier_names, *review_context["imageNames"]]))
+                    review_context = {**review_context, "imageNames": names, "images": len(names)}
+                result["context"] = review_context
             result["finishReason"] = continuation.get("finishReason")
+        record_text_image_context(result, payload)
         if cancel_event.is_set():
             raise InterruptedError()
         with TEXT_JOB_LOCK:
@@ -1758,8 +1785,12 @@ def store_chat_image(value: Any, storage_revision: int) -> str:
     return filename
 
 
+def is_chat_image_name(filename: Any) -> bool:
+    return isinstance(filename, str) and re.fullmatch(r"chat-image-[a-f0-9]{32}\.png", filename) is not None
+
+
 def chat_image_path(filename: Any) -> str:
-    if not isinstance(filename, str) or not re.fullmatch(r"chat-image-[a-f0-9]{32}\.png", filename):
+    if not is_chat_image_name(filename):
         raise ValueError("The attached chat image is invalid.")
     directory = (DATA_DIR / "references").resolve()
     path = (directory / filename).resolve()
@@ -3004,6 +3035,8 @@ class Handler(BaseHTTPRequestHandler):
                 safe_messages = []
                 total_chars = 0
                 generated_images = None
+                unavailable_images: set[str] = set()
+                selected_image_name = None
                 require_gpu_vision = False
                 for message in messages:
                     if not isinstance(message, dict) or message.get("role") not in ("user", "assistant"):
@@ -3026,9 +3059,12 @@ class Handler(BaseHTTPRequestHandler):
                             total_chars += len(description)
                             filename = message["generatedImage"]
                             path = (OUTPUTS / filename).resolve()
-                            if model.get("supportsVision") and path.parent == OUTPUTS.resolve() and path.is_file():
-                                turn["imagePath"] = str(path)
-                                require_gpu_vision |= saved.get("model") in INTEL_MEDIA_CATALOG or saved.get("model") == APPLE_IMAGE_ID
+                            if model.get("supportsVision") and path.parent == OUTPUTS.resolve():
+                                if path.is_file():
+                                    turn["imagePath"] = str(path)
+                                    require_gpu_vision |= saved.get("model") in INTEL_MEDIA_CATALOG or saved.get("model") == APPLE_IMAGE_ID
+                                elif re.fullmatch(r"[a-zA-Z0-9_-]+\.png", filename):
+                                    unavailable_images.add(filename)
                     if message.get("image") is not None:
                         if message["role"] != "user" or not model.get("supportsVision"):
                             raise ValueError("Choose a vision-capable GGUF model to use chat images.")
@@ -3037,6 +3073,8 @@ class Handler(BaseHTTPRequestHandler):
                         except ValueError:
                             if message is messages[-1]:
                                 raise
+                            if is_chat_image_name(message["image"]):
+                                unavailable_images.add(message["image"])
                     included_name = message.get("includedImage")
                     if included_name is not None:
                         if message["role"] != "user" or not model.get("supportsVision") or "imagePath" in turn:
@@ -3049,8 +3087,12 @@ class Handler(BaseHTTPRequestHandler):
                         path = (OUTPUTS / included_name).resolve()
                         if saved.get("threadId") == image_owner and saved.get("source") == "chat" and path.parent == OUTPUTS.resolve() and path.is_file():
                             turn["imagePath"] = str(path)
+                            if message is messages[-1]:
+                                selected_image_name = included_name
                         elif message is messages[-1]:
                             raise ValueError("The selected image is unavailable. Remove it from the draft or restore the file.")
+                        else:
+                            unavailable_images.add(included_name)
                     safe_messages.append(turn)
                 if safe_messages[-1]["role"] != "user" or any(item["role"] != ("user" if index % 2 == 0 else "assistant") for index, item in enumerate(safe_messages)):
                     raise ValueError("The last conversation message must be from you.")
@@ -3104,6 +3146,8 @@ class Handler(BaseHTTPRequestHandler):
                     "loadOptions": load_options,
                     "documentIds": document_ids(payload.get("documentIds")),
                     "requireGpuVision": require_gpu_vision or image_model in INTEL_MEDIA_CATALOG or image_model == APPLE_IMAGE_ID,
+                    **({"selectedImageName": selected_image_name} if selected_image_name else {}),
+                    **({"unavailableImageNames": sorted(unavailable_images)} if unavailable_images else {}),
                 }
                 job = start_text_job(generation, payload.get("requestId"), payload.get("admitBefore"))
                 self.send_json(202, text_job_receipt(payload, job))

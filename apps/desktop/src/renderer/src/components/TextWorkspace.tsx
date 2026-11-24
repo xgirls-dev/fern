@@ -484,15 +484,23 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   const storedRows = useMemo<TranscriptRow[]>(() => {
     let previouslyTrimmed = false;
     let previouslySummarized = false;
+    let previouslyOmittedImages = false;
+    let previouslyUnavailableImages = false;
     return displayMessages.map((message, index) => {
       const stored = activeThread.messages[index];
       const context = stored.requestContext;
       const trimmed = !!(context?.omittedMessages || context?.shortenedMessages || context?.omittedAttachments);
-      const summarized = (stored.metrics?.context?.compactedMessages ?? 0) > 0;
-      const contextChanged = (trimmed && !previouslyTrimmed) || (summarized && !previouslySummarized);
+      const runtimeContext = stored.metrics?.context;
+      const summarized = !!runtimeContext?.compactedMessages;
+      const omittedImages = !!runtimeContext?.omittedImages;
+      const unavailableImages = !!runtimeContext?.unavailableImages;
+      const contextChanged = (trimmed && !previouslyTrimmed) || (summarized && !previouslySummarized) ||
+        (omittedImages && !previouslyOmittedImages) || (unavailableImages && !previouslyUnavailableImages);
       if (stored.role === "assistant") {
         previouslyTrimmed = trimmed;
         previouslySummarized = summarized;
+        previouslyOmittedImages = omittedImages;
+        previouslyUnavailableImages = unavailableImages;
       }
       const versionAnchor = message.alternatives?.length ? replyVersions(message)[0].id : message.id;
       return { message, messageId: stored.id, contextChanged, key: `${activeThread.id}:${versionAnchor}`, estimatedHeight: estimateRowHeight(message) };
@@ -793,7 +801,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
       previewWhileStreaming={live?.previous}
       contextChanged={row.contextChanged && !preview}
       generatedImage={message.generatedImage || message.generatedImages?.length ? messageImages(message).map((image, index) => renderChatImage(image, live && !live.previous ? undefined : message, { preview, showFindCaption: index === 0 && !savedMatch && match?.section === "image" })) : undefined}
-      includedImageLabel={findChatImage({ messages }, message.includedImage)?.prompt}
+      includedImageLabel={findChatImage({ messages }, message.includedImage ?? message.metrics?.context?.reusedImageName)?.prompt}
       editor={editing && <TextPromptEditor draftKey={`revision:${threadId}:${message.id}`} content={promptEdit.content} original={message.content} replaceLatest={replaceLatest}
         focusRequested={requestedEdit === message.id}
         onFocusHandled={clearEditFocus} hasImage={hasImage} sendUnavailable={editUnavailable} invalid={revisionTooLong}
