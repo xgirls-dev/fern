@@ -35,7 +35,11 @@ try {
   await gallery.waitFor();
   assert.equal(await gallery.evaluate(element => element.scrollTop), 120, 'reopening Images restores the last position');
   await page.setViewportSize({ width: 1440, height: 900 });
-  await gallery.evaluate(element => { element.scrollTop = 0; });
+  await gallery.evaluate(element => new Promise(resolve => {
+    element.scrollTop = 0;
+    // Let the resize and scroll events settle before opening the next menu.
+    requestAnimationFrame(() => requestAnimationFrame(resolve));
+  }));
   await page.evaluate(() => {
     window.studio.copyText = async (text) => { window.copiedImagePrompt = text; };
   });
