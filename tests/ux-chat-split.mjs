@@ -7,6 +7,10 @@ const models = [
   { id: "qwen", name: "Qwen", installed: true, format: "gguf", maxContextSize: 65536, supportsVision: true, supportsTools: true },
 ];
 const document = { id: `doc-${"a".repeat(64)}`, name: "Research notes.txt", bytes: 35 };
+const sharedImage = `chat-image-${"b".repeat(32)}.png`;
+const photo = { name: "Shared photo.png", mimeType: "image/png",
+  buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=", "base64") };
+const uploads = [];
 const { page, state, errors, dir, close } = await fixture({
   firstRun: true, imageCount: 0, threadCount: 0, viewport: { width: 1500, height: 900 },
   textStatus: { models, runtimeAvailable: true, ggufAvailable: true, imageToolModels: [{ id: "4b", label: "Klein 4B" }],
@@ -113,6 +117,39 @@ try {
   await button("Close chat settings", settings(left)).click();
   await button("Close chat settings", settings(right)).click();
 
+  await page.route(`**/references/${sharedImage}`, (route) => route.fulfill({ contentType: "image/png", body: photo.buffer }));
+  await page.route("**/api/text/images", async (route) => {
+    const admission = Promise.withResolvers();
+    const settled = Promise.withResolvers();
+    uploads.push({ finish: admission.resolve, settled: settled.promise, body: route.request().postDataJSON() });
+    await admission.promise;
+    await route.fulfill({ status: 201, json: { image: sharedImage } }).catch(() => {});
+    settled.resolve();
+  });
+  const attach = (pane) => pane.getByLabel("Chat image file", { exact: true }).setInputFiles(photo);
+  const cancelAttach = (pane) => button("Cancel image attachment", pane);
+  const draftImage = (pane) => pane.getByAltText("Image to send", { exact: true });
+  await attach(left);
+  await expect.poll(() => uploads.length).toBe(1);
+  await attach(right);
+  await expect.poll(() => uploads.length).toBe(2);
+  await expect(cancelAttach(left)).toBeVisible();
+  await expect(cancelAttach(right)).toBeVisible();
+  await cancelAttach(left).click();
+  await expect(cancelAttach(left)).toHaveCount(0);
+  await expect(cancelAttach(right)).toBeVisible();
+  await attach(left);
+  await expect.poll(() => uploads.length).toBe(3);
+  assert.deepEqual(uploads.map(({ body }) => body), Array(3).fill(uploads[0].body));
+  uploads[0].finish();
+  uploads[1].finish();
+  await uploads[0].settled;
+  await expect(draftImage(right)).toHaveAttribute("src", new RegExp(sharedImage));
+  await expect(draftImage(left)).toHaveCount(0);
+  await expect(cancelAttach(left)).toBeVisible();
+  uploads[2].finish();
+  await expect(draftImage(left)).toHaveAttribute("src", new RegExp(sharedImage));
+
   await message(left).fill("Continue the left draft");
   await message(right).fill("Answer the right prompt");
   await button("Send message", right).click();
@@ -123,6 +160,7 @@ try {
   assert.equal(rightRequest.modelId, "qwen");
   assert.equal(rightRequest.imageSettings.width, 576);
   assert.deepEqual(rightRequest.documentIds, [document.id]);
+  assert.equal(rightRequest.messages.at(-1).image, sharedImage);
   await button("Stop generation", right).waitFor();
   assert(await button("Send message", left).isDisabled());
   assert.equal(await message(left).inputValue(), "Continue the left draft");
@@ -136,6 +174,7 @@ try {
   assert.equal(leftRequest.modelId, "gemma");
   assert.equal(leftRequest.imageSettings.width, 320);
   assert.equal(leftRequest.documentIds, undefined);
+  assert.equal(leftRequest.messages.at(-1).image, sharedImage);
   await complete("Left answer.", left);
 
   await button("Find in chat", left).click();
@@ -174,6 +213,8 @@ try {
   await page.reload();
   await right.getByText("Right answer.", { exact: true }).waitFor();
   await left.getByText("Left answer.", { exact: true }).waitFor();
+  await expect(left.getByAltText("Attached chat image", { exact: true })).toHaveAttribute("src", new RegExp(sharedImage));
+  await expect(right.getByAltText("Attached chat image", { exact: true })).toHaveAttribute("src", new RegExp(sharedImage));
   assert.equal(Number(await divider.getAttribute("aria-valuenow")), savedSplit);
   await page.screenshot({ path: `${dir}/chat-split-wide.png` });
   await page.setViewportSize({ width: 864, height: 620 });
@@ -203,7 +244,8 @@ try {
   await button("Close pane", left).click();
   await region("Text conversation").getByRole("heading", { name: "New text thread", exact: true }).waitFor();
   assert.deepEqual(errors, []);
-  console.log("Split chats preserve independent Find results, drafts, image settings, models, documents, responses, pane sizes, and narrow navigation.");
+  console.log("Split chats preserve independent Find, drafts, shared attachments, settings, responses, and Undo through pane changes and reload.");
 } finally {
+  for (const upload of uploads) upload.finish();
   await close();
 }

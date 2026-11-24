@@ -1,4 +1,6 @@
 """Regression coverage for text admission, cancellation and external model safety."""
+import base64
+import io
 import json
 import sys
 import tempfile
@@ -11,6 +13,8 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import ANY, patch
 from http.server import ThreadingHTTPServer
+
+from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import api_server as api
@@ -61,6 +65,79 @@ class TextThreadsTests(unittest.TestCase):
             self.assertTrue(api.text_runtime_snapshot()['runtimeAvailable'])
         with patch.object(api, 'TEXT_MODEL_REGISTRY', self.registry), patch.object(api.importlib.util, 'find_spec', return_value=None):
             self.assertFalse(api.text_runtime_snapshot()['runtimeAvailable'])
+
+    def test_simultaneous_chat_image_uploads_share_one_file_without_blocking_stop(self):
+        image = io.BytesIO()
+        Image.new("RGB", (16, 16), "green").save(image, format="PNG")
+        data = "data:image/png;base64," + base64.b64encode(image.getvalue()).decode("ascii")
+        both_decoding = threading.Barrier(3, timeout=5)
+        resume_decode = threading.Event()
+        cancel = threading.Event()
+        decode = api.decode_flux_reference_image
+
+        def decode_together(value):
+            both_decoding.wait()
+            if not resume_decode.wait(timeout=7):
+                raise TimeoutError("Timed out waiting for Stop.")
+            return decode(value)
+
+        with ThreadingHTTPServer(("127.0.0.1", 0), api.Handler) as server:
+            worker = threading.Thread(target=server.serve_forever, daemon=True)
+            worker.start()
+            base = f"http://127.0.0.1:{server.server_port}/api/text"
+
+            def post(endpoint, payload):
+                request = urllib.request.Request(f"{base}/{endpoint}", data=json.dumps(payload).encode(),
+                                                 headers={"Content-Type": "application/json"})
+                try:
+                    with urllib.request.urlopen(request, timeout=5) as response:
+                        return response.status, json.load(response)
+                except urllib.error.HTTPError as error:
+                    with error:
+                        return error.code, json.load(error)
+
+            try:
+                with (
+                    patch.object(api, "DATA_DIR", self.root),
+                    patch.object(api, "decode_flux_reference_image", side_effect=decode_together),
+                    patch.dict(api.TEXT_JOB, {"id": "attach-running", "threadId": "text-thread-attach", "status": "running"}),
+                    patch.object(api, "TEXT_CANCEL_EVENT", cancel),
+                    patch.object(api.TEXT_GENERATION_WORKER, "request_stop") as request_stop,
+                    patch.object(api.INTEL_MEDIA, "interrupt"),
+                    ThreadPoolExecutor(max_workers=2) as uploads,
+                ):
+                    first = uploads.submit(post, "images", {"image": data})
+                    second = uploads.submit(post, "images", {"image": data})
+                    try:
+                        both_decoding.wait()
+                        status, receipt = post("stop", {"requestId": "attach-running", "threadId": "text-thread-attach"})
+                        self.assertEqual(status, 202, receipt)
+                        self.assertTrue(cancel.is_set())
+                        request_stop.assert_called_once_with(cancel)
+                    finally:
+                        resume_decode.set()
+                    responses = [first.result(), second.result()]
+                    self.assertEqual([status for status, _ in responses], [201, 201], responses)
+                    name = responses[0][1]["image"]
+                    self.assertEqual(responses[1][1]["image"], name)
+                    with Image.open(api.chat_image_path(name)) as stored:
+                        self.assertEqual(stored.size, (16, 16))
+                        self.assertEqual(stored.getpixel((0, 0)), (0, 128, 0))
+                    self.assertEqual(list((self.root / "references").iterdir()), [self.root / "references" / name])
+            finally:
+                server.shutdown()
+                worker.join(timeout=5)
+
+    def test_upload_admitted_before_a_local_data_reset_cannot_publish_after_it(self):
+        revision = api.CHAT_IMAGE_STORAGE_REVISION
+        with (
+            patch.object(api, "DATA_DIR", self.root),
+            patch.object(api, "decode_flux_reference_image", return_value=Image.new("RGB", (16, 16), "green")),
+            patch.object(api, "CHAT_IMAGE_STORAGE_REVISION", revision + 1),
+            self.assertRaisesRegex(ValueError, "Local data was cleared"),
+        ):
+            api.store_chat_image("fixture", revision)
+        self.assertFalse((self.root / "references").exists())
 
     def test_subprocess_reuse_switch_and_interrupt(self):
         script = self.root / 'fake_worker.py'
