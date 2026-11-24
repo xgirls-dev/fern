@@ -1,6 +1,6 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { RootContent } from "hast";
-import { appendChatMarkdownTableRows, canReuseChatMarkdownPrefix, parseChatMarkdown, parsePlainChatMarkdown, type ChatMarkdownRequest, type ChatMarkdownResponse } from "../lib/chatMarkdown";
+import { appendChatMarkdownTableRows, canReuseChatMarkdownPrefix, parseChatMarkdown, parsePlainChatMarkdown, parseStreamingChatMarkdown, type ChatMarkdownRequest, type ChatMarkdownResponse } from "../lib/chatMarkdown";
 
 const WORKER_THRESHOLD = 2_000;
 const SYNC_PROSE_LIMIT = 16_000;
@@ -56,16 +56,22 @@ type MarkdownInput = Omit<ChatMarkdownRequest, "id"> & { queue: MarkdownQueue };
 type ParsedMarkdown = {
   content: string;
   nodes: RootContent[];
+  streamingParse?: ReturnType<typeof parseStreamingChatMarkdown>;
 };
 const settledMarkdown = new Map<string, ParsedMarkdown>();
 
-function parseSmallReply(content: string, streaming: boolean, receivingReply: boolean): ParsedMarkdown {
+function parseSmallReply(content: string, streaming: boolean, receivingReply: boolean, previous: ParsedMarkdown | null): ParsedMarkdown {
+  if (streaming) {
+    const streamingParse = parseStreamingChatMarkdown(content, previous?.streamingParse);
+    return { content, nodes: streamingParse.nodes, streamingParse };
+  }
+
   // Virtualized rows and switched chats can remount with the same saved reply.
   // Keep only small, settled parses so live snapshots never crowd them out.
-  const cacheable = !receivingReply && !streaming && !!content && content.length < WORKER_THRESHOLD;
+  const cacheable = !receivingReply && !!content && content.length < WORKER_THRESHOLD;
   const parsed = (cacheable ? settledMarkdown.get(content) : undefined) ?? {
     content,
-    nodes: parseChatMarkdown(content, streaming).children,
+    nodes: parseChatMarkdown(content, false).children,
   };
   if (cacheable) {
     settledMarkdown.delete(content);
@@ -117,7 +123,7 @@ export function useChatMarkdown(content: string, streaming: boolean, receivingRe
     return root && { content, nodes: root.children };
   }, [content, workerCandidate]);
   const shouldOffload = workerCandidate && !plainResult;
-  const smallResult = useMemo(() => shouldOffload ? null : plainResult ?? parseSmallReply(content, streaming, receivingReply),
+  const smallResult = useMemo(() => shouldOffload ? null : plainResult ?? parseSmallReply(content, streaming, receivingReply, latestSmall.current),
     [content, plainResult, receivingReply, shouldOffload, streaming]);
   const finalNodes = useMemo(() => shouldOffload && !streaming ? finishParsedReply(largeResult, content) : null,
     [content, largeResult, shouldOffload, streaming]);

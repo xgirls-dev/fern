@@ -32,11 +32,16 @@ export function parsePlainChatMarkdown(content: string): Root | null {
   return { type: "root", children };
 }
 
+export function prepareChatMarkdown(content: string, streaming: boolean) {
+  const preview = streaming && hasStreamingMarkdown(content);
+  return { source: preview ? previewMarkdown(content) : content, preview };
+}
+
 export function parseChatMarkdown(content: string, streaming: boolean): Root {
   const plain = parsePlainChatMarkdown(content);
   if (plain) return plain;
-  const preview = streaming && hasStreamingMarkdown(content);
-  return parsePreparedChatMarkdown(preview ? previewMarkdown(content) : content, preview).root;
+  const { source, preview } = prepareChatMarkdown(content, streaming);
+  return parsePreparedChatMarkdown(source, preview).root;
 }
 
 export function canReuseChatMarkdownPrefix(source: string) {
@@ -82,6 +87,31 @@ export function parsePreparedChatMarkdown(source: string, preview: boolean, find
     }
   }
   return { root: renderable, boundary, trimmedPreview, openTable };
+}
+
+interface ParsedStreamingMarkdown {
+  content: string;
+  nodes: RootContent[];
+  prefix?: { source: string; blockCount: number };
+}
+
+export function parseStreamingChatMarkdown(content: string, previous?: ParsedStreamingMarkdown): ParsedStreamingMarkdown {
+  const plain = parsePlainChatMarkdown(content);
+  if (plain) return { content, nodes: plain.children };
+
+  const { source, preview } = prepareChatMarkdown(content, true);
+  const independent = canReuseChatMarkdownPrefix(source);
+  // A revised snapshot may remove a whole block or reinterpret an earlier one.
+  const priorPrefix = independent && previous && content.startsWith(previous.content) ? previous.prefix : undefined;
+  const prefix = priorPrefix && source.startsWith(priorPrefix.source) ? priorPrefix : undefined;
+  const offset = prefix?.source.length ?? 0;
+  const count = prefix?.blockCount ?? 0;
+  const { root, boundary } = parsePreparedChatMarkdown(source.slice(offset), preview, independent);
+  return {
+    content,
+    nodes: prefix && previous ? [...previous.nodes.slice(0, count), ...root.children] : root.children,
+    prefix: boundary ? { source: source.slice(0, offset + boundary.offset), blockCount: count + boundary.index } : prefix,
+  };
 }
 
 export function appendChatMarkdownTableRows(table: RootContent | undefined, update: ChatMarkdownTableRows): RootContent | undefined {

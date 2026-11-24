@@ -1,5 +1,4 @@
-import { canReuseChatMarkdownPrefix, parsePreparedChatMarkdown, type ChatMarkdownRequest, type ChatMarkdownResponse } from "./chatMarkdown";
-import { hasStreamingMarkdown, previewMarkdown } from "./streamingMarkdown";
+import { canReuseChatMarkdownPrefix, parsePreparedChatMarkdown, prepareChatMarkdown, type ChatMarkdownRequest, type ChatMarkdownResponse } from "./chatMarkdown";
 
 type BlockPrefix = { source: string; blockCount: number };
 type TablePrefix = BlockPrefix & { header: string; rowCount: number };
@@ -38,8 +37,7 @@ self.addEventListener("message", (event: MessageEvent<ChatMarkdownRequest>) => {
   const { id, content, streaming, view, previousId } = event.data;
   let response: ChatMarkdownResponse;
   try {
-    const preview = streaming && hasStreamingMarkdown(content);
-    const source = preview ? previewMarkdown(content) : content;
+    const { source, preview } = prepareChatMarkdown(content, streaming);
     const independent = canReuseChatMarkdownPrefix(source);
     const candidate = prefixes.get(view);
     // Only omit nodes from a reply the renderer has acknowledged.
