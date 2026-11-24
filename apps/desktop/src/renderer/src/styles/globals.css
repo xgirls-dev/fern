@@ -3833,6 +3833,10 @@ textarea:focus {
 .tts-setup-card p { margin: 7px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
 .tts-setup-card .ui-button { flex: 0 0 auto; }
 .tts-submit { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.speech-model-requirements { display: grid; min-width: 0; gap: 6px; font-size: 12px; }
+.speech-model-requirements > p { margin: 0; color: var(--muted); line-height: 1.5; }
+.tts-submit--setup { align-items: flex-end; }
+.tts-submit--setup .speech-model-requirements { flex: 1 1 220px; }
 .tts-submit .ui-button { margin-left: auto; }
 .tts-submit > span { flex: 1 1 160px; color: var(--muted-2); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
 .tts-result-note { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--border)); border-radius: 8px; background: color-mix(in srgb, var(--accent) 7%, var(--card)); color: var(--foreground); font-size: 11px; }

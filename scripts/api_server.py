@@ -69,7 +69,8 @@ from gguf_runtime import RUNTIME_PLATFORM_ERROR, apple_silicon, runtime_supporte
 from chat_image_tools import CHAT_IMAGE_SIZE, IMAGE_MODEL_PRIORITY, IMAGE_TOOL, chat_image_overrides, image_tool_prompt
 from chat_documents import document_ids, retrieve_passages, store_document
 from chat_context import DEFAULT_CONTEXT_SIZE, validate_context_size, validate_gguf_load_options
-from tts_model_download import catalog_spec as tts_catalog_spec, model_ready as tts_export_ready
+from tts_model_download import model_download_details as tts_model_download_details
+from tts_model_download import model_ready as tts_export_ready, require_fresh_install_space as require_tts_install_space
 
 GENERATION_WORKER = GenerationWorker()
 TAME_PONY_GENERATION_WORKER = GenerationWorker(target=tame_pony_inference_loop)
@@ -623,15 +624,17 @@ def tts_setup_unavailable() -> str | None:
         return "Speech generation is unavailable in the Mac beta."
     if sys.platform == "linux":
         return "Qwen3-TTS setup is unavailable in the Linux beta."
+    if sys.platform != "win32":
+        return "Speech setup requires Fern on Windows x64."
     return None
 
 
 @lru_cache(maxsize=5)
-def tts_download_bytes(model: str) -> int | None:
+def tts_download_requirements(model: str) -> dict[str, Any]:
     try:
-        return int(tts_catalog_spec(model)["bytes"])
+        return tts_model_download_details(model)
     except (OSError, KeyError, TypeError, ValueError, RuntimeError):
-        return None
+        return {}
 
 
 def tts_snapshot() -> dict[str, Any]:
@@ -645,7 +648,7 @@ def tts_snapshot() -> dict[str, Any]:
         files_ready = tts_export_ready(TTS_MODEL_ROOT / f"{key}-OV", key)
         job["models"].append({
             "id": key, **spec, "installed": files_ready, "ready": files_ready and environment_ready,
-            "bytes": tts_download_bytes(key),
+            **tts_download_requirements(key),
         })
     job["environmentReady"] = environment_ready
     job["setupUnavailableReason"] = tts_setup_unavailable()
@@ -1365,6 +1368,7 @@ def run_tts_setup(model: str, job_id: str, cancel_event: threading.Event) -> Non
         append_tts_log("FERN_TTS_PROGRESS:Preparing the local speech environment.")
         if cancel_event.is_set():
             raise TtsJobCancelled()
+        require_tts_install_space(model, TTS_MODEL_ROOT)
         # The separate speech environment is installed while no generation is
         # active; also release idle workers so setup has predictable headroom.
         GENERATION_WORKER.close()
@@ -1386,17 +1390,18 @@ def run_tts_setup(model: str, job_id: str, cancel_event: threading.Event) -> Non
             ], clean_python_env=False, cancel_event=cancel_event)
             if install_code:
                 raise RuntimeError("Speech runtime installation failed. Retry setup; Technical diagnostics contain the installer error.")
-        python = TTS_ENV / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-        code, output = run_tts_process([
-            str(python), str(SCRIPTS / "qwen3_tts_worker.py"), "setup", "--model", model,
-            "--model-root", str(TTS_MODEL_ROOT),
-        ], cancel_event=cancel_event)
-        if code:
-            try:
-                message = json.loads(output.strip().splitlines()[-1]).get("error")
-            except (ValueError, IndexError, AttributeError):
-                message = None
-            raise RuntimeError(message or "Could not download the OpenVINO speech model. Retry setup to resume the download.")
+        if not tts_export_ready(TTS_MODEL_ROOT / f"{model}-OV", model):
+            python = TTS_ENV / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+            code, output = run_tts_process([
+                str(python), str(SCRIPTS / "qwen3_tts_worker.py"), "setup", "--model", model,
+                "--model-root", str(TTS_MODEL_ROOT),
+            ], cancel_event=cancel_event)
+            if code:
+                try:
+                    message = json.loads(output.strip().splitlines()[-1]).get("error")
+                except (ValueError, IndexError, AttributeError):
+                    message = None
+                raise RuntimeError(message or "Could not download the OpenVINO speech model. Retry setup to resume the download.")
         with TTS_JOB_LOCK:
             if cancel_event.is_set():
                 raise TtsJobCancelled()

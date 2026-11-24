@@ -1,10 +1,11 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import AudioLines from "lucide-react/dist/esm/icons/audio-lines.mjs";
 import { Button, ErrorMessage, ModelCard, ModelCardActions, ModelCardHeading, ModelStatus, PageHeader, SegmentedControl, Select } from "./ui/controls";
 import type { useTextChat } from "../hooks/useTextChat";
 import type { useQwen3Tts } from "../hooks/useQwen3Tts";
 import { ModelLibrary, type InstalledModel } from "./ModelLibrary";
 import { TextModelLibrary } from "./TextModelLibrary";
+import { SpeechModelRequirements } from "./SpeechModelRequirements";
 import type { ModelSetup, SetupSelection } from "../lib/modelSetup";
 import { recommendedTextModelIssue, textModelReadiness } from "../lib/textThreads";
 
@@ -18,6 +19,7 @@ export function ModelsView({ category: tab, onCategoryChange, text, audio, setup
   imageGpuAvailable?: boolean;
 }) {
   const heading = useRef<HTMLHeadingElement>(null);
+  const audioRequirementsPrefix = useId();
   const body = useRef<HTMLDivElement>(null);
   const [imageCatalog, setImageCatalog] = useState<InstalledModel[]>([]);
   const [textSelection, setTextSelection] = useState<{ setup: ModelSetup; modelId: string }>();
@@ -119,13 +121,21 @@ export function ModelsView({ category: tab, onCategoryChange, text, audio, setup
         <div className="model-library-grid">{audio.status.models.map((model) => {
           const settingUp = audio.status.operation === "setup" && audio.status.model === model.id && audio.status.status === "setting_up";
           const ready = model.ready ?? model.installed;
+          const showRequirements = !ready && !audio.status.setupUnavailableReason;
+          const requirementsId = audioRequirementsPrefix + "-" + model.id;
           return <ModelCard key={model.id}>
             <ModelCardHeading icon={<AudioLines size={17} />}><h4>{model.label}</h4></ModelCardHeading>
             <p>{model.kind === "base" ? "Clone a voice from a recording" : model.kind === "voice_design" ? "Describe and create a voice" : "Generate speech with preset voices"}</p>
-            {model.bytes ? <p>{(model.bytes / 1e9).toFixed(2)} GB</p> : null}
+            {showRequirements && <SpeechModelRequirements id={requirementsId} model={model} device={audio.computeDevice}
+              environmentReady={audio.status.environmentReady} />}
             <ModelStatus installed={model.installed}>{ready ? "Ready" : settingUp ? audio.status.phase || "Installing…" : model.installed ? "Installed · speech runtime required" : "Not installed"}</ModelStatus>
             {settingUp ? <progress aria-label={`${model.label} installation`} /> : null}
-            <ModelCardActions>{!ready && !audio.status.setupUnavailableReason ? <Button disabled={!audio.statusLoaded || Boolean(audio.statusError) || audio.busy || text.busy || settingUp} onClick={() => void audio.setupModel(model.id)}>{settingUp ? "Installing…" : model.installed ? "Set up runtime" : "Install"}</Button> : null}{settingUp ? <Button disabled={audio.status.status === "stopping"} onClick={() => void audio.stopJob()}>Cancel</Button> : null}</ModelCardActions>
+            <ModelCardActions>
+              {showRequirements && <Button aria-describedby={requirementsId}
+                disabled={!audio.statusLoaded || Boolean(audio.statusError) || audio.busy || text.busy || settingUp}
+                onClick={() => void audio.setupModel(model.id)}>{settingUp ? "Installing…" : model.installed ? "Set up runtime" : "Install"}</Button>}
+              {settingUp && <Button onClick={() => void audio.stopJob()}>Cancel</Button>}
+            </ModelCardActions>
           </ModelCard>;
         })}</div>
       </section> : null}
