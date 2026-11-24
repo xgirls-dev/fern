@@ -155,12 +155,15 @@ try {
   await handle.press("End");
   await handle.press("ArrowDown");
   await expect(handle).toHaveAttribute("aria-valuenow", "408");
-  const resizeBounds = await handle.boundingBox();
-  const resizeX = resizeBounds.x + resizeBounds.width / 2;
-  const resizeY = resizeBounds.y + resizeBounds.height / 2;
-  await page.mouse.move(resizeX, resizeY);
+  // The hover can scroll the grip into view. Use the actual pointer-down position.
+  await handle.evaluate((element) => element.addEventListener("pointerdown", (event) => {
+    window.activityResizeStart = { x: event.clientX, y: event.clientY };
+  }, { once: true }));
+  await handle.hover({ position: { x: 8, y: 8 } });
   await page.mouse.down();
-  await page.mouse.move(resizeX, resizeY + 36, { steps: 5 });
+  await expect(handle).toHaveAttribute("data-resizing", "true");
+  const start = await page.evaluate(() => window.activityResizeStart);
+  await page.mouse.move(start.x, start.y + 36, { steps: 5 });
   await expect(handle).toHaveAttribute("aria-valuetext", "372 pixels");
   await expect(terminal).toHaveCSS("height", "372px");
   await page.mouse.up();

@@ -3,10 +3,11 @@ import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
 import remarkRehype from "remark-rehype";
 import { hasStreamingMarkdown, previewMarkdown, remarkStreamingPreview } from "./streamingMarkdown";
-import { chatSearchPattern, isChatSearchBlock } from "./chatSearchRange";
+import { chatSearchExcerpt, chatSearchPattern, isChatSearchBlock } from "./chatSearchRange";
 import { replyVersions, type TextMessage } from "./textThreads";
 
 type MatchSection = "body" | "image" | "reasoning";
+type SearchField = [section: MatchSection, source: string | undefined, markdown?: "settled" | "streaming"];
 
 export interface ChatSearchMatch {
   messageId: string;
@@ -18,13 +19,14 @@ export interface ChatSearchMatch {
 }
 
 interface ChatSearchEntry extends Pick<ChatSearchMatch, "messageId" | "versionId" | "savedPromptId"> {
-  fields: Array<[section: MatchSection, value: string | undefined]>;
+  fields: SearchField[];
 }
 
 const markdown = unified().use(remarkParse).use(remarkGfm).freeze();
 const settledMarkdown = markdown().use(remarkRehype, { allowDangerousHtml: true }).freeze();
 const streamingMarkdown = markdown().use(remarkStreamingPreview).use(remarkRehype, { allowDangerousHtml: true }).freeze();
-const indexed = new WeakMap<TextMessage, ChatSearchEntry["fields"]>();
+const indexed = new WeakMap<TextMessage, SearchField[]>();
+const rendered = new WeakMap<SearchField, string>();
 
 type RenderedNode = { type: string; value?: string; tagName?: string; properties?: Record<string, unknown>; children?: RenderedNode[] };
 
@@ -48,16 +50,27 @@ function renderedMarkdown(text: string | undefined, streaming: boolean) {
   return readRenderedText(processor.runSync(processor.parse(preview ? previewMarkdown(text) : text)));
 }
 
-function searchFields(message: TextMessage, streaming = false): ChatSearchEntry["fields"] {
+function searchFields(message: TextMessage, streaming = false): SearchField[] {
   const cached = streaming ? undefined : indexed.get(message);
   if (cached) return cached;
-  const fields: ChatSearchEntry["fields"] = [
-    ["body", message.role === "assistant" ? renderedMarkdown(message.content, streaming) : message.content],
+  const markdown = streaming ? "streaming" : "settled";
+  const fields: SearchField[] = [
+    ["body", message.content, message.role === "assistant" ? markdown : undefined],
     ["image", message.generatedImage?.prompt],
-    ["reasoning", renderedMarkdown(message.reasoning, streaming)],
+    ["reasoning", message.reasoning, markdown],
   ];
   if (!streaming) indexed.set(message, fields);
   return fields;
+}
+
+function renderedField(field: SearchField) {
+  const [, source, mode] = field;
+  if (!source || !mode) return source;
+  const cached = rendered.get(field);
+  if (cached !== undefined) return cached;
+  const text = renderedMarkdown(source, mode === "streaming") ?? "";
+  rendered.set(field, text);
+  return text;
 }
 
 export function liveChatSearchEntry(message: TextMessage): ChatSearchEntry {
@@ -90,7 +103,9 @@ export function matchingChatOccurrences(entries: ChatSearchEntry[], query: strin
   const pattern = chatSearchPattern(query);
   const matches: ChatSearchMatch[] = [];
   for (const { messageId, versionId, savedPromptId, fields } of entries) {
-    for (const [section, text] of fields) {
+    for (const field of fields) {
+      const [section] = field;
+      const text = renderedField(field);
       if (!text) continue;
       let occurrence = 0;
       for (const _ of text.normalize().matchAll(pattern)) matches.push({ messageId, versionId, savedPromptId, section, occurrence: occurrence++, query });
@@ -99,6 +114,34 @@ export function matchingChatOccurrences(entries: ChatSearchEntry[], query: strin
   return matches;
 }
 
-export function chatSearchText(messages: readonly TextMessage[]) {
-  return chatSearchEntries(messages).flatMap((entry) => entry.fields.map(([, text]) => text?.replace(/\s+/g, " ").trim()));
+function couldMatchMarkdown(source: string, characters: string) {
+  // Markdown keeps these source characters in order. Entities can introduce letters
+  // and GFM footnotes move their text. Always parse those fields before matching.
+  if (!characters || source.includes("&") || source.includes("[^")) return true;
+  // Decomposition retains base letters across accent combinations. Unicode
+  // case-insensitive matching also treats the long s as equivalent to ASCII s.
+  const folded = source.normalize("NFD").toLowerCase().replaceAll("ſ", "s");
+  let offset = 0;
+  for (const character of characters) {
+    const position = folded.indexOf(character, offset);
+    if (position === -1) return false;
+    offset = position + 1;
+  }
+  return true;
+}
+
+export function threadSearchMatcher(query: string) {
+  const pattern = chatSearchPattern(query);
+  // Limit the prefilter to characters with predictable decomposition and case folding.
+  const characters = query.normalize().toLowerCase().replace(/[^a-z\p{Unified_Ideograph}]/gu, "");
+  return (entries: ChatSearchEntry[]) => {
+    for (const { fields } of entries) {
+      for (const field of fields) {
+        const [, source, mode] = field;
+        if (!source || (mode && !rendered.has(field) && !couldMatchMarkdown(source, characters))) continue;
+        const excerpt = chatSearchExcerpt(renderedField(field)?.replace(/\s+/g, " ").trim(), pattern);
+        if (excerpt) return excerpt;
+      }
+    }
+  };
 }
