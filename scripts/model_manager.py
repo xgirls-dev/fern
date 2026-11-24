@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import math
 import os
 import shutil
 import stat
@@ -9,6 +10,9 @@ import threading
 import urllib.request
 from pathlib import Path
 from model_catalog import MODEL_CATALOG, installed, model_spec
+
+
+DOWNLOAD_RESERVE_BYTES = 2 * 1024**3
 
 
 def remove_tree(path):
@@ -48,9 +52,11 @@ class ModelManager:
             result = []
             for key, spec in MODEL_CATALOG.items():
                 is_installed = installed(self.root, key)
+                download_bytes = sum(f["size"] for f in spec["files"])
                 result.append({
                     **{k: v for k, v in spec.items() if k != "files"},
-                    "bytes": sum(f["size"] for f in spec["files"]),
+                    "bytes": download_bytes,
+                    "minimumFreeBytes": download_bytes + DOWNLOAD_RESERVE_BYTES,
                     "installed": is_installed,
                     **self.jobs.get(
                         key,
@@ -143,18 +149,22 @@ class ModelManager:
         stage = self.folder(model, True)
         try:
             stage.mkdir(parents=True, exist_ok=True)
-            remaining = sum(
-                (
-                    max(0, f["size"] - (stage / f["path"]).stat().st_size)
-                    if (stage / f["path"]).exists()
-                    else f["size"]
-                )
-                for f in spec["files"]
-            )
-            if shutil.disk_usage(stage).free < remaining + 2 * 1024**3:
-                raise ValueError(
-                    "Not enough free disk space; leave at least 2 GB after installation."
-                )
+            staged_files = []
+            remaining = 0
+            for item in spec["files"]:
+                target = (stage / item["path"]).resolve()
+                if not target.is_relative_to(stage.resolve()):
+                    raise ValueError("Invalid model asset path")
+                offset = target.stat().st_size if target.exists() else 0
+                if offset > item["size"]:
+                    target.unlink()
+                    offset = 0
+                remaining += item["size"] - offset
+                staged_files.append((item, target, offset))
+            required = remaining + DOWNLOAD_RESERVE_BYTES
+            if shutil.disk_usage(stage).free < required:
+                gigabytes = math.ceil(required / 10_000_000) / 100
+                raise ValueError(f"Free at least {gigabytes:.2f} GB to download the remaining model files.")
             def set_phase(phase):
                 self._update(model, state="preparing", phase=phase)
 
@@ -162,17 +172,10 @@ class ModelManager:
                 self.preflight(model, stage, event, set_phase)
                 self._update(model, state="downloading", phase=None)
             done = 0
-            for item in spec["files"]:
+            for item, target, offset in staged_files:
                 if event.is_set():
                     raise InterruptedError()
-                target = (stage / item["path"]).resolve()
-                if not target.is_relative_to(stage.resolve()):
-                    raise ValueError("Invalid model asset path")
                 target.parent.mkdir(parents=True, exist_ok=True)
-                offset = target.stat().st_size if target.exists() else 0
-                if offset > item["size"]:
-                    target.unlink()
-                    offset = 0
                 if offset < item["size"]:
                     url = item.get("url") or f"https://huggingface.co/{spec['repo']}/resolve/{spec['revision']}/{item['path']}"
                     req = urllib.request.Request(

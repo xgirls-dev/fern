@@ -2586,7 +2586,7 @@ code {
 .model-library-download-status small { font-size:11px; }
 @media (max-width:760px) { .model-library-import { grid-template-columns:minmax(0, 1fr); } .model-library-import > p, .model-library-local-source, .model-library-download-status { grid-column:auto; } }
 .model-library-card progress { width:100%; }
-.text-model-requirements {
+.model-download-requirements {
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr);
   gap: var(--ui-space-1) var(--ui-space-3);
@@ -2594,8 +2594,8 @@ code {
   font-size: var(--ui-font-control);
   line-height: var(--ui-line-control);
 }
-.text-model-requirements dt { color: var(--muted); }
-.text-model-requirements dd { margin: 0; overflow-wrap: anywhere; }
+.model-download-requirements dt { color: var(--muted); }
+.model-download-requirements dd { margin: 0; overflow-wrap: anywhere; }
 .model-library-card-qwen > .model-library-note { font-size:11px; }
 .model-library-card-qwen > progress { height:4px; accent-color:var(--accent); }
 .model-library-card-qwen details { min-width:0; font-size:12px; }

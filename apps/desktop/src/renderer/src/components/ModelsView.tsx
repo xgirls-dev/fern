@@ -51,13 +51,18 @@ export function ModelsView({ category: tab, onCategoryChange, text, audio, setup
       Number(b.id === text.status.defaultModelId) - Number(a.id === text.status.defaultModelId))[0]
     : undefined);
   const installedTool = text.status.imageToolModels?.[0];
-  const installedImage = needsImageTools ? installedTool : imageCatalog.find((model) => model.installed && (["4b", "9b"].includes(model.id) || (model.category === "image" && !model.setupUnavailableReason)));
+  const installedImage = needsImageTools ? installedTool : imageCatalog.find((model) => model.installed &&
+    !model.setupUnavailableReason && model.state !== "runtime-unavailable" &&
+    (["4b", "9b"].includes(model.id) || model.category === "image") &&
+    (text.computeDevice !== "CPU" || !model.generationDevices || model.generationDevices.includes("CPU")));
   const recommendedImage = imageCatalog.find((model) =>
     model.id === (window.studio.platform === "darwin" ? "klein-4b-mlx" : "4b") && !model.setupUnavailableReason
   );
   const imageToolBlock = needsImageTools && (text.computeDevice === "CPU"
     ? "Select GPU in Preferences to generate images in chat."
     : imageGpuAvailable === false ? `Image generation in chat requires an available ${window.studio.platform === "darwin" ? "Apple" : "Intel"} GPU.` : null);
+  const imageDeviceBlock = setup?.task === "image" && !installedImage && text.computeDevice === "CPU" &&
+    recommendedImage?.generationDevices && !recommendedImage.generationDevices.includes("CPU");
   const selection = {
     textModelId: needsText ? installedText?.id : undefined,
     imageModelId: needsImage ? installedImage?.id : undefined,
@@ -90,10 +95,12 @@ export function ModelsView({ category: tab, onCategoryChange, text, audio, setup
         {needsImage && <div className="model-setup-requirement">
           {needsImageTools && <span className="model-setup-role">Image creation</span>}
           <span>{installedImage ? `${installedImage.label} · Installed` :
+            recommendedImage?.installed ? `${recommendedImage.label} · Installed` :
             recommendedImage ? `${recommendedImage.label} · ${(recommendedImage.bytes / 1e9).toFixed(2)} GB download` :
             "Choose an image model."}</span>
         </div>}
         {imageToolBlock && <span>{imageToolBlock}</span>}
+        {imageDeviceBlock && <span>Select Available GPU in Preferences to use this image model.</span>}
       </div>
       <div className="model-setup-summary-actions">
         {needsText && !installedText && tab !== "text" && <Button variant="ghost" onClick={() => onCategoryChange("text")}>Choose chat model</Button>}

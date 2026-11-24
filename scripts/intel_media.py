@@ -37,6 +37,7 @@ FLAGS = {
     "vae": "--vae", "tae": "--tae", "tokenizer": "--tokenizer",
 }
 VIDEO_ID = "wan22-turbo"
+SANA_RUNTIME_RESERVE_BYTES = 4 * 1024**3
 
 
 def supported():
@@ -190,7 +191,7 @@ class IntelMedia:
         overlay = stage / ".runtime"
         if not (overlay / "ready").is_file():
             log("Installing SANA-Sprint’s isolated OpenVINO and Python dependencies…")
-            if shutil.disk_usage(stage).free < 4 * 1024**3:
+            if shutil.disk_usage(stage).free < SANA_RUNTIME_RESERVE_BYTES:
                 raise RuntimeError("SANA-Sprint needs at least 4 GB free while installing its runtime.")
             if overlay.exists():
                 shutil.rmtree(overlay)

@@ -79,13 +79,14 @@ TEXT_GENERATION_WORKER = TextGenerationProcess()
 from model_manager import ModelManager, remove_tree
 from model_catalog import APPLE_IMAGE_ID, APPLE_IMAGE_SPEC, INTEL_MEDIA_CATALOG, model_spec
 import apple_image
-from intel_media import IntelMedia, PLATFORM_NOTE as INTEL_MEDIA_PLATFORM_NOTE, VIDEO_ID, supported as intel_media_supported
+from intel_media import IntelMedia, PLATFORM_NOTE as INTEL_MEDIA_PLATFORM_NOTE, SANA_RUNTIME_RESERVE_BYTES, VIDEO_ID, supported as intel_media_supported
 from video_jobs import VideoJobs
 from PIL import ImageOps
 import gallery_store
 from media_http import byte_range
 import storage_manager
-from device_adapters import APPLE_GPU, device_label, normalize_device
+from device_adapters import APPLE_GPU, CPU, INTEL_GPU, NVIDIA_GPU, device_label, normalize_device
+from qwen21_turbo_download import MINIMUM_FREE_BYTES as QWEN_TURBO_DISK_RESERVE
 from qwen21_turbo_download import download_model as download_qwen_turbo_model
 
 
@@ -427,10 +428,14 @@ def qwen_turbo_snapshot() -> dict[str, Any]:
         "failed" if job["status"] == "failed" else
         "not-installed"
     )
+    download_bytes = qwen_turbo_quant_bytes()
     return {
         "id": QWEN_TURBO_MODEL_ID,
         "label": "Qwen Image 2.1 Turbo · official",
-        "bytes": qwen_turbo_quant_bytes(),
+        "bytes": download_bytes,
+        "minimumFreeBytes": download_bytes + QWEN_TURBO_DISK_RESERVE,
+        "generationDevices": [INTEL_GPU, CPU],
+        "downloadIncludes": ["Text and vision encoders", "VAE"],
         "downloaded": int(job.get("downloaded") or 0),
         "installed": installed,
         "state": state,
@@ -451,12 +456,21 @@ def model_library_snapshot() -> list[dict[str, Any]]:
         item.update(
             runtimeReady=status["runtimeReady"], supportsReferenceImage=False,
             setupUnavailableReason=None if status["selectedDevice"] else status["runtimeNote"],
+            generationDevices=[APPLE_GPU], downloadIncludes=["Text encoder", "VAE"],
         )
         return [item]
     models = [item for item in MODEL_MANAGER.snapshot() if item["id"] != APPLE_IMAGE_ID]
     klein_installed = any(item["id"] in ("4b", "4b-lora") and item["installed"] for item in models)
     for item in models:
-        if item["id"] in ("4b", "4b-lora"):
+        model = item["id"]
+        intel_only = model in flux2.LORA_MODEL_KEYS or model in INTEL_MEDIA_CATALOG
+        item["generationDevices"] = [INTEL_GPU] if intel_only else [INTEL_GPU, NVIDIA_GPU, CPU]
+        item["downloadIncludes"] = ["Text encoders" if tame_pony.is_model(model) else "Text encoder", "VAE"]
+        if model == "kromoss-opd-dmd2":
+            item["downloadIncludes"].append("Bundled LoRA")
+        elif model == "sana-sprint":
+            item["minimumFreeBytes"] = item["bytes"] + SANA_RUNTIME_RESERVE_BYTES
+        if model in ("4b", "4b-lora"):
             item["uncensoredTextEncoder"] = KLEIN_TEXT_ENCODER_MANAGER.snapshot(klein_installed)
     flux3_item = next((item for item in models if item["id"] == flux3.MODEL_KEY), None)
     if flux3_item is not None:

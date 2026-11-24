@@ -1,11 +1,12 @@
 import Clapperboard from "lucide-react/dist/esm/icons/clapperboard.mjs";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import ImageIcon from "lucide-react/dist/esm/icons/image.mjs";
 import ChevronDown from "lucide-react/dist/esm/icons/chevron-down.mjs";
 import Plus from "lucide-react/dist/esm/icons/plus.mjs";
 import { Button, Checkbox, ErrorMessage, InlineConfirmation, Input, ModelCard, ModelCardActions, ModelCardHeading, ModelStatus, Select } from "./ui/controls";
 import { getApiBaseUrl } from "../lib/api";
 import { isKleinLoraModel } from "../lib/imageModels";
+import type { DeviceId } from "../lib/types";
 import { useReturnFocus } from "../hooks/useReturnFocus";
 export interface InstalledModel {
   id: string;
@@ -23,6 +24,9 @@ export interface InstalledModel {
   memoryGiB?: number;
   defaultSteps?: number;
   setupUnavailableReason?: string | null;
+  minimumFreeBytes?: number;
+  generationDevices?: Exclude<DeviceId, "AUTO">[];
+  downloadIncludes?: string[];
   supportsReferenceImage?: boolean;
   error?: string;
   family?: string;
@@ -49,6 +53,15 @@ interface CustomImageDownload {
   bytes?: number;
   error?: string | null;
 }
+const generationDeviceLabels = {
+  APPLE_GPU: "Apple GPU", INTEL_GPU: "Intel GPU", NVIDIA_GPU: "NVIDIA GPU (OpenVINO plugin)", CPU: "CPU",
+};
+
+function showDownloadRequirements(model: InstalledModel): model is InstalledModel & { minimumFreeBytes: number } {
+  return !model.installed && !model.setupUnavailableReason && model.minimumFreeBytes !== undefined &&
+    !["repair-needed", "checking-runtime", "runtime-unavailable"].includes(model.state);
+}
+
 const CUSTOM_IMAGE_FAMILIES = [
   ["stable-diffusion", "Stable Diffusion 1.x / 2.x"],
   ["sdxl", "Stable Diffusion XL"],
@@ -63,6 +76,7 @@ export function ModelLibrary({ recommendedId, category = "image", onCatalogChang
   onCatalogChange?: (models: InstalledModel[]) => void;
 }) {
   const [models, setModels] = useState<InstalledModel[]>([]);
+  const cardPrefix = useId();
   useEffect(() => onCatalogChange?.(models), [models, onCatalogChange]);
   const [error, setError] = useState("");
   const [actionError, setActionError] = useState("");
@@ -295,19 +309,31 @@ export function ModelLibrary({ recommendedId, category = "image", onCatalogChang
             aria-busy={["downloading", "verifying", "preparing", "installing", "checking-runtime"].includes(model.state) || undefined}
           >
             <ModelCardHeading icon={category === "video" ? <Clapperboard size={17} /> : <ImageIcon size={17} />}>
-              <h4 title={model.label}>{model.label}</h4>
+              <div className="model-card-heading">
+                <h4 id={`${cardPrefix}${model.id}-name`} title={model.label}>{model.label}</h4>
+                {model.id === recommendedId && !model.installed && <span className="model-card-badge">Recommended</span>}
+              </div>
             </ModelCardHeading>
             <p>
-              {model.quantization ? `${model.quantization} · ${(model.bytes / 1e9).toFixed(2)} GB download` : model.id.startsWith("custom-")
+              {model.quantization ? model.quantization : model.id.startsWith("custom-")
               ? `${model.familyLabel ?? model.family ?? "Custom model"} · ${model.sourceType === "huggingface" ? "Hugging Face" : "Local folder"}`
               : model.id === "qwen21-turbo"
-              ? `8 steps · INT8 · ${(model.bytes / 1e9).toFixed(1)} GB`
+              ? "8 steps · INT8"
                 : model.id === "flux3-klein"
-                  ? `16 steps · INT4/INT8 · ${(model.bytes / 1e9).toFixed(2)} GB`
+                  ? "16 steps · INT4/INT8"
                   : model.id.startsWith("tame-pony-")
-                    ? `SDXL · ${model.id.endsWith("-int8") ? "INT8" : "FP16"} · ${(model.bytes / 1e9).toFixed(2)} GB`
-                    : `${model.bytes > 0 ? `${(model.bytes / 1e9).toFixed(2)} GB · ` : ""}${isKleinLoraModel(model.id) ? "LoRA-ready · Intel GPU" : model.id === "4b" ? "Smaller download and lower memory use" : "Larger model"}`}
+                    ? `SDXL · ${model.id.endsWith("-int8") ? "INT8" : "FP16"}`
+                    : isKleinLoraModel(model.id) ? "LoRA-ready" : model.id === "4b" ? "Smaller download and lower memory use" : "Larger model"}
+              {!showDownloadRequirements(model) && model.bytes > 0 && !model.id.startsWith("custom-") ? ` · ${(model.bytes / 1e9).toFixed(2)} GB` : null}
             </p>
+            {showDownloadRequirements(model) && (
+              <dl className="model-download-requirements" id={`${cardPrefix}${model.id}-requirements`}>
+                <dt>{["paused", "failed"].includes(model.state) ? "Full download" : "Download"}</dt><dd>{(model.bytes / 1e9).toFixed(2)} GB</dd>
+                {!!model.generationDevices?.length && <><dt>Device</dt><dd>{model.generationDevices.map((device) => generationDeviceLabels[device]).join(", ")}</dd></>}
+                <dt>Free space</dt><dd>At least {(Math.ceil(model.minimumFreeBytes / 1e7) / 100).toFixed(2)} GB for a fresh install</dd>
+                {!!model.downloadIncludes?.length && <><dt>Includes</dt><dd>{model.downloadIncludes.join(", ")}</dd></>}
+              </dl>
+            )}
             {model.quantization ? <p className="model-library-note">{model.description}{model.memoryGiB ? ` Recommended GPU memory budget: ${model.memoryGiB} GiB.` : ""}</p> : null}
               {model.id.startsWith("custom-") ? (
               <p className="model-library-note" title={model.repoId}>Text to image · {model.sourceType === "huggingface" ? model.repoId : "Linked in place; source files are kept on removal."}</p>
@@ -515,6 +541,7 @@ export function ModelLibrary({ recommendedId, category = "image", onCatalogChang
               ) : !model.installed && !model.setupUnavailableReason && !["repair-needed", "checking-runtime"].includes(model.state) ? (
                 <Button
                   variant={model.id === recommendedId ? "primary" : "secondary"}
+                  aria-describedby={showDownloadRequirements(model) ? `${cardPrefix}${model.id}-name ${cardPrefix}${model.id}-requirements` : undefined}
                   disabled={actionsUnavailable || downloading}
                   onClick={() => void action(model.id, "install")}
                 >

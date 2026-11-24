@@ -14,9 +14,44 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import api_server
 import gallery_store
+from model_manager import DOWNLOAD_RESERVE_BYTES, ModelManager
 
 
 class UxWorkflowTests(unittest.TestCase):
+    def test_image_catalog_details_match_the_platform_and_installer(self):
+        with tempfile.TemporaryDirectory() as directory:
+            manager = ModelManager(directory)
+            with (
+                patch.object(api_server, "MODEL_MANAGER", manager),
+                patch.object(api_server, "apple_silicon", return_value=False),
+                patch.object(api_server, "intel_media_supported", return_value=True),
+                patch.object(api_server, "qwen_turbo_model_ready", return_value=False),
+                patch.object(api_server.custom_image_registry.MODEL_REGISTRY, "snapshot", return_value=[]),
+            ):
+                models = {item["id"]: item for item in api_server.model_library_snapshot()}
+            klein = models["4b"]
+            self.assertEqual(klein["minimumFreeBytes"], klein["bytes"] + DOWNLOAD_RESERVE_BYTES)
+            self.assertEqual(klein["generationDevices"], ["INTEL_GPU", "NVIDIA_GPU", "CPU"])
+            self.assertEqual(klein["downloadIncludes"], ["Text encoder", "VAE"])
+            self.assertEqual(models["4b-lora"]["generationDevices"], ["INTEL_GPU"])
+            sana = models["sana-sprint"]
+            self.assertEqual(sana["minimumFreeBytes"], sana["bytes"] + api_server.SANA_RUNTIME_RESERVE_BYTES)
+            qwen = models[api_server.QWEN_TURBO_MODEL_ID]
+            self.assertEqual(qwen["minimumFreeBytes"], qwen["bytes"] + api_server.QWEN_TURBO_DISK_RESERVE)
+            self.assertEqual(qwen["generationDevices"], ["INTEL_GPU", "CPU"])
+
+            with (
+                patch.object(api_server, "MODEL_MANAGER", manager),
+                patch.object(api_server, "MODELS_DIR", Path(directory)),
+                patch.object(api_server, "apple_silicon", return_value=True),
+                patch.object(api_server.apple_image, "device_available", return_value=True),
+            ):
+                apple, = api_server.model_library_snapshot()
+            self.assertEqual(apple["id"], api_server.APPLE_IMAGE_ID)
+            self.assertEqual(apple["minimumFreeBytes"], apple["bytes"] + DOWNLOAD_RESERVE_BYTES)
+            self.assertEqual(apple["generationDevices"], ["APPLE_GPU"])
+            self.assertEqual(apple["downloadIncludes"], ["Text encoder", "VAE"])
+
     def test_chat_catalog_exposes_installed_models_and_their_own_defaults(self):
         pony = api_server.model_spec(api_server.tame_pony.MODEL_KEY)
         custom = {"id": "custom-example", "label": "My SDXL", "installed": True, "family": "sdxl",
