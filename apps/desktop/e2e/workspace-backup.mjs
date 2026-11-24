@@ -7,13 +7,19 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { _electron as electron, expect } from "@playwright/test";
-import { savedTextWorkspace } from "../../../tests/ui-fixture.mjs";
+import { chooseMessageAction, savedTextWorkspace } from "../../../tests/ui-fixture.mjs";
 
 const repo = fileURLToPath(new URL("../../../", import.meta.url));
 const scratch = await mkdtemp(path.join(os.tmpdir(), "fern-backup-test-"));
 const root = path.join(scratch, "fern-data");
 const archive = path.join(scratch, "My workspace.fern-backup");
 const packaged = process.env.FERN_E2E_EXECUTABLE;
+const previousExecutable = process.env.FERN_E2E_PREVIOUS_EXECUTABLE;
+const previousSourceEntry = process.env.FERN_E2E_PREVIOUS_SOURCE_ENTRY;
+assert(!(previousExecutable && previousSourceEntry), "Choose one prior Fern build.");
+const testUpgrade = Boolean(previousExecutable || previousSourceEntry);
+const savedReply = "selected color is sage";
+const archivedReply = "earlier image was charcoal";
 const chatId = "text-thread-portable";
 const imageId = "thread-portable-image";
 const audioId = "audio-thread-portable";
@@ -37,10 +43,12 @@ const env = { ...process.env, FERN_ROOT: root, INTEL_IRIS_ROOT: root, FERN_E2E_H
 delete env.ELECTRON_RUN_AS_NODE;
 let app;
 
-async function openProfile() {
+async function openProfile(beforeUpgrade = false) {
+  const executable = beforeUpgrade ? previousExecutable : packaged;
+  const sourceEntry = beforeUpgrade ? previousSourceEntry : path.join(repo, "apps/desktop/out/main/index.js");
   app = await electron.launch({
-    ...(packaged ? { executablePath: packaged } : {}),
-    args: [...(packaged ? [] : [path.join(repo, "apps/desktop/out/main/index.js")]),
+    ...(executable ? { executablePath: executable } : {}),
+    args: [...(executable ? [] : [path.resolve(sourceEntry)]),
       `--user-data-dir=${profile}`, "--disable-gpu"],
     env, cwd: repo, timeout: 180_000,
   });
@@ -54,7 +62,7 @@ async function openProfile() {
     }
     return false;
   }, { timeout: 180_000 }).toBe(true);
-  assert.equal(await app.evaluate(({ app }) => app.isPackaged), Boolean(packaged));
+  assert.equal(await app.evaluate(({ app }) => app.isPackaged), Boolean(executable));
   page.on("pageerror", (error) => errors.push(error.message));
   await (await app.browserWindow(page)).evaluate((window) => window.webContents.setBackgroundThrottling(false));
   // Launch each process under Playwright, preserving the native startup and profile handoff.
@@ -74,6 +82,46 @@ async function restartAfter(button) {
   return openProfile();
 }
 
+async function search(page, phrase, { found, open = false, savedVersion = false }) {
+  await page.getByRole("button", { name: "Search threads", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Search threads", exact: true });
+  const input = dialog.getByRole("searchbox", { name: "Find a thread", exact: true });
+  await input.fill(phrase);
+  if (found) {
+    const result = dialog.getByRole("button").filter({ hasText: "Portable workshop" });
+    await expect(result).toContainText(phrase);
+    if (savedVersion) await expect(result).toContainText("Saved version");
+  } else {
+    await expect(dialog.getByRole("status").filter({ hasText: "No matching threads" })).toBeVisible();
+  }
+
+  if (open) {
+    await input.press("Enter");
+    const find = page.getByRole("searchbox", { name: "Search this chat", exact: true });
+    await expect(find).toHaveValue(phrase);
+    await expect.poll(() => page.evaluate(() => [...(CSS.highlights.get("fern-chat-find") ?? [])][0]?.toString()))
+      .toBe(phrase);
+    await find.press("Escape");
+    if (savedVersion) {
+      await expect(input).toHaveValue(phrase);
+      await expect(input).toBeFocused();
+      await input.press("Escape");
+      await expect(dialog).toHaveCount(0);
+    }
+  } else {
+    await input.press("Escape");
+    await expect(dialog).toHaveCount(0);
+  }
+}
+
+async function deleteSavedReply(page) {
+  const reply = page.getByRole("article", { name: "Model response" }).filter({ hasText: savedReply });
+  await chooseMessageAction(reply, "Delete reply");
+  const confirmation = reply.getByRole("group", { name: "Confirm message deletion" });
+  await confirmation.getByRole("button", { name: "Delete", exact: true }).click();
+  await expect(reply).toHaveCount(0);
+}
+
 async function openRestore(page, file) {
   await app.evaluate(({ dialog }, selected) => {
     dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] });
@@ -90,16 +138,16 @@ try {
   }
   await mkdir(path.join(root, "models"), { recursive: true });
   await writeFile(path.join(root, "models", "not-in-the-backup.gguf"), "model fixture");
-  let page = await openProfile();
+  let page = await openProfile(testUpgrade);
   await expect.poll(() => savedTextWorkspace(page).then(Boolean, () => false)).toBe(true);
   await savedTextWorkspace(page, { activeId: chatId, threads: [{
     id: chatId, title: "Portable workshop", modelId: "local", draft: "Unsent chat draft",
     updatedAt: Date.now(), contextSize: 4096, systemPrompt: "Keep the answer brief",
     messages: [{ id: "prompt", role: "user", content: "Compare the colors.", image: attachment, createdAt: 10 },
-      { id: "reply", role: "assistant", content: "The selected color is sage.", createdAt: 11 }],
+      { id: "reply", role: "assistant", content: "The selected **color** is sage.", createdAt: 11 }],
     versions: [{ id: "saved-version", label: "First pass", messages: [
       { id: "old-prompt", role: "user", content: "Describe the image.", createdAt: 1 },
-      { id: "old-reply", role: "assistant", content: "The earlier image was charcoal.", createdAt: 2 },
+      { id: "old-reply", role: "assistant", content: "The earlier image was **charcoal**.", createdAt: 2 },
     ] }],
   }] });
   await page.evaluate(async ({ imageId, audioId, reference }) => {
@@ -129,6 +177,7 @@ try {
 
   await page.reload();
   await expect(page.getByRole("textbox", { name: "Message", exact: true })).toHaveValue("Unsent chat draft");
+  await search(page, savedReply, { found: true, open: true });
   await page.getByRole("button", { name: "Local data", exact: true }).click();
   const backup = page.getByRole("button", { name: "Save Backup…", exact: true });
   await app.evaluate(({ dialog }) => { dialog.showSaveDialog = async () => ({ canceled: true }); });
@@ -147,7 +196,7 @@ try {
   assert.equal(snapshot.chats.activeId, chatId);
   assert.equal(snapshot.chats.threads[0].draft, "Unsent chat draft");
   assert.equal(snapshot.chats.threads[0].messages[0].image, attachment);
-  assert.equal(snapshot.chats.threads[0].versions[0].messages[1].content, "The earlier image was charcoal.");
+  assert.equal(snapshot.chats.threads[0].versions[0].messages[1].content, "The earlier image was **charcoal**.");
   assert.equal(snapshot.chats.threads[0].systemPrompt, "Keep the answer brief");
   assert.equal(snapshot.images.threads[0].settings.prompt, "Unsent image draft");
   assert.deepEqual(snapshot.imageReferences[imageId], [reference]);
@@ -162,6 +211,22 @@ try {
   await page.getByRole("button", { name: "Text thread: Portable workshop", exact: true }).click();
   await page.getByRole("textbox", { name: "Message", exact: true }).fill(originalDraft);
   await expect.poll(async () => (await savedTextWorkspace(page))?.threads[0]?.draft).toBe(originalDraft);
+  await deleteSavedReply(page);
+  await search(page, savedReply, { found: false });
+  await page.getByRole("button", { name: "Undo deletion", exact: true }).click();
+  await search(page, savedReply, { found: true });
+  await deleteSavedReply(page);
+  await expect.poll(async () => (await savedTextWorkspace(page))?.threads[0]?.messages.map(({ id }) => id))
+    .toEqual(["prompt"]);
+
+  if (testUpgrade) {
+    await app.close();
+    page = await openProfile();
+    await expect(page.getByRole("textbox", { name: "Message", exact: true })).toHaveValue(originalDraft, { timeout: 25_000 });
+    await search(page, savedReply, { found: false });
+    await search(page, archivedReply, { found: true, open: true, savedVersion: true });
+    console.log("The upgraded Fern build found the saved version and excluded the deleted reply.");
+  }
 
   let restore = await openRestore(page, archive);
   await expect(restore).toContainText("My workspace");
@@ -200,14 +265,17 @@ try {
     };
   }), imageId);
   assert.deepEqual(restoredReferences, [reference]);
+  await search(page, savedReply, { found: true, open: true });
+  await search(page, archivedReply, { found: true, open: true, savedVersion: true });
   await page.reload();
   await expect(page.getByRole("textbox", { name: "Message", exact: true })).toHaveValue("Unsent chat draft");
-
 
   await page.getByRole("button", { name: "Local data", exact: true }).click();
   await page.getByRole("combobox", { name: "Workspace to open", exact: true }).selectOption("original");
   page = await restartAfter(page.getByRole("button", { name: "Open Workspace", exact: true }));
   await expect(page.getByRole("textbox", { name: "Message", exact: true })).toHaveValue(originalDraft, { timeout: 25_000 });
+  await search(page, savedReply, { found: false });
+  await search(page, archivedReply, { found: true, savedVersion: true });
 
   const malformedState = path.join(scratch, "malformed.json");
   const malformedArchive = path.join(scratch, "Malformed.fern-backup");
@@ -220,7 +288,7 @@ try {
   await expect(page.getByRole("textbox", { name: "Message", exact: true })).toHaveValue(originalDraft, { timeout: 25_000 });
   for (const [name, content] of Object.entries(assets)) assert.deepEqual(await readFile(path.join(root, name)), content);
   assert.deepEqual(errors, []);
-  console.log("Electron backup and restore preserved workspace data and returned to the original after a malformed restore.");
+  console.log("Electron backup and restore preserved workspace data, scoped chat search and recovered from a malformed backup.");
 } finally {
   await app?.close();
   await rm(scratch, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
