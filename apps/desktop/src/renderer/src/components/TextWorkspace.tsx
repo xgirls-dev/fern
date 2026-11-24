@@ -12,6 +12,7 @@ import ArrowLeftRight from "lucide-react/dist/esm/icons/arrow-left-right.mjs";
 import Search from "lucide-react/dist/esm/icons/search.mjs";
 import GitBranch from "lucide-react/dist/esm/icons/git-branch.mjs";
 import Pencil from "lucide-react/dist/esm/icons/pencil.mjs";
+import { isComposingKey } from "../lib/keyboard";
 import { TextChatMessage, type TextReplyProgress } from "./TextChatMessage";
 import { TextComposerControls } from "./TextComposerControls";
 import { TextPromptEditor } from "./TextPromptEditor";
@@ -290,7 +291,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   useEffect(() => {
     if (!canFind || !focused) return;
     const onFind = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.isComposing || !(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "f"
+      if (event.defaultPrevented || isComposingKey(event) || !(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "f"
         || document.querySelector('[aria-modal="true"]')) return;
       event.preventDefault();
       if (findOpen) {
@@ -958,11 +959,12 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
               void studio.attachImages(activeThread.id, images);
             }}
             onKeyDown={(event) => {
-              if (event.key === "Escape" && (runningHere || pendingHere) && !event.nativeEvent.isComposing) {
+              if (isComposingKey(event.nativeEvent)) return;
+              if (event.key === "Escape" && (runningHere || pendingHere)) {
                 event.preventDefault();
                 void studio.stop(activeThread.id);
               }
-              if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) {
+              if (event.key === "Enter" && !event.shiftKey) {
                 event.preventDefault();
                 if (!event.repeat) submit();
               }
@@ -999,7 +1001,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
         </div>}
       </footer>
       </div>
-      {panel && <aside id={inspectorId} className="generation-inspector text-inspector" ref={panelRef} tabIndex={-1} aria-label="Chat settings panel" onKeyDown={(event) => { if (event.key === "Escape" && !event.defaultPrevented) { event.preventDefault(); closePanel(); } }}>
+      {panel && <aside id={inspectorId} className="generation-inspector text-inspector" ref={panelRef} tabIndex={-1} aria-label="Chat settings panel" onKeyDown={(event) => { if (event.key === "Escape" && !event.defaultPrevented && !isComposingKey(event.nativeEvent)) { event.preventDefault(); closePanel(); } }}>
         <div className="inspector-heading">
           <SegmentedControl label="Chat inspector views" value={panel}
             options={[{ value: "settings", label: "Model" }, { value: "image", label: "Image" }]} onChange={showPanel} />

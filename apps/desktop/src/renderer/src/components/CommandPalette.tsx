@@ -16,6 +16,7 @@ import { Dialog, DialogTitle } from "./ui/Dialog";
 import { SearchDialogField } from "./ui/SearchDialogField";
 import { shortcutLabel, shortcuts } from "../lib/workspaceNavigation";
 import { commandSearchRank, indexPaletteThreads, normalizeCommandSearch, searchPaletteThreads, type PaletteThread } from "../lib/commandSearch";
+import { isComposingKey } from "../lib/keyboard";
 import type { TranscriptDestination } from "../lib/textTranscript";
 
 interface CommandPaletteProps {
@@ -256,7 +257,7 @@ export function CommandPalette({
   };
 
   const onSearchKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
-    if (event.nativeEvent.isComposing || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    if (isComposingKey(event.nativeEvent) || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
       keyboardNavigation.current = true;

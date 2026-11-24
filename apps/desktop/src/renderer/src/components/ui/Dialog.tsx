@@ -1,6 +1,7 @@
 import { Dialog as BaseDialog } from "@base-ui/react/dialog";
 import { AlertDialog as BaseAlertDialog } from "@base-ui/react/alert-dialog";
 import type { ComponentProps, ReactNode } from "react";
+import { isComposingKey } from "../../lib/keyboard";
 
 type PopupProps = ComponentProps<typeof BaseDialog.Popup>;
 
@@ -14,7 +15,14 @@ export function Dialog({ children, onClose, className = "", variant = "default",
   alert?: boolean;
 }) {
   const Root = alert ? BaseAlertDialog.Root : BaseDialog.Root;
-  return <Root open onOpenChange={(open) => { if (!open) onClose(); }}>
+  return <Root open onOpenChange={(open, details) => {
+    if (open) return;
+    if (details.reason === "escape-key" && isComposingKey(details.event)) {
+      details.cancel();
+      return;
+    }
+    onClose();
+  }}>
     <BaseDialog.Portal>
       <BaseDialog.Backdrop className={`ui-dialog-backdrop${variant === "search" ? " ui-dialog-backdrop--search" : ""}`} />
       <BaseDialog.Viewport className="ui-dialog-viewport">

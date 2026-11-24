@@ -6,6 +6,7 @@ import { IconButton, Input } from "./ui/controls";
 import { Tooltip } from "./ui/Tooltip";
 import { useChatSearch } from "../hooks/useChatSearch";
 import type { ChatSearchMatch } from "../lib/chatSearch";
+import { isComposingKey } from "../lib/keyboard";
 import type { TextMessage } from "../lib/textThreads";
 
 export function TextFindBar({ input, messages, liveMessage, initialQuery, onMatch, onClose }: {
@@ -52,10 +53,10 @@ export function TextFindBar({ input, messages, liveMessage, initialQuery, onMatc
     if (matches.length) setSelected(matches[(index + matches.length + direction) % matches.length]);
   };
   return (
-    <form className="text-find-bar" role="search" aria-label="Find in chat" onSubmit={(event) => { event.preventDefault(); step(1); }} onKeyDown={(event) => {
-      if (event.nativeEvent.isComposing) return;
+    <div className="text-find-bar" role="search" aria-label="Find in chat" onKeyDown={(event) => {
+      if (isComposingKey(event.nativeEvent)) return;
       if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); onClose(); }
-      if (event.key === "Enter" && event.shiftKey) { event.preventDefault(); step(-1); }
+      if (event.key === "Enter" && event.target === input.current) { event.preventDefault(); step(event.shiftKey ? -1 : 1); }
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f") { event.preventDefault(); input.current?.select(); }
     }}>
       <Input ref={input} type="search" aria-label="Search this chat" placeholder="Find in chat…" value={query} onChange={(event) => { setQuery(event.target.value); setSelected(undefined); }} />
@@ -69,6 +70,6 @@ export function TextFindBar({ input, messages, liveMessage, initialQuery, onMatc
       <Tooltip content="Close find · Esc">
         <IconButton aria-label="Close find" onClick={onClose}><X size={16} aria-hidden="true" /></IconButton>
       </Tooltip>
-    </form>
+    </div>
   );
 }
