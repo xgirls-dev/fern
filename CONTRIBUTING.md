@@ -25,6 +25,15 @@ GPU generation is intentionally not part of CI. If a change affects inference,
 include the tested device, resolution, steps, and observed result in the pull
 request.
 
+## Desktop chat smoke test
+
+Run `npm run test:electron --workspace @fern/desktop` for the source-built
+desktop app. To verify a package, set `FERN_E2E_EXECUTABLE` to the absolute path
+of its executable and run `node apps/desktop/e2e/smoke.mjs` on the target OS.
+The release workflows run the same long-history journey in the packaged app.
+The test seeds an isolated history and verifies exact search, reply deletion,
+Undo, and persistence through reload without downloading a model.
+
 ## Verify workspace backup and search
 
 Run `npm run build`, then `node apps/desktop/e2e/workspace-backup.mjs`. The test uses disposable profiles and verifies backup, restore, and search in the original and recovered workspaces.
