@@ -204,7 +204,7 @@ export const TextChatMessage = memo(function TextChatMessage({ message, selectio
   const cursorState = progress?.kind === "answer" && progress.waiting ? "waiting" : "active";
   const reasoningInProgress = progress?.kind === "reasoning" && !!message.reasoning && !previewWhileStreaming;
   const checkingImageInCaption = progress?.kind === "image-check" && !!generatedImage;
-  const indicator = progress && <ProgressLabel className="text-thinking">{progress.label}</ProgressLabel>;
+  const indicator = progress && <ProgressLabel className="text-thinking text-reply-stage">{progress.label}</ProgressLabel>;
   const stoppedNote = hasAnswer ? "Stopped · Partial response" : message.generatedImage ? "Stopped · Image saved"
     : message.reasoning ? "Stopped during reasoning" : "Stopped before any text was generated";
   const failed = message.status === "failed";
