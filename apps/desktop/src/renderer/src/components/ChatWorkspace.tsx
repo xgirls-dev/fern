@@ -1,4 +1,4 @@
-import { useId, useRef, useState, type CSSProperties, type DragEvent } from "react";
+import { useId, useRef, useState, type CSSProperties, type DragEvent, type ReactNode } from "react";
 import { CHAT_NAV_DRAG, chatFolderPath } from "../lib/chatFolders";
 import type { ChatPane } from "../lib/textThreads";
 import { TextWorkspace, type TextWorkspaceProps } from "./TextWorkspace";
@@ -7,9 +7,11 @@ import { SegmentedControl } from "./ui/controls";
 import { ResizeHandle } from "./ui/ResizeHandle";
 import { TooltipScope } from "./ui/Tooltip";
 
-type WorkspaceProps = Omit<TextWorkspaceProps, "thread" | "pane" | "focused" | "split" | "onChooseChat" | "onClosePane">;
+type WorkspaceProps = Omit<TextWorkspaceProps, "thread" | "pane" | "focused" | "split" | "onChooseChat" | "onClosePane"> & {
+  storagePlaceholder: ReactNode;
+};
 
-export function ChatWorkspace(props: WorkspaceProps) {
+export function ChatWorkspace({ storagePlaceholder, ...props }: WorkspaceProps) {
   const { studio } = props;
   const { primaryThread, secondaryThread, activePane } = studio;
   const split = Boolean(secondaryThread);
@@ -19,6 +21,9 @@ export function ChatWorkspace(props: WorkspaceProps) {
   const [picker, setPicker] = useState<ChatPane | null>(null);
   const [dragSize, setDragSize] = useState<number | null>(null);
   const [dropPane, setDropPane] = useState<ChatPane | null>(null);
+  // Keep the composer unmounted until the saved draft is ready.
+  if (!studio.storageReady) return storagePlaceholder;
+
   const ratio = dragSize ?? studio.splitPercent;
   const folderIndex = new Map(studio.folders.map((folder) => [folder.id, folder]));
   const otherThread = picker === "primary" ? secondaryThread : primaryThread;
