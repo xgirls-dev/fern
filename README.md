@@ -32,6 +32,8 @@ The package includes Python and OpenVINO. Install the Intel OpenCL and Vulkan dr
 sudo pacman -Syu intel-compute-runtime ocl-icd vulkan-intel vulkan-icd-loader
 ```
 
+Build the package from this checkout to use the [Fern Wallpapers panel for Omarchy Quattro](plugins/omarchy/fern-wallpapers/README.md).
+
 ### macOS Apple Silicon preview
 
 Download the `Fern-*-macOS-arm64-preview.zip` on an M-series Mac running macOS 15 or later. Extract it, move **Fern.app** to **Applications**, and open it. [Apple Silicon preview](https://github.com/xgirls-dev/fern/releases/tag/v0.1.45-macos-preview.1)

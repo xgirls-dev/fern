@@ -15,6 +15,7 @@ import { PythonBackend } from "./python-backend";
 import { resolveDataProfile } from "./data-profile";
 import { installEditorContextMenu } from "./editor-context-menu";
 import { ensureFirstRunSetup, RuntimeSetupCancelled } from "./first-run-setup";
+import { publishWallpaperConnection } from "./wallpaper-connection";
 import { getAppIconPath, getOutputsDir, resolveProjectRoot } from "./paths";
 
 const isDev = !app.isPackaged;
@@ -22,6 +23,7 @@ let mainWindow: BrowserWindow | null = null;
 let backend: PythonBackend | null = null;
 let backendReady = false;
 let isShuttingDown = false;
+let removeWallpaperConnection: (() => void) | undefined;
 
 async function allocatePort(): Promise<number> {
   const probe = createServer();
@@ -611,6 +613,13 @@ async function bootstrap(): Promise<void> {
       await backend?.start();
       backendReady = Boolean(backend);
       const baseUrl = backend?.baseUrl ?? pendingBaseUrl;
+      if (backendReady && !isShuttingDown && app.isPackaged && !profileOverride) {
+        try {
+          removeWallpaperConnection = publishWallpaperConnection(port, getOutputsDir());
+        } catch (error) {
+          console.warn("Could not connect the Omarchy wallpaper panel:", error);
+        }
+      }
       for (const window of BrowserWindow.getAllWindows()) {
         if (!window.isDestroyed()) {
           window.webContents.send("studio:api-base-url", baseUrl);
@@ -642,6 +651,7 @@ async function shutdown(): Promise<void> {
   }
   isShuttingDown = true;
 
+  removeWallpaperConnection?.();
   backendReady = false;
   if (backend) {
     await backend.stop();
