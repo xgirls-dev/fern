@@ -30,9 +30,13 @@ request.
 Run `npm run test:electron --workspace @fern/desktop` for the source-built
 desktop app. To verify a package, set `FERN_E2E_EXECUTABLE` to the absolute path
 of its executable and run `node apps/desktop/e2e/smoke.mjs` on the target OS.
-The release workflows run the same long-history journey in the packaged app.
-The test seeds an isolated history and verifies exact search, reply deletion,
-Undo, and persistence through reload without downloading a model.
+The release workflows run the same smoke tests in the packaged app.
+They seed an isolated history and verify exact search, reply deletion, Undo,
+and persistence through reload without downloading a model. The composer test
+uses Chromium's input pipeline for multiline typing, composition, chooser
+selection and cancellation, and file drops. On each supported OS, also try
+candidate selection and cancellation with an installed input method, paste text
+and an image, and attach a document using the system file picker.
 
 ## Release notes
 

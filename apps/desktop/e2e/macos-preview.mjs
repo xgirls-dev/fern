@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { _electron as electron, expect } from "@playwright/test";
 import { verifyChatHistory } from "./chat-history.mjs";
+import { verifyChatComposer } from "./chat-composer.mjs";
 
 const executablePath = process.env.FERN_E2E_EXECUTABLE;
 assert(executablePath, "Set FERN_E2E_EXECUTABLE to the Fern.app executable.");
@@ -41,6 +42,7 @@ try {
   await expect(page.getByText("Gemma 4 E4B · GGUF", { exact: true })).toBeVisible();
   await (await app.browserWindow(page)).evaluate((window) => window.webContents.setBackgroundThrottling(false));
   await verifyChatHistory(page);
+  await verifyChatComposer(page);
   console.log("Packaged arm64 app started its bundled Python backend and displayed the Mac model catalog.");
   console.log(models[0].setupUnavailableReason ?? "Metal detected. Model inference requires a separate real-model test.");
 } finally {

@@ -6,6 +6,10 @@ lands directly on `main` instead of through labeled pull requests.
 
 ## [Unreleased]
 
+### Fixed
+
+- Resume typing at the same caret after attaching a document. The chat composer shows when it can accept a document drop even if a conversation image is already selected.
+
 ## [0.1.48] - 2026-11-20
 
 ### Added

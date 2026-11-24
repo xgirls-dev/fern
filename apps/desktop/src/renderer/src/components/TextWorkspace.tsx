@@ -13,6 +13,7 @@ import Search from "lucide-react/dist/esm/icons/search.mjs";
 import GitBranch from "lucide-react/dist/esm/icons/git-branch.mjs";
 import Pencil from "lucide-react/dist/esm/icons/pencil.mjs";
 import { isComposingKey } from "../lib/keyboard";
+import { MAX_CHAT_DOCUMENTS } from "../lib/chatDocuments";
 import { TextChatMessage, type TextReplyProgress } from "./TextChatMessage";
 import { TextComposerControls } from "./TextComposerControls";
 import { TextPromptEditor } from "./TextPromptEditor";
@@ -54,6 +55,13 @@ import type { ImageRecord } from "../lib/types";
 type TextStudio = ReturnType<typeof useTextChat>;
 const PROMPT_COUNT_THRESHOLD = TEXT_MESSAGE_CHARACTER_LIMIT - 2_000;
 const PROMPT_LIMIT_MESSAGE = `OpenVINO accepts up to ${TEXT_MESSAGE_CHARACTER_LIMIT.toLocaleString()} characters per message.`;
+
+function canDropChatFiles(data: DataTransfer, canAttachImage: boolean, canAttachDocuments: boolean) {
+  const types = Array.from(data.items).filter((item) => item.kind === "file").map((item) => item.type);
+  // Some desktop file managers withhold the MIME type until the drop.
+  if (!types.length || types.some((type) => !type)) return canAttachImage || canAttachDocuments;
+  return types.every((type) => type.startsWith("image/")) ? canAttachImage : canAttachDocuments;
+}
 
 interface TranscriptRow {
   message: TextMessage;
@@ -366,6 +374,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
     [hasPromptLimit, promptEdit?.content]);
   const canSend = !busy && !attachingImage && modelAvailable && !runtimeIssue && !incompatibleImages && !draftTooLong && (!!activeThread.draft.trim() || hasDraftImage);
   const canAttach = studio.attachmentReady && !attachingImage && !activeThread.draftContextImage;
+  const canAttachDocuments = !busy && documents.length < MAX_CHAT_DOCUMENTS;
   useEffect(() => { dragDepth.current = 0; setFileOver(false); }, [activeThread.id]);
   const imageModels = status.imageToolModels ?? [];
   const imageModelAvailable = imageModels.some((model) => activeThread?.imageModel === "auto" || activeThread?.imageModel === model.id);
@@ -606,8 +615,10 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
     void studio.attachImages(threadId, files);
   }, [inputRef, studio.attachImages, threadId]);
   const stageDocuments = useCallback((files: File[]) => {
+    if (!files.length) return;
+    inputRef.current?.focus({ preventScroll: true });
     void studio.attachDocuments(threadId, files);
-  }, [studio.attachDocuments, threadId]);
+  }, [inputRef, studio.attachDocuments, threadId]);
   const changeMode = useCallback((mode: TextMode) => {
     studio.updateThread(threadId, { mode, ...(mode === "reasoning" && activeThread.maxNewTokens === 512 ? { maxNewTokens: 1024 } : {}) });
   }, [activeThread.maxNewTokens, studio.updateThread, threadId]);
@@ -985,12 +996,14 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
             if (!event.dataTransfer.types.includes("Files")) return;
             event.preventDefault();
             dragDepth.current += 1;
-            setFileOver(canAttach);
+            setFileOver(canDropChatFiles(event.dataTransfer, canAttach, canAttachDocuments));
           }}
           onDragOver={(event) => {
             if (!event.dataTransfer.types.includes("Files")) return;
             event.preventDefault();
-            event.dataTransfer.dropEffect = canAttach ? "copy" : "none";
+            const acceptsFiles = canDropChatFiles(event.dataTransfer, canAttach, canAttachDocuments);
+            event.dataTransfer.dropEffect = acceptsFiles ? "copy" : "none";
+            setFileOver(acceptsFiles);
           }}
           onDragLeave={() => { if (--dragDepth.current <= 0) { dragDepth.current = 0; setFileOver(false); } }}
           onDrop={(event) => {
@@ -1000,7 +1013,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
             setFileOver(false);
             const files = Array.from(event.dataTransfer.files);
             if (files.every((file) => file.type.startsWith("image/"))) stageAttachment(files);
-            else void studio.attachDocuments(activeThread.id, files);
+            else stageDocuments(files);
           }}>
           {attachment?.status === "saving" && <div className="text-attachment-notice">
             <LoaderCircle className="spinner" size={15} aria-hidden="true" />
