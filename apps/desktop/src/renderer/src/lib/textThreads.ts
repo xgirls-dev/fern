@@ -186,6 +186,13 @@ export interface TextModel {
   error?: string | null;
 }
 export type TextModelRemoval = "unlink" | "remove-download";
+export interface TextModelResidency {
+  modelId: string;
+  backend: string;
+  device: "CPU" | "GPU";
+  gguf?: { contextSize: number; loadOptions: GgufLoadOptions };
+}
+
 export interface TextJob {
   id: string | null;
   threadId: string | null;
@@ -203,6 +210,7 @@ export interface TextJob {
   error: string | null;
   errorCode?: string | null;
   failureDiagnostics?: TextFailureDiagnostics | null;
+  residentModel?: TextModelResidency | null;
 }
 export interface TextModelInstall {
   id: string | null;
@@ -229,7 +237,7 @@ export interface TextRuntimeStatus {
   defaultModelId?: string;
   imageToolModels?: ChatImageModel[];
   modelInstall?: TextModelInstall;
-  residentModel?: { modelId: string; backend: string; device: "CPU" | "GPU" } | null;
+  residentModel?: TextModelResidency | null;
   runtimeAvailable: boolean;
   runtimeError: string | null;
   ggufAvailable?: boolean;

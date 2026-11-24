@@ -24,7 +24,7 @@ import api_server as api
 import text_model_download as download
 from text_model_registry import TextModelRegistry, REQUIRED_FILES
 from text_generation_process import TextGenerationProcess, TextWorkerError
-from text_generation_worker import resolve_text_device
+from text_generation_worker import resolve_text_device, run as run_text_worker
 from text_model_download import INSTALL_MARKER, MINIMUM_FREE_BYTES, model_spec
 from text_model_download import PREPARING_MODEL_FILES, check_download_pause
 
@@ -84,7 +84,8 @@ try:
         action = json.loads(line)["action"]
         if action == "gguf":
             engine = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
-            emit(type="residency", model={"backend": "cpu", "device": "CPU", "enginePid": engine.pid})
+            emit(type="residency", model={"backend": "cpu", "device": "CPU", "enginePid": engine.pid,
+                                         "gguf": {"contextSize": 4096, "loadOptions": {"flashAttention": "on"}}})
         elif action == "engine-exit":
             engine.terminate()
             engine.wait()
@@ -110,7 +111,8 @@ finally:
                 self.assertIsNone(api.text_runtime_snapshot()["residentModel"])
                 generate("gguf")
                 self.assertEqual(api.text_runtime_snapshot()["residentModel"],
-                                 {"modelId": model_id, "backend": "cpu", "device": "CPU"})
+                                 {"modelId": model_id, "backend": "cpu", "device": "CPU",
+                                  "gguf": {"contextSize": 4096, "loadOptions": {"flashAttention": "on"}}})
                 generate("engine-exit")
                 self.assertIsNone(api.text_runtime_snapshot()["residentModel"])
                 generate("openvino")
@@ -120,6 +122,33 @@ finally:
                 self.assertIsNone(api.text_runtime_snapshot()["residentModel"])
         finally:
             worker.close()
+
+    def test_openvino_reuses_pipeline_for_system_prompt_and_sampling_changes(self):
+        base = {"op": "generate", "messages": [{"role": "user", "content": "Hello."}],
+                "systemPrompt": "Keep it short.", "temperature": 0.8, "topP": 0.95, "maxNewTokens": 64}
+        follow_up = {**base, "systemPrompt": "Explain the details.", "temperature": 0.25, "topP": 0.8,
+                     "maxNewTokens": 120, "sampling": {"topK": 16}}
+        stream = io.StringIO("".join(json.dumps(request) + "\n" for request in (base, follow_up, {"op": "shutdown"})))
+        pipeline = Mock()
+        pipeline.get_generation_config.side_effect = SimpleNamespace
+        pipeline.generate.return_value = SimpleNamespace(
+            texts=["Done."], perf_metrics=Mock(get_num_input_tokens=Mock(return_value=12), get_num_generated_tokens=Mock(return_value=2)),
+        )
+        load = Mock(return_value=pipeline)
+        with (
+            patch.dict(sys.modules, {"openvino_genai": SimpleNamespace(LLMPipeline=load)}),
+            patch("text_generation_worker.resolve_text_device", return_value="CPU"),
+            patch("text_generation_worker.sys.stdin", stream),
+            patch("text_generation_worker.emit") as emit,
+        ):
+            self.assertEqual(run_text_worker(str(self.folder), "CPU"), 0)
+        load.assert_called_once()
+        self.assertEqual([call.args[0][0]["content"] for call in pipeline.get_tokenizer.return_value.apply_chat_template.call_args_list],
+                         [base["systemPrompt"], follow_up["systemPrompt"]])
+        self.assertEqual([call.args[1].temperature for call in pipeline.generate.call_args_list], [0.8, 0.25])
+        self.assertEqual([call.args[1].max_new_tokens for call in pipeline.generate.call_args_list], [64, 120])
+        self.assertEqual(pipeline.generate.call_args.args[1].top_k, 16)
+        self.assertEqual([call.args[0]["type"] for call in emit.call_args_list].count("residency"), 1)
 
     def test_text_model_status_surfaces_fresh_install_disk_and_companion_requirements(self):
         with patch.object(api, "TEXT_MODEL_REGISTRY", self.registry), patch.object(api, "apple_silicon", return_value=False):
@@ -664,10 +693,11 @@ for line in sys.stdin:
         image = {"name": "poster.png", "width": 512, "height": 512, "modelLabel": "Klein 4B", "prompt": "Red circle"}
         thread_id = "text-thread-poster"
         metadata = {**image, "source": "chat", "threadId": thread_id, "chatJobId": "original"}
-        vision_model = {**self.model, "supportsVision": True}
+        vision_model = {**self.model, "supportsVision": True, "format": "gguf", "maxContextSize": 65536}
         with patch.object(api, "OUTPUTS", self.root), \
              patch.object(self.registry, "snapshot", return_value=[vision_model]), \
              patch.object(api, "TEXT_MODEL_REGISTRY", self.registry), \
+             patch.object(api, "gguf_runtime_supported", return_value=True), \
              patch.object(api.gallery_store, "get_image_metadata", return_value=metadata), \
              patch.object(api.gallery_store, "metadata_snapshot", return_value={"poster.png": metadata}), \
              patch.object(api.TEXT_GENERATION_WORKER, "generate", return_value={"text": "A red circle."}) as inspect, \
@@ -678,12 +708,16 @@ for line in sys.stdin:
             attempt = {"threadId": thread_id, "image": "poster.png", "modelId": self.model["id"]}
             with self.assertRaisesRegex(ValueError, "saved image from this conversation"):
                 api.prepare_image_inspection({**attempt, "threadId": "text-thread-other"})
-            generation = api.prepare_image_inspection({**attempt, "threadId": "text-thread-fork", "imageThreadId": thread_id})
+            loading = {"contextSize": 12_288, "loadOptions": {"flashAttention": "off", "promptBatch": 1024}}
+            with self.assertRaisesRegex(ValueError, "Prompt batch size"):
+                api.prepare_image_inspection({**attempt, "contextSize": 1024, "loadOptions": {"promptBatch": 2048}})
+            generation = api.prepare_image_inspection({**attempt, **loading, "threadId": "text-thread-fork", "imageThreadId": thread_id})
             self.assertEqual(generation["threadId"], "text-thread-fork")
             api.run_text_generation(generation, "inspection", threading.Event())
             self.assertEqual(api.TEXT_JOB["status"], "complete")
             self.assertTrue(api.TEXT_JOB["result"]["visionChecked"])
             self.assertEqual(inspect.call_args.kwargs["request"]["messages"][0]["imagePath"], str(self.root.resolve() / "poster.png"))
+            self.assertEqual({key: inspect.call_args.kwargs["request"][key] for key in loading}, loading)
             self.assertNotIn("tools", inspect.call_args.kwargs["request"])
             render.assert_not_called()
             self.assertEqual(len(list(self.root.glob("*.png"))), 1)

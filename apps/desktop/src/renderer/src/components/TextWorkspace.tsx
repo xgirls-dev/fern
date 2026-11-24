@@ -210,6 +210,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   sidebarCollapsed = false, onSetupModels, focusRequest = 0, findRequest, onFindRequestHandled, imageGpuAvailable,
   onOpenImage, onNewChat, onCreateImage, onCreateSpeech, onOpenCompute }: TextWorkspaceProps) {
   const { status, statusError, actionError, busy } = studio;
+  const { refreshModels } = studio;
   const { id: threadId, messages, draftImage, draftContextImage: draftContextName } = activeThread;
   const fieldPrefix = useId() + "-";
   const inspectorId = fieldPrefix + "chat-inspector";
@@ -219,6 +220,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   const pendingReplyOutput = studio.pendingReplyOutput(activeThread);
   const documents = activeThread.documents ?? [];
   const [panel, setPanel] = useState<"settings" | "image" | null>(null);
+  useEffect(() => { if (panel === "settings") void refreshModels(); }, [panel, refreshModels]);
   const inspectorOpen = panel !== null;
   const openModels = useCallback(() => { setPanel(null); onSetupModels("chat", threadId); }, [onSetupModels, threadId]);
   const openImageSetup = () => { setPanel(null); onSetupModels("chat-image", activeThread.id); };
@@ -320,18 +322,21 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   const dismissDeletionLabel = deletionCount > 1 ? "Dismiss undo for all deletions" : "Dismiss deletion notice";
   const { models, recommendedModels, ggufAvailable, ggufUnavailableReason, runtimeAvailable, runtimeError, residentModel } = status;
   const runningModelId = status.job.status === "running" ? status.job.modelId : null;
-  const modelOptions = useMemo(() => {
+  const { modelOptions, settingsModelOptions } = useMemo(() => {
     const runtime = { ggufAvailable, ggufUnavailableReason, runtimeAvailable, runtimeError,
       residentModel: statusError ? undefined : residentModel, runningModelId };
     const catalogIds = new Set(models.map((model) => model.id));
-    return [
-      ...models.map((model) => {
-        const readiness = textModelReadiness(runtime, model);
-        return { value: model.id, label: model.name, description: readiness.label, disabled: !readiness.usable };
-      }),
-      ...(recommendedModels ?? []).filter((model) => !model.installed && !catalogIds.has(model.id))
-        .map((model) => ({ value: model.id, label: model.name, description: "Not installed", disabled: true })),
-    ];
+    const local = models.map((model) => {
+      const readiness = textModelReadiness(runtime, model);
+      return { value: model.id, label: model.name, description: readiness.label, disabled: !readiness.usable };
+    });
+    return {
+      modelOptions: [...local, ...(recommendedModels ?? []).filter((model) => !model.installed && !catalogIds.has(model.id))
+        .map((model) => ({ value: model.id, label: model.name, description: "Not installed", disabled: true }))],
+      settingsModelOptions: local.map((option) => ({
+        ...option, label: option.disabled ? `${option.label} · ${option.description}` : option.label,
+      })),
+    };
   }, [models, recommendedModels, ggufAvailable, ggufUnavailableReason, runtimeAvailable, runtimeError, residentModel, runningModelId, statusError]);
   const installedModels = useMemo(() => models.filter((model) => model.installed), [models]);
   const selectedModel = resolveTextModel(status, activeThread) ?? "";
@@ -708,6 +713,12 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   const tokenLimits = chatTokenLimits(activeThread, selected);
   const canReduceContext = selected?.format === "gguf" && tokenLimits.contextSize > tokenLimits.contextMinimum;
   const loadOptions = ggufLoadOptions(activeThread.loadOptions, tokenLimits.contextSize);
+  const loadedSettings = panel === "settings" && !busy && !statusError && residentModel?.modelId === selected?.id ? residentModel?.gguf : undefined;
+  const contextNeedsReload = loadedSettings && loadedSettings.contextSize !== tokenLimits.contextSize;
+  const optionsNeedReload = loadedSettings && (Object.keys({ ...loadedSettings.loadOptions, ...loadOptions }) as Array<keyof GgufLoadOptions>)
+    .some((key) => loadedSettings.loadOptions[key] !== loadOptions[key]);
+  const reloadReason = contextNeedsReload && optionsNeedReload ? "Context length and loading options changed."
+    : contextNeedsReload ? "Context length changed." : optionsNeedReload ? "Loading options changed." : null;
   const imageModel = activeThread.imageModel === "auto" ? imageModels[0] : imageModels.find((item) => item.id === activeThread.imageModel);
   const imageSettings = imageModel ? chatImageSettings(imageModel, activeThread.imageRenderSettings?.[imageModel.id]) : undefined;
   const imageErrors = imageModel && imageSettings ? chatImageErrors(imageModel, imageSettings) : undefined;
@@ -1082,13 +1093,18 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
           <TooltipIconButton aria-label="Close chat settings" tooltip="Close chat settings" tooltipSide="bottom" onClick={closePanel}><X size={16} aria-hidden="true" /></TooltipIconButton>
         </div>
         {panel === "settings" && <div className="text-inspector-body">
-          <p className="text-panel-description">Settings for this conversation. Changes apply to your next response.</p>
+          <p className="text-panel-description">System prompt, maximum output, and sampling apply to the next reply.</p>
           {busy && <p className="text-panel-description" role="status">{activity || "Settings are locked while a response is generating."}</p>}
           <div className="text-settings-grid">
             <label>Model<Select ref={modelSetting} aria-label="Settings model" value={selectedModel || null} placeholder="Choose a model" disabled={busy}
-              options={models.map((model) => ({ value: model.id, label: model.installed ? model.name : `${model.name} · Unavailable`, disabled: !model.installed }))}
+              options={settingsModelOptions}
               onChange={(id) => studio.selectModel(activeThread.id, id)} /></label>
             <Button variant="ghost" className="text-compute-link" onClick={openModels}>Manage models</Button>
+            {selected?.format === "gguf" && <p role="status" className="text-setting-help text-model-load-note">
+              {reloadReason
+                ? <><strong>Reloads on the next reply.</strong> {reloadReason}</>
+                : "Changing context length or advanced loading options reloads a loaded model on the next reply."}
+            </p>}
             {selected?.format === "gguf" && <TokenField key={`context-${activeThread.id}-${selected.id}`}
               inputRef={contextSetting}
               label="Context length (tokens)" value={tokenLimits.contextSize} min={tokenLimits.contextMinimum}

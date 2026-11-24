@@ -67,7 +67,7 @@ try {
   await expect(availableModels.getByRole("menuitemradio", { name: "Local model", exact: true })).toBeFocused();
   const missingModel = unavailableModels.getByRole("menuitemradio", { name: "Missing model", exact: true });
   await expect(missingModel).toBeDisabled();
-  await expect(missingModel).toHaveAccessibleDescription("Unavailable");
+  await expect(missingModel).toHaveAccessibleDescription("Files unavailable");
   const scroller = modelMenu.locator(".ui-model-menu-options");
   const manageModels = modelMenu.getByRole("menuitem", { name: "Manage models", exact: true });
   const footerBefore = await manageModels.boundingBox();

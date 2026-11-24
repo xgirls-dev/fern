@@ -88,7 +88,7 @@ class TextGenerationProcess:
                 return None
         with self._control_lock:
             if self._residency is residency and self._process is worker and worker.poll() is None:
-                return {key: model[key] for key in ("modelId", "backend", "device")}
+                return {key: model[key] for key in ("modelId", "backend", "device", "gguf") if key in model}
         return None
 
     def _stop_unlocked(self) -> None:

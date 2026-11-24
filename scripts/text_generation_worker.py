@@ -123,7 +123,10 @@ def run_gguf(file: Path, device: str, projector: Path | None) -> int:
                         gpu_projector=gpu_projector, load_options=load_options,
                     )
                     loaded_projector = requested_projector
-                    emit({"type": "residency", "model": {"backend": backend, "device": target, "enginePid": server.process.pid}})
+                    emit({"type": "residency", "model": {
+                        "backend": backend, "device": target, "enginePid": server.process.pid,
+                        "gguf": {"contextSize": server.context_size, "loadOptions": server.load_options},
+                    }})
                     load_timing["modelReadyMs"] = (time.perf_counter() - load_started) * 1000
                 emit({"type": "phase", "stage": "preparing-conversation"})
                 try:

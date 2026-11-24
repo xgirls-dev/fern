@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { expect } from "@playwright/test";
+import { chooseSelectOption } from "./select-option.mjs";
 import { fixture, savedTextWorkspace } from "./ui-fixture.mjs";
 
 const image = { name: "original-poster.png", prompt: "A red circle", width: 512, height: 512, modelLabel: "Klein 4B" };
@@ -31,6 +32,11 @@ try {
   });
   await page.locator(".sidebar-new-button").click();
   await page.getByRole("menuitem", { name: "Chat", exact: true }).click();
+  await page.getByRole("button", { name: "Chat settings", exact: true }).click();
+  await page.getByRole("spinbutton", { name: /^Context length/ }).fill("12288");
+  await page.getByText("Advanced model loading", { exact: true }).click();
+  await chooseSelectOption(page.getByLabel("Flash Attention", { exact: true }), "On");
+  await page.getByRole("button", { name: "Close chat settings", exact: true }).click();
   const prompt = "Make a red poster";
   await page.getByRole("textbox", { name: "Message", exact: true }).fill(prompt);
   await page.getByRole("button", { name: "Send message", exact: true }).click();
@@ -77,6 +83,8 @@ try {
   assert.equal(await page.locator(".text-generated-artifact").evaluate((figure) => figure.closest("article") === document.activeElement), true);
   assert.equal(inspections[0].image, image.name);
   assert.equal(inspections[0].threadId, state.textRequests[0].threadId);
+  assert.equal(inspections[0].contextSize, 12_288);
+  assert.deepEqual(inspections[0].loadOptions, { flashAttention: "on" });
   assert.equal(await page.locator(".text-generated-artifact").count(), 1);
   const savedThread = async () => (await savedTextWorkspace(page))?.threads.find((thread) => thread.id === inspections[0].threadId);
   await expect.poll(async () => (await savedThread())?.pendingJobId).toBe(inspections[0].requestId);

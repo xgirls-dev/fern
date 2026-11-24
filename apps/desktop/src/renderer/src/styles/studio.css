@@ -2629,6 +2629,8 @@ code {
 .text-inspector .text-settings-grid > .field { margin-bottom: 0; }
 .text-inspector .text-settings-grid label { gap: 8px; font-size: 12px; }
 .text-setting-help { color: var(--muted); font-size: 11px; line-height: 1.5; font-weight: 400; }
+.text-model-load-note { margin: 0; }
+.text-model-load-note strong { color: var(--foreground); font-weight: 600; }
 .text-inspector .text-settings-grid .ui-field { height: var(--ui-control-height); padding-inline: var(--ui-space-2); }
 .text-inspector .text-settings-grid .ui-textarea { min-height: 110px; font-size: 12px; }
 .chat-advanced-settings[open] > .text-settings-grid { gap: 16px; padding-block: 4px 8px; }

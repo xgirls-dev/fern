@@ -231,11 +231,14 @@ try {
   await delay(appendIntervalMs);
   emit({ append: { phase, text: formatting, reasoning: "" } });
   await delay(appendIntervalMs);
+  const residentModel = { modelId: job.modelId, backend: "openvino", device: "CPU",
+    gguf: { contextSize: 8192, loadOptions: {} } };
   state.textStatus.job = {
     ...job, status: "complete", partialText: partialText + formatting, finishedAt: Date.now() / 1000,
     result: { inputTokens: 18, outputTokens: 500, generationSeconds: 5, tokensPerSecond: 100 },
+    residentModel,
   };
-  state.textStatus.residentModel = { modelId: job.modelId, backend: "openvino", device: "CPU" };
+  state.textStatus.residentModel = residentModel;
   emit({ job: state.textStatus.job });
   connection.response.end();
 

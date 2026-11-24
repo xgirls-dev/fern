@@ -115,6 +115,17 @@ function reconcileRunningTextJob(current: TextJob, next: TextJob): TextJob {
   };
 }
 
+function applyTextJobStatus(current: TextRuntimeStatus, job: TextJob): TextRuntimeStatus {
+  const next = reconcileRunningTextJob(current.job, job);
+  if (sameTextJob(current.job, next)) return current;
+  // Job-only responses carry the residency observed when that job settled.
+  // Full status reads can see later evictions and remain authoritative.
+  return {
+    ...current, job: next,
+    ...(isTerminalTextJob(next) && next.residentModel !== undefined ? { residentModel: next.residentModel } : {}),
+  };
+}
+
 function settleTextJob(workspace: TextThreadWorkspace, job: TextJob, lastRunningJob: TextJob,
   models: TextRuntimeStatus["models"], observedAt: number): TextThreadWorkspace {
   const { id: jobId, threadId, status: outcome } = job;
@@ -313,7 +324,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     const job = "textJob" in accepted ? accepted.textJob : accepted.job?.job;
     if (!confirmsSubmission(job, pending)) throw new Error("Fern did not receive confirmation for this response.");
     invalidatePoll();
-    setStatus((current) => "textJob" in accepted ? { ...current, job: accepted.textJob } : accepted.job);
+    setStatus((current) => "textJob" in accepted ? applyTextJobStatus(current, accepted.textJob) : accepted.job);
     setStatusError(null);
   }, [invalidatePoll, setStatus]);
   const submissionIsMissing = useCallback(async (pending: TextSubmission) => {
@@ -460,10 +471,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
         }));
         setStatusLoaded(true);
       } else if (confirmed) {
-        setStatus((current) => {
-          const next = reconcileRunningTextJob(current.job, job);
-          return sameTextJob(current.job, next) ? current : { ...current, job: next };
-        });
+        setStatus((current) => applyTextJobStatus(current, job));
       }
       setStatusError(null);
     } catch (error) {
@@ -500,8 +508,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
       receivingJobEvents.current = true;
       setStatus((current) => {
         if (current.job.id !== watchedJobId || current.job.threadId !== watchedThreadId || current.job.status !== "running") return current;
-        const next = reconcileRunningTextJob(current.job, job);
-        return sameTextJob(current.job, next) ? current : { ...current, job: next };
+        return applyTextJobStatus(current, job);
       });
       setStatusError(null);
     };
@@ -1189,10 +1196,12 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
       messages: thread.messages.map((item) => item.id === messageId ? { ...item, inspectionJobId: requestId } : item),
     });
     try {
+      const { contextSize } = chatTokenLimits(thread, model);
       const accepted = await inspectChatImage({
         requestId, threadId: thread.id, modelId: model.id,
         image: message.generatedImage.name, imageThreadId: message.generatedImage.originThreadId ?? message.imageThreadId,
         device: computeDevice === "CPU" ? "CPU" : "AUTO",
+        ...(model.format === "gguf" ? { contextSize, loadOptions: ggufLoadOptions(thread.loadOptions, contextSize) } : {}),
       });
       acceptJob(accepted, receipt);
     } catch (error) {
