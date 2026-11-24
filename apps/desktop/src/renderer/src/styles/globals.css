@@ -1293,7 +1293,7 @@ textarea:focus {
   border: 1px solid var(--border-strong);
   border-radius: 5px;
   overflow: hidden;
-  background: #000;
+  background: var(--input-bg);
   cursor: pointer;
   padding: 0;
   width: 100%;

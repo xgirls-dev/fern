@@ -1574,6 +1574,14 @@ def runtime_snapshot() -> dict[str, Any]:
         }
 
 
+def output_asset(path: Path, info: os.stat_result) -> dict[str, Any]:
+    url = f"/outputs/{urllib.parse.quote(path.name)}"
+    record = {"name": path.name, "url": url, "mtime": info.st_mtime}
+    if path.suffix.lower() == ".png":
+        record["thumbnailUrl"] = f"{url}?thumbnail=1&v={gallery_store.thumbnail_version(info)}"
+    return record
+
+
 def latest_images() -> list[dict[str, Any]]:
     OUTPUTS.mkdir(parents=True, exist_ok=True)
     metadata_path = gallery_store.GALLERY_PATH
@@ -1590,25 +1598,17 @@ def latest_images() -> list[dict[str, Any]]:
         records = []
         for path in OUTPUTS.glob("*.png"):
             try:
-                modified = path.stat().st_mtime
+                record = output_asset(path, path.stat())
             except FileNotFoundError:
                 continue  # An image can be moved to Recycle Bin during a listing.
-            records.append(gallery_store.enrich_image_record({
-                "name": path.name,
-                "url": f"/outputs/{urllib.parse.quote(path.name)}",
-                "mtime": modified,
-            }, metadata))
+            records.append(gallery_store.enrich_image_record(record, metadata))
         records.sort(key=lambda record: record["mtime"], reverse=True)
         IMAGE_LIST_CACHE.update(key=key, checkedAt=now, records=records)
         return list(records)
 
 
 def image_record(path: Path, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
-    record = {
-        "name": path.name,
-        "url": f"/outputs/{urllib.parse.quote(path.name)}",
-        "mtime": path.stat().st_mtime,
-    }
+    record = output_asset(path, path.stat())
     if metadata:
         gallery_store.save_image_metadata(path.name, metadata)
     return gallery_store.enrich_image_record(record)
@@ -2595,8 +2595,35 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_error(404)
                 return
 
+            try:
+                info = path.stat()
+            except OSError:
+                self.send_error(404)
+                return
+
+            if parsed.path.startswith("/outputs/") and path.suffix.lower() == ".png" and parsed.query:
+                query = urllib.parse.parse_qs(parsed.query)
+                if query.get("thumbnail") == ["1"]:
+                    version = gallery_store.thumbnail_version(info)
+                    try:
+                        data = gallery_store.image_thumbnail(path, version, CACHE_DIR / "image-thumbnails")
+                    except (OSError, ValueError, Image.DecompressionBombError):
+                        self.send_error(404)
+                        return
+                    self.send_response(200)
+                    self.send_header("Content-Type", "image/webp")
+                    self.send_header("Content-Length", str(len(data)))
+                    self.send_header("Cache-Control", "private, max-age=86400, immutable" if query.get("v") == [version] else "no-store")
+                    self.send_cors_headers()
+                    self.end_headers()
+                    try:
+                        self.wfile.write(data)
+                    except (BrokenPipeError, ConnectionResetError):
+                        pass
+                    return
+
             content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
-            size = path.stat().st_size
+            size = info.st_size
             try:
                 requested = byte_range(self.headers.get("Range"), size)
             except ValueError:

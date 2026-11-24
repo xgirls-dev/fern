@@ -397,9 +397,14 @@ function ImageCard({
   onToggleSelect: () => void;
   onOpen: () => void;
 }) {
-  const [failed, setFailed] = useState(false);
+  const [failedUrl, setFailedUrl] = useState<string>();
+  const [failedThumbnail, setFailedThumbnail] = useState<string>();
   const [retry, setRetry] = useState(0);
   const [copied, setCopied] = useState(false);
+  const thumbnail = image.thumbnailUrl !== failedThumbnail ? image.thumbnailUrl : undefined;
+  const original = resolveAssetUrl(image.url, `${image.mtime}-${retry}`);
+  const source = thumbnail ? resolveAssetUrl(thumbnail) : original;
+  const failed = !thumbnail && failedUrl === original;
   const subject = image.prompt?.trim().replace(/\s+/g, " ").slice(0, 140);
   const copyTimer = useRef<number | null>(null);
   useEffect(() => () => { if (copyTimer.current !== null) window.clearTimeout(copyTimer.current); }, []);
@@ -417,13 +422,17 @@ function ImageCard({
           <span>Image unavailable — open details</span>
         ) : (
           <img
-            src={resolveAssetUrl(image.url, `${image.mtime}-${retry}`)}
+            key={source}
+            src={source}
             alt={image.prompt ?? image.name}
             width={image.width ?? 256}
             height={image.height ?? 256}
             loading="lazy"
             decoding="async"
-            onError={() => setFailed(true)}
+            onError={() => {
+              if (thumbnail) setFailedThumbnail(thumbnail);
+              else setFailedUrl(original);
+            }}
           />
         )}
       </button>
@@ -459,7 +468,8 @@ function ImageCard({
         <Button
           variant="secondary"
           onClick={() => {
-            setFailed(false);
+            setFailedUrl(undefined);
+            setFailedThumbnail(undefined);
             setRetry((v) => v + 1);
           }}
         >

@@ -10,6 +10,7 @@ export interface ImageRecord {
   threadId?: string;
   name: string;
   url: string;
+  thumbnailUrl?: string;
   mtime: number;
   prompt?: string;
   seed?: number;

@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import hashlib
+import io
 import json
 import os
 import re
+import tempfile
 import threading
 from pathlib import Path
 from typing import Any
+from PIL import Image, ImageOps
 
 CONFIGURED_ROOT = (
     os.environ.get("FERN_ROOT", "").strip()
@@ -16,6 +20,56 @@ DATA_DIR = ROOT / "data"
 GALLERY_PATH = DATA_DIR / "flux2_gallery.json"
 GALLERY_LOCK = threading.Lock()
 SEED_PATTERN = re.compile(r"-seed(\d+)", re.IGNORECASE)
+THUMBNAIL_DECODERS = threading.BoundedSemaphore(2)
+
+
+def thumbnail_version(stat: os.stat_result) -> str:
+    return f"1-{stat.st_mtime_ns:x}-{stat.st_ctime_ns:x}-{stat.st_size:x}-{stat.st_ino:x}"
+
+
+def image_thumbnail(path: Path, version: str, cache_dir: Path) -> bytes:
+    key = hashlib.sha256(os.fsencode(path) + version.encode("ascii")).hexdigest()
+    target = cache_dir / f"{key}.webp"
+    try:
+        return target.read_bytes()
+    except OSError:
+        pass
+
+    with THUMBNAIL_DECODERS:
+        # A previous request may have generated this thumbnail while we were waiting.
+        try:
+            return target.read_bytes()
+        except OSError:
+            pass
+        with path.open("rb") as original, Image.open(original, formats=("PNG",)) as source:
+            if thumbnail_version(os.fstat(original.fileno())) != version:
+                raise FileNotFoundError("The output changed while opening its thumbnail.")
+            if source.width * source.height > 32 * 1024**2:
+                raise ValueError("The source exceeds the thumbnail decoder's pixel limit.")
+            ImageOps.exif_transpose(source, in_place=True)
+            source.thumbnail((512, 512), Image.Resampling.LANCZOS, reducing_gap=2.0)
+            with io.BytesIO() as encoded:
+                source.save(encoded, "WEBP", quality=82, method=0, icc_profile=source.info.get("icc_profile", b""))
+                data = encoded.getvalue()
+            if thumbnail_version(os.fstat(original.fileno())) != version:
+                raise FileNotFoundError("The output changed while generating its thumbnail.")
+
+        temp_path = None
+        try:
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(dir=cache_dir, suffix=".tmp", delete=False) as temp:
+                temp_path = Path(temp.name)
+                temp.write(data)
+            temp_path.replace(target)
+        except OSError:
+            pass  # The cache can be cleared during a request or be unavailable.
+        finally:
+            if temp_path is not None:
+                try:
+                    temp_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+        return data
 
 
 def _empty_gallery() -> dict[str, Any]:

@@ -1,11 +1,34 @@
 import assert from "node:assert/strict";
 import { expect } from "@playwright/test";
 import { fixture } from "./ui-fixture.mjs";
-const { page, dir, errors, close } = await fixture();
+const { page, dir, errors, state, close } = await fixture();
 try {
+  const fallbackImage = state.images[0];
+  const thumbnailImage = state.images[1];
+  fallbackImage.thumbnailUrl = "/outputs/audit-1.png?thumbnail=1";
+  thumbnailImage.thumbnailUrl = "/outputs/audit-2.png?thumbnail=1";
+  await page.route("**/outputs/*?thumbnail=1", (route) =>
+    route.request().url().includes("audit-1.png") ? route.fulfill({ status: 404 }) : route.fulfill({
+      contentType: "image/svg+xml", body: '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100"><rect width="200" height="100" fill="#756b5d"/></svg>',
+    }),
+  );
+  await page.reload();
   await page.getByRole("button", { name: "Images", exact: true }).click();
   const firstImage = page.getByRole("button", { name: /^Review.*audit-1\.png$/, exact: true });
   await firstImage.waitFor();
+  await expect(firstImage.locator("img")).toHaveAttribute("src", fallbackImage.url);
+  const secondTile = page.getByRole("button", { name: /^Review.*audit-2\.png$/, exact: true });
+  await expect(secondTile.locator("img")).toHaveAttribute("src", /audit-2\.png\?thumbnail=1$/);
+  await secondTile.press("Enter");
+  const thumbnailViewer = page.getByRole("dialog", { name: /^Review image \d+ of \d+:/ });
+  await expect(thumbnailViewer.getByRole("img", { name: thumbnailImage.prompt, exact: true })).toHaveAttribute("src", thumbnailImage.url);
+  await page.evaluate(() => {
+    window.studio.saveImageAs = async () => "saved-image.png";
+    window.studio.writeImageFile = async (path, source) => { window.savedGalleryImage = { path, source }; };
+  });
+  await thumbnailViewer.getByRole("button", { name: "Save image", exact: true }).click();
+  await expect.poll(() => page.evaluate(() => window.savedGalleryImage)).toEqual({ path: "saved-image.png", source: thumbnailImage.url });
+  await page.keyboard.press("Escape");
   for (const [width, height] of [[1440, 920], [864, 547], [800, 491]]) {
     await page.setViewportSize({ width, height });
     await page.getByRole("button", { name: width <= 900 ? "Expand sidebar" : "Collapse sidebar", exact: true }).waitFor();
