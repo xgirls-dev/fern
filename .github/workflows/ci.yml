@@ -26,4 +26,6 @@ jobs:
         run: npm run test:ui
       - run: npm run typecheck
       - run: npm run check:python
+      - name: Verify workspace backup archives
+        run: python -m unittest discover -s tests -p test_workspace_backup.py
       - run: npm run build

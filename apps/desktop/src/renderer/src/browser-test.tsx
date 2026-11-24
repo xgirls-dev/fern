@@ -85,6 +85,7 @@ const browserStudio: StudioApi = {
   saveImageAs: async () => null,
   writeImageFile: async () => "",
   saveChatTranscript: async () => false,
+  saveWorkspaceBackup: async () => false,
   copyText: async (text) => {
     await navigator.clipboard.writeText(text);
   },

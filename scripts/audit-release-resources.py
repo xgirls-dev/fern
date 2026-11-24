@@ -26,7 +26,7 @@ ALLOWED_BACKEND = {
     'text_model_download.py', 'text_model_catalog.json', 'gguf_metadata.py', 'gguf_runtime.py', 'chat_image_tools.py', 'chat_context.py', 'chat_documents.py',
     'requirements-qwen21-turbo-export.txt', 'requirements-qwen21-turbo-overlay.txt',
     'install-qwen3-tts.ps1', 'gallery_store.py', 'generation_worker.py',
-    'storage_manager.py', 'bootstrap_install.py',
+    'storage_manager.py', 'bootstrap_install.py', 'workspace_backup.py',
 }
 LICENSES = {'LICENSE-QWEN', 'LICENSE-OPENVINO-NOTEBOOKS', 'NOTICE'}
 TOKEN = re.compile(rb'hf_[A-Za-z0-9]{20,}')

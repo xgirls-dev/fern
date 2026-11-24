@@ -35,6 +35,7 @@ export interface StudioApi {
   saveChatTranscript: (title: string, markdown: string) => Promise<boolean>;
   copyText: (text: string) => Promise<void>;
   readFileAsDataUrl: (filePath: string) => Promise<string>;
+  saveWorkspaceBackup: (snapshot: string) => Promise<boolean>;
   clearWebCache: () => Promise<void>;
 }
 

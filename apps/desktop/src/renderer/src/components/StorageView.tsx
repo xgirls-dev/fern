@@ -4,12 +4,16 @@ import ShieldCheck from "lucide-react/dist/esm/icons/shield-check.mjs";
 import Trash2 from "lucide-react/dist/esm/icons/trash-2.mjs";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { clearGenerationCache, fetchStorageStatus } from "../lib/api";
+import { notify } from "../lib/notifications";
+import { saveWorkspaceBackup, type WorkspaceBackupSnapshot } from "../lib/workspaceBackup";
 import type { StorageStatus } from "../lib/types";
 import { Button, PageHeader } from "./ui/controls";
 
 interface StorageViewProps {
   active: boolean;
   running: boolean;
+  backupReady: boolean;
+  captureBackup: () => WorkspaceBackupSnapshot;
   onResetLocalData: () => Promise<void>;
   onOpenModels: () => void;
 }
@@ -47,12 +51,14 @@ function storedPreferenceBytes(): number {
 export function StorageView({
   active,
   running,
+  backupReady,
+  captureBackup,
   onResetLocalData,
   onOpenModels,
 }: StorageViewProps) {
   const [storage, setStorage] = useState<StorageStatus | null>(null);
   const [loading, setLoading] = useState(false);
-  const [action, setAction] = useState<"cache" | "reset" | null>(null);
+  const [action, setAction] = useState<"backup" | "cache" | "reset" | null>(null);
   const [confirmingReset, setConfirmingReset] = useState(false);
   const resetTrigger = useRef<HTMLButtonElement>(null);
   const resetConfirmation = useRef<HTMLDivElement>(null);
@@ -96,6 +102,18 @@ export function StorageView({
     window.addEventListener("keydown", dismiss, true);
     return () => window.removeEventListener("keydown", dismiss, true);
   }, [confirmingReset, action]);
+
+  const createBackup = async () => {
+    setAction("backup");
+    try {
+      if (await saveWorkspaceBackup(captureBackup())) notify("Workspace backup saved.");
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message.replace(/^Error invoking remote method '[^']+': Error: /, "") : "";
+      notify(message || "Could not save the workspace backup.", "error");
+    } finally {
+      setAction(null);
+    }
+  };
 
   const clearCache = async () => {
     setAction("cache");
@@ -144,7 +162,7 @@ export function StorageView({
         className="shell-page storage-view" hidden={!active}
         aria-labelledby="storage-view-title"
       >
-        <PageHeader className="shell-page-header" id="storage-view-title" title="Local data" description="See what Fern stores and clean it up without opening system folders." />
+        <PageHeader className="shell-page-header" id="storage-view-title" title="Local data" description="Back up your workspace and manage Fern’s disk usage." />
 
         <div className="shell-page-body storage-body">
         {loading && !storage ? (
@@ -240,6 +258,18 @@ export function StorageView({
             <Button variant="ghost" disabled={loading || Boolean(action)} onClick={() => void refreshStorage()}>Retry</Button>
           </p>
         ) : null}
+
+        <div className="data-actions">
+          <div>
+            <strong>Workspace Backup</strong>
+            <p>Save chats, drafts, reply versions, saved attachments, media, and preferences in one file.</p>
+            {running && <small>Finish active jobs before backing up.</small>}
+            {action === "backup" && <small role="status">Saving workspace backup…</small>}
+          </div>
+          <Button variant="secondary" disabled={!backupReady || running || Boolean(action)} onClick={() => void createBackup()}>
+            Save Backup…
+          </Button>
+        </div>
 
         <div className="data-actions">
           <div>
