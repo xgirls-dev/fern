@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { expect } from "@playwright/test";
 import { fixture } from "./ui-fixture.mjs";
 
 const { page, errors, dir, close } = await fixture();
@@ -111,7 +112,9 @@ try {
   await page.screenshot({ path: `${dir}/video-preview.png` });
   await page.setViewportSize({ width: 740, height: 800 });
   const workspace = page.locator(".video-workspace");
-  assert(await workspace.evaluate((element) => element.scrollWidth <= element.clientWidth));
+  await expect(page.getByRole("button", { name: "Expand sidebar", exact: true })).toBeVisible();
+  await expect.poll(() => workspace.evaluate((element) => element.scrollWidth - element.clientWidth))
+    .toBeLessThanOrEqual(0);
   await page.reload();
   await page.getByRole("button", { name: "Save WebM" }).waitFor();
   await page.getByRole("button", { name: "Delete", exact: true }).click();

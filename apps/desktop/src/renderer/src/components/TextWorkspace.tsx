@@ -614,19 +614,23 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   }, [activeThread.id, studio.deleteMessage]);
   const undoDeletion = () => {
     if (!deletion || undoBlocked) return;
-    const prompt = activeThread.messages.find((message) => message.id === deletion.beforeId);
-    const savedPrompt = prompt && savedVersionForDeletedReply(prompt, deletion) ? prompt : undefined;
     studio.undoMessageDeletion(activeThread.id);
     setFindThreadId(null);
+    if (deletion.snapshotId) {
+      inputRef.current?.focus({ preventScroll: true });
+      const restored = deletion.replyVersion ? "Reply version" : deletion.messages.length > 1 ? "Message and reply"
+        : deletion.messages[0].role === "assistant" ? "Reply" : "Message";
+      notify(`${restored} restored in conversation history.`);
+      return;
+    }
+    const prompt = activeThread.messages.find((message) => message.id === deletion.beforeId);
+    const savedPrompt = prompt && savedVersionForDeletedReply(prompt, deletion) ? prompt : undefined;
     const survivor = deletion.replyVersion?.survivingId;
     const restoredId = deletion.messages[0].id;
     if (!survivor || savedPrompt || messages.some((message) => matchesTextMessage(message, survivor) || matchesTextMessage(message, restoredId))) {
       setFocusJump({ threadId: activeThread.id, messageId: savedPrompt?.id ?? restoredId });
     } else {
       inputRef.current?.focus({ preventScroll: true });
-      if (activeThread.versions?.some((snapshot) => snapshot.messages.some((message) => matchesTextMessage(message, survivor)))) {
-        notify("Reply version restored in conversation history.");
-      }
     }
     if (savedPrompt) notify("Reply restored to Prompt versions.");
   };

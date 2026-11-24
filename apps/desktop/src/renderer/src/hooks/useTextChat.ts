@@ -397,7 +397,8 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     const historyChanged = previous.activeId !== workspace.activeId || previous.threads.length !== workspace.threads.length ||
       workspace.threads.some((thread, index) => {
         const before = previous.threads[index];
-        return !before || before.id !== thread.id || before.messages !== thread.messages || before.pendingJobId !== thread.pendingJobId;
+        return !before || before.id !== thread.id || before.messages !== thread.messages ||
+          before.versions !== thread.versions || before.pendingJobId !== thread.pendingJobId;
       });
     if (historyChanged) { persist(); return; }
     const timer = window.setTimeout(persist, 180);
@@ -593,13 +594,22 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     };
   }, [hasPendingReply, ready, runtimeJobId, statusError, statusLoaded, storageReady, submitting]);
 
-  const updateThread = useCallback((id: string, patch: Partial<TextThread>) => {
-    setWorkspace((current) => ({
-      ...current,
-      threads: current.threads.map((thread) => thread.id === id
-        ? { ...thread, ...patch, updatedAt: Date.now() }
-        : thread),
-    }));
+  const updateThread = useCallback((id: string, patch: Partial<TextThread>, versionChange?: {
+    savedId: string; restoredId?: string;
+  }) => {
+    const updatedAt = Date.now();
+    setChatState((current) => {
+      const workspace = {
+        ...current.workspace,
+        threads: current.workspace.threads.map((thread) => thread.id === id ? { ...thread, ...patch, updatedAt } : thread),
+      };
+      const deletions = versionChange && current.messageDeletions.get(id);
+      if (!versionChange || !deletions?.length) return { ...current, workspace };
+      // An Undo belongs to the transcript it changed, even while another version is open.
+      const scoped = deletions.map((deletion) => !deletion.snapshotId ? { ...deletion, snapshotId: versionChange.savedId }
+        : deletion.snapshotId === versionChange.restoredId ? { ...deletion, snapshotId: undefined } : deletion);
+      return { ...current, workspace, messageDeletions: new Map(current.messageDeletions).set(id, scoped) };
+    });
   }, []);
 
   const organize = useCallback((action: ChatOrganizationAction) => {
@@ -1010,14 +1020,15 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     }
     const { contextSize, maxNewTokens } = chatTokenLimits(thread, model);
     const receipt = beginSubmission(requestId, thread.id);
+    const snapshot = rewriteId ? snapshotTextVersion(thread.messages) : undefined;
     const pending: Partial<TextThread> = {
       title, modelId, pendingJobId: requestId, pendingPreview: undefined, pendingContext: history.context,
-      ...(rewriteId ? { versions: [snapshotTextVersion(thread.messages), ...(thread.versions ?? [])] } : {}),
+      ...(snapshot ? { versions: [snapshot, ...(thread.versions ?? [])] } : {}),
       ...(revision || rewriteId ? { messages, promptEdit: undefined } : retry ? {} : continueFrom ? { messages }
         : { messages, draft: "", draftImage: undefined, draftContextImage: undefined, draftContextImageThreadId: undefined }),
     };
     if (sourceId) setWorkspace((current) => addEditedChat(current, sourceId, { ...thread, ...pending }));
-    else updateThread(thread.id, pending);
+    else updateThread(thread.id, pending, snapshot && { savedId: snapshot.id });
     try {
       const accepted = await startTextGeneration({
         requestId,
@@ -1108,13 +1119,14 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
 
   const restoreVersion = useCallback((threadId: string, id: string) => {
     const activeThread = getThread(threadId);
-    if (busy || !activeThread?.versions) return;
+    if (busy || submission.current || activeThread?.pendingJobId || !activeThread?.versions) return;
     const previous = activeThread.versions.find((version) => version.id === id);
     if (!previous) return;
+    const snapshot = snapshotTextVersion(activeThread.messages);
     updateThread(activeThread.id, {
       messages: previous.messages,
-      versions: [snapshotTextVersion(activeThread.messages), ...activeThread.versions.filter((version) => version.id !== id)],
-    });
+      versions: [snapshot, ...activeThread.versions.filter((version) => version.id !== id)],
+    }, { savedId: snapshot.id, restoredId: previous.id });
     setActionError(null);
   }, [getThread, busy, updateThread, setActionError]);
 

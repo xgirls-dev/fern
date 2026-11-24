@@ -1,6 +1,7 @@
 import { chooseSelectOption } from "./select-option.mjs";
 import assert from "node:assert/strict";
-import { fixture } from "./ui-fixture.mjs";
+import { expect } from "@playwright/test";
+import { chooseMessageAction, fixture } from "./ui-fixture.mjs";
 
 const model = { id: "gemma", name: "Gemma", installed: true, format: "gguf" };
 const { page, state, errors, close } = await fixture({
@@ -25,13 +26,20 @@ try {
   await send("First prompt", "First response.");
   await send("Original follow-up", "Original answer.");
   await message.fill("Keep this draft");
+  const original = page.locator("article.text-message").filter({ hasText: "Original answer." });
+  await chooseMessageAction(original, "Delete reply");
+  await page.getByRole("group", { name: "Confirm message deletion" }).getByRole("button", { name: "Delete", exact: true }).click();
+  await expect(original).toHaveCount(0);
   await button("Edit message").first().click();
   await page.getByRole("textbox", { name: "Edited prompt" }).fill("Revised opening");
   await button("Resend").click();
   assert.deepEqual(state.textRequests[2].messages, [{ role: "user", content: "Revised opening" }]);
   await complete("Revised response.");
-  assert.equal(await message.inputValue(), "Keep this draft");
-  assert.equal(await page.getByText("Original answer.", { exact: true }).count(), 0);
+  await button("Undo deletion").click();
+  await expect(page.getByText("Reply restored in conversation history.")).toBeVisible();
+  await expect(message).toBeFocused();
+  await expect(message).toHaveValue("Keep this draft");
+  await expect(original).toHaveCount(0);
   await page.reload();
   await chooseSelectOption(page.getByLabel("Conversation versions", { exact: true }), "Original follow-up");
   await page.getByText("Original answer.", { exact: true }).waitFor();
