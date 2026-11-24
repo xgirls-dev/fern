@@ -152,7 +152,7 @@ TEXT_CANCEL_EVENT: threading.Event | None = None
 TEXT_JOB: dict[str, Any] = {
     "id": None, "threadId": None, "modelId": None, "status": "idle",
     "phase": None, "partialText": "", "partialReasoning": "", "startedAt": None, "finishedAt": None,
-    "result": None, "image": None, "error": None, "errorCode": None,
+    "result": None, "image": None, "error": None, "errorCode": None, "failureDiagnostics": None,
 }
 
 
@@ -838,7 +838,7 @@ def start_text_job(payload: dict[str, Any], request_id: Any, admit_before: Any =
             startedAt=time.time(), finishedAt=None, result=None, image=payload.get("inspectionImage"),
             images=[],
             inspection=payload.get("inspectionImage") is not None,
-            error=None, errorCode=None,
+            error=None, errorCode=None, failureDiagnostics=None,
         )
         text_job_changed()
     threading.Thread(target=run_text_generation, args=(payload, job_id, cancel_event), daemon=True).start()
@@ -867,6 +867,7 @@ def validate_text_sampling(options: Any) -> dict[str, Any]:
 
 
 def run_text_generation(payload: dict[str, Any], job_id: str, cancel_event: threading.Event) -> None:
+    diagnostics = {"stage": "preparing-conversation", "requestedDevice": payload.get("device")}
     try:
         image_model = payload.get("imageModel")
         inspection_image = payload.get("inspectionImage")
@@ -889,15 +890,27 @@ def run_text_generation(payload: dict[str, Any], job_id: str, cancel_event: thre
         if model is None or not model.get("installed"):
             raise ValueError("Add this text model again; its files are no longer available.")
         device = payload["device"]
+        diagnostics["runtime"] = "gguf" if model.get("format") == "gguf" else "openvino"
         append_text_event(job_id, phase="Preparing conversation…")
         passages = []
         if attachments := payload.get("documentIds"):
+            diagnostics["stage"] = "finding-documents"
             append_text_event(job_id, phase="Finding document passages…")
             passages = retrieve_passages(DATA_DIR / "chat-documents", attachments, payload["messages"], payload["contextSize"])
         if cancel_event.is_set():
             raise InterruptedError()
 
         def generate(request: dict[str, Any]) -> dict[str, Any]:
+            diagnostics["stage"] = "preparing-conversation"
+
+            def append_output(token: str, *, reasoning: bool = False) -> None:
+                if token:
+                    diagnostics["stage"] = "generating-reply"
+                if reasoning:
+                    append_text_event(job_id, reasoning=token)
+                else:
+                    append_text_event(job_id, token=token)
+
             return TEXT_GENERATION_WORKER.generate(
                 model_path=model["path"],
                 device=device,
@@ -914,15 +927,17 @@ def run_text_generation(payload: dict[str, Any], job_id: str, cancel_event: thre
                     "PYTHONIOENCODING": "utf-8",
                     "FERN_GGUF_RUNTIME_ROOT": str(DATA_DIR / "gguf-runtime"),
                 },
-                on_token=lambda token: append_text_event(job_id, token=token),
+                on_token=append_output,
                 on_phase=lambda phase: append_text_event(job_id, phase=phase),
-                on_reasoning=lambda token: append_text_event(job_id, reasoning=token),
+                on_reasoning=lambda token: append_output(token, reasoning=True),
+                on_diagnostic=diagnostics.update,
                 cancel_event=cancel_event,
             )
 
         request = {**payload, **({"tools": [IMAGE_TOOL]} if image_model else {}),
                    **({"documentPassages": passages} if passages else {})}
         result = generate(request)
+        diagnostics["stage"] = "checking-reply"
         calls = result.pop("toolCalls", [])
         if inspection_image and result.get("text", "").strip():
             result["visionChecked"] = True
@@ -932,6 +947,7 @@ def run_text_generation(payload: dict[str, Any], job_id: str, cancel_event: thre
             if result.get("device") != "GPU":
                 raise RuntimeError("Select GPU in Preferences to use the image tool in chat.")
             prompt = image_tool_prompt(calls)
+            diagnostics["stage"] = "generating-image"
             append_text_event(job_id, phase="Generating an image…")
 
             def show_image(artifact: dict[str, Any]) -> None:
@@ -966,6 +982,7 @@ def run_text_generation(payload: dict[str, Any], job_id: str, cancel_event: thre
                     },
                 ],
             })
+            diagnostics["stage"] = "checking-reply"
             if not continuation.get("text", "").strip():
                 raise RuntimeError("The model returned an empty image inspection. Try again.")
             result["text"] = "\n\n".join(
@@ -1008,7 +1025,8 @@ def run_text_generation(payload: dict[str, Any], job_id: str, cancel_event: thre
                 finish_text_job(status="stopped" if stopped else "failed", finishedAt=time.time(),
                                 phase="Generation stopped." if stopped else "Generation failed.",
                                 error=None if stopped else (str(error) or type(error).__name__)[-1000:],
-                                errorCode=error.code if not stopped and isinstance(error, TextWorkerError) else None)
+                                errorCode=error.code if not stopped and isinstance(error, TextWorkerError) else None,
+                                failureDiagnostics=None if stopped else diagnostics)
 
 
 def tts_job_running() -> bool:
@@ -3175,7 +3193,8 @@ class Handler(BaseHTTPRequestHandler):
                 FLUX3_GENERATION_WORKER.close()
                 TEXT_GENERATION_WORKER.close()
                 with TEXT_JOB_LOCK:
-                    TEXT_JOB.update(id=None, threadId=None, status="idle", partialText="", partialReasoning="", result=None, image=None, error=None, errorCode=None)
+                    TEXT_JOB.update(id=None, threadId=None, status="idle", partialText="", partialReasoning="", result=None, image=None, error=None,
+                                    errorCode=None, failureDiagnostics=None)
                     text_job_changed()
                 INTEL_MEDIA.close()
                 flux2.release_pipeline()

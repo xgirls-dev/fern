@@ -43,6 +43,8 @@ function waitForApiBaseUrl(timeoutMs = 90_000): Promise<string> {
 
 const studioApi: StudioApi = {
   platform: process.platform,
+  architecture: process.arch,
+  appVersion: process.argv.find((argument) => argument.startsWith("--fern-app-version="))?.slice("--fern-app-version=".length),
   getApiBaseUrl: () => waitForApiBaseUrl(),
   adjustZoom: (action) => ipcRenderer.invoke("studio:adjust-zoom", action),
 

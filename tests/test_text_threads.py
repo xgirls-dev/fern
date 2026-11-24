@@ -259,6 +259,40 @@ for line in sys.stdin:
             self.assertEqual(api.TEXT_JOB['status'], 'stopped')
             self.assertEqual(api.TEXT_JOB['partialText'], 'partial output')
             self.assertIsNone(api.TEXT_JOB['error'])
+            self.assertIsNone(api.TEXT_JOB['failureDiagnostics'])
+
+    def test_text_failure_keeps_the_structured_stage_after_worker_logs(self):
+        script = self.root / "failing_worker.py"
+        script.write_text(
+            "import json, sys\n"
+            "def emit(**event): print('FERN_TEXT_EVENT:' + json.dumps(event), flush=True)\n"
+            "sys.stdin.readline()\n"
+            "emit(type='runtime', backend='openvino', device='GPU')\n"
+            "emit(type='phase', stage='loading-model', text='Loading the OpenVINO model…')\n"
+            "print('Private runtime log: /local/model.xml', flush=True)\n"
+            "emit(type='error', error='Could not allocate GPU memory.', traceback='Private traceback')\n",
+            encoding="utf-8",
+        )
+        worker = TextGenerationProcess()
+
+        def load_worker(**kwargs):
+            return worker.generate(**{**kwargs, "command": [sys.executable, "-X", "utf8", str(script)]})
+
+        try:
+            with (patch.object(api, "TEXT_MODEL_REGISTRY", self.registry),
+                  patch.object(api.TEXT_GENERATION_WORKER, "generate", side_effect=load_worker),
+                  patch.object(api.flux2, "release_pipeline"),
+                  patch.dict(api.TEXT_JOB, {"id": "failure-test", "status": "running"}, clear=True)):
+                api.run_text_generation({"modelId": self.model["id"], "device": "AUTO"}, "failure-test", threading.Event())
+                job = api.text_job_snapshot()
+                self.assertEqual(job["status"], "failed")
+                self.assertEqual(job["error"], "Could not allocate GPU memory.")
+                self.assertEqual(job["failureDiagnostics"], {
+                    "stage": "loading-model", "runtime": "openvino", "backend": "openvino",
+                    "requestedDevice": "AUTO", "device": "GPU",
+                })
+        finally:
+            worker.close()
 
     def test_auto_never_falls_back_to_cpu(self):
         import types

@@ -381,7 +381,7 @@ class GGUFServer:
             # Shutdown wakes a blocked response read and tells llama.cpp to cancel this request.
             with cancellation.watch(connection.sock):
                 emit({"type": "cancellable"})
-                emit({"type": "phase", "text": "Waiting for the first token…"})
+                emit({"type": "phase", "stage": "waiting-for-first-token", "text": "Waiting for the first token…"})
                 connection.request("POST", "/v1/chat/completions", json.dumps(body).encode("utf-8"), {
                     "Authorization": f"Bearer {self.key}", "Content-Type": "application/json", "Connection": "close",
                 })
@@ -417,7 +417,7 @@ class GGUFServer:
         thread = request.get("threadId", "")
 
         def compact(transcript: str) -> str:
-            emit({"type": "phase", "text": "Compacting earlier turns…"})
+            emit({"type": "phase", "stage": "preparing-conversation", "text": "Compacting earlier turns…"})
             return self._summarize(transcript)
 
         def prompt_tokens(turns: list[dict[str, Any]]) -> int:

@@ -87,6 +87,7 @@ function createWindow(apiBaseUrl?: string): BrowserWindow {
       : {}),
     webPreferences: {
       preload: resolvePreloadPath(),
+      additionalArguments: [`--fern-app-version=${app.getVersion()}`],
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,

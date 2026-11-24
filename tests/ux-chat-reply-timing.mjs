@@ -35,6 +35,10 @@ try {
   await expect(reply.getByText("Loading model…", { exact: true })).toBeVisible();
   emit({ append: { phase: "Generating…", reasoning: "", text: "The measured answer." } });
   await expect(reply.locator(".text-message-content p")).toHaveText("The measured answer.");
+  // The DOM assertion can resolve before the timing probe samples a frame.
+  await reply.evaluate(() => new Promise((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(resolve));
+  }));
   state.textStatus.job = { ...running, partialText: "The measured answer.", status: "complete", finishedAt: Date.now() / 1000 };
   emit({ job: state.textStatus.job });
   stream.end();

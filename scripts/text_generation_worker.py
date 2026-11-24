@@ -81,6 +81,7 @@ def run_gguf(file: Path, device: str, projector: Path | None) -> int:
                 load_options = request.get("loadOptions") or {}
                 if vision and not projector:
                     raise ValueError("Add the model's vision projector before sending an image.")
+                emit({"type": "phase", "stage": "selecting-device"})
                 if sys.platform == "darwin":
                     target = "CPU" if device == "CPU" else "GPU"
                     backend = "cpu" if target == "CPU" else "metal"
@@ -90,6 +91,7 @@ def run_gguf(file: Path, device: str, projector: Path | None) -> int:
                     backend = "cpu" if target == "CPU" else "vulkan"
                 else:
                     target, backend = resolve_text_device(device), "openvino"
+                emit({"type": "runtime", "backend": backend, "device": target})
                 gpu_projector = vision and (backend == "metal" or bool(request.get("requireGpuVision")))
                 if gpu_projector and backend not in ("vulkan", "metal"):
                     raise ValueError("This image conversation requires GPU vision. Select Available GPU in Preferences.")
@@ -101,17 +103,21 @@ def run_gguf(file: Path, device: str, projector: Path | None) -> int:
                     if server is not None:
                         server.close()
                         server = None
-                    phase = lambda text: emit({"type": "phase", "text": text})
+                    def setup_progress(text: str) -> None:
+                        emit({"type": "phase", "text": text})
+
+                    emit({"type": "phase", "stage": "setting-up-runtime"})
                     setup_started = time.perf_counter()
-                    executable = ensure_runtime(runtime_root, backend, phase)
+                    executable = ensure_runtime(runtime_root, backend, setup_progress)
                     load_timing["runtimeSetupMs"] = (time.perf_counter() - setup_started) * 1000
-                    phase(f"Loading the GGUF model with {backend}…")
+                    emit({"type": "phase", "stage": "loading-model", "text": f"Loading the GGUF model with {backend}…"})
                     load_started = time.perf_counter()
                     server = GGUFServer(
                         executable, file, projector if vision else None, target, backend, context_size,
                         gpu_projector=gpu_projector, load_options=load_options,
                     )
                     load_timing["modelReadyMs"] = (time.perf_counter() - load_started) * 1000
+                emit({"type": "phase", "stage": "preparing-conversation"})
                 result = server.generate(request, emit, cancellation)
                 result["runtimeTiming"].update(load_timing)
                 emit(result)
@@ -137,12 +143,15 @@ def run(model_path: str, device: str, projector_path: str = "") -> int:
         return run_gguf(folder, device, projector)
 
     try:
+        emit({"type": "phase", "stage": "selecting-device"})
         device = resolve_text_device(device)
     except Exception as error:
         emit({"type": "error", "error": str(error)})
         return 1
 
     try:
+        emit({"type": "runtime", "backend": "openvino", "device": device})
+        emit({"type": "phase", "stage": "setting-up-runtime"})
         import openvino_genai as genai
     except Exception as error:
         emit({"type": "error", "error": f"OpenVINO GenAI is unavailable: {error}"})
@@ -160,11 +169,15 @@ def run(model_path: str, device: str, projector_path: str = "") -> int:
                 return 0
             if request.get("op") != "generate":
                 raise ValueError("Unsupported text worker request.")
+            emit({"type": "runtime", "backend": "openvino", "device": device})
+            preparing = {"type": "phase", "stage": "preparing-conversation"}
             if pipeline is None:
-                emit({"type": "phase", "text": "Loading the OpenVINO model…"})
+                emit({"type": "phase", "stage": "loading-model", "text": "Loading the OpenVINO model…"})
                 pipeline = genai.LLMPipeline(str(folder), device)
                 tokenizer = pipeline.get_tokenizer()
-                emit({"type": "phase", "text": "Model ready. Preparing the conversation…"})
+                preparing["text"] = "Model ready. Preparing the conversation…"
+
+            emit(preparing)
 
             messages = request["messages"]
             if request.get("systemPrompt", "").strip():
@@ -201,7 +214,7 @@ def run(model_path: str, device: str, projector_path: str = "") -> int:
 
             # A one-element batch returns DecodedResults (single strings return
             # only text in supported release runtimes), retaining true metrics.
-            emit({"type": "phase", "text": "Waiting for the first token…"})
+            emit({"type": "phase", "stage": "waiting-for-first-token", "text": "Waiting for the first token…"})
             result = pipeline.generate([prompt], config, stream)
             elapsed = max(time.perf_counter() - started, 0.001)
             output = result.texts[0] if result.texts else "".join(parts)

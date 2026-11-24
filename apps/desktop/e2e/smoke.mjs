@@ -108,9 +108,13 @@ try {
   const bridge = await page.evaluate(async () => ({
     url: await window.studio.getApiBaseUrl(),
     platform: window.studio.platform,
+    version: window.studio.appVersion,
+    architecture: window.studio.architecture,
     isolated: typeof window.studio === "object" && typeof process === "undefined" && typeof require === "undefined",
   }));
   assert.equal(bridge.url, apiBaseUrl, "The preload bridge should keep the assigned API URL");
+  assert.equal(bridge.version, await electronApp.evaluate(({ app }) => app.getVersion()), "Diagnostics should carry the app build");
+  assert.equal(bridge.architecture, await electronApp.evaluate(() => process.arch), "Diagnostics should carry the app architecture");
   assert.equal(healthStatus, 200, `Fern backend should become healthy (${lastHealthError})`);
   assert.ok(bridge.isolated, "Renderer should expose only the context-isolated preload bridge");
   await expect.poll(() => browserWindow.evaluate((window) => window.isVisible())).toBe(visible);

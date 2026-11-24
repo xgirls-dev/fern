@@ -125,6 +125,7 @@ class TextGenerationProcess:
         on_token: Callable[[str], None],
         on_phase: Callable[[str], None],
         on_reasoning: Callable[[str], None] | None = None,
+        on_diagnostic: Callable[[dict[str, Any]], None] | None = None,
         cancel_event: threading.Event | None = None,
     ) -> dict[str, Any]:
         key = (str(Path(model_path).resolve()), device, tuple(command))
@@ -134,6 +135,8 @@ class TextGenerationProcess:
             process = self._process
             if process is None or process.poll() is not None or self._key != key:
                 self._stop_unlocked()
+                if on_diagnostic is not None:
+                    on_diagnostic({"stage": "starting-worker"})
                 process = subprocess.Popen(
                     command,
                     cwd=str(cwd),
@@ -174,7 +177,7 @@ class TextGenerationProcess:
                     event = json.loads(line[len(EVENT_PREFIX):])
                     kind = event.get("type")
                     cancelled = cancel_event is not None and cancel_event.is_set()
-                    if cancelled and kind in ("token", "reasoning", "phase"):
+                    if cancelled and kind in ("token", "reasoning", "phase", "runtime"):
                         continue
                     if kind == "cancellable":
                         with self._control_lock:
@@ -184,7 +187,13 @@ class TextGenerationProcess:
                     elif kind == "reasoning" and on_reasoning is not None:
                         on_reasoning(str(event.get("text", "")))
                     elif kind == "phase":
-                        on_phase(str(event.get("text", "")))
+                        if on_diagnostic is not None and "stage" in event:
+                            on_diagnostic({"stage": event["stage"]})
+                        if "text" in event:
+                            on_phase(str(event["text"]))
+                    elif kind == "runtime":
+                        if on_diagnostic is not None:
+                            on_diagnostic({"backend": event.get("backend"), "device": event.get("device")})
                     elif kind == "result":
                         if cancelled:
                             raise _GenerationStopped("Generation stopped.")
