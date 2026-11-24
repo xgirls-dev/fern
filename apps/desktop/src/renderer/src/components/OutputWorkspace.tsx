@@ -110,9 +110,16 @@ export function OutputWorkspace({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
+  const galleryFocus = useRef<HTMLElement>(null);
+  const createTrigger = useRef<HTMLButtonElement>(null);
   const deleteTrigger = useRef<HTMLButtonElement>(null);
   const selectTrigger = useRef<HTMLButtonElement>(null);
   const cancelDelete = useRef<HTMLButtonElement>(null);
+  const completedBulkDelete = useRef(false);
+  useLayoutEffect(() => {
+    if (selecting || !completedBulkDelete.current) return;
+    (selectTrigger.current ?? createTrigger.current ?? galleryFocus.current)?.focus({ preventScroll: true });
+  }, [selecting]);
   const url = preview
     ? resolveAssetUrl(preview.url, `${preview.mtime}-${retry}`)
     : null;
@@ -255,6 +262,8 @@ export function OutputWorkspace({
           className="gallery-panel is-expanded"
           id="recent-renders"
           aria-label="Image gallery"
+          ref={galleryFocus}
+          tabIndex={-1}
         >
           {images.length ? <div className="gallery-panel-header">
             <span className="gallery-panel-count" role="status">
@@ -268,7 +277,10 @@ export function OutputWorkspace({
                 <Button onClick={() => setSelected((previous) => { const next = new Set(previous); const allSelected = filtered.every((image) => next.has(image.name)); for (const image of filtered) { if (allSelected) next.delete(image.name); else next.add(image.name); } return next; })} disabled={!filtered.length}>{filtered.length && filtered.every((image) => selected.has(image.name)) ? "Deselect results" : "Select all results"}</Button>
                 <Button ref={deleteTrigger} variant="danger" disabled={!selected.size || deleting} onClick={() => { setDeleteError(""); setConfirmDelete(true); }}>Delete selected</Button>
                 <Button onClick={() => { setSelecting(false); setSelected(new Set()); }}>Done</Button>
-              </> : <Button ref={selectTrigger} onClick={() => setSelecting(true)} disabled={!images.length}>Select</Button> : null}
+              </> : <Button ref={selectTrigger} onClick={() => {
+                completedBulkDelete.current = false;
+                setSelecting(true);
+              }} disabled={!images.length}>Select</Button> : null}
               <Input
                 ref={search}
                 className="gallery-search"
@@ -309,7 +321,7 @@ export function OutputWorkspace({
               <div className="gallery-no-results ui-empty-state">
                 <strong>{images.length ? "No matching images" : "No images yet"}</strong>
                 <p>{images.length ? "Try another search to find an image." : mode === "library" ? "Images you create will appear here." : "Images created in this thread will appear here."}</p>
-                {!images.length && onCreateImage ? <Button variant="primary" onClick={onCreateImage}>Create an image</Button> : images.length && view.query ? (
+                {!images.length && onCreateImage ? <Button ref={createTrigger} variant="primary" onClick={onCreateImage}>Create an image</Button> : images.length && view.query ? (
                   <Button
                     onClick={() => { resetGalleryScroll(); setView((v) => ({ ...v, query: "" })); search.current?.focus(); }}
                   >
@@ -356,7 +368,7 @@ export function OutputWorkspace({
         </section>
       )}
       {confirmDelete && <Dialog alert initialFocus={cancelDelete}
-        finalFocus={deleteTrigger}
+        finalFocus={() => completedBulkDelete.current ? false : deleteTrigger.current}
         onClose={() => { if (!deleting) setConfirmDelete(false); }}>
         <DialogTitle>Move {selected.size} {selected.size === 1 ? "image" : "images"} to {trashName}?</DialogTitle>
         <DialogDescription>They will disappear from Library and their threads. You can restore the files from {trashName}.</DialogDescription>
@@ -372,8 +384,8 @@ export function OutputWorkspace({
               deletedCount += 1;
               setSelected((previous) => { const next = new Set(previous); next.delete(image.name); return next; });
             }
+            completedBulkDelete.current = true;
             setConfirmDelete(false); setSelecting(false);
-            requestAnimationFrame(() => (selectTrigger.current ?? search.current)?.focus({ preventScroll: true }));
             notify(`${deletedCount} ${deletedCount === 1 ? "image" : "images"} moved to ${trashName}.`);
           } catch (error) { setDeleteError(`${deletedCount ? `${deletedCount} moved. ` : ""}${error instanceof Error ? error.message : "Could not delete the remaining images. Try again."}`); }
           finally { setDeleting(false); }

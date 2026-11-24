@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { expect } from '@playwright/test';
 import { fixture } from './ui-fixture.mjs';
 
 const { page, state, errors, close } = await fixture({ imageCount: 4 });
@@ -12,15 +13,37 @@ try {
   await deleteSelected.click();
   const dialog = page.getByRole('alertdialog', { name: 'Move 2 images to Recycle Bin?', exact: true });
   const cancel = dialog.getByRole('button', { name: 'Cancel' });
-  await page.waitForFunction(element => element === document.activeElement, await cancel.elementHandle());
+  await expect(cancel).toBeFocused();
   await cancel.click();
-  await page.waitForFunction(element => element === document.activeElement, await deleteSelected.elementHandle());
+  await expect(deleteSelected).toBeFocused();
   assert.equal(state.images.length, 4, 'cancelling leaves all images in place');
   await deleteSelected.click();
-  await dialog.getByRole('button', { name: 'Delete images' }).click();
-  await dialog.waitFor({ state: 'detached' });
-  await page.waitForFunction(element => element === document.activeElement, await page.getByRole('button', { name: 'Select', exact: true }).elementHandle());
-  assert.deepEqual(state.images.map(image => image.name).sort(), ['audit-3.png', 'audit-4.png']);
+  const confirm = dialog.getByRole('button', { name: 'Delete images', exact: true });
+  const select = page.getByRole('button', { name: 'Select', exact: true });
+  await expect(confirm).toBeVisible();
+  const resumeFrames = await page.evaluateHandle(() => {
+    const { requestAnimationFrame } = window;
+    let id = 0;
+    window.requestAnimationFrame = () => --id;
+    return () => { window.requestAnimationFrame = requestAnimationFrame; };
+  });
+  try {
+    await confirm.press('Enter');
+    await expect(dialog).toHaveCount(0);
+    await expect(select).toBeFocused();
+    assert.deepEqual(state.images.map(image => image.name).sort(), ['audit-3.png', 'audit-4.png']);
+  } finally {
+    await resumeFrames.evaluate(restore => restore());
+    await resumeFrames.dispose();
+  }
+
+  await select.press('Enter');
+  await page.getByRole('button', { name: 'Select all results', exact: true }).press('Enter');
+  await deleteSelected.press('Enter');
+  await confirm.press('Enter');
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Create an image', exact: true })).toBeFocused();
+  assert.equal(state.images.length, 0, 'confirming the remaining images empties the library');
   assert.deepEqual(errors, []);
-  console.log('Library selection deletes only confirmed images and preserves the rest.');
+  console.log('Library selection preserves cancellation and restores keyboard focus after partial or complete deletion.');
 } finally { await close(); }

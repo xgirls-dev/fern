@@ -12,6 +12,7 @@ lands directly on `main` instead of through labeled pull requests.
 
 ### Improved
 
+- Keep keyboard focus in the gallery after a bulk deletion, including when the last image is removed.
 - Find text in saved conversation versions from Search threads. Open the matching message in a preview that keeps the active conversation intact.
 
 ## [0.1.48] - 2026-11-20
