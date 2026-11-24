@@ -1,6 +1,7 @@
 import { useId, useLayoutEffect } from "react";
 import Send from "lucide-react/dist/esm/icons/arrow-up.mjs";
 import { Button, Textarea } from "./ui/controls";
+import { isComposingKey } from "../lib/keyboard";
 import { useTextDraftField } from "../hooks/useTextDraftField";
 
 export function TextPromptEditor({ draftKey, content, original, replaceLatest, focusRequested, hasImage, sendUnavailable, invalid, onChange, onCancel, onApply, onResend, onFocusHandled }: {
@@ -55,7 +56,7 @@ export function TextPromptEditor({ draftKey, content, original, replaceLatest, f
       event.preventDefault();
       if (canSend) onApply(true);
     }} onKeyDown={(event) => {
-      if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+      if (isComposingKey(event.nativeEvent)) return;
       if (event.key === "Escape") {
         event.preventDefault();
         event.stopPropagation();

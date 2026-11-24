@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type Keyboar
 import type { ImageThread } from "../lib/threads";
 import { chatSearchExcerpt, chatSearchPattern } from "../lib/chatSearchRange";
 import { useThreadSearch } from "../hooks/useThreadSearch";
+import { isComposingKey } from "../lib/keyboard";
 import type { TextMessage } from "../lib/textThreads";
 import { Dialog, DialogTitle } from "./ui/Dialog";
 import { SearchDialogField } from "./ui/SearchDialogField";
@@ -74,7 +75,7 @@ export function ThreadBrowser({
     focusResult(index);
   }, [focusResult, limit]);
   const moveResultFocus = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
-    if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || event.nativeEvent.isComposing) return;
+    if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || isComposingKey(event.nativeEvent)) return;
     let next: number;
     switch (event.key) {
       case "ArrowUp": next = index - 1; break;
@@ -114,7 +115,7 @@ export function ThreadBrowser({
           }}
           onBlur={() => { confirmAfterSearch.current = false; }}
           onKeyDown={(event) => {
-            if (event.nativeEvent.isComposing) return;
+            if (isComposingKey(event.nativeEvent)) return;
             if (event.key === "Enter") {
               event.preventDefault();
               if (loading) confirmAfterSearch.current = true;
@@ -155,7 +156,7 @@ export function ThreadBrowser({
         })}
         {filtered.length > limit && <Button ref={showMore} variant="secondary"
           onKeyDown={(event) => {
-            if (event.key === "ArrowUp") { event.preventDefault(); focusResult(visibleCount - 1); }
+            if (event.key === "ArrowUp" && !isComposingKey(event.nativeEvent)) { event.preventDefault(); focusResult(visibleCount - 1); }
           }}
           onClick={(event) => {
             if (event.detail === 0) focusAfterLoad.current = visibleCount;

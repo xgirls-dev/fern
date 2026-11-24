@@ -2,6 +2,7 @@ import { useCallback, useLayoutEffect, useRef, useState, type FocusEvent, type K
 import { flushChatReadingPositions, getChatReadingPosition, readingLineFingerprint, saveChatReadingPosition,
   type ReadingLine, type ReadingSection, type ScrollPosition } from "../lib/chatReadingPositions";
 import type { ChatSearchMatch } from "../lib/chatSearch";
+import { isComposingKey } from "../lib/keyboard";
 import { chatSearchPattern, findChatSearchRange, isChatSearchBlock } from "../lib/chatSearchRange";
 
 const readingSections: Record<ReadingSection, string> = { answer: ".text-message-content", reasoning: ".text-reasoning > div" };
@@ -262,7 +263,7 @@ export function useTextScroll(threadId: string) {
   const onKeyDown = useCallback((event: KeyboardEvent<HTMLDivElement>) => {
     const targetIsMessage = event.target instanceof HTMLElement && event.target.matches("[data-chat-message]");
     if ((event.target !== event.currentTarget && !targetIsMessage) ||
-        event.nativeEvent.isComposing || event.metaKey || event.ctrlKey || event.altKey) return;
+        isComposingKey(event.nativeEvent) || event.metaKey || event.ctrlKey || event.altKey) return;
     const feed = event.currentTarget;
     const page = Math.max(1, feed.clientHeight - 36);
     let target: number;
