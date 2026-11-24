@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type ChangeEvent, type ComponentProps } from "react";
+import { useEffect, useId, useRef, useState, type ChangeEvent, type ComponentProps, type Ref } from "react";
 import { Input } from "./controls";
 
 interface NumberFieldProps {
@@ -13,6 +13,7 @@ interface NumberFieldProps {
   placeholder?: string;
   help?: string;
   invalidHelp?: string;
+  inputRef?: Ref<HTMLInputElement>;
   onChange: (value: number | undefined) => void;
 }
 
@@ -76,7 +77,7 @@ export function NumberInput({ value, onChange, error, ...props }:
 }
 
 export function NumberField({ label, value, min, max, integer = false, optional = false, hideLabel = false,
-  disabled, placeholder, help, invalidHelp, onChange }: NumberFieldProps) {
+  disabled, placeholder, help, invalidHelp, inputRef, onChange }: NumberFieldProps) {
   const id = useId();
   const { valid, inputProps } = useNumberDraft({
     value,
@@ -87,7 +88,7 @@ export function NumberField({ label, value, min, max, integer = false, optional 
 
   return <label htmlFor={id}>
     <span className={hideLabel ? "sr-only" : undefined}>{label}</span>
-    <Input id={id} type="number" inputMode={integer ? "numeric" : "decimal"} min={min} max={max} step={integer ? 1 : "any"}
+    <Input ref={inputRef} id={id} type="number" inputMode={integer ? "numeric" : "decimal"} min={min} max={max} step={integer ? 1 : "any"}
       disabled={disabled} placeholder={placeholder} aria-invalid={!valid}
       aria-describedby={hint ? id + "-help" : undefined} {...inputProps} />
     {hint && <small id={id + "-help"} className={valid ? "text-setting-help" : "field-error"}>{hint}</small>}

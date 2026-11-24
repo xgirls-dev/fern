@@ -1,4 +1,4 @@
-import { useCallback, useDeferredValue, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type Ref } from "react";
 import Plus from "lucide-react/dist/esm/icons/plus.mjs";
 import ArrowDown from "lucide-react/dist/esm/icons/arrow-down.mjs";
 import RotateCcw from "lucide-react/dist/esm/icons/rotate-ccw.mjs";
@@ -63,11 +63,12 @@ interface TranscriptRow {
   estimatedHeight: number;
 }
 
-function TokenField({ label, value, min, max, disabled, help, onChange }: {
+function TokenField({ label, value, min, max, disabled, help, inputRef, onChange }: {
   label: string; value: number; min: number; max: number; disabled: boolean; help?: string;
+  inputRef?: Ref<HTMLInputElement>;
   onChange: (number: number) => void;
 }) {
-  return <NumberField label={label} value={value} min={min} max={max} integer disabled={disabled} help={help}
+  return <NumberField label={label} value={value} min={min} max={max} integer disabled={disabled} help={help} inputRef={inputRef}
     invalidHelp={`Use a whole number from ${min.toLocaleString()} to ${max.toLocaleString()}.`}
     onChange={(next) => { if (next !== undefined) onChange(next); }} />;
 }
@@ -222,6 +223,11 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   const openModels = useCallback(() => { setPanel(null); onSetupModels("chat", threadId); }, [onSetupModels, threadId]);
   const openImageSetup = () => { setPanel(null); onSetupModels("chat-image", activeThread.id); };
   const panelRef = useRef<HTMLElement>(null);
+  const contextSetting = useRef<HTMLInputElement>(null);
+  const modelSetting = useRef<HTMLButtonElement>(null);
+  const recoverySetting = useRef<"context" | "model" | undefined>(undefined);
+  const recoveryTrigger = useRef<HTMLButtonElement | null>(null);
+  const [recoveryFocus, requestRecoveryFocus] = useState(0);
   const panelTrigger = useRef<HTMLButtonElement>(null);
   const findTrigger = useRef<HTMLButtonElement>(null);
   const findInput = useRef<HTMLInputElement>(null);
@@ -339,7 +345,8 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   const lastMessage = activeThread?.messages.at(-1);
   const replaceablePrompt = latestTextPrompt(activeThread.messages);
   const lastPrompt = useMemo(() => messages[messages.map((message) => message.role).lastIndexOf("user")], [messages]);
-  const canRetry = modelAvailable && !runtimeIssue && (selected.supportsVision || !(lastPrompt?.image || lastPrompt?.includedImage));
+  const promptNeedsVision = !!(lastPrompt?.image || lastPrompt?.includedImage);
+  const canRetry = modelAvailable && !runtimeIssue && (selected.supportsVision || !promptNeedsVision);
   const hasPromptLimit = !!selected && selected.format !== "gguf";
   const draftCharacters = useMemo(() => hasPromptLimit && activeThread.draft.length >= PROMPT_COUNT_THRESHOLD
     ? countTextPromptCharacters(activeThread.draft, TEXT_MESSAGE_CHARACTER_LIMIT + 1) : undefined,
@@ -362,8 +369,10 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   const installing = install?.status === "downloading" || install?.status === "preparing";
   const installName = status.recommendedModels?.find((model) => model.id === install?.modelId)?.name
     ?? models.find((model) => model.id === install?.modelId)?.name;
-  const modelSetupAction = { label: installedModels.some((model) => model.id !== selectedModel && !textRuntimeIssue(status, model))
-    ? "Choose another model" : "Browse models", run: openModels };
+  const availableAlternatives = installedModels.filter((model) => model.id !== selectedModel && !textRuntimeIssue(status, model));
+  const hasAlternativeModel = availableAlternatives.length > 0;
+  const hasAlternativeVisionModel = availableAlternatives.some((model) => model.supportsVision);
+  const modelSetupAction = { label: hasAlternativeModel ? "Choose another model" : "Browse models", run: openModels };
   const pendingHere = !!activeThread?.pendingJobId && !runningHere;
   const responseHere = runningHere || pendingHere;
   const deferredBusy = useDeferredValue(busy);
@@ -529,13 +538,33 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   }, [activeThread.id, promptEdit]);
 
   const closePanel = () => {
+    const trigger = recoveryTrigger.current;
+    recoveryTrigger.current = null;
     setPanel(null);
-    panelTrigger.current?.focus();
+    if (trigger?.isConnected) trigger.focus({ preventScroll: true });
+    else panelTrigger.current?.focus();
   };
 
   useEffect(() => {
-    if (inspectorOpen && focused) panelRef.current?.focus();
-  }, [focused, inspectorOpen]);
+    if (!inspectorOpen) {
+      recoveryTrigger.current = null;
+      recoverySetting.current = undefined;
+      return;
+    }
+    if (!focused) return;
+    const target = recoverySetting.current;
+    recoverySetting.current = undefined;
+    const field = target === "context" ? contextSetting.current : target === "model" ? modelSetting.current : null;
+    (field ?? panelRef.current)?.focus();
+  }, [focused, inspectorOpen, recoveryFocus]);
+
+  const openRecoverySetting = useCallback((target: "context" | "model", trigger: HTMLButtonElement) => {
+    recoveryTrigger.current = trigger;
+    recoverySetting.current = target;
+    setFindThreadId(null);
+    setPanel("settings");
+    requestRecoveryFocus((request) => request + 1);
+  }, []);
 
   const submit = () => {
     if (!canSend) return;
@@ -668,6 +697,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   const draftContextImage = imageCollection.find((image) => image.name === activeThread.draftContextImage) ?? (draftArtifact && chatImageRecord(draftArtifact, 0));
   const latestContext = useMemo(() => [...messages].reverse().find((message) => message.status === "complete")?.metrics?.context, [messages]);
   const tokenLimits = chatTokenLimits(activeThread, selected);
+  const canReduceContext = selected?.format === "gguf" && tokenLimits.contextSize > tokenLimits.contextMinimum;
   const loadOptions = ggufLoadOptions(activeThread.loadOptions, tokenLimits.contextSize);
   const imageModel = activeThread.imageModel === "auto" ? imageModels[0] : imageModels.find((item) => item.id === activeThread.imageModel);
   const imageSettings = imageModel ? chatImageSettings(imageModel, activeThread.imageRenderSettings?.[imageModel.id]) : undefined;
@@ -761,13 +791,21 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
       deleteTurn={user && messages[index + 1]?.role === "assistant"}
       onRetry={latest && !preview && !live && !user && !busy && (!message.generatedImage || message.status === "complete") ? retry : undefined}
       canRetry={latest && canRetry}
+      memoryRecovery={latest && !preview && !live && !user && !busy && message.errorCode === "out-of-memory"
+        ? canReduceContext && !message.generatedImage
+          ? { label: "Adjust context", run: (trigger) => openRecoverySetting("context", trigger) }
+          : (promptNeedsVision || message.generatedImage ? hasAlternativeVisionModel : hasAlternativeModel)
+            ? { label: "Choose model", run: (trigger) => openRecoverySetting("model", trigger) }
+            : { label: "Browse models", run: openModels }
+        : undefined}
       onContinue={latest && !preview && !live && canContinueTextReply(message) ? continueReply : undefined}
       canContinue={latest && !busy && modelAvailable && !runtimeIssue}
       onSelectVersion={!user && !live && message.alternatives?.length ? selectVersion : undefined}
       busy={(latest && busy) || !!match}
     />;
-  }, [activeMatch, applyRevision, branchReply, busy, canDeleteMessages, canForkReplies, canRetry, clearEditFocus, closeFind, continueReply,
-    deleteMessage, deleteTarget, editMessage, forkReply, jumpToLatest, lastMessage, messages, modelAvailable, promptEdit, revisionTooLong, renderChatImage,
+  }, [activeMatch, applyRevision, branchReply, busy, canDeleteMessages, canForkReplies, canReduceContext, canRetry, clearEditFocus, closeFind, continueReply,
+    deleteMessage, deleteTarget, editMessage, forkReply, hasAlternativeModel, hasAlternativeVisionModel, jumpToLatest, lastMessage, messages,
+    modelAvailable, openModels, openRecoverySetting, promptEdit, promptNeedsVision, revisionTooLong, renderChatImage,
     replaceablePrompt?.id, requestDelete, requestedEdit, restoreReasoningId, retry, runtimeIssue, selectVersion, selected?.supportsVision,
     studio.restorePromptVersion, studio.send, studio.updateThread, threadId]);
   const renderStoredRow = useCallback((index: number) => renderRow(storedRows[index], index), [renderRow, storedRows]);
@@ -1038,14 +1076,16 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
           <p className="text-panel-description">Settings for this conversation. Changes apply to your next response.</p>
           {busy && <p className="text-panel-description" role="status">{activity || "Settings are locked while a response is generating."}</p>}
           <div className="text-settings-grid">
-            <label>Model<Select aria-label="Settings model" value={selectedModel || null} placeholder="Choose a model" disabled={busy}
+            <label>Model<Select ref={modelSetting} aria-label="Settings model" value={selectedModel || null} placeholder="Choose a model" disabled={busy}
               options={models.map((model) => ({ value: model.id, label: model.installed ? model.name : `${model.name} · Unavailable`, disabled: !model.installed }))}
               onChange={(id) => studio.selectModel(activeThread.id, id)} /></label>
             <Button variant="ghost" className="text-compute-link" onClick={openModels}>Manage models</Button>
             {selected?.format === "gguf" && <TokenField key={`context-${activeThread.id}-${selected.id}`}
+              inputRef={contextSetting}
               label="Context length (tokens)" value={tokenLimits.contextSize} min={tokenLimits.contextMinimum}
               max={tokenLimits.contextMaximum} disabled={busy}
-              help={selected.maxContextSize ? `Model limit ${tokenLimits.contextMaximum.toLocaleString()} tokens.` : "Larger contexts use more memory."}
+              help={(selected.maxContextSize ? `Model limit ${tokenLimits.contextMaximum.toLocaleString()} tokens. ` : "") +
+                "Larger contexts use more memory."}
               onChange={(contextSize) => studio.updateThread(activeThread.id, { contextSize })}
             />}
             {selected?.format === "gguf" && <Disclosure className="chat-advanced-settings" appearance="section" label="Advanced model loading">

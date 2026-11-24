@@ -18,6 +18,7 @@ const backends = { openvino: "OpenVINO", vulkan: "Vulkan", metal: "Metal", cpu: 
 const devices = { AUTO: "Auto", GPU: "GPU", CPU: "CPU" } as const;
 const platforms = { darwin: "macOS", linux: "Linux", win32: "Windows" } as const;
 const architectures = { arm64: "arm64", x64: "x64" } as const;
+const failureCodes = new Set(["intel-vulkan-driver", "empty-response", "backend-restarted", "out-of-memory"]);
 
 export interface TextFailureDiagnostics {
   stage?: keyof typeof stages;
@@ -64,7 +65,7 @@ export function formatTextFailure(data: TextFailureDiagnostics | undefined, code
   const runtime = [failure?.runtime && runtimes[failure.runtime], failure?.backend && backends[failure.backend]]
     .filter(Boolean).join(" / ") || "Unknown";
   const version = failure?.appVersion ?? (current?.appVersion ? `Unknown (currently ${current.appVersion})` : "Unknown");
-  const error = code === "intel-vulkan-driver" || code === "empty-response" || code === "backend-restarted" ? code : "unspecified";
+  const error = code && failureCodes.has(code) ? code : "unspecified";
   return [
     "Fern chat diagnostics",
     `Fern version at failure: ${version}`,
