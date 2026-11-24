@@ -132,6 +132,8 @@ export interface ChatMarkdownRequest {
   content: string;
   streaming: boolean;
   previousId?: number;
+  /** Stable blocks already parsed by the renderer before switching to the worker. */
+  seedPrefix?: { source: string; blockCount: number };
 }
 
 export interface ChatMarkdownBlock {
@@ -147,7 +149,7 @@ export interface ChatMarkdownTableRows {
 export interface ChatMarkdownResponse {
   id: number;
   blocks?: ChatMarkdownBlock[];
-  retained?: { requestId: number; blockCount: number };
+  retained?: { requestId?: number; blockCount: number };
   tableRows?: ChatMarkdownTableRows;
   stablePrefix?: { sourceLength: number; blockCount: number };
   matchesFinal?: true;

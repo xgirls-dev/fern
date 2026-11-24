@@ -22,6 +22,8 @@ FERN_E2E_VISIBLE=1 FERN_BENCH_STREAM_SEND=enter node benchmarks/chat-streaming.m
 
 Repeat with the same opener, window visibility, recorded viewport, browser, and machine load. The script verifies that all 100 updates appeared and that the completed Markdown table and code block rendered. Keep the revision and raw JSON when comparing runs.
 
+Set `FERN_BENCH_STREAM_TRACE=1` for a diagnostic replay. The `trace` section records event receipt, DOM commit, the following render opportunity, Markdown worker round trips, and Chromium long tasks and animation frames where supported. The extra observers affect timing. Use ordinary replays for paired latency comparisons.
+
 ## Read the report
 
 - **Send to first frame** measures the first frame opportunity after the click or Enter. **Send to reply commit** measures the first streaming row mutation in the DOM. **Send to feedback** measures the first frame with that row present.

@@ -9,8 +9,9 @@ const { page, state, errors, close } = await fixture({
     ggufAvailable: true, supportsJobPolling: true, job: { id: null, status: "idle" },
   },
 });
-const codeBlock = 'Example:\n\n```js\nconst example = 1;\n```\n\n';
-const longReply = codeBlock + Array.from({ length: 18 }, (_, index) =>
+const codeBlock = 'Example with an [opening reference].\n\n```js\nconst example = 1;\n```\n\n';
+const firstUpdate = codeBlock + "The output follows.\n\nMore details are coming.";
+const longReply = firstUpdate + "\n\n" + Array.from({ length: 18 }, (_, index) =>
   `### Part ${index + 1}\n\n${"An earlier paragraph in the same response. ".repeat(30)}\n\n`,
 ).join("");
 const reply = page.getByRole("log", { name: "Conversation" }).locator(".text-message--assistant").last();
@@ -20,16 +21,20 @@ try {
   await page.evaluate(() => {
     window.parsedMarkdownReplies = 0;
     window.finishedMarkdownRequests = 0;
+    window.markdownWorkerSeeds = [];
+    window.retainedSeedBlocks = [];
     const NativeWorker = window.Worker;
     window.Worker = class extends NativeWorker {
       constructor(...args) {
         super(...args);
         this.addEventListener("message", ({ data }) => {
           if (data.blocks) window.parsedMarkdownReplies++;
+          if (data.retained && data.retained.requestId === undefined) window.retainedSeedBlocks.push(data.retained.blockCount);
         });
       }
       postMessage(data) {
         if (!data.streaming) window.finishedMarkdownRequests++;
+        if (data.seedPrefix) window.markdownWorkerSeeds.push(data.seedPrefix.blockCount);
         if (window.holdMarkdownTail && data.content.endsWith(window.holdMarkdownTail)) {
           window.releaseMarkdownTail = () => super.postMessage(data);
           return;
@@ -45,13 +50,15 @@ try {
     page.getByRole("button", { name: "Send message", exact: true }).click(),
   ]);
   await expect(reply).toHaveClass(/text-message--streaming/);
-  state.textStatus.job = { ...state.textStatus.job, partialText: codeBlock };
+  state.textStatus.job = { ...state.textStatus.job, partialText: firstUpdate };
   await expect(code).toHaveText("const example = 1;\n");
   await code.evaluate((element) => { element.dataset.beforeWorker = "true"; });
 
   state.textStatus.job = { ...state.textStatus.job, partialText: longReply + "First update." };
   await expect(reply).toContainText("First update.");
   await expect(code).toHaveAttribute("data-before-worker", "true");
+  assert.deepEqual(await page.evaluate(() => window.markdownWorkerSeeds), [4]);
+  assert.deepEqual(await page.evaluate(() => window.retainedSeedBlocks), [4]);
 
   state.textStatus.job = { ...state.textStatus.job, partialText: longReply + "First update. Next update." };
   await expect(reply).toContainText("Next update.");
@@ -60,11 +67,12 @@ try {
   state.textStatus.job = {
     ...state.textStatus.job,
     status: "complete",
-    partialText: longReply + "First update. Next update.\n\nSee the [reference].\n\n[reference]: https://example.com/info\n\nEntity &copy;. <span>Literal HTML</span>",
+    partialText: longReply + "First update. Next update.\n\nSee the [reference].\n\n[reference]: https://example.com/info\n\n[opening reference]: https://example.com/intro\n\nEntity &copy;. <span>Literal HTML</span>",
     finishedAt: Date.now() / 1000,
   };
   await expect(reply).not.toHaveClass(/text-message--streaming/);
-  await expect(reply.getByRole("link", { name: "reference" })).toHaveAttribute("href", "https://example.com/info");
+  await expect(reply.getByRole("link", { name: "reference", exact: true })).toHaveAttribute("href", "https://example.com/info");
+  await expect(reply.getByRole("link", { name: "opening reference", exact: true })).toHaveAttribute("href", "https://example.com/intro");
   await expect(reply).toContainText("<span>Literal HTML</span>");
   await expect(reply).toContainText("Entity ©.");
   assert(await page.evaluate(() => window.parsedMarkdownReplies >= 3));
