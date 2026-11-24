@@ -327,6 +327,26 @@ try {
   await page.evaluate(() => window.releaseMarkdownHistory());
   await expect(page.getByRole("link", { name: "reference", exact: true })).toHaveAttribute("href", "https://example.com/info");
 
+  await composer.fill("Stop this reply while it is reasoning.");
+  await send.click();
+  await expect(reply).toHaveClass(/text-message--streaming/);
+  const beginning = "First we should review the notes.";
+  const ending = "**The retained reasoning is now formatted.**";
+  state.textStatus.job = { ...state.textStatus.job, phase: "Waiting for the first token…", partialReasoning: beginning };
+  const reasoning = reply.locator(".text-reasoning");
+  await reasoning.locator("summary").click();
+  await expect(reasoning.getByText(beginning)).toBeVisible();
+  await holdFormatting(ending);
+  state.textStatus.job = { ...state.textStatus.job, status: "stopped", partialReasoning: `${beginning}\n\n${mediumReply}${ending}`,
+    finishedAt: Date.now() / 1000 };
+  await expect(reply).not.toHaveClass(/text-message--streaming/);
+  await expect(reasoning.locator("[data-chat-markdown-formatting]")).toHaveText("Formatting response…");
+  await expect(replyStatus).toBeEmpty();
+  await expect.poll(() => page.evaluate(() => typeof window.releasePendingFormatting)).toBe("function");
+  await releaseFormatting();
+  await expect(reasoning.locator("strong")).toHaveText("The retained reasoning is now formatted.");
+  await expect(replyStatus).toHaveText("Response stopped. Partial reply available.");
+
   assert.deepEqual(errors, []);
   console.log("Long replies keep code mounted, resolve late references, and finish while historical Markdown is queued.");
 } finally {

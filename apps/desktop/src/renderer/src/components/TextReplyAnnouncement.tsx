@@ -40,8 +40,11 @@ export function TextReplyAnnouncement({ jobId, inspectionMessageId, messages, co
     if (!reply) { active.current = undefined; return; }
     const feed = conversation.current;
     const rowSelector = `[data-chat-message="${CSS.escape(reply.id)}"]`;
+    // Reasoning is the only readable output if generation stopped before an answer.
+    const pendingSection = !reply.content.trim() && !reply.generatedImage && reply.reasoning
+      ? ".text-reasoning[open]" : ".text-message-content";
     const announce = () => {
-      if (feed?.querySelector(`${rowSelector} .text-message-content [data-chat-markdown-formatting]`)) return false;
+      if (feed?.querySelector(`${rowSelector} ${pendingSection} [data-chat-markdown-formatting]`)) return false;
       active.current = undefined;
       setAnnouncement(messageForOutcome(reply, !!inspection));
       return true;
