@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { _electron as electron, expect } from "@playwright/test";
 import { verifyChatHistory } from "./chat-history.mjs";
+import { verifyChatComposer } from "./chat-composer.mjs";
 
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = path.resolve(desktopRoot, "..", "..");
@@ -131,6 +132,7 @@ try {
     coverage = "multi-reference persistence, Models navigation, family and repository controls, dialog IPC, local model add/remove, composer model selection, cancellation, and source preservation";
   }
   await verifyChatHistory(page);
+  await verifyChatComposer(page);
   assert.deepEqual(pageErrors, [], `Renderer errors: ${pageErrors.join(" | ")}`);
   assert.deepEqual(consoleErrors, [], `Console errors: ${consoleErrors.join(" | ")}`);
 
