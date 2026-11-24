@@ -2,6 +2,7 @@ export type PaletteThread = {
   id: string;
   title: string;
   updatedAt: number;
+  hasWork: boolean;
   archived?: boolean;
   excerpt?: string;
   folderPath?: string;
@@ -19,7 +20,7 @@ export function commandSearchRank(needle: string, words: string[], title: string
 }
 
 export function indexPaletteThreads(threads: readonly PaletteThread[]) {
-  const visible = threads.filter((thread) => !thread.archived).sort((a, b) => b.updatedAt - a.updatedAt);
+  const visible = threads.filter((thread) => thread.hasWork && !thread.archived).sort((a, b) => b.updatedAt - a.updatedAt);
   const titles = new Map<string, number>();
   const summaries = new Map<string, number>();
   const entries = visible.map((thread) => {

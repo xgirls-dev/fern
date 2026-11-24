@@ -32,7 +32,8 @@ import { Notifications } from "./components/Notifications";
 import { notify } from "./lib/notifications";
 import { validateReference } from "./lib/reference";
 import { loadModelSetup, saveModelSetup, type SetupSelection, type SetupTask } from "./lib/modelSetup";
-import { textRuntimeIssue } from "./lib/textThreads";
+import { hasTextThreadWork, textRuntimeIssue } from "./lib/textThreads";
+import { hasAudioThreadWork } from "./lib/ttsThreads";
 import { loadLastWorkspace, matchesShortcut, saveLastWorkspace, shortcuts } from "./lib/workspaceNavigation";
 import { fixedImagePreset, isKleinLoraModel, kleinLoraLabel, maxReferenceImages } from "./lib/imageModels";
 import { chatFolderPath } from "./lib/chatFolders";
@@ -108,9 +109,12 @@ export function App() {
     if (!commandPaletteOpen && !searchingThreads) return [];
     return [
       ...(!searchKind || searchKind === "Image" ? studio.searchThreads() : []),
-      ...(!searchKind || searchKind === "Speech" ? tts.threads.map((thread) => ({ ...thread, excerpt: thread.text })) : []),
+      ...(!searchKind || searchKind === "Speech" ? tts.threads.map((thread) => ({
+        ...thread, excerpt: thread.text, hasWork: hasAudioThreadWork(thread),
+      })) : []),
       ...(!searchKind || searchKind === "Chat" ? text.threads.map((thread) => ({
         ...thread,
+        hasWork: hasTextThreadWork(thread),
         excerpt: thread.messages.find((message) => message.role === "user")?.content || thread.draft,
         folderPath: chatFolderPath(chatFolderIndex, thread.folderId),
       })) : []),

@@ -21,7 +21,7 @@ import { Button, IconButton, Input, NavigationButton } from "./ui/controls";
 import { Dropdown, DropdownItem, DropdownSeparator, useDropdownActions } from "./ui/Dropdown";
 import { Tooltip, TooltipIconButton, TooltipScope } from "./ui/Tooltip";
 import type { ImageThread } from "../lib/threads";
-import type { AudioThread } from "../lib/ttsThreads";
+import { hasAudioThreadWork, type AudioThread } from "../lib/ttsThreads";
 import type { TextSidebarRow } from "../hooks/useTextChat";
 import type { TranscriptDestination } from "../lib/textTranscript";
 import { canMoveChatFolder, CHAT_NAV_DRAG, chatFolderPath, chatFolderRows, type ChatFolder, type ChatOrganizationAction } from "../lib/chatFolders";
@@ -191,8 +191,7 @@ export const StudioSidebar = memo(function StudioSidebar({
   ));
   const visibleAudioThreads = audioThreads.filter((thread) =>
     (activeSection === "tts" && thread.id === activeAudioThreadId) || (!thread.archived && (
-      thread.id === runningAudioThreadId || thread.renamed || thread.title !== "New audio thread" ||
-      thread.text.trim() || thread.outputs.length || thread.instruction || thread.designInstruction || thread.referenceText
+      thread.id === runningAudioThreadId || hasAudioThreadWork(thread)
     ))
   );
   const visibleTextThreads = textThreads.filter((thread) =>

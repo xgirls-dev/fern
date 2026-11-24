@@ -17,10 +17,20 @@ try {
   await page.waitForFunction(() => document.activeElement?.id === "main-content");
   assert.equal(await page.locator(".sidebar-audio-threads").count(), 0);
   assert.equal(await page.getByRole("region", { name: "Image threads", exact: true }).count(), 0);
+  await page.keyboard.press("Control+k");
+  const commands = page.getByRole("dialog", { name: "Commands", exact: true });
+  await expect(commands.getByRole("option", { selected: true })).toContainText("Create image");
+  await expect(commands.getByRole("group", { name: "Recent threads" })).toHaveCount(0);
+  await page.keyboard.press("Escape");
   await chat.fill("Keep this first conversation draft.");
   await page.reload();
   await chat.waitFor();
   assert.equal(await chat.inputValue(), "Keep this first conversation draft.");
+  await page.keyboard.press("Control+k");
+  const recent = commands.getByRole("group", { name: "Recent threads" }).getByRole("option");
+  await expect(recent).toHaveCount(1);
+  await expect(recent.first()).toContainText("New text thread");
+  await page.keyboard.press("Escape");
   await page.screenshot({ path: `${dir}/design-chat-first-run.png` });
 
   await button("Create image").click();

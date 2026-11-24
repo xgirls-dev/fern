@@ -34,6 +34,7 @@ import {
   draftContextImageOwner,
   findChatImage,
   finishTextReply,
+  hasTextThreadWork,
   isChatImage,
   keepStreamedText,
   latestTextPrompt,
@@ -334,8 +335,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
       const { id, title, folderId } = thread;
       const archived = thread.archived === true;
       const hasTranscript = thread.messages.length > 0;
-      const hasWork = hasTranscript || title !== "New text thread" || !!(thread.renamed || thread.draft.trim()
-        || thread.draftImage || thread.draftContextImage || thread.systemPrompt || folderId || thread.documents?.length);
+      const hasWork = hasTextThreadWork(thread);
       const row = previous[index];
       if (row?.id === id && row.title === title && row.folderId === folderId && row.archived === archived
         && row.hasWork === hasWork && row.hasTranscript === hasTranscript) return row;

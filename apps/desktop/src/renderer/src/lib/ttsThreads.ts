@@ -45,6 +45,12 @@ export interface AudioThread {
   outputs: AudioOutput[];
 }
 
+export function hasAudioThreadWork(thread: Pick<AudioThread,
+  "renamed" | "title" | "text" | "outputs" | "instruction" | "designInstruction" | "referenceText">) {
+  return Boolean(thread.renamed || thread.title !== "New audio thread" || thread.text.trim()
+    || thread.outputs.length || thread.instruction || thread.designInstruction || thread.referenceText);
+}
+
 export interface AudioThreadWorkspace {
   activeId: string;
   threads: AudioThread[];

@@ -129,6 +129,11 @@ export interface TextThread {
   pendingContext?: TextRequestContext;
 }
 
+export function hasTextThreadWork(thread: TextThread) {
+  return Boolean(thread.messages.length || thread.title !== "New text thread" || thread.renamed || thread.draft.trim()
+    || thread.draftImage || thread.draftContextImage || thread.systemPrompt || thread.folderId || thread.documents?.length);
+}
+
 export interface TextRequestContext {
   omittedMessages: number;
   shortenedMessages: number;
