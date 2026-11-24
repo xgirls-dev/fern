@@ -167,6 +167,8 @@ export function useChatMarkdown(content: string, streaming: boolean, receivingRe
       waiting.current = null;
       const { queue, ...input } = next;
       const previous = latestWorkerResult.current;
+      // The terminal event can arrive while the identical live snapshot is in flight.
+      if (!input.streaming && previous?.content === input.content && previous.matchesFinal) return;
       const seed = !previous && input.streaming ? latestSmall.current?.streamingParse : undefined;
       const cancel = requestMarkdown(queue, { ...input, previousId: previous?.requestId, seedPrefix: seed?.prefix }, ({ id, blocks, retained, tableRows, stablePrefix, matchesFinal }) => {
         inFlight.current = null;

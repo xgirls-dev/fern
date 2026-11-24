@@ -139,6 +139,34 @@ try {
   await expect(reply.getByRole("heading", { name: /^Short section / })).toHaveCount(14);
   assert.equal(await page.evaluate(() => window.finishedMarkdownRequests), completedRequests,
     "An eligible final tail should render without another worker request.");
+  await composer.fill("Finish a long code sample just before the reply settles.");
+  await send.click();
+  await expect(reply).toHaveClass(/text-message--streaming/);
+  const ongoingReply = mediumReply + "A longer example follows.";
+  state.textStatus.job = { ...state.textStatus.job, partialText: ongoingReply };
+  await expect(reply).toContainText("A longer example follows.");
+  const completedCode = "const finalLine = true;\n" + "`".repeat(3);
+  const finishedReply = ongoingReply + "\n\n" + "`".repeat(3) + "js\n" +
+    "console.log('more output');\n".repeat(75) + completedCode;
+  const pendingFinalRequests = await page.evaluate((tail) => {
+    window.releaseMarkdownTail = undefined;
+    window.holdMarkdownTail = tail;
+    return window.finishedMarkdownRequests;
+  }, completedCode);
+  state.textStatus.job = { ...state.textStatus.job, partialText: finishedReply };
+  await expect.poll(() => page.evaluate(() => typeof window.releaseMarkdownTail)).toBe("function");
+  state.textStatus.job = { ...state.textStatus.job, status: "complete", finishedAt: Date.now() / 1000 };
+  await expect(reply).not.toHaveClass(/text-message--streaming/);
+  await expect(reply.locator("[data-chat-markdown-formatting]")).toHaveCount(1);
+  await page.evaluate(() => {
+    window.holdMarkdownTail = "";
+    window.releaseMarkdownTail();
+  });
+  await expect(reply.locator("pre code").last()).toContainText("const finalLine = true;");
+  await expect(reply.locator("[data-chat-markdown-formatting]")).toHaveCount(0);
+  assert.equal(await page.evaluate(() => window.finishedMarkdownRequests), pendingFinalRequests,
+    "A compatible live result already in flight should satisfy the queued final parse.");
+
   const snapshots = [
     longReply + "First item\n\n- One\n- Two",
     longReply + "First item\n\n- One\n- Two\n\n  continued\n\nAn evolving title",
@@ -292,21 +320,43 @@ try {
   await send.click();
   await expect(reply).toHaveClass(/text-message--streaming/);
   await expect.poll(() => state.textStatus.job.status).toBe("running");
+  const liveUpdate = `${mediumReply}**This is a live update`;
   await holdFormatting("**This is a live update");
-  state.textStatus.job = { ...state.textStatus.job, partialText: `${mediumReply}**This is a live update` };
+  state.textStatus.job = { ...state.textStatus.job, partialText: liveUpdate };
+  await expect(formatting).toBeVisible();
   await expect(formatting).toHaveText("Formatting response…");
   await expect(reply.locator(".text-message-content")).not.toContainText("### Short section");
   await expect.poll(() => page.evaluate(() => typeof window.releasePendingFormatting)).toBe("function");
   await releaseFormatting();
   await expect(reply.locator("strong")).toHaveText("This is a live update");
+  await expect(formatting).toHaveCount(0);
+  await holdFormatting("[new resource]: https://example.com/new");
+  await reply.evaluate((row) => {
+    window.formattingStartedHidden = undefined;
+    const observer = new MutationObserver(() => {
+      const indicator = row.querySelector("[data-chat-markdown-formatting]");
+      if (!indicator) return;
+      window.formattingStartedHidden = indicator.hidden;
+      observer.disconnect();
+    });
+    observer.observe(row, { childList: true, subtree: true });
+  });
   state.textStatus.job = {
     ...state.textStatus.job,
     status: "complete",
-    partialText: `${mediumReply}See the [new resource].\n\n[new resource]: https://example.com/new`,
+    partialText: `${liveUpdate}**\n\nSee the [new resource].\n\n[new resource]: https://example.com/new`,
     finishedAt: Date.now() / 1000,
   };
   await expect(reply).not.toHaveClass(/text-message--streaming/);
+  await expect.poll(() => page.evaluate(() => window.formattingStartedHidden)).toBe(true);
+  await expect(reply.locator("strong")).toHaveText("This is a live update");
+  await expect(replyStatus).toBeEmpty();
+  await expect(formatting).toBeVisible();
+  await expect.poll(() => page.evaluate(() => typeof window.releasePendingFormatting)).toBe("function");
+  await releaseFormatting();
   await expect(reply.getByRole("link", { name: "new resource" })).toHaveAttribute("href", "https://example.com/new");
+  await expect(formatting).toHaveCount(0);
+  await expect(replyStatus).toHaveText("Reply ready.");
 
   await composer.fill("Return the finished answer in one update.");
   await send.click();
