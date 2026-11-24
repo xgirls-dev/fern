@@ -56,10 +56,27 @@ try {
 
   await observeReply("Keep the whole greeting visible while renderer callbacks are delayed.");
   const restoreCallbacks = await page.evaluateHandle(() => {
-    const { requestAnimationFrame, setTimeout } = window;
-    let id = 0;
-    window.requestAnimationFrame = () => --id;
-    window.setTimeout = () => --id;
+    const { requestAnimationFrame, cancelAnimationFrame, setTimeout } = window;
+    const scheduledFrames = new WeakMap();
+    let heldTimeout = 0;
+    window.requestAnimationFrame = (callback) => {
+      const frame = requestAnimationFrame.call(window, (time) => {
+        if (scheduledFrames.get(callback) === frame) scheduledFrames.delete(callback);
+        callback(time);
+      });
+      scheduledFrames.set(callback, frame);
+      return frame;
+    };
+    window.setTimeout = (callback, delay, ...args) => {
+      // Hold the animation and its backup timer when they schedule the same callback.
+      const frame = typeof callback === "function" ? scheduledFrames.get(callback) : undefined;
+      if (frame !== undefined) {
+        cancelAnimationFrame.call(window, frame);
+        scheduledFrames.delete(callback);
+        return --heldTimeout;
+      }
+      return setTimeout.call(window, callback, delay, ...args);
+    };
     return () => Object.assign(window, { requestAnimationFrame, setTimeout });
   });
   try {

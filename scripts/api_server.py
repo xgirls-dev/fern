@@ -7,7 +7,7 @@ import io
 import importlib.util
 import json
 import math
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from functools import lru_cache
 import mimetypes
 import os
@@ -21,7 +21,7 @@ import uuid
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
 from PIL import Image
 
@@ -153,7 +153,8 @@ TEXT_PENDING_STOP_LIMIT = 256
 # Serialize admission and cancellation across modalities.
 JOB_ADMISSION_LOCK = threading.RLock()
 CHAT_IMAGE_UPLOAD_SLOTS = threading.BoundedSemaphore(2)
-CHAT_IMAGE_STORAGE_REVISION = 0
+CHAT_DOCUMENT_UPLOAD_LOCK = threading.Lock()
+CHAT_ATTACHMENT_STORAGE_REVISION = 0
 TEXT_CANCEL_EVENT: threading.Event | None = None
 TEXT_JOB: dict[str, Any] = {
     "id": None, "threadId": None, "modelId": None, "status": "idle",
@@ -1758,6 +1759,14 @@ def decode_flux_reference_image(value: Any) -> Image.Image | None:
         raise ValueError("Could not read the reference image.") from exc
 
 
+@contextmanager
+def publish_chat_attachment(storage_revision: int, kind: str) -> Iterator[None]:
+    with JOB_ADMISSION_LOCK:
+        if storage_revision != CHAT_ATTACHMENT_STORAGE_REVISION:
+            raise ValueError(f"Local data was cleared. Attach the {kind} again.")
+        yield
+
+
 def store_chat_image(value: Any, storage_revision: int) -> str:
     image = decode_flux_reference_image(value)
     if image is None:
@@ -1771,9 +1780,7 @@ def store_chat_image(value: Any, storage_revision: int) -> str:
     path = directory / filename
     # Image decoding and encoding can take time. Serialize only publication so
     # Stop and other panes do not wait for that work.
-    with JOB_ADMISSION_LOCK:
-        if storage_revision != CHAT_IMAGE_STORAGE_REVISION:
-            raise ValueError("Local data was cleared. Attach the image again.")
+    with publish_chat_attachment(storage_revision, "image"):
         if not path.exists():
             directory.mkdir(parents=True, exist_ok=True)
             temporary = path.with_suffix(".upload")
@@ -2774,11 +2781,24 @@ class Handler(BaseHTTPRequestHandler):
             self.pause_text_model_download()
             return
         if path == "/api/text/images":
-            storage_revision = CHAT_IMAGE_STORAGE_REVISION
+            storage_revision = CHAT_ATTACHMENT_STORAGE_REVISION
             try:
                 with CHAT_IMAGE_UPLOAD_SLOTS:
                     image = store_chat_image(self.read_json_body().get("image"), storage_revision)
                 self.send_json(201, {"image": image})
+            except Exception as error:
+                self.send_json(400, {"error": str(error)})
+            return
+        if path == "/api/text/documents":
+            storage_revision = CHAT_ATTACHMENT_STORAGE_REVISION
+            try:
+                with CHAT_DOCUMENT_UPLOAD_LOCK:
+                    payload = self.read_json_body(too_large="Choose a document up to 20 MB.")
+                    document = store_document(
+                        DATA_DIR / "chat-documents", payload.get("name"), payload.get("content"),
+                        storage_guard=publish_chat_attachment(storage_revision, "document"),
+                    )
+                self.send_json(201, {"document": document})
             except Exception as error:
                 self.send_json(400, {"error": str(error)})
             return
@@ -2875,7 +2895,7 @@ class Handler(BaseHTTPRequestHandler):
         }, release_models)})
 
     def handle_post(self) -> None:
-        global CHAT_IMAGE_STORAGE_REVISION, FLUX_CANCEL_EVENT, TTS_CANCEL_EVENT
+        global CHAT_ATTACHMENT_STORAGE_REVISION, FLUX_CANCEL_EVENT, TTS_CANCEL_EVENT
         parsed = urllib.parse.urlparse(self.path)
 
         if parsed.path in ("/api/video/generate", "/api/video/stop", "/api/video/remove"):
@@ -2932,15 +2952,6 @@ class Handler(BaseHTTPRequestHandler):
                                               operation="repair" if repair else "install")
                 threading.Thread(target=run_text_model_install, args=(model_id, job_id, pause, repair), daemon=True).start()
                 self.send_json(202, text_runtime_snapshot())
-            except Exception as error:
-                self.send_json(400, {"error": str(error)})
-            return
-
-        if parsed.path == "/api/text/documents":
-            try:
-                payload = self.read_json_body(too_large="Choose a document up to 20 MB.")
-                document = store_document(DATA_DIR / "chat-documents", payload.get("name"), payload.get("content"))
-                self.send_json(201, {"document": document})
             except Exception as error:
                 self.send_json(400, {"error": str(error)})
             return
@@ -3330,7 +3341,7 @@ class Handler(BaseHTTPRequestHandler):
                 cache_result = storage_manager.cleanup_cache(ROOT, CACHE_DIR, force=True)
                 VIDEO_JOBS.clear()
                 output_files, output_bytes = storage_manager.clear_directory(OUTPUTS)
-                CHAT_IMAGE_STORAGE_REVISION += 1
+                CHAT_ATTACHMENT_STORAGE_REVISION += 1
                 metadata_files, metadata_bytes = storage_manager.clear_directory(DATA_DIR)
                 mark_flux_job(
                     id=None,
