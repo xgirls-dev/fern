@@ -9,7 +9,7 @@ export function estimateTextRowHeight(message: TextMessage) {
   return 64 + lines * 25 + illustration + (message.reasoning ? 26 : 0) + (message.error ? 24 : 0);
 }
 
-const PAGE_SIZE = 24;
+const PAGE_SIZE = 12;
 export const TEXT_TRANSCRIPT_WINDOW_THRESHOLD = 72;
 const OVERSCAN = "640px 0px";
 const CACHED_CHATS = 20;
