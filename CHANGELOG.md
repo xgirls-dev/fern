@@ -17,11 +17,13 @@ lands directly on `main` instead of through labeled pull requests.
 - Keep keyboard focus in the gallery after a bulk deletion, including when the last image is removed.
 - Find text in saved conversation versions from Search threads. Open the matching message in a preview that keeps the active conversation intact.
 - Show the full text of each received reply update immediately, so delayed animation callbacks cannot leave a reply stuck halfway through a chunk.
+- Show when chat is checking hardware before it begins loading a GGUF model.
 
 ### Fixed
 
 - Resume typing at the same caret after attaching a document. The chat composer shows when it can accept a document drop even if a conversation image is already selected.
 - Keep Stop responsive while Fern reads a large chat document.
+- Stop a GGUF load promptly when the model server is still starting.
 
 ## [0.1.48] - 2026-11-20
 

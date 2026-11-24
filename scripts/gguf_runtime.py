@@ -183,12 +183,14 @@ class GGUFServer:
     def __init__(
         self, executable: Path, model: Path, projector: Path | None, device: str, backend: str,
         context_size: int = DEFAULT_CONTEXT_SIZE, *, gpu_projector: bool = False, load_options: dict[str, Any] | None = None,
+        on_phase: Callable[[str, str], None] | None = None,
     ):
         self.backend = backend
         self.device = device
         self.context_size = context_size
         self.gpu_projector = gpu_projector
         self.load_options = load_options or {}
+        self.startup_timing: dict[str, float] = {}
         self.history: dict[str, CompactedHistory] = {}
         self.process: subprocess.Popen[bytes] | None = None
         self.diagnostics = tempfile.TemporaryDirectory(prefix="fern-llama-")
@@ -206,7 +208,12 @@ class GGUFServer:
             if backend == "openvino":
                 env.update(GGML_OPENVINO_DEVICE=device)
             flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            if on_phase is not None and backend != "cpu":
+                on_phase("selecting-device", "Checking hardware…")
+            discovery_started = time.perf_counter()
             selected = self._select_device(executable, env, flags)
+            if backend != "cpu":
+                self.startup_timing["deviceDiscoveryMs"] = (time.perf_counter() - discovery_started) * 1000
             command = [
                 str(executable), "--model", str(model), "--device", selected, "--n-gpu-layers",
                 "0" if backend == "cpu" else "999",
@@ -226,13 +233,18 @@ class GGUFServer:
             if gpu_projector or backend == "metal":
                 # llama.cpp emits GPU layer placement at trace verbosity.
                 command.extend(("-lv", "4"))
+            if on_phase is not None:
+                on_phase("loading-model", "Loading model…")
+            server_started = time.perf_counter()
             with self.log_path.open("wb") as log:
                 self.process = subprocess.Popen(
                     command, cwd=executable.parent, env=env, stdin=subprocess.DEVNULL,
                     stdout=log, stderr=subprocess.STDOUT, creationflags=flags,
                 )
             self._wait_ready()
+            self.startup_timing["serverReadyMs"] = (time.perf_counter() - server_started) * 1000
             if gpu_projector or backend == "metal":
+                verification_started = time.perf_counter()
                 placement = self.log_path.read_text(encoding="utf-8", errors="replace")
                 layers = re.search(r"offloaded (\d+)/(\d+) layers to GPU", placement)
                 vision_offloaded = not gpu_projector or f"mtmd_backends: using {selected} backend" in placement
@@ -244,8 +256,11 @@ class GGUFServer:
                     accelerator = "Apple GPU" if backend == "metal" else "Intel GPU"
                     scope = "The chat model and vision projector" if gpu_projector else "The chat model"
                     raise RuntimeError(f"{scope} could not load fully on {accelerator}. Free GPU memory and retry." + detail)
+                self.startup_timing["placementVerificationMs"] = (time.perf_counter() - verification_started) * 1000
         except BaseException:
-            self.close()
+            # A server that never reached verified readiness cannot be reused.
+            # Stop should not wait for its graceful shutdown while it is loading.
+            self.close(force=True)
             raise
 
     def _select_device(self, executable: Path, env: dict[str, str], flags: int) -> str:

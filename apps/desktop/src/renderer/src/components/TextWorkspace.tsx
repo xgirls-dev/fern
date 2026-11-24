@@ -415,7 +415,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   // Image batches publish previews before generation finishes. An existing
   // preview only implies review after the image generation phase ends.
   const checkingImage = responseHere && !restoringReply && !reconnecting && !stopping && !creatingImage &&
-    (!!inspectionMessageId || runningHere && (phase.startsWith("Checking") || !!liveJob?.inspection || !!replyImage));
+    (!!inspectionMessageId || runningHere && (/^Checking (the (generated )?)?image\b/.test(phase) || !!liveJob?.inspection || !!replyImage));
   const inspectionCaption = reconnecting ? (stopping ? "Reconnecting to stop…" : "Reconnecting to check the image…")
     : stopping ? "Stopping image check…" : restoringReply ? restorationLabel : "Checking image…";
   const modelNotice: ModelReadiness | null = responseHere || otherResponseThread ? null
@@ -449,6 +449,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
     : phase.startsWith("Finding document") ? phase
     : phase.includes("Compacting") ? "Summarizing earlier messages…"
     : /download/i.test(phase) ? replyPaused ? "Still downloading the text runtime…" : "Downloading the text runtime…"
+    : phase.startsWith("Checking hardware") ? replyPaused ? "Still checking hardware…" : "Checking hardware…"
     : /^(loading|starting the text worker)/i.test(phase) ? replyPaused ? "Still loading the model…" : "Loading model…" : null;
   const hasReplyContent = !!replyContent.trim();
   const hasReplyReasoning = !!replyReasoning?.trim();

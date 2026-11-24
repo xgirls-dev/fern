@@ -162,6 +162,45 @@ class GGUFCompletionTests(unittest.TestCase):
                 self.assertEqual(result["generationSeconds"], 0.75)
                 self.assertEqual(result["outputTokens"], 3)
 
+    def test_interrupted_startup_kills_the_server_without_waiting_for_graceful_shutdown(self) -> None:
+        process = Mock()
+        process.poll.return_value = None
+        with (
+            patch("gguf_runtime.subprocess.Popen", return_value=process),
+            patch.object(GGUFServer, "_wait_ready", side_effect=SystemExit(0)),
+            self.assertRaises(SystemExit),
+        ):
+            GGUFServer(Path("llama-server"), Path("model.gguf"), None, "CPU", "cpu")
+        process.kill.assert_called_once_with()
+        process.terminate.assert_not_called()
+        process.wait.assert_called_once()
+
+    def test_metal_startup_reports_discovery_readiness_and_placement_separately(self) -> None:
+        process = Mock()
+        process.poll.return_value = 0
+        on_phase = Mock()
+
+        def select_device(*_args):
+            on_phase.assert_called_once_with("selecting-device", "Checking hardware…")
+            return "MTL0"
+
+        def launch(_command, **options):
+            on_phase.assert_called_with("loading-model", "Loading model…")
+            options["stdout"].write(b"offloaded 38/38 layers to GPU\n")
+            return process
+
+        with (
+            patch.object(GGUFServer, "_select_device", side_effect=select_device),
+            patch.object(GGUFServer, "_wait_ready"),
+            patch("gguf_runtime.subprocess.Popen", side_effect=launch),
+            patch("gguf_runtime.time.perf_counter", side_effect=[1, 1.25, 2, 2.5, 3, 3.125]),
+        ):
+            server = GGUFServer(Path("llama-server"), Path("model.gguf"), None, "GPU", "metal", on_phase=on_phase)
+        self.addCleanup(server.close)
+        self.assertEqual(server.startup_timing, {
+            "deviceDiscoveryMs": 250, "serverReadyMs": 500, "placementVerificationMs": 125,
+        })
+
     def test_worker_reports_setup_and_model_ready_only_when_loading(self) -> None:
         from text_generation_worker import run_gguf
         requests = [
@@ -172,10 +211,15 @@ class GGUFCompletionTests(unittest.TestCase):
         stream = io.StringIO("".join(json.dumps(request) + "\n" for request in requests))
         phases = []
         engine = Mock(backend="cpu" if sys.platform == "darwin" else "openvino",
-                      context_size=4096, gpu_projector=False, load_options={})
+                      context_size=4096, gpu_projector=False, load_options={}, startup_timing={"serverReadyMs": 500})
         engine.process.poll.return_value = None
         engine.process.pid = 42
         engine.generate.side_effect = lambda *_args: {"type": "result", "runtimeTiming": {"prefillMs": 10}}
+
+        def start_engine(*_args, on_phase, **_options):
+            on_phase("loading-model", "Loading model…")
+            return engine
+
         with (
             patch.dict(os.environ, {"FERN_GGUF_RUNTIME_ROOT": "scratch"}),
             patch("text_generation_worker.sys.stdin", stream),
@@ -183,15 +227,17 @@ class GGUFCompletionTests(unittest.TestCase):
             patch("text_generation_worker.emit", side_effect=phases.append),
             patch("text_generation_worker.time.perf_counter", side_effect=[10, 10.125, 10.25, 10.875]),
             patch("gguf_runtime.ensure_runtime", return_value=Path("llama-server")) as setup,
-            patch("gguf_runtime.GGUFServer", return_value=engine),
+            patch("gguf_runtime.GGUFServer", side_effect=start_engine),
         ):
             self.assertEqual(run_gguf(Path("model.gguf"), "CPU", None), 0)
         setup.assert_called_once()
+        self.assertEqual([event["text"] for event in phases if event["type"] == "phase" and "text" in event],
+                         ["Loading model…", "Preparing conversation…", "Preparing conversation…"])
         self.assertEqual([event["model"] for event in phases if event["type"] == "residency"],
                          [{"backend": engine.backend, "device": "CPU", "enginePid": 42,
                            "gguf": {"contextSize": 4096, "loadOptions": {}}}])
         self.assertEqual([event["runtimeTiming"] for event in phases if event["type"] == "result"], [
-            {"prefillMs": 10, "runtimeSetupMs": 125, "modelReadyMs": 625},
+            {"prefillMs": 10, "runtimeSetupMs": 125, "modelReadyMs": 625, "serverReadyMs": 500},
             {"prefillMs": 10},
         ])
 
@@ -204,7 +250,7 @@ class GGUFCompletionTests(unittest.TestCase):
             {"op": "shutdown"},
         ]
         stream = io.StringIO("".join(json.dumps(request) + "\n" for request in requests))
-        engines = [Mock(backend="cpu", gpu_projector=False, load_options={}) for _ in range(2)]
+        engines = [Mock(backend="cpu", gpu_projector=False, load_options={}, startup_timing={}) for _ in range(2)]
         for pid, engine in enumerate(engines, start=42):
             engine.context_size = 4096
             engine.process.poll.return_value = None
@@ -239,7 +285,7 @@ class GGUFCompletionTests(unittest.TestCase):
         engines = []
 
         def load(_executable, _model, _projector, _device, backend, context_size, **options):
-            engine = Mock(backend=backend, context_size=context_size, **options)
+            engine = Mock(backend=backend, context_size=context_size, startup_timing={}, **options)
             engine.process.poll.return_value = None
             engine.process.pid = len(engines) + 42
             engine.generate.side_effect = lambda *_args: {"type": "result", "runtimeTiming": {}}
