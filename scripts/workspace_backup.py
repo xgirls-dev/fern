@@ -112,10 +112,12 @@ def copy_member(source, target, expected_size):
     return digest.hexdigest()
 
 
+def file_signature(info):
+    return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns
+
+
 def unchanged(original, latest):
-    return (original.st_dev, original.st_ino, original.st_size, original.st_mtime_ns, original.st_ctime_ns) == (
-        latest.st_dev, latest.st_ino, latest.st_size, latest.st_mtime_ns, latest.st_ctime_ns
-    )
+    return file_signature(original) == file_signature(latest) and original.st_ctime_ns == latest.st_ctime_ns
 
 
 def create_backup(root, state, destination):
@@ -145,10 +147,17 @@ def create_backup(root, state, destination):
                 entry.file_size = info.st_size
                 flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
                 with os.fdopen(os.open(path, flags), "rb") as source:
-                    if not unchanged(info, os.fstat(source.fileno())):
+                    descriptor = source.fileno()
+                    opened = os.fstat(descriptor)
+                    # Windows can report different ctime values for the path and
+                    # descriptor. Compare each value only with the same stat API.
+                    if (linked(opened) or not stat.S_ISREG(opened.st_mode)
+                            or file_signature(info) != file_signature(opened)):
                         raise ValueError(f"Workspace file changed while backing up: {path.name}.")
                     with archive.open(entry, "w", force_zip64=True) as target:
                         signature = copy_member(source, target, info.st_size)
+                    if not unchanged(opened, os.fstat(descriptor)):
+                        raise ValueError(f"Workspace file changed while backing up: {path.name}.")
                 records.append({"path": name, "size": info.st_size, "sha256": signature, "mtimeNs": info.st_mtime_ns})
                 observed.append((path, info))
 

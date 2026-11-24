@@ -1,9 +1,11 @@
 from hashlib import sha256
 import json
+import os
 from pathlib import Path
 import stat
 import sys
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 from zipfile import ZipFile, ZipInfo
@@ -11,6 +13,12 @@ from zipfile import ZipFile, ZipInfo
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from workspace_backup import FORMAT, MANIFEST, VERSION, WORKSPACE, create_backup, inspect_backup, stage_backup
+
+
+def with_change_time(info, change_time):
+    return SimpleNamespace(st_dev=info.st_dev, st_ino=info.st_ino, st_size=info.st_size,
+                           st_mode=info.st_mode, st_mtime_ns=info.st_mtime_ns, st_ctime_ns=change_time,
+                           st_file_attributes=getattr(info, "st_file_attributes", 0))
 
 
 class WorkspaceBackupTests(unittest.TestCase):
@@ -81,6 +89,39 @@ class WorkspaceBackupTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     stage_backup(self.archive, self.staged)
                 self.assertFalse(self.staged.exists())
+
+    def test_stat_and_fstat_can_report_different_change_times(self):
+        name = "data/flux2_gallery.json"
+        content = b'{"poster":{"threadId":"original"}}'
+        self.add_file(name, content)
+        fstat = os.fstat
+
+        def descriptor_info(descriptor):
+            info = fstat(descriptor)
+            return with_change_time(info, info.st_ctime_ns + 100) if info.st_size == len(content) else info
+
+        with patch("workspace_backup.os.fstat", side_effect=descriptor_info):
+            create_backup(self.root, self.state, self.archive)
+        stage_backup(self.archive, self.staged)
+        self.assertEqual((self.staged / name).read_bytes(), content)
+
+    def test_metadata_change_during_copy_preserves_previous_backup(self):
+        self.archive.write_bytes(b"previous backup")
+        content = b"gallery marker"
+        self.add_file("outputs/poster.png", content)
+        fstat = os.fstat
+        changes = iter((0, 200))
+
+        def descriptor_info(descriptor):
+            info = fstat(descriptor)
+            if info.st_size == len(content):
+                return with_change_time(info, info.st_ctime_ns + next(changes))
+            return info
+
+        with patch("workspace_backup.os.fstat", side_effect=descriptor_info):
+            with self.assertRaisesRegex(ValueError, "changed while backing up: poster.png"):
+                create_backup(self.root, self.state, self.archive)
+        self.assertEqual(self.archive.read_bytes(), b"previous backup")
 
     def test_conflicts_and_unlisted_entries_are_rejected(self):
         self.write_archive([(WORKSPACE, b"{}"), ("outputs/same.png", b"lower"), ("outputs/SAME.png", b"upper")])
