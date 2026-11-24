@@ -16,6 +16,7 @@ import {
 } from "../lib/api";
 import { readReference } from "../lib/reference";
 import { chatImageErrors, chatImageSettings } from "../lib/chatImageSettings";
+import { clearChatReadingPositions, saveChatReadingPosition } from "../lib/chatReadingPositions";
 import { EMPTY_CHAT_FOLDERS, organizeChats, revealChatFolder, type ChatOrganizationAction } from "../lib/chatFolders";
 import { isChatDocument, MAX_CHAT_DOCUMENTS, validateChatDocument } from "../lib/chatDocuments";
 
@@ -770,6 +771,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
       await conversationStore.load();
       await conversationStore.save(fresh);
       conversationStore.clearLegacy();
+      clearChatReadingPositions();
       workspaceRef.current = fresh;
       scheduledWorkspace.current = fresh;
       setChatState({ workspace: fresh, messageDeletions: new Map(), status: idleStatus, lastRunningJob: idleStatus.job });
@@ -817,6 +819,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
         return { ...closeChatPane(current, current.activeId === id ? "primary" : "secondary"), threads: remaining };
       return { ...current, activeId: current.activeId === id ? remaining[0].id : current.activeId, threads: remaining };
     });
+    saveChatReadingPosition(id);
     dismissMessageDeletion(id);
     clearAttachment(id);
   }, [busy, clearAttachment, dismissMessageDeletion, getThread, setActionError, setWorkspace, status.job.threadId]);
