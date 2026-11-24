@@ -954,19 +954,19 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     }
   }, [setStatus]);
 
-  const installRecommendedModel = useCallback(async (id: string) => {
+  const installRecommendedModel = useCallback(async (id: string, repair = false) => {
     if (modelActionRef.current) return;
     modelActionRef.current = true;
-    setModelAction("Starting download…");
+    setModelAction(repair ? "Checking model files…" : "Starting download…");
     setActionError(null);
     try {
-      const result = await installTextModel(id);
+      const result = await installTextModel(id, repair);
       invalidatePoll();
       setStatus(result);
       setStatusError(null);
       setRefreshKey((value) => value + 1);
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : "Could not install the recommended model.");
+      setActionError(error instanceof Error ? error.message : repair ? "Could not repair the model." : "Could not install the recommended model.");
     } finally {
       modelActionRef.current = false;
       setModelAction(null);

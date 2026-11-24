@@ -165,7 +165,7 @@ def text_model_install_running() -> bool:
         return TEXT_MODEL_INSTALL.get("status") in ("downloading", "pausing", "preparing")
 
 
-def run_text_model_install(model_id: str, job_id: str, pause: threading.Event) -> None:
+def run_text_model_install(model_id: str, job_id: str, pause: threading.Event, repair: bool = False) -> None:
     def progress(phase: str) -> None:
         with TEXT_MODEL_INSTALL_LOCK:
             if TEXT_MODEL_INSTALL.get("id") == job_id:
@@ -175,12 +175,13 @@ def run_text_model_install(model_id: str, job_id: str, pause: threading.Event) -
     try:
         check_download_pause(pause)
         TEXT_GENERATION_WORKER.close()
-        folder = install_text_model(model_id, TEXT_MODEL_ROOT, progress, pause=pause)
+        folder = install_text_model(model_id, TEXT_MODEL_ROOT, progress, pause=pause, repair=repair)
         model_path, projector_path = text_model_files(folder, text_model_catalog()[model_id])
         model = TEXT_MODEL_REGISTRY.add(str(model_path), str(projector_path) if projector_path else None)
-        fields = {"status": "complete", "phase": "Installed and verified.", "error": None, "modelId": model["id"]}
+        fields = {"status": "complete", "phase": "Repaired and verified." if repair else "Installed and verified.",
+                  "error": None, "modelId": model_id if repair else model["id"]}
     except TextModelDownloadPaused:
-        fields = {"status": "paused", "phase": "Download paused.", "error": None}
+        fields = {"status": "paused", "phase": "Repair paused." if repair else "Download paused.", "error": None}
     except Exception as error:
         fields = {"status": "failed", "phase": None, "error": str(error)[:1000]}
     with TEXT_MODEL_INSTALL_LOCK:
@@ -746,13 +747,15 @@ def text_runtime_snapshot() -> dict[str, Any]:
         model_path, _ = text_model_files(folder, spec)
         entry = next((model for model in models if Path(model.get("path", "")).resolve() == model_path), None)
         installed = bool(entry and entry.get("installed"))
+        repair_model_id = entry["id"] if entry and entry.get("ownership") == "managed" else None
         recommended.append({
             "id": model_id,
             "name": spec["name"],
             "repo": spec["repo"],
             **text_model_download_details(spec),
             "installed": installed,
-            "hasPartialDownload": not installed and has_partial_download(TEXT_MODEL_ROOT, spec),
+            "hasPartialDownload": (not installed or repair_model_id is not None) and has_partial_download(TEXT_MODEL_ROOT, spec),
+            "repairModelId": repair_model_id,
             "format": spec["format"],
         })
     gguf_available = gguf_runtime_supported()
@@ -2735,7 +2738,8 @@ class Handler(BaseHTTPRequestHandler):
         with TEXT_MODEL_INSTALL_LOCK:
             if TEXT_MODEL_INSTALL["id"] == job_id and TEXT_MODEL_INSTALL["status"] == "downloading" and TEXT_MODEL_DOWNLOAD_PAUSE:
                 TEXT_MODEL_DOWNLOAD_PAUSE.set()
-                TEXT_MODEL_INSTALL.update(status="pausing", phase="Pausing download…")
+                phase = "Pausing repair…" if TEXT_MODEL_INSTALL.get("operation") == "repair" else "Pausing download…"
+                TEXT_MODEL_INSTALL.update(status="pausing", phase=phase)
             snapshot = dict(TEXT_MODEL_INSTALL)
         self.send_json(202, {"modelInstall": snapshot})
 
@@ -2842,9 +2846,12 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 payload = self.read_json_body()
                 model_id = payload.get("modelId")
+                repair = payload.get("repair", False)
                 catalog = text_model_catalog()
                 if not isinstance(model_id, str) or model_id not in catalog:
                     raise ValueError("Choose a recommended text model.")
+                if not isinstance(repair, bool):
+                    raise ValueError("Choose whether to install or repair the model.")
                 if apple_silicon() and catalog[model_id]["format"] != "gguf":
                     raise ValueError("Choose a GGUF model on this Mac.")
                 if catalog[model_id]["format"] == "gguf" and not gguf_runtime_supported():
@@ -2855,12 +2862,17 @@ class Handler(BaseHTTPRequestHandler):
                     image_busy = FLUX_JOB.get("status") == "running"
                 if audio_busy or image_busy or text_job_running() or tts_job_running() or qwen_turbo_setup_running() or text_model_install_running():
                     raise ValueError("Finish the active generation or model setup before installing a text model.")
+                if repair and not any(managed_download_id(TEXT_MODEL_ROOT, model, {model_id: catalog[model_id]})
+                                      for model in TEXT_MODEL_REGISTRY.snapshot()):
+                    raise ValueError("Fern can repair only its own verified downloads. Import a replacement for linked files.")
                 job_id = str(uuid.uuid4())
                 pause = threading.Event()
                 with TEXT_MODEL_INSTALL_LOCK:
                     TEXT_MODEL_DOWNLOAD_PAUSE = pause
-                    TEXT_MODEL_INSTALL.update(id=job_id, status="downloading", phase="Preparing download…", error=None, modelId=model_id)
-                threading.Thread(target=run_text_model_install, args=(model_id, job_id, pause), daemon=True).start()
+                    TEXT_MODEL_INSTALL.update(id=job_id, status="downloading", error=None, modelId=model_id,
+                                              phase="Checking downloaded files…" if repair else "Preparing download…",
+                                              operation="repair" if repair else "install")
+                threading.Thread(target=run_text_model_install, args=(model_id, job_id, pause, repair), daemon=True).start()
                 self.send_json(202, text_runtime_snapshot())
             except Exception as error:
                 self.send_json(400, {"error": str(error)})

@@ -32,7 +32,10 @@ export function ModelsView({ category: tab, onCategoryChange, text, audio, setup
     ?? compatibleText.find((model) => model.id === setupThread?.modelId)
     ?? compatibleText.find((model) => model.id === text.status.defaultModelId)
     ?? compatibleText[0];
-  const recommendedText = text.status.recommendedModels?.find((model) =>
+  const repairTarget = setupThread && !text.status.models.some((model) => model.id === setupThread.modelId && model.installed)
+    ? text.status.recommendedModels?.find((model) => model.repairModelId === setupThread.modelId && model.repairModelId)
+    : undefined;
+  const recommendedText = repairTarget ?? text.status.recommendedModels?.find((model) =>
     needsVision ? model.format === "gguf" && text.status.ggufAvailable === true : model.id === text.status.defaultModelId);
   const installedTool = text.status.imageToolModels?.[0];
   const installedImage = needsVision ? installedTool : imageCatalog.find((model) => model.installed && (["4b", "9b"].includes(model.id) || (model.category === "image" && !model.setupUnavailableReason)));
@@ -65,6 +68,7 @@ export function ModelsView({ category: tab, onCategoryChange, text, audio, setup
           {installedText && compatibleText.length > 1 ? <Select aria-label="Chat model" className="model-setup-text-choice" value={installedText.id}
             onChange={(modelId) => setTextSelection({ setup, modelId })}
             options={compatibleText.map(({ id, name }) => ({ value: id, label: name }))} /> : <span>{installedText ? `${installedText.name} · Installed` :
+            repairTarget ? `${repairTarget.name} · Needs repair` :
             recommendedText ? `${recommendedText.name} · ${(recommendedText.bytes / 1e9).toFixed(2)} GB download` :
             text.statusLoaded ? "Choose a compatible chat model." : "Checking chat models…"}</span>}
         </div>}

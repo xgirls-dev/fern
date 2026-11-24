@@ -367,6 +367,9 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   const catalogError = statusError ?? status.registryError;
   const install = status.modelInstall;
   const installing = isTextModelInstalling(install);
+  const repairing = install?.operation === "repair";
+  const repairTarget = status.recommendedModels?.find((model) => model.repairModelId && model.repairModelId === selectedModel &&
+    (model.format === "gguf" ? status.ggufAvailable === true : status.runtimeAvailable));
   const installName = status.recommendedModels?.find((model) => model.id === install?.modelId)?.name
     ?? models.find((model) => model.id === install?.modelId)?.name;
   const availableAlternatives = installedModels.filter((model) => model.id !== selectedModel && !textRuntimeIssue(status, model));
@@ -404,17 +407,19 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   const inspectionCaption = reconnecting ? (stopping ? "Reconnecting to stop…" : "Reconnecting to check the image…")
     : stopping ? "Stopping image check…" : restoringReply ? restorationLabel : "Checking image…";
   const modelNotice: ModelReadiness | null = responseHere || otherResponseThread ? null
-    : installing ? { label: `Installing ${installName ?? "a chat model"}`, detail: install.phase, tone: "pending", action: { label: "View model download", run: openModels } }
+    : installing ? { label: `${repairing ? "Repairing" : "Installing"} ${installName ?? "a chat model"}`, detail: install.phase,
+        tone: "pending", action: { label: repairing ? "View model repair" : "View model download", run: openModels } }
     : studio.modelAction ? { label: studio.modelAction, tone: "pending" }
     : checking ? { label: "Checking local models…", tone: "pending" }
     : catalogError && !modelAvailable ? { label: "Could not check local models.", detail: catalogError, tone: "error",
         action: { label: "Retry checking models", run: () => { void studio.refresh(); } } }
-    : install?.status === "failed" && !modelAvailable && (!selectedModel || selectedModel === install.modelId)
-      ? { label: "Model download failed.", detail: install.error, tone: "error", action: { label: "Open model setup", run: openModels } }
+    : install?.status === "failed" && !modelAvailable && (!selectedModel || selectedModel === install.modelId || repairTarget?.id === install.modelId)
+      ? { label: repairing ? "Model repair failed." : "Model download failed.", detail: install.error, tone: "error", action: { label: "Open model setup", run: openModels } }
     : install?.status === "paused" && !modelAvailable
-      ? { label: "Model download paused.", detail: "Downloaded files are kept.", action: { label: "Resume model download", run: openModels } }
+      ? { label: repairing ? "Model repair paused." : "Model download paused.", detail: "Downloaded files are kept.",
+        action: { label: repairing ? "Resume model repair" : "Resume model download", run: openModels } }
     : selectedModel && !modelAvailable ? { label: modelRecord ? `${modelRecord.name} is unavailable.` : "This chat’s model is unavailable.",
-        detail: modelRecord?.error, tone: "error", action: modelSetupAction }
+        detail: modelRecord?.error, tone: "error", action: repairTarget ? { label: "Repair model", run: openModels } : modelSetupAction }
     : !modelAvailable ? { label: "Download a local model to start chatting.", action: { label: "Browse models", run: openModels } }
     : runtimeIssue ? { label: "The selected model can’t run right now.", detail: runtimeIssue, tone: "error", action: modelSetupAction }
     : null;

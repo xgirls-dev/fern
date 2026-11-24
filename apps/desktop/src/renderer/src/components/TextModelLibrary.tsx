@@ -33,18 +33,23 @@ export function TextModelLibrary({ studio, recommendedId }: { studio: ReturnType
         const pausing = install?.status === "pausing";
         const pauseId = install?.status === "downloading" ? install.id : null;
         const canResume = paused || model.hasPartialDownload;
+        const canRepair = Boolean(model.repairModelId);
+        const needsRepair = canRepair && !model.installed;
+        const repairing = install?.operation === "repair";
         const gguf = model.format === "gguf";
-        const unavailable = gguf && status.ggufAvailable !== true;
+        const unavailable = gguf ? status.ggufAvailable !== true : canRepair && !status.runtimeAvailable;
         const showRequirements = !model.installed && !unavailable;
-        const canDownload = showRequirements && !installing;
+        const canDownload = !unavailable && !installing && (!model.installed || canRepair);
+        const actionLabel = canRepair ? canResume ? "Resume repair" : needsRepair ? "Repair model" : "Check and repair"
+          : canResume ? "Resume download" : "Download";
         const requirementsId = requirementsPrefix + model.id;
         const device = studio.computeDevice === "CPU" ? "CPU" : gguf && window.studio.platform === "darwin" ? "Apple GPU" : "Intel GPU";
         return <ModelCard key={model.id}>
           <ModelCardHeading icon={<MessageSquare size={17} />}><div className="model-card-heading"><h4>{model.name}</h4>
-            {model.id === recommendedId && <span className="model-card-badge">Recommended</span>}</div></ModelCardHeading>
+            {model.id === recommendedId && <span className="model-card-badge">{needsRepair ? "Current chat" : "Recommended"}</span>}</div></ModelCardHeading>
           <p>{!showRequirements && `${gigabytes(model.bytes)} · `}{gguf ? "GGUF · Chat, vision and image tools" : "OpenVINO · Chat"}</p>
           {showRequirements && <dl className="text-model-requirements" id={requirementsId}>
-            <dt>{canResume ? "Full download" : "Download"}</dt><dd>{gigabytes(model.bytes)}</dd>
+            <dt>{canResume || needsRepair ? "Full download" : "Download"}</dt><dd>{gigabytes(model.bytes)}</dd>
             <dt>Device</dt><dd>{device}</dd>
             {model.minimumFreeBytes !== undefined && <><dt>Free space</dt>
               <dd>{gigabytes(Math.ceil(model.minimumFreeBytes / 1e7) * 1e7)} for a fresh install</dd></>}
@@ -52,22 +57,28 @@ export function TextModelLibrary({ studio, recommendedId }: { studio: ReturnType
               ? `${Math.round(model.projectorBytes / 1e6)} MB` : gigabytes(model.projectorBytes)}</dd></>}
             {!gguf && <><dt>Files</dt><dd>Fern prepares the tokenizer and detokenizer</dd></>}
           </dl>}
+          {needsRepair && !installing && !paused && <p>Fern checks the download and replaces files that are missing or damaged.</p>}
           {showRequirements && gguf && <p>Fern may download the GGUF runtime on first use.</p>}
-          <ModelStatus installed={model.installed} role="status">{model.installed ? "Installed" : paused ? "Download paused" :
-            installing ? install?.phase || "Installing…" : "Not installed"}</ModelStatus>
+          <ModelStatus installed={model.installed && !installing && !paused} role="status">
+            {paused ? repairing ? "Repair paused" : "Download paused" :
+              installing ? install.phase || (repairing ? "Repairing…" : "Installing…") :
+              model.installed ? repairing && install.status === "complete" ? "Repaired and verified" : "Installed" :
+              needsRepair ? "Needs repair" : "Not installed"}
+          </ModelStatus>
           {paused ? <p>Downloaded files are kept for when you resume.</p> : null}
           {install?.status === "failed" ? <ErrorMessage>{install.error}</ErrorMessage> : null}
           {installing ? <progress aria-label="Text model installation" /> : null}
-          {unavailable ? <p>{status.ggufUnavailableReason ?? "GGUF runtime availability is unknown."}</p> : null}
+          {unavailable ? <p>{gguf ? status.ggufUnavailableReason ?? "GGUF runtime availability is unknown." :
+            status.runtimeError ?? "The OpenVINO text runtime is unavailable."}</p> : null}
           <ModelCardActions>
-            {pauseId || pausing || canDownload ? <Button variant={canDownload && model.id === recommendedId ? "primary" : "secondary"}
-              aria-describedby={canDownload ? requirementsId : undefined}
+            {pauseId || pausing || canDownload ? <Button variant={canDownload && !model.installed && model.id === recommendedId ? "primary" : "secondary"}
+              aria-describedby={canDownload && showRequirements ? requirementsId : undefined}
               aria-disabled={pausing || (!!pauseId && !!studio.modelAction) || undefined}
               disabled={canDownload && (busy || !studio.statusLoaded || Boolean(studio.statusError))}
               onClick={() => {
                 if (pauseId && !studio.modelAction) void studio.pauseRecommendedModel(pauseId);
-                else if (canDownload) void studio.installRecommendedModel(model.id);
-              }}>{pausing ? "Pausing…" : pauseId ? "Pause download" : canResume ? "Resume download" : "Download"}</Button> : null}
+                else if (canDownload) void studio.installRecommendedModel(model.id, canRepair);
+              }}>{pausing ? "Pausing…" : pauseId ? repairing ? "Pause repair" : "Pause download" : actionLabel}</Button> : null}
           </ModelCardActions>
         </ModelCard>;
       })}
