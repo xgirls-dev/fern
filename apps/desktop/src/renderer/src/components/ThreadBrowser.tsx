@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import type { ImageThread } from "../lib/threads";
 import { chatSearchExcerpt, chatSearchPattern } from "../lib/chatSearchRange";
-import { useThreadSearch } from "../hooks/useThreadSearch";
+import { useThreadSearch, type ThreadSearchSession } from "../hooks/useThreadSearch";
 import { isComposingKey } from "../lib/keyboard";
 import type { TextMessage } from "../lib/textThreads";
 import { Dialog, DialogTitle } from "./ui/Dialog";
@@ -20,6 +20,7 @@ function threadKind(id: string): ThreadKind {
 
 export function ThreadBrowser({
   threads,
+  searchSession,
   initialQuery,
   onOpen,
   onClose,
@@ -27,6 +28,7 @@ export function ThreadBrowser({
   scope,
 }: {
   threads: Array<Pick<ImageThread, "id" | "title" | "archived"> & { excerpt?: string; folderPath?: string; messages?: TextMessage[] }>;
+  searchSession?: ThreadSearchSession;
   initialQuery: string;
   onOpen: (id: string, messageQuery?: string) => void;
   onClose: () => void;
@@ -51,7 +53,7 @@ export function ThreadBrowser({
   const pattern = chatSearchPattern(needle);
   const includesQuery = (value: string | undefined) => value !== undefined && value.normalize().search(pattern) !== -1;
   const searchMessages = searching && (selectedKind === "All" || selectedKind === "Chat") && threads.some((thread) => thread.messages?.length);
-  const { matches, loading, failed } = useThreadSearch(threads, searchMessages ? needle : "");
+  const { matches, loading, failed } = useThreadSearch(searchSession, threads, searchMessages ? needle : "");
   const filtered = threads.flatMap((thread) => {
     if (selectedKind !== "All" && threadKind(thread.id) !== selectedKind) return [];
     if (archivedOnly ? !thread.archived : scope && thread.archived && thread.id !== scope.currentId) return [];

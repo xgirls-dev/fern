@@ -27,6 +27,8 @@ To measure typing rather than setting the full query in one input event, set `FE
 FERN_E2E_VISIBLE=1 FERN_BENCH_SEARCH_INPUT=keys node benchmarks/chat-history-search.mjs electron
 ```
 
+Set `FERN_BENCH_SEARCH_REOPEN=1` to close and reopen the dialog before each warm query. This measures a new search after returning to the chat. The default keeps the dialog open between queries.
+
 ## Read the report
 
 - **First frame** is the time from the input event to the next animation frame. **Longest frame gap** tracks stalls until the search settles.
@@ -58,3 +60,17 @@ On November 23, 2026, the same Intel Mac ran a source-built Electron window with
 The renderer used to send every prefix through the worker. Keeping only the latest waiting query improved cold typing, but a running prefix could still delay warm searches. The worker now scans in slices so it can cancel that work and take the latest query. Search still verifies exact rendered Markdown matches.
 
 The default single-event test on the hidden source-built Electron window also ran five cold and 100 warm queries on the candidate. Cold completion was **336 ms** at the median and warm completion was **60 ms** at p95. The worst cold frame gap was **164 ms**, so that path still exceeds the roadmap’s 100 ms frame budget.
+
+## Reopening search
+
+On November 24, 2026, the same Intel Mac ran four fresh sessions and 32 reopen queries per build in a visible source-built Electron window. The dialog closed between queries. Both builds used a click opener, one input event per query, 100 synthetic chats, and 3,168 messages.
+
+| Measurement | Baseline `5e5855b` | Retained index |
+| --- | ---: | ---: |
+| First search complete, median | 144 ms | 135 ms |
+| Reopen search complete, median | 137 ms | 31 ms |
+| Reopen search complete, p95 | 207 ms | 82 ms |
+| Reopen search complete, slowest | 256 ms | 120 ms |
+| Reopen search frame gap, longest | 70 ms | 96 ms |
+
+The worker first loads on a message query. Subsequent searches reuse unchanged chat histories for one minute after the last search, apply changes before matching, and release the cache on local data reset. The fixture verifies that detail for edits, replies that finish while the dialog is open, deletions, Undo, and reload after migration. The native timings cover this synthetic history and this machine.
