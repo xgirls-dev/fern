@@ -6,7 +6,7 @@ import type { useQwen3Tts } from "../hooks/useQwen3Tts";
 import { ModelLibrary, type InstalledModel } from "./ModelLibrary";
 import { TextModelLibrary } from "./TextModelLibrary";
 import type { ModelSetup, SetupSelection } from "../lib/modelSetup";
-import { textRuntimeIssue } from "../lib/textThreads";
+import { textModelReadiness } from "../lib/textThreads";
 
 export type ModelCategory = "image" | "text" | "audio" | "video";
 export function ModelsView({ category: tab, onCategoryChange, text, audio, setup, onReturnToDraft, imageGpuAvailable }: {
@@ -24,7 +24,7 @@ export function ModelsView({ category: tab, onCategoryChange, text, audio, setup
   const needsVision = setup?.task === "chat-image";
   const needsText = setup?.task !== "image";
   const needsImage = setup?.task !== "chat";
-  const compatibleText = text.status.models.filter((model) => model.installed && !textRuntimeIssue(text.status, model) &&
+  const compatibleText = text.status.models.filter((model) => textModelReadiness(text.status, model).usable &&
     (!needsVision || (model.supportsVision && model.supportsTools)));
   const setupThread = setup && text.threads.find((thread) => thread.id === setup.threadId);
   const chosenTextId = textSelection?.setup === setup ? textSelection?.modelId : undefined;
@@ -32,6 +32,10 @@ export function ModelsView({ category: tab, onCategoryChange, text, audio, setup
     ?? compatibleText.find((model) => model.id === setupThread?.modelId)
     ?? compatibleText.find((model) => model.id === text.status.defaultModelId)
     ?? compatibleText[0];
+  const selectedTextReadiness = installedText && textModelReadiness({
+    ...text.status, residentModel: text.statusError ? undefined : text.status.residentModel,
+    runningModelId: text.status.job.status === "running" ? text.status.job.modelId : null,
+  }, installedText);
   const repairTarget = setupThread && !text.status.models.some((model) => model.id === setupThread.modelId && model.installed)
     ? text.status.recommendedModels?.find((model) => model.repairModelId === setupThread.modelId && model.repairModelId)
     : undefined;
@@ -67,7 +71,7 @@ export function ModelsView({ category: tab, onCategoryChange, text, audio, setup
           {needsVision && <span className="model-setup-role">Chat and vision</span>}
           {installedText && compatibleText.length > 1 ? <Select aria-label="Chat model" className="model-setup-text-choice" value={installedText.id}
             onChange={(modelId) => setTextSelection({ setup, modelId })}
-            options={compatibleText.map(({ id, name }) => ({ value: id, label: name }))} /> : <span>{installedText ? `${installedText.name} · Installed` :
+            options={compatibleText.map(({ id, name }) => ({ value: id, label: name }))} /> : <span>{installedText ? `${installedText.name} · ${selectedTextReadiness?.label}` :
             repairTarget ? `${repairTarget.name} · Needs repair` :
             recommendedText ? `${recommendedText.name} · ${(recommendedText.bytes / 1e9).toFixed(2)} GB download` :
             text.statusLoaded ? "Choose a compatible chat model." : "Checking chat models…"}</span>}

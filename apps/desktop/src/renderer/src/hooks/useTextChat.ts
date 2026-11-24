@@ -475,6 +475,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
   }, [finishSubmission, ready, setStatus]);
 
   const refresh = useCallback(() => pollStatus(useJobPoll), [pollStatus, useJobPoll]);
+  const refreshModels = useCallback(() => pollStatus(false), [pollStatus]);
   useEffect(() => { void pollStatus(false); }, [pollStatus, refreshKey]);
   useEffect(() => {
     if (!ready) return;
@@ -1312,6 +1313,6 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
         && (status.job.id === stoppingId || status.job.phase === "Stopping generation…"),
     newThread, selectThread, copyThread, exportTranscript, resetWorkspace, renameThread, archiveThread, deleteThread, deleteMessage,
     messageDeletions, undoMessageDeletion, dismissMessageDeletion,
-    updateThread, importModel, deleteModel, installRecommendedModel, pauseRecommendedModel, attachImages, clearAttachment, send, retry, continueReply, retryInspection, selectReply, revisePrompt, restorePromptVersion, stop, refresh, selectModel, setDevice,
+    updateThread, importModel, deleteModel, installRecommendedModel, pauseRecommendedModel, attachImages, clearAttachment, send, retry, continueReply, retryInspection, selectReply, revisePrompt, restorePromptVersion, stop, refresh, refreshModels, selectModel, setDevice,
   };
 }

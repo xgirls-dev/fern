@@ -224,10 +224,12 @@ export interface TextRuntimeStatus {
   recommendedModels?: Array<{
     id: string; name: string; repo: string; bytes: number; installed: boolean; format?: string;
     minimumFreeBytes?: number; projectorBytes?: number; hasPartialDownload?: boolean; repairModelId?: string | null;
+    registeredModelId?: string | null;
   }>;
   defaultModelId?: string;
   imageToolModels?: ChatImageModel[];
   modelInstall?: TextModelInstall;
+  residentModel?: { modelId: string; backend: string; device: "CPU" | "GPU" } | null;
   runtimeAvailable: boolean;
   runtimeError: string | null;
   ggufAvailable?: boolean;
@@ -385,8 +387,10 @@ export function checkpointTextReply(workspace: TextThreadWorkspace, job: TextJob
   }) };
 }
 
+type TextRuntimeAvailability = Pick<TextRuntimeStatus, "ggufAvailable" | "ggufUnavailableReason" | "runtimeAvailable" | "runtimeError">;
+
 export function textRuntimeIssue(
-  status: Pick<TextRuntimeStatus, "ggufAvailable" | "ggufUnavailableReason" | "runtimeAvailable" | "runtimeError">,
+  status: TextRuntimeAvailability,
   model: TextModel | undefined,
 ): string | null {
   if (model?.format === "gguf") {
@@ -395,6 +399,22 @@ export function textRuntimeIssue(
       : null;
   }
   return status.runtimeAvailable ? null : status.runtimeError ?? "The OpenVINO text runtime is unavailable.";
+}
+
+export function textModelReadiness(
+  status: TextRuntimeAvailability & { residentModel?: TextRuntimeStatus["residentModel"]; runningModelId?: string | null },
+  model: TextModel,
+) {
+  if (!model.installed) return { label: "Files unavailable", usable: false, detail: model.error ?? "Add the model files again." };
+  const issue = textRuntimeIssue(status, model);
+  if (issue) return { label: "Runtime unavailable", usable: false, detail: issue };
+  if (status.runningModelId) {
+    return { label: status.runningModelId === model.id ? "In use" : "Ready to load", usable: true };
+  }
+  if (status.residentModel?.modelId === model.id) {
+    return { label: "Loaded", usable: true, resident: status.residentModel };
+  }
+  return { label: "Ready to load", usable: true };
 }
 
 export function chatTokenLimits(thread: TextThread, model?: TextModel) {
@@ -431,7 +451,7 @@ export function ggufLoadOptions(options: GgufLoadOptions | undefined, contextSiz
 export function resolveTextModel(status: TextRuntimeStatus, thread: TextThread): string | undefined {
   if (thread.modelId != null) return thread.modelId;
   const installed = status.models.filter((model) => model.installed);
-  const ready = installed.filter((model) => !textRuntimeIssue(status, model));
+  const ready = installed.filter((model) => textModelReadiness(status, model).usable);
   const candidates = ready.length ? ready : installed;
   return candidates.find((model) => model.id === status.defaultModelId)?.id ?? candidates[0]?.id;
 }

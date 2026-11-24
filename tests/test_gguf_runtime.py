@@ -144,6 +144,8 @@ class GGUFCompletionTests(unittest.TestCase):
         phases = []
         engine = Mock(backend="cpu" if sys.platform == "darwin" else "openvino",
                       context_size=4096, gpu_projector=False, load_options={})
+        engine.process.poll.return_value = None
+        engine.process.pid = 42
         engine.generate.side_effect = lambda *_args: {"type": "result", "runtimeTiming": {"prefillMs": 10}}
         with (
             patch.dict(os.environ, {"FERN_GGUF_RUNTIME_ROOT": "scratch"}),
@@ -156,10 +158,43 @@ class GGUFCompletionTests(unittest.TestCase):
         ):
             self.assertEqual(run_gguf(Path("model.gguf"), "CPU", None), 0)
         setup.assert_called_once()
+        self.assertEqual([event["model"] for event in phases if event["type"] == "residency"],
+                         [{"backend": engine.backend, "device": "CPU", "enginePid": 42}])
         self.assertEqual([event["runtimeTiming"] for event in phases if event["type"] == "result"], [
             {"prefillMs": 10, "runtimeSetupMs": 125, "modelReadyMs": 625},
             {"prefillMs": 10},
         ])
+
+    def test_worker_loads_a_missing_projector_and_reuses_it_for_follow_up(self) -> None:
+        from text_generation_worker import run_gguf
+        requests = [
+            {"op": "generate", "contextSize": 4096, "messages": [{"role": "user", "content": "Hello."}]},
+            {"op": "generate", "contextSize": 4096, "messages": [{"role": "user", "imagePath": "fixture.png"}]},
+            {"op": "generate", "contextSize": 4096, "messages": [{"role": "user", "content": "Another question."}]},
+            {"op": "shutdown"},
+        ]
+        stream = io.StringIO("".join(json.dumps(request) + "\n" for request in requests))
+        engines = [Mock(backend="cpu", gpu_projector=False, load_options={}) for _ in range(2)]
+        for pid, engine in enumerate(engines, start=42):
+            engine.context_size = 4096
+            engine.process.poll.return_value = None
+            engine.process.pid = pid
+            engine.generate.side_effect = lambda *_args: {"type": "result", "runtimeTiming": {}}
+        with (
+            patch.dict(os.environ, {"FERN_GGUF_RUNTIME_ROOT": "scratch"}),
+            patch("text_generation_worker.sys.platform", "darwin"),
+            patch("text_generation_worker.sys.stdin", stream),
+            patch("text_generation_worker.emit") as emit,
+            patch("gguf_runtime.ensure_runtime", return_value=Path("llama-server")),
+            patch("gguf_runtime.GGUFServer", side_effect=engines) as load,
+        ):
+            projector = Path("projector.gguf")
+            self.assertEqual(run_gguf(Path("model.gguf"), "CPU", projector), 0)
+        self.assertEqual([call.args[2] for call in load.call_args_list], [None, projector])
+        self.assertEqual([engine.generate.call_count for engine in engines], [1, 2])
+        self.assertEqual([call.args[0]["model"] for call in emit.call_args_list if call.args[0]["type"] == "residency"],
+                         [{"backend": "cpu", "device": "CPU", "enginePid": 42}, None,
+                          {"backend": "cpu", "device": "CPU", "enginePid": 43}])
 
     def test_cancel_disconnects_a_completion_waiting_for_more_tokens(self) -> None:
         streaming = threading.Event()

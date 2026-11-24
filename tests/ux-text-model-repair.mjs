@@ -56,7 +56,8 @@ try {
   state.textStatus.models = [{ ...model, installed: true, error: null }];
   state.textStatus.recommendedModels = [recommended, { ...target, installed: true, hasPartialDownload: false }];
   Object.assign(state.textStatus.modelInstall, { status: "complete", phase: "Repaired and verified." });
-  await expect(card.getByRole("status")).toHaveText("Repaired and verified");
+  await expect(card.getByRole("status")).toHaveText("Ready to load");
+  await expect(card.getByText("Repaired and verified.", { exact: true })).toBeVisible();
   await button("Use model in draft").click();
   await expect(composer).toBeFocused();
   await expect(composer).toHaveValue(draft);

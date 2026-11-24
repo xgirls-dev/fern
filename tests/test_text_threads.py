@@ -72,6 +72,55 @@ class TextThreadsTests(unittest.TestCase):
         with patch.object(api, 'TEXT_MODEL_REGISTRY', self.registry), patch.object(api.importlib.util, 'find_spec', return_value=None):
             self.assertFalse(api.text_runtime_snapshot()['runtimeAvailable'])
 
+    def test_chat_runtime_only_reports_resident_live_engines(self):
+        script = self.root / "engine_fixture.py"
+        script.write_text("""import json, subprocess, sys
+def emit(**data):
+    print("FERN_TEXT_EVENT:" + json.dumps(data), flush=True)
+
+engine = None
+try:
+    for line in sys.stdin:
+        action = json.loads(line)["action"]
+        if action == "gguf":
+            engine = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+            emit(type="residency", model={"backend": "cpu", "device": "CPU", "enginePid": engine.pid})
+        elif action == "engine-exit":
+            engine.terminate()
+            engine.wait()
+            engine = None
+        else:
+            emit(type="residency", model={"backend": "openvino", "device": "GPU"})
+        emit(type="result")
+finally:
+    if engine is not None:
+        engine.terminate()
+        engine.wait()
+""", encoding="utf-8")
+        worker = TextGenerationProcess()
+        model_id = self.model["id"]
+
+        def generate(action):
+            worker.generate(model_path=str(self.folder), device="GPU", command=[sys.executable, "-u", str(script)],
+                            request={"action": action, "modelId": model_id}, cwd=self.root, env=dict(os.environ),
+                            on_token=lambda _: None, on_phase=lambda _: None)
+
+        try:
+            with patch.object(api, "TEXT_GENERATION_WORKER", worker), patch.object(api, "TEXT_MODEL_REGISTRY", self.registry):
+                self.assertIsNone(api.text_runtime_snapshot()["residentModel"])
+                generate("gguf")
+                self.assertEqual(api.text_runtime_snapshot()["residentModel"],
+                                 {"modelId": model_id, "backend": "cpu", "device": "CPU"})
+                generate("engine-exit")
+                self.assertIsNone(api.text_runtime_snapshot()["residentModel"])
+                generate("openvino")
+                self.assertEqual(api.text_runtime_snapshot()["residentModel"],
+                                 {"modelId": model_id, "backend": "openvino", "device": "GPU"})
+                worker.close()
+                self.assertIsNone(api.text_runtime_snapshot()["residentModel"])
+        finally:
+            worker.close()
+
     def test_text_model_status_surfaces_fresh_install_disk_and_companion_requirements(self):
         with patch.object(api, "TEXT_MODEL_REGISTRY", self.registry), patch.object(api, "apple_silicon", return_value=False):
             recommendations = {item["id"]: item for item in api.text_runtime_snapshot()["recommendedModels"]}

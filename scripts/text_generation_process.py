@@ -63,9 +63,38 @@ class TextGenerationProcess:
         self._active: _ActiveRequest | None = None
         self._process: subprocess.Popen[str] | None = None
         self._key: tuple[str, str, tuple[str, ...]] | None = None
+        self._residency: tuple[subprocess.Popen[str], dict[str, Any]] | None = None
+
+    def resident_model(self) -> dict[str, Any] | None:
+        with self._control_lock:
+            residency = self._residency
+        if residency is None:
+            return None
+        worker, model = residency
+        if worker.poll() is not None:
+            return None
+        if engine_pid := model.get("enginePid"):
+            # GGUF weights live in the worker's server child, which can exit
+            # independently while the Python worker remains available.
+            try:
+                import psutil
+            except ImportError:
+                return None
+            try:
+                engine = psutil.Process(engine_pid)
+                if engine.ppid() != worker.pid or engine.status() == psutil.STATUS_ZOMBIE:
+                    return None
+            except psutil.Error:
+                return None
+        with self._control_lock:
+            if self._residency is residency and self._process is worker and worker.poll() is None:
+                return {key: model[key] for key in ("modelId", "backend", "device")}
+        return None
 
     def _stop_unlocked(self) -> None:
         process = self._process
+        with self._control_lock:
+            self._residency = None
         self._process = None
         self._key = None
         if process is None:
@@ -185,7 +214,11 @@ class TextGenerationProcess:
                     cancelled = cancel_event is not None and cancel_event.is_set()
                     if cancelled and kind in ("token", "reasoning", "phase", "runtime"):
                         continue
-                    if kind == "cancellable":
+                    if kind == "residency":
+                        model = event.get("model")
+                        with self._control_lock:
+                            self._residency = (process, {**model, "modelId": request["modelId"]}) if model and request.get("modelId") else None
+                    elif kind == "cancellable":
                         with self._control_lock:
                             active.cancellable = True
                     elif kind == "token":

@@ -1,9 +1,9 @@
-import { useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import MessageSquare from "lucide-react/dist/esm/icons/message-square.mjs";
 import { Button, ErrorMessage, InlineConfirmation, ModelCard, ModelCardActions, ModelCardHeading, ModelStatus } from "./ui/controls";
 import type { useTextChat } from "../hooks/useTextChat";
 import { useReturnFocus } from "../hooks/useReturnFocus";
-import { isTextModelInstalling } from "../lib/textThreads";
+import { isTextModelInstalling, textModelReadiness } from "../lib/textThreads";
 
 function gigabytes(bytes: number) {
   return `${(bytes / 1e9).toFixed(2)} GB`;
@@ -14,7 +14,10 @@ export function TextModelLibrary({ studio, recommendedId }: { studio: ReturnType
   const removalFocus = useReturnFocus();
   const heading = useRef<HTMLHeadingElement | null>(null);
   const requirementsPrefix = useId();
-  const { status, busy } = studio;
+  const { status, busy, refreshModels } = studio;
+  useEffect(() => { void refreshModels(); }, [refreshModels]);
+  const runtime = { ...status, residentModel: studio.statusError ? undefined : status.residentModel,
+    runningModelId: status.job.status === "running" ? status.job.modelId : null };
   const recommendations = status.recommendedModels ?? [];
   const ordered = recommendedId ? [...recommendations].sort((a, b) => Number(b.id === recommendedId) - Number(a.id === recommendedId)) : recommendations;
   const error = (studio.actionError?.threadId ? undefined : studio.actionError?.message) ?? studio.statusError ?? status.registryError;
@@ -33,6 +36,8 @@ export function TextModelLibrary({ studio, recommendedId }: { studio: ReturnType
         const pausing = install?.status === "pausing";
         const pauseId = install?.status === "downloading" ? install.id : null;
         const canResume = paused || model.hasPartialDownload;
+        const registered = status.models.find((entry) => entry.id === (model.registeredModelId ?? model.repairModelId));
+        const readiness = registered && textModelReadiness(runtime, registered);
         const canRepair = Boolean(model.repairModelId);
         const needsRepair = canRepair && !model.installed;
         const repairing = install?.operation === "repair";
@@ -59,12 +64,13 @@ export function TextModelLibrary({ studio, recommendedId }: { studio: ReturnType
           </dl>}
           {needsRepair && !installing && !paused && <p>Fern checks the download and replaces files that are missing or damaged.</p>}
           {showRequirements && gguf && <p>Fern may download the GGUF runtime on first use.</p>}
-          <ModelStatus installed={model.installed && !installing && !paused} role="status">
+          <ModelStatus installed={model.installed && readiness?.usable !== false && !installing && !paused} role="status">
             {paused ? repairing ? "Repair paused" : "Download paused" :
               installing ? install.phase || (repairing ? "Repairing…" : "Installing…") :
-              model.installed ? repairing && install.status === "complete" ? "Repaired and verified" : "Installed" :
+              model.installed ? readiness?.label ?? "Installed" :
               needsRepair ? "Needs repair" : "Not installed"}
           </ModelStatus>
+          {repairing && install.status === "complete" && model.installed && <p>Repaired and verified.</p>}
           {paused ? <p>Downloaded files are kept for when you resume.</p> : null}
           {install?.status === "failed" ? <ErrorMessage>{install.error}</ErrorMessage> : null}
           {installing ? <progress aria-label="Text model installation" /> : null}
@@ -87,10 +93,12 @@ export function TextModelLibrary({ studio, recommendedId }: { studio: ReturnType
       const managed = model.ownership === "managed";
       const label = managed ? "Remove download" : "Unlink model";
       const format = model.format === "gguf" ? model.supportsVision ? "GGUF · Text and vision" : "GGUF · Text" : "OpenVINO";
+      const readiness = textModelReadiness(runtime, model);
       return <article className="models-installed-row" key={model.id}>
         <div>
           <strong title={model.name}>{model.name}</strong>
-          <small title={model.path}>{managed ? "Downloaded by Fern" : "Linked files"} · {model.installed ? format : model.error ?? "Model files unavailable"}</small>
+          <small title={model.path}>{managed ? "Downloaded by Fern" : "Linked files"} · {format}</small>
+          <small>{readiness.label}{readiness.detail ? ` · ${readiness.detail}` : ""}</small>
         </div>
         {removing === model.id ? <InlineConfirmation confirmLabel={label} disabled={busy}
           onCancel={() => { setRemoving(null); removalFocus.restore(model.id); }}
