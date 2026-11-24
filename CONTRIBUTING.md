@@ -38,6 +38,13 @@ selection and cancellation, and file drops. On each supported OS, also try
 candidate selection and cancellation with an installed input method, paste text
 and an image, and attach a document using the system file picker.
 
+On an eligible Mac or Windows machine, run `node apps/desktop/e2e/gguf-smoke.mjs`
+with `FERN_E2E_EXECUTABLE` pointing to the package to exercise Gemma 4 E4B on the
+GPU. The test downloads the model, checks a first reply from a preserved draft,
+then measures a warm Stop and follow-up. It records reply, runtime, and renderer
+timings under `artifacts/release-test/`. The macOS preview workflow runs this test
+when GPU smoke is enabled and uses the downloaded weights again for backend checks.
+
 ## Verify workspace backup and search
 
 Run `npm run build`, then `node apps/desktop/e2e/workspace-backup.mjs`. The test uses disposable profiles and verifies backup, restore, and search in the original and recovered workspaces.

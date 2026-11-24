@@ -52,17 +52,30 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
       - uses: actions/download-artifact@v4
         with:
           name: fern-macos-arm64-preview
           path: ${{ runner.temp }}/fern-preview
-      - name: Run GPU inference with the packaged runtime
+      - name: Run first chat, Stop, and follow-up in the packaged app
         run: |
           preview="$RUNNER_TEMP/fern-preview"
           ditto -x -k "$preview"/Fern-*-macOS-arm64-preview.zip "$preview"
+          FERN_E2E_EXECUTABLE="$preview/Fern.app/Contents/MacOS/Fern" \
+            FERN_E2E_TEXT_MODEL_ROOT="$preview/models/text" \
+            FERN_E2E_ARTIFACTS="$preview/proof" \
+            node apps/desktop/e2e/gguf-smoke.mjs
+      - name: Run GPU inference with the packaged runtime
+        run: |
+          preview="$RUNNER_TEMP/fern-preview"
           app="$preview/Fern.app"
-          "$app/Contents/Resources/runtime/python-home/bin/python3.12" -B \
-            apps/desktop/e2e/macos-gpu-smoke.py "$app" "$preview/proof"
+          FERN_TEXT_MODEL_ROOT="$preview/models/text" \
+            "$app/Contents/Resources/runtime/python-home/bin/python3.12" -B \
+              apps/desktop/e2e/macos-gpu-smoke.py "$app" "$preview/proof"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

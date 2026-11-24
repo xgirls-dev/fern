@@ -12,8 +12,13 @@ const scratch = await mkdtemp(path.join(os.tmpdir(), "fern-gguf-"));
 const dataRoot = process.env.FERN_E2E_DATA_ROOT ?? path.join(scratch, "workspace");
 const existingModelRoot = process.env.FERN_E2E_TEXT_MODEL_ROOT;
 const sourceApp = process.env.FERN_E2E_APP_SOURCE;
-const executable = process.env.FERN_E2E_EXECUTABLE ?? path.join(desktop, "release", "win-unpacked", "Fern.exe");
+const mac = process.platform === "darwin";
+const packagedExecutable = mac
+  ? path.join(desktop, "release-macos", "mac-arm64", "Fern.app", "Contents", "MacOS", "Fern")
+  : path.join(desktop, "release", "win-unpacked", "Fern.exe");
+const executable = process.env.FERN_E2E_EXECUTABLE ?? packagedExecutable;
 const catalogId = "gemma-4-e4b-gguf";
+const firstPrompt = "Name only the capital of France.";
 const env = {
   ...process.env,
   FERN_ROOT: dataRoot,
@@ -52,6 +57,9 @@ try {
     env,
     timeout: 180_000,
   });
+  if (!sourceApp) {
+    assert(await app.evaluate(({ app }) => app.isPackaged), "Launch a packaged Fern executable.");
+  }
   let page = await app.firstWindow();
   const deadline = Date.now() + 180_000;
   while (Date.now() < deadline) {
@@ -74,10 +82,18 @@ try {
   };
 
   await openThread();
+  const composer = page.getByRole("textbox", { name: "Message", exact: true });
+  const initial = await status();
+  assert.equal(initial.models.length, 0, "Start with an empty model library.");
+  const suggested = initial.recommendedModels.find((model) => model.id === catalogId);
+  assert(suggested && !suggested.installed, "Gemma should be available to download from the catalog.");
+  if (mac) assert.equal(initial.defaultModelId, catalogId, "Use the recommended Mac chat model.");
+  await composer.fill(firstPrompt);
   await page.getByRole("button", { name: "Browse models", exact: true }).click();
   const card = page.locator(".model-library-card").filter({
-    has: page.getByRole("heading", { name: "Gemma 4 E4B · GGUF", exact: true }),
+    has: page.getByRole("heading", { name: suggested.name, exact: true }),
   });
+  if (mac) await expect(card.getByText("Recommended", { exact: true })).toBeVisible();
   await card.getByRole("button", { name: "Download", exact: true }).click();
   let previousPhase;
   await expect.poll(async () => {
@@ -90,13 +106,18 @@ try {
     }
     return snapshot.recommendedModels.find((model) => model.id === catalogId)?.installed;
   }, { timeout: 1_200_000, intervals: [2_000] }).toBe(true);
-  await expect(card.getByText("Installed", { exact: true })).toBeVisible();
-  const installed = (await status()).models.find((model) => model.format === "gguf");
+  await expect(card.getByRole("status")).toHaveText("Ready to load");
+  const ready = await status();
+  const installed = ready.models.find((model) => model.format === "gguf");
   assert(installed?.supportsVision && installed?.supportsReasoning, "Gemma must advertise vision and reasoning");
-  await page.locator(".sidebar-text-threads .sidebar-thread-button").first().click();
+  assert.equal(ready.job.status, "idle", "Model setup should wait for an explicit Send.");
+  await page.getByRole("button", { name: "Use model in draft", exact: true }).click();
+  await expect(composer).toHaveValue(firstPrompt);
+  await expect(composer).toBeFocused();
+  console.log("Model setup returned to the focused, unsent first draft.");
 
   const cases = [
-    { modality: "text", mode: "instant", prompt: "Name only the capital of France.", answer: /\bparis\b/i },
+    { modality: "text", mode: "instant", prompt: firstPrompt, answer: /\bparis\b/i },
     { modality: "text", mode: "reasoning", prompt: "Six boxes contain seven pencils each. Nine pencils are sold. How many are left? Give just the number after reasoning.", answer: /\b33\b/ },
     { modality: "vision", mode: "instant", prompt: "What color is the circle? Reply with one color.", color: "#2255ee", answer: /\bblue\b/i },
     { modality: "vision", mode: "reasoning", prompt: "Compare the two shapes. Which colored shape is lower, and what is its shape?", color: "#158e36", answer: /\bgreen\b.*\bcircle\b/i },
@@ -112,7 +133,7 @@ try {
       await page.getByLabel("Chat image file").setInputFiles(await makeImage(page, test.color));
       await expect(page.getByAltText("Image to send")).toBeVisible();
     }
-    await page.getByLabel("Message", { exact: true }).fill(test.prompt);
+    if (index) await composer.fill(test.prompt);
     console.log(`Sending ${test.modality} ${test.mode}…`);
     const send = page.getByRole("button", { name: "Send message", exact: true });
     const timing = await observeChatReply(send);
@@ -124,7 +145,8 @@ try {
     assert.equal(response.job.modelId, installed.id);
     assert.equal(response.job.result.mode, test.mode);
     assert.equal(response.job.result.device, "GPU");
-    assert.equal(response.job.result.backend, test.modality === "text" ? "OpenVINO" : "Vulkan");
+    const expectedBackend = mac ? "Metal" : test.modality === "text" ? "OpenVINO" : "Vulkan";
+    assert.equal(response.job.result.backend, expectedBackend);
     assert(response.job.result.outputTokens > 0 && response.job.result.inputTokens > 0, "Token counts must be positive");
     assert.match(response.job.partialText, test.answer);
     await expect(message.locator(".text-message-content")).toContainText(test.answer);
@@ -139,7 +161,7 @@ try {
     if (index === 0) {
       assert(Number.isFinite(runtimeTiming?.modelReadyMs), "The first reply should report its cold GGUF model load.");
       const warmStop = await measureWarmStop(page, async () => (await status()).job, installed.id);
-      assert.equal(warmStop.followUp.backend, "OpenVINO");
+      assert.equal(warmStop.followUp.backend, expectedBackend);
       assert.equal(warmStop.followUp.device, "GPU");
       report.push({ modality: "text", mode: "instant", journey: "warm-stop-and-follow-up", ...warmStop });
       console.log(JSON.stringify(report.at(-1)));
@@ -169,7 +191,7 @@ try {
   const reimported = (await status()).models.find((model) => model.id === installed.id);
   assert(reimported?.supportsVision && reimported?.supportsReasoning, "Import must restore the model and its projector");
   console.log("Local GGUF and projector import passed.");
-  const artifacts = path.resolve(desktop, "..", "..", "artifacts", "release-test");
+  const artifacts = process.env.FERN_E2E_ARTIFACTS ?? path.resolve(desktop, "..", "..", "artifacts", "release-test");
   await mkdir(artifacts, { recursive: true });
   await writeFile(path.join(artifacts, "gemma-4-e4b-gguf.json"), JSON.stringify(report, null, 2) + "\n");
   await writeFile(path.join(artifacts, "gemma-4-e4b-vision-reasoning.png"), screenshot);
