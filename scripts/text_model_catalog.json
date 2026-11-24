@@ -21,6 +21,7 @@
     "revision": "8903cb408c7df39cde2ed15fac397e6d7be92951",
     "folder": "gemma-4-e4b-gguf",
     "format": "gguf",
+    "supportsTools": true,
     "modelFile": "gemma-4-E4B-it-Q4_0.gguf",
     "projectorFile": "mmproj-gemma-4-E4B-it-Q8_0.gguf",
     "files": [

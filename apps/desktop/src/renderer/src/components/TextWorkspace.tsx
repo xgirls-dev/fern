@@ -222,7 +222,10 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   const [panel, setPanel] = useState<"settings" | "image" | null>(null);
   useEffect(() => { if (panel === "settings") void refreshModels(); }, [panel, refreshModels]);
   const inspectorOpen = panel !== null;
-  const openModels = useCallback(() => { setPanel(null); onSetupModels("chat", threadId); }, [onSetupModels, threadId]);
+  const openModels = useCallback(() => {
+    setPanel(null);
+    onSetupModels(draftImage || draftContextName ? "chat-vision" : "chat", threadId);
+  }, [draftContextName, draftImage, onSetupModels, threadId]);
   const openImageSetup = () => { setPanel(null); onSetupModels("chat-image", activeThread.id); };
   const panelRef = useRef<HTMLElement>(null);
   const contextSetting = useRef<HTMLInputElement>(null);
@@ -427,6 +430,8 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
         action: { label: repairing ? "Resume model repair" : "Resume model download", run: openModels } }
     : selectedModel && !modelAvailable ? { label: modelRecord ? `${modelRecord.name} is unavailable.` : "This chat’s model is unavailable.",
         detail: modelRecord?.error, tone: "error", action: repairTarget ? { label: "Repair model", run: openModels } : modelSetupAction }
+    : incompatibleImages && !runtimeIssue ? { label: "Choose a vision model or remove the attachment",
+        action: { label: "Choose a vision model", run: openModels } }
     : !modelAvailable ? { label: "Download a local model to start chatting.", action: { label: "Browse models", run: openModels } }
     : runtimeIssue ? { label: "The selected model can’t run right now.", detail: runtimeIssue, tone: "error", action: modelSetupAction }
     : null;
@@ -919,7 +924,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
           <div className="text-empty-state">
             <h3>What can I help with?</h3>
             {modelNotice && <ChatModelReadiness notice={modelNotice} actionRef={bindModelAction} />}
-            {studio.statusLoaded && !catalogError && !installing && !studio.modelAction && modelNotice?.tone !== "error" && canUseImageSetup && status.ggufAvailable === true && !canCreateImage &&
+            {!hasDraftImage && studio.statusLoaded && !catalogError && !installing && !studio.modelAction && modelNotice?.tone !== "error" && canUseImageSetup && status.ggufAvailable === true && !canCreateImage &&
               <Button variant="ghost" onClick={openImageSetup}>Set up images in chat</Button>}
             {canCreateImage && <Button variant="ghost" onClick={() => {
               if (!activeThread.draft.trim()) studio.updateThread(activeThread.id, { draft: "Create a small poster with a red circle on cream, then describe what you see." });

@@ -3,7 +3,7 @@ import MessageSquare from "lucide-react/dist/esm/icons/message-square.mjs";
 import { Button, ErrorMessage, InlineConfirmation, ModelCard, ModelCardActions, ModelCardHeading, ModelStatus } from "./ui/controls";
 import type { useTextChat } from "../hooks/useTextChat";
 import { useReturnFocus } from "../hooks/useReturnFocus";
-import { isTextModelInstalling, textModelReadiness } from "../lib/textThreads";
+import { isTextModelInstalling, recommendedTextModelIssue, textModelReadiness } from "../lib/textThreads";
 
 function gigabytes(bytes: number) {
   return `${(bytes / 1e9).toFixed(2)} GB`;
@@ -42,17 +42,19 @@ export function TextModelLibrary({ studio, recommendedId }: { studio: ReturnType
         const needsRepair = canRepair && !model.installed;
         const repairing = install?.operation === "repair";
         const gguf = model.format === "gguf";
-        const unavailable = gguf ? status.ggufAvailable !== true : canRepair && !status.runtimeAvailable;
+        const unavailable = recommendedTextModelIssue(status, model);
+        const capabilities = model.projectorBytes ? model.supportsTools ? "Chat, vision and image tools" : "Chat and vision" : "Text only";
         const showRequirements = !model.installed && !unavailable;
         const canDownload = !unavailable && !installing && (!model.installed || canRepair);
         const actionLabel = canRepair ? canResume ? "Resume repair" : needsRepair ? "Repair model" : "Check and repair"
           : canResume ? "Resume download" : "Download";
-        const requirementsId = requirementsPrefix + model.id;
+        const requirementsId = `${requirementsPrefix}${model.id}-requirements`;
+        const modelNameId = `${requirementsPrefix}${model.id}-name`;
         const device = studio.computeDevice === "CPU" ? "CPU" : gguf && window.studio.platform === "darwin" ? "Apple GPU" : "Intel GPU";
         return <ModelCard key={model.id}>
-          <ModelCardHeading icon={<MessageSquare size={17} />}><div className="model-card-heading"><h4>{model.name}</h4>
+          <ModelCardHeading icon={<MessageSquare size={17} />}><div className="model-card-heading"><h4 id={modelNameId}>{model.name}</h4>
             {model.id === recommendedId && <span className="model-card-badge">{needsRepair ? "Current chat" : "Recommended"}</span>}</div></ModelCardHeading>
-          <p>{!showRequirements && `${gigabytes(model.bytes)} · `}{gguf ? "GGUF · Chat, vision and image tools" : "OpenVINO · Chat"}</p>
+          <p>{!showRequirements && `${gigabytes(model.bytes)} · `}{gguf ? "GGUF" : "OpenVINO"} · {capabilities}</p>
           {showRequirements && <dl className="text-model-requirements" id={requirementsId}>
             <dt>{canResume || needsRepair ? "Full download" : "Download"}</dt><dd>{gigabytes(model.bytes)}</dd>
             <dt>Device</dt><dd>{device}</dd>
@@ -74,11 +76,10 @@ export function TextModelLibrary({ studio, recommendedId }: { studio: ReturnType
           {paused ? <p>Downloaded files are kept for when you resume.</p> : null}
           {install?.status === "failed" ? <ErrorMessage>{install.error}</ErrorMessage> : null}
           {installing ? <progress aria-label="Text model installation" /> : null}
-          {unavailable ? <p>{gguf ? status.ggufUnavailableReason ?? "GGUF runtime availability is unknown." :
-            status.runtimeError ?? "The OpenVINO text runtime is unavailable."}</p> : null}
+          {unavailable && !model.installed ? <p>{unavailable}</p> : null}
           <ModelCardActions>
             {pauseId || pausing || canDownload ? <Button variant={canDownload && !model.installed && model.id === recommendedId ? "primary" : "secondary"}
-              aria-describedby={canDownload && showRequirements ? requirementsId : undefined}
+              aria-describedby={canDownload && showRequirements ? `${modelNameId} ${requirementsId}` : undefined}
               aria-disabled={pausing || (!!pauseId && !!studio.modelAction) || undefined}
               disabled={canDownload && (busy || !studio.statusLoaded || Boolean(studio.statusError))}
               onClick={() => {

@@ -1,4 +1,4 @@
-export type SetupTask = "image" | "chat" | "chat-image";
+export type SetupTask = "image" | "chat" | "chat-vision" | "chat-image";
 
 export interface ModelSetup {
   task: SetupTask;
@@ -18,7 +18,7 @@ export function loadModelSetup(): ModelSetup | null {
     const saved = JSON.parse(localStorage.getItem(storageKey) ?? "null");
     if (
       saved &&
-      ["image", "chat", "chat-image"].includes(saved.task) &&
+      ["image", "chat", "chat-vision", "chat-image"].includes(saved.task) &&
       typeof saved.threadId === "string"
     ) return saved;
   } catch {

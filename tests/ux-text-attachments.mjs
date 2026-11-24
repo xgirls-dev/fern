@@ -4,12 +4,15 @@ import { fixture, savedTextWorkspace } from "./ui-fixture.mjs";
 
 const textModel = { id: "words", name: "Text model only", installed: true, format: "gguf" };
 const visionModel = { id: "vision", name: "Vision model", installed: true, format: "gguf", supportsVision: true };
+const visionDownload = { ...visionModel, installed: false, bytes: 3e9, minimumFreeBytes: 3_536_870_912, projectorBytes: 256e6 };
+const smallerDownload = { id: "smaller", name: "Small text model", installed: false, format: "gguf", bytes: 1e9 };
 const firstId = "text-thread-attachment-first";
 const secondId = "text-thread-attachment-second";
 const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=";
 const { page, state, errors, close } = await fixture({
   builtRenderer: process.env.FERN_ATTACHMENTS_BUILT === "1", firstRun: true,
-  textStatus: { models: [textModel, visionModel], ggufAvailable: true, job: { id: null, status: "idle" } },
+  textStatus: { models: [textModel], recommendedModels: [smallerDownload, visionDownload], ggufAvailable: true,
+    job: { id: null, status: "idle" } },
   legacyTextWorkspace: { activeId: firstId, threads: [
     { id: firstId, title: "Photo notes", modelId: textModel.id, draft: "Keep this draft", messages: [] },
     { id: secondId, title: "Second chat", modelId: textModel.id, draft: "A separate question", messages: [] },
@@ -76,9 +79,36 @@ try {
   await expect(preview).toHaveAttribute("src", new RegExp(imageId(1)));
   await expect(button("Send message")).toBeDisabled();
   await expect(page.getByText("Choose a vision model or remove the attachment", { exact: true })).toBeVisible();
-  await button("Text model: Text model only").click();
-  await page.getByRole("menuitemradio", { name: "Vision model", exact: true }).click();
+  await button("Choose a vision model").click();
+  const setup = page.getByRole("region", { name: "Draft setup" });
+  await expect(setup).toContainText("Chat about an image");
+  await expect(setup).toContainText("Vision model · 3.00 GB download");
+  await page.reload();
+  await expect(setup).toContainText("Chat about an image");
+  await expect(setup).toContainText("Vision model · 3.00 GB download");
+  await expect(button("Use model in draft")).toHaveCount(0);
+  const visionCard = page.getByRole("article").filter({ has: page.getByRole("heading", { name: "Vision model", exact: true }) });
+  const download = visionCard.getByRole("button", { name: "Download", exact: true });
+  await expect(visionCard).toContainText("Recommended");
+  await expect(visionCard).toContainText("GGUF · Chat and vision");
+  await expect(page.getByRole("article").filter({ has: page.getByRole("heading", { name: smallerDownload.name, exact: true }) }))
+    .toContainText("GGUF · Text only");
+  await expect(download).toHaveAccessibleDescription(/Download\s+3\.00 GB\s+Device\s+Intel GPU/);
+  await expect(download).toHaveAccessibleDescription(/Free space\s+3\.54 GB for a fresh install/);
+  await expect(download).toHaveAccessibleDescription(/Vision projector\s+·\s+256 MB/);
+  await page.route("**/api/text/models/install", (route) => {
+    assert.equal(route.request().postDataJSON().modelId, visionModel.id);
+    state.textStatus.models = [textModel, visionModel];
+    state.textStatus.recommendedModels = [smallerDownload, { ...visionDownload, installed: true, registeredModelId: visionModel.id }];
+    return route.fulfill({ json: state.textStatus });
+  });
+  await download.click();
+  await button("Use model in draft").click();
+  await expect(preview).toHaveAttribute("src", new RegExp(imageId(1)));
+  await expect(composer).toHaveValue("Keep this draft");
+  await expect(composer).toBeFocused();
   await expect(button("Send message")).toBeEnabled();
+  assert.equal(state.textRequests.length, 1, "Setup returns to the draft without sending it.");
 
   await attach("replacement.png");
   await expect.poll(() => requests.length).toBe(3);

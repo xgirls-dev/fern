@@ -15,9 +15,10 @@ try {
   const klein = { id: platform === "darwin" ? "klein-4b-mlx" : "4b", label: "Klein 4B", bytes: 4e9,
     category: "image", downloaded: 0, installed: false, state: "not-installed" };
   const gemma = { id: "gemma", name: "Gemma", format: "gguf", bytes: 5e9, minimumFreeBytes: 5_536_870_912,
-    projectorBytes: 560e6, installed: false };
+    projectorBytes: 560e6, supportsTools: true, installed: false };
   state.textStatus.ggufAvailable = true;
-  state.textStatus.recommendedModels.push(gemma);
+  state.textStatus.recommendedModels.push({ id: "vision-only", name: "Vision without image tools", format: "gguf",
+    bytes: 2e9, projectorBytes: 256e6, installed: false }, gemma);
   await page.route("**/api/models", (route) => route.fulfill({ json: { models: [klein] } }));
   await page.route("**/api/models/install", (route) => {
     assert.equal(route.request().postDataJSON().model, klein.id);

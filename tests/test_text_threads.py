@@ -157,7 +157,9 @@ finally:
         self.assertEqual(gemma["bytes"], 5_150_682_240)
         self.assertEqual(gemma["minimumFreeBytes"], gemma["bytes"] + MINIMUM_FREE_BYTES)
         self.assertEqual(gemma["projectorBytes"], 559_874_848)
+        self.assertTrue(gemma["supportsTools"])
         self.assertNotIn("projectorBytes", recommendations[api.DEFAULT_TEXT_MODEL_ID])
+        self.assertFalse(recommendations[api.DEFAULT_TEXT_MODEL_ID]["supportsTools"])
 
     def test_managed_removal_and_legacy_unlink_through_the_api(self):
         root = (self.root / "downloads").resolve()
