@@ -12,8 +12,10 @@ import { fixture } from "../tests/ui-fixture.mjs";
 const root = fileURLToPath(new URL("..", import.meta.url));
 const mode = process.argv[2] ?? "renderer";
 const sendMethod = process.env.FERN_BENCH_STREAM_SEND ?? "click";
+const workload = process.env.FERN_BENCH_STREAM_WORKLOAD ?? "mixed";
 assert(["renderer", "electron"].includes(mode), "Choose renderer or electron.");
 assert(["click", "enter"].includes(sendMethod), "Choose click or enter for FERN_BENCH_STREAM_SEND.");
+assert(["mixed", "prose"].includes(workload), "Choose mixed or prose for FERN_BENCH_STREAM_WORKLOAD.");
 const visible = mode === "electron" && process.env.FERN_E2E_VISIBLE === "1";
 const trace = process.env.FERN_BENCH_STREAM_TRACE === "1";
 const codeLines = Number(process.env.FERN_BENCH_STREAM_CODE_LINES ?? 1);
@@ -307,7 +309,8 @@ try {
   for (let number = 1; number <= sampleCount; number += 1) {
     await delay(appendIntervalMs);
     const marker = "stream-part-" + String(number).padStart(3, "0");
-    const line = number % 10 === 0 ? "**" + marker + "** notes are ready. 🎙️" : marker + " notes are ready.";
+    const line = workload === "prose" ? "Notes are ready. " + marker
+      : number % 10 === 0 ? "**" + marker + "** notes are ready. 🎙️" : marker + " notes are ready.";
     const text = (number === 1 ? "" : number % 10 === 0 ? "\n\n" : " ") + line;
     partialText += text;
     emit({ append: { phase, text, reasoning: "" } });
@@ -337,11 +340,12 @@ try {
   assert.equal(samples.length, sampleCount);
   for (const [key, value] of Object.entries(milestones)) assert(Number.isFinite(value) && value >= 0, key);
   assert.deepEqual(errors, []);
-  const revision = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
+  const revision = process.env.FERN_BENCH_REVISION
+    ?? execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
   console.log(JSON.stringify({
     revision, mode, visible, sendMethod, browser, fixture: "deterministic server-sent events",
     host: { os: os.version(), arch: os.arch(), cpu: os.cpus()[0]?.model, memoryBytes: os.totalmem() },
-    sampleCount, appendIntervalMs, codeLines, milestones,
+    sampleCount, appendIntervalMs, codeLines, workload, milestones,
     receiptToFrameMs: summarize(samples.map(({ receiptToFrameMs }) => receiptToFrameMs)), samples,
     ...(frameTrace ? { trace: frameTrace } : {}),
   }, null, 2));
