@@ -225,6 +225,41 @@ try {
   await expect(notesReply.getByLabel("Response versions")).toContainText("3 / 3");
   await notesReply.getByRole("button", { name: "Previous response version" }).click();
   await expect(notesReply).toContainText("Current notes answer");
+
+  await composer.fill("A draft that belongs to this chat");
+  await remove("current-notes", "Delete message", "Delete this message and its reply?");
+  await conversationVersions.press("ArrowDown");
+  await page.getByRole("option", { name: "Old notes prompt", exact: true }).click();
+  await expect(notesReply).toContainText("Old notes answer");
+  await undo.click();
+  await expect(row("current-notes")).toHaveCount(0);
+  await expect(notesReply).toHaveText(/Old notes answer/);
+  await expect(composer).toBeFocused();
+  await expect(composer).toHaveValue("A draft that belongs to this chat");
+  await expect(page.getByText("Message and reply restored in conversation history.")).toBeVisible();
+  await expect.poll(async () => {
+    const workspace = await savedTextWorkspace(page);
+    const thread = workspace.threads.find(({ title }) => title === "Chat with snapshots");
+    return { current: thread.messages.map(({ id }) => id), archived: thread.versions[0].messages.map(({ id }) => id) };
+  }).toEqual({ current: ["old-notes-prompt", "old-notes-reply"], archived: ["current-notes", "current-notes-reply"] });
+
+  await conversationVersions.press("ArrowDown");
+  await page.getByRole("option", { name: "Previous conversation", exact: true }).click();
+  await expect(row("current-notes")).toBeVisible();
+  await expect(notesReply).toContainText("Current notes answer");
+  await expect(notesReply.getByLabel("Response versions")).toContainText("2 / 3");
+
+  await remove("current-notes-reply", "Delete reply", "Delete this reply and its other versions?");
+  await conversationVersions.press("ArrowDown");
+  await page.getByRole("option", { name: "Old notes prompt", exact: true }).click();
+  await expect(notesReply).toContainText("Old notes answer");
+  await conversationVersions.press("ArrowDown");
+  await page.getByRole("option", { name: "Current notes", exact: true }).click();
+  await expect(notesReply).toHaveCount(0);
+  await undo.click();
+  await expect(row("current-notes-reply")).toBeFocused();
+  await expect(notesReply).toContainText("Current notes answer");
+  await expect(undo).toHaveCount(0);
   assert.deepEqual(errors, []);
   console.log("Chat and reply-version deletion, per-chat undo history, keyboard focus, archived reply restoration, image context, retry reconciliation, and durable dismissal passed.");
 } finally {
