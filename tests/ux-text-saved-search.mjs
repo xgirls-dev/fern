@@ -7,6 +7,18 @@ const messages = Array.from({ length: 160 }, (_, index) => ({
   id: `row-${index}`, role: index % 2 ? "assistant" : "user", createdAt: index + 1,
   content: index % 2 ? `Reply ${index}\n\n${"Notes from the current conversation. ".repeat(8)}` : `Current prompt ${index}`,
 }));
+const markdownMatches = [
+  { source: "The **crystal** lattice is stable.", query: "crystal lattice", displayed: "crystal lattice" },
+  { source: "The &#90;ircon is luminous.", query: "zircon is luminous", displayed: "Zircon is luminous" },
+  { source: "[^sample]: The relocated **footnote**\n\nThe sample marker[^sample].",
+    query: "sample marker1. the relocated footnote", displayed: "The relocated footnote" },
+  { source: "The **Kelvin** ſcale is stable.", query: "kelvin scale", displayed: "Kelvin ſcale" },
+  { source: "Read the **結晶** 格子 findings.", query: "結晶 格子", displayed: "結晶 格子" },
+];
+for (const [index, { source }] of markdownMatches.entries()) {
+  messages[35 + index * 2].content = source;
+}
+
 messages[20].promptVersionId = "edited-firing";
 messages[20].promptAlternatives = [
   { id: "first-firing", content: "Find the golden cedar glaze", createdAt: 3,
@@ -128,6 +140,16 @@ try {
   await expect(panel.getByRole("button", { name: "Restore this version" })).toHaveCount(0);
   await find.press("Escape");
   await expect(panel).toHaveCount(0);
+
+  await button("Search threads").click();
+  const notebook = page.locator(".thread-browser-open").filter({ hasText: "Studio notebook" });
+  for (const { query, displayed } of markdownMatches) {
+    await globalFind.fill(query);
+    await expect(notebook).toContainText(displayed);
+  }
+  await globalFind.fill("crystal stable lattice");
+  await expect(page.getByRole("status", { name: "" }).filter({ hasText: "No matching threads" })).toBeVisible();
+  await globalFind.press("Escape");
 
   const saved = await savedTextWorkspace(page);
   assert.equal(saved.threads.find((thread) => thread.id === chatId).messages[20].promptVersionId, "edited-firing");

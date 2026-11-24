@@ -1,5 +1,4 @@
-import { chatSearchText } from "./chatSearch";
-import { chatSearchExcerpt, chatSearchPattern } from "./chatSearchRange";
+import { chatSearchEntries, threadSearchMatcher } from "./chatSearch";
 import type { TextMessage } from "./textThreads";
 
 export interface ThreadSearchRequest {
@@ -14,18 +13,17 @@ export interface ThreadSearchResponse {
   matches?: Array<[threadId: string, excerpt: string]>;
 }
 
-const index = new Map<string, ReturnType<typeof chatSearchText>>();
+const index = new Map<string, ReturnType<typeof chatSearchEntries>>();
 
 self.addEventListener("message", ({ data }: MessageEvent<ThreadSearchRequest>) => {
   const { id, query, updated, removed } = data;
   try {
     for (const threadId of removed) index.delete(threadId);
-    for (const thread of updated) index.set(thread.id, chatSearchText(thread.messages));
+    for (const thread of updated) index.set(thread.id, chatSearchEntries(thread.messages));
     const matches: NonNullable<ThreadSearchResponse["matches"]> = [];
-    const pattern = chatSearchPattern(query);
-    for (const [threadId, fields] of index) {
-      const field = fields.find((text) => text && text.normalize().search(pattern) !== -1);
-      const excerpt = chatSearchExcerpt(field, pattern);
+    const match = threadSearchMatcher(query);
+    for (const [threadId, entries] of index) {
+      const excerpt = match(entries);
       if (excerpt) matches.push([threadId, excerpt]);
     }
     self.postMessage({ id, matches } satisfies ThreadSearchResponse);
