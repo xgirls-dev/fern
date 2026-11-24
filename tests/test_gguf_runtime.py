@@ -162,6 +162,19 @@ class GGUFCompletionTests(unittest.TestCase):
                 self.assertEqual(result["generationSeconds"], 0.75)
                 self.assertEqual(result["outputTokens"], 3)
 
+    def test_interrupted_startup_kills_the_server_without_waiting_for_graceful_shutdown(self) -> None:
+        process = Mock()
+        process.poll.return_value = None
+        with (
+            patch("gguf_runtime.subprocess.Popen", return_value=process),
+            patch.object(GGUFServer, "_wait_ready", side_effect=SystemExit(0)),
+            self.assertRaises(SystemExit),
+        ):
+            GGUFServer(Path("llama-server"), Path("model.gguf"), None, "CPU", "cpu")
+        process.kill.assert_called_once_with()
+        process.terminate.assert_not_called()
+        process.wait.assert_called_once()
+
     def test_metal_startup_reports_discovery_readiness_and_placement_separately(self) -> None:
         process = Mock()
         process.poll.return_value = 0

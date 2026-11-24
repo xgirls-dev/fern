@@ -253,7 +253,9 @@ class GGUFServer:
                     raise RuntimeError(f"{scope} could not load fully on {accelerator}. Free GPU memory and retry." + detail)
                 self.startup_timing["placementVerificationMs"] = (time.perf_counter() - verification_started) * 1000
         except BaseException:
-            self.close()
+            # A server that never reached verified readiness cannot be reused.
+            # Stop should not wait for its graceful shutdown while it is loading.
+            self.close(force=True)
             raise
 
     def _select_device(self, executable: Path, env: dict[str, str], flags: int) -> str:
