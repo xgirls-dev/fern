@@ -58,6 +58,8 @@ try {
   await expect(menuPopup("Current conversation")).toBeVisible();
   await expect(item("Current conversation", "Copy transcript")).toHaveCount(0);
   await page.keyboard.press("Escape");
+  await expect(menuPopup("Current conversation")).toHaveCount(0);
+  await expect(menu("Current conversation")).toBeFocused();
   await menu(title).press("Enter");
   await expect(item(title, "Rename")).toBeFocused();
   await page.keyboard.press("ArrowDown");

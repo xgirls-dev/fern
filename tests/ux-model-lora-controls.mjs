@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { expect } from '@playwright/test';
 import { fixture } from './ui-fixture.mjs';
 
 const { page, state, errors, close } = await fixture();
@@ -27,12 +28,11 @@ try {
     const action = await card.getByRole('button', { name: 'Pause' }).boundingBox();
     assert(heading && action && heading.x + heading.width <= action.x, 'model title and action must not overlap');
     assert.equal(Math.round(action.height), 32, 'model actions use the shared control height');
-    const geometry = await card.evaluate(element => {
+    await expect.poll(() => card.evaluate(element => {
       const rect = element.getBoundingClientRect();
       const heading = element.querySelector('h4').getBoundingClientRect();
-      return { left: heading.left - rect.left, right: rect.right - heading.right };
-    });
-    assert(geometry.left >= 16 && geometry.right >= 16, 'model content must remain inside the card padding');
+      return Math.min(heading.left - rect.left, rect.right - heading.right);
+    }), { message: `Model content must retain 16px of clearance at ${width}px` }).toBeGreaterThanOrEqual(16);
   }
   models[1].installed = true;
   models[1].state = 'installed';
