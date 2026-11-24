@@ -16,7 +16,7 @@ export function Dialog({ children, onClose, className = "", variant = "default",
   const Root = alert ? BaseAlertDialog.Root : BaseDialog.Root;
   return <Root open onOpenChange={(open) => { if (!open) onClose(); }}>
     <BaseDialog.Portal>
-      <BaseDialog.Backdrop className="ui-dialog-backdrop" />
+      <BaseDialog.Backdrop className={`ui-dialog-backdrop${variant === "search" ? " ui-dialog-backdrop--search" : ""}`} />
       <BaseDialog.Viewport className="ui-dialog-viewport">
         <BaseDialog.Popup
           className={`ui-dialog${variant === "search" ? " ui-dialog--search" : ""}${alert ? " ui-dialog--alert" : ""} ${className}`}

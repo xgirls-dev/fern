@@ -27,12 +27,33 @@ try {
         { id: "text-thread-earlier", title: "Poster", draft: "Earlier draft", messages: [], updatedAt: now - 120_000 },
         { id: "text-thread-archived", title: "Poster", archived: true, messages: [], updatedAt: now - 60_000 },
         { id: "text-thread-renamed", title: "Named empty draft", renamed: true, messages: [], updatedAt: now },
+        { id: "text-thread-exact", title: "Local conversation", renamed: true, messages: [], updatedAt: now - 240_000 },
+        { id: "text-thread-cafe", title: "Café ideas", renamed: true, messages: [], updatedAt: now - 240_000 },
+        ...Array.from({ length: 24 }, (_, index) => ({
+          id: `text-thread-conversation-${index}`,
+          title: `Local conversation ${index}`,
+          renamed: true, messages: [], updatedAt: now - index,
+        })),
       ],
   });
   await page.reload();
   await page.getByRole("button", { name: "Preferences", exact: true }).click();
   await page.keyboard.press("Control+k");
   const search = page.getByRole("combobox", { name: "Search commands or threads" });
+  const activeOption = page.getByRole("option", { selected: true });
+  await expect(activeOption).toHaveAttribute("id", /^command-thread-/);
+  await search.fill("local conversation");
+  await expect(activeOption).toHaveAttribute("id", "command-thread-text-thread-exact");
+  for (let index = 0; index < 15; index++) await search.press("ArrowDown");
+  const list = page.getByRole("listbox", { name: "Commands and threads" });
+  assert(await list.evaluate((element) => element.scrollTop > 0), "Keyboard selection scrolls through broader results");
+  await search.fill("  video   open ");
+  await expect(activeOption).toContainText("Open Video");
+  assert.equal(await list.evaluate((element) => element.scrollTop), 0, "A new query scrolls back to its best result");
+  await search.fill("ideas cafe\u0301");
+  await expect(activeOption).toHaveAttribute("id", "command-thread-text-thread-cafe");
+  await search.fill("Atlas rehearsal");
+  await expect(activeOption).toContainText("Search all threads");
   await search.fill("poster");
   const matches = page.getByRole("group", { name: "Recent threads" }).getByRole("option");
   assert.equal(await matches.count(), 2);

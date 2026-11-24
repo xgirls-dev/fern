@@ -161,6 +161,7 @@ body:has(.ui-resize-handle[data-resizing][aria-orientation="horizontal"]) { curs
 .ui-popover { padding: var(--ui-space-3); }
 .ui-dialog-backdrop, .ui-dialog-viewport { position: fixed; inset: 0; z-index: 450; }
 .ui-dialog-backdrop { background: var(--ui-search-scrim); backdrop-filter: blur(4px); }
+.ui-dialog-backdrop--search { backdrop-filter: none; }
 .ui-dialog-viewport { display: grid; place-items: center; padding: var(--ui-space-4); pointer-events: none; }
 .ui-dialog {
   box-sizing: border-box;

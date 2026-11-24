@@ -1,5 +1,4 @@
 import Clapperboard from "lucide-react/dist/esm/icons/clapperboard.mjs";
-import ArrowDownUp from "lucide-react/dist/esm/icons/arrow-down-up.mjs";
 import Command from "lucide-react/dist/esm/icons/command.mjs";
 import Copy from "lucide-react/dist/esm/icons/copy.mjs";
 import Download from "lucide-react/dist/esm/icons/download.mjs";
@@ -16,17 +15,17 @@ import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Dialog, DialogTitle } from "./ui/Dialog";
 import { SearchDialogField } from "./ui/SearchDialogField";
 import { shortcutLabel, shortcuts } from "../lib/workspaceNavigation";
+import { commandSearchRank, indexPaletteThreads, normalizeCommandSearch, searchPaletteThreads, type PaletteThread } from "../lib/commandSearch";
 import type { TranscriptDestination } from "../lib/textTranscript";
 
 interface CommandPaletteProps {
-  open: boolean;
   running: boolean;
   audioRunning: boolean;
   videoRunning: boolean;
   onOpenVideo: () => void;
   onStopVideo: () => void;
   textRunning: boolean;
-  threads: Array<{ id: string; title: string; updatedAt: number; archived?: boolean; excerpt?: string; folderPath?: string }>;
+  threads: readonly PaletteThread[];
   onOpenThread: (id: string) => void;
   onOpenThreadSearch: (query: string) => void;
   sidebarCollapsed: boolean;
@@ -57,7 +56,6 @@ interface PaletteAction {
 }
 
 export function CommandPalette({
-  open,
   running,
   audioRunning,
   videoRunning,
@@ -88,13 +86,9 @@ export function CommandPalette({
   const listRef = useRef<HTMLDivElement>(null);
   const keyboardNavigation = useRef(false);
   const [query, setQuery] = useState("");
-  const [activeIndex, setActiveIndex] = useState(0);
-
-  useLayoutEffect(() => {
-    if (!open) return;
-    setQuery("");
-    setActiveIndex(0);
-  }, [open]);
+  const [activeId, setActiveId] = useState<string>();
+  const threadIndex = useMemo(() => indexPaletteThreads(threads), [threads]);
+  const dateFormatter = useMemo(() => new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }), []);
 
   const actions = useMemo<PaletteAction[]>(
     () => [
@@ -193,54 +187,67 @@ export function CommandPalette({
     ],
   );
 
-  const normalized = query.trim().toLowerCase();
-  const searchAllThreads: PaletteAction = {
-    id: "search-all-threads",
-    label: "Search all threads",
-    description: "Filter by type or find archived work",
-    icon: <Search size={16} aria-hidden="true" />,
-    onSelect: () => onOpenThreadSearch(query.trim()),
-  };
-  const matchingCommands = actions.filter((action) => `${action.label} ${action.description}`.toLowerCase().includes(normalized));
-  const recentThreads: PaletteAction[] = open ? threads
-    .filter((thread) => !thread.archived && `${thread.title} ${thread.folderPath ?? ""} ${thread.excerpt ?? ""}`.toLowerCase().includes(normalized))
-    .sort((a, b) => b.updatedAt - a.updatedAt)
-    .slice(0, normalized ? 20 : 6)
-    .map((thread) => {
+  const normalized = normalizeCommandSearch(query);
+  const groups = useMemo(() => {
+    const words = normalized ? normalized.split(" ") : [];
+    const commands = normalized
+      ? actions.map((action) => ({
+          action,
+          rank: commandSearchRank(normalized, words, normalizeCommandSearch(action.label), normalizeCommandSearch(action.description)),
+        })).filter(({ rank }) => rank > 0).sort((a, b) => b.rank - a.rank)
+      : actions.map((action) => ({ action, rank: 0 }));
+    const matches = normalized
+      ? searchPaletteThreads(threadIndex.entries, normalized, words, 20)
+      : { entries: threadIndex.entries.slice(0, 3), bestRank: 1 };
+
+    const recentThreads: PaletteAction[] = matches.entries.map(({ thread, title, body, excerpt, summaryKey }) => {
       const kind = thread.id.startsWith("text-thread-") ? "Chat" : thread.id.startsWith("audio-thread-") ? "Speech" : "Image";
       const Icon = kind === "Chat" ? MessageSquare : kind === "Speech" ? AudioLines : Images;
-      const date = Number.isFinite(thread.updatedAt) ? new Date(thread.updatedAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "";
-      const duplicate = threads.some((other) => other.id !== thread.id && !other.archived && other.title === thread.title);
-      const excerpt = thread.excerpt?.trim().replace(/\s+/g, " ").slice(0, 90);
-      const description = [kind, thread.folderPath, duplicate && excerpt ? excerpt : date].filter(Boolean).join(" · ");
-      const duplicateDate = duplicate && threads.some((other) => other.id !== thread.id && !other.archived &&
-        other.title === thread.title && other.excerpt?.trim() === thread.excerpt?.trim() &&
-        Math.floor(other.updatedAt / 60_000) === Math.floor(thread.updatedAt / 60_000));
-      return { id: `thread-${thread.id}`, label: thread.title, description: duplicateDate ? `${description} · ${thread.id.slice(-6)}` : description, icon: <Icon size={16} aria-hidden="true" />, onSelect: () => onOpenThread(thread.id) };
-    }) : [];
-  const groups = [
-    { label: "Commands", actions: matchingCommands },
-    { label: "Recent threads", actions: recentThreads },
-    { label: "Thread search", actions: normalized ? [searchAllThreads] : [] },
-  ];
-  const filteredActions = groups.flatMap((group) => group.actions);
-
-  const selectedIndex = Math.min(
-    activeIndex,
-    Math.max(0, filteredActions.length - 1),
-  );
+      const date = new Date(thread.updatedAt);
+      const duplicate = (threadIndex.titles.get(thread.title) ?? 0) > 1;
+      const bodyMatch = words.some((word) => !title.includes(word) && body.includes(word));
+      const showId = (threadIndex.summaries.get(summaryKey) ?? 0) > 1;
+      const description = [
+        kind, thread.folderPath, duplicate || bodyMatch ? excerpt : undefined,
+        (duplicate || !bodyMatch) && Number.isFinite(date.getTime()) ? dateFormatter.format(date) : undefined,
+        showId ? thread.id.slice(-6) : undefined,
+      ].filter(Boolean).join(" · ");
+      return { id: `thread-${thread.id}`, label: thread.title, description, icon: <Icon size={16} aria-hidden="true" />, onSelect: () => onOpenThread(thread.id) };
+    });
+    const commandsGroup = { label: "Commands", actions: commands.map(({ action }) => action) };
+    const recentGroup = { label: "Recent threads", actions: recentThreads };
+    const result = matches.bestRank > (commands[0]?.rank ?? 0)
+      ? [recentGroup, commandsGroup]
+      : [commandsGroup, recentGroup];
+    return result.filter((group) => group.actions.length);
+  }, [actions, dateFormatter, normalized, onOpenThread, threadIndex]);
+  const searchAllThreads = useMemo<PaletteAction>(() => ({
+    id: "search-all-threads",
+    label: "Search all threads",
+    description: "Search chat messages and archived threads",
+    icon: <Search size={16} aria-hidden="true" />,
+    onSelect: () => onOpenThreadSearch(query.trim()),
+  }), [onOpenThreadSearch, query]);
+  const resultGroups = useMemo(() => normalized
+    ? [...groups, { label: "Thread search", actions: [searchAllThreads] }]
+    : groups, [groups, normalized, searchAllThreads]);
+  const filteredActions = useMemo(() => resultGroups.flatMap((group) => group.actions), [resultGroups]);
+  const selectedIndex = Math.max(0, filteredActions.findIndex((action) => action.id === activeId));
+  const selected = filteredActions[selectedIndex];
 
   useLayoutEffect(() => {
-    if (!open) { keyboardNavigation.current = false; return; }
+    if (listRef.current) listRef.current.scrollTop = 0;
+  }, [query]);
+  useLayoutEffect(() => {
     if (!keyboardNavigation.current) return;
     const list = listRef.current;
-    const selected = list?.querySelector<HTMLElement>('[aria-selected="true"]');
-    if (!list || !selected) return;
+    const row = list?.querySelector<HTMLElement>('[aria-selected="true"]');
+    if (!list || !row) return;
     const listBounds = list.getBoundingClientRect();
-    const selectedBounds = selected.getBoundingClientRect();
+    const selectedBounds = row.getBoundingClientRect();
     if (selectedBounds.top < listBounds.top) list.scrollTop -= listBounds.top - selectedBounds.top;
     else if (selectedBounds.bottom > listBounds.bottom) list.scrollTop += selectedBounds.bottom - listBounds.bottom;
-  }, [open, selectedIndex, filteredActions]);
+  }, [selected, filteredActions]);
 
   const selectAction = (action: PaletteAction | undefined) => {
     if (!action) return;
@@ -249,49 +256,38 @@ export function CommandPalette({
   };
 
   const onSearchKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
-    if (event.nativeEvent.isComposing) return;
-    if (event.key === "ArrowDown") {
+    if (event.nativeEvent.isComposing || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
       keyboardNavigation.current = true;
-      setActiveIndex((index) =>
-        Math.min(index + 1, Math.max(0, filteredActions.length - 1)),
-      );
-    } else if (event.key === "ArrowUp") {
-      event.preventDefault();
-      keyboardNavigation.current = true;
-      setActiveIndex((index) => Math.max(index - 1, 0));
+      const next = selectedIndex + (event.key === "ArrowDown" ? 1 : -1);
+      setActiveId(filteredActions[Math.max(0, Math.min(next, filteredActions.length - 1))]?.id);
     } else if (event.key === "Enter") {
       event.preventDefault();
-      selectAction(filteredActions[selectedIndex]);
+      selectAction(selected);
     }
   };
-
-  if (!open) return null;
 
   return (
     <Dialog variant="search" onClose={onClose} initialFocus={searchRef}>
       <DialogTitle className="sr-only">Commands</DialogTitle>
       <SearchDialogField
-          closeLabel="Close commands"
-          ref={searchRef}
-          value={query}
-          onChange={(event) => {
-            keyboardNavigation.current = false;
-            setQuery(event.target.value);
-            setActiveIndex(0);
-          }}
-          onKeyDown={onSearchKeyDown}
-          placeholder="Search commands or threads…"
-          aria-label="Search commands or threads"
-          role="combobox"
-          aria-expanded="true"
-          aria-controls="fern-command-options"
-          aria-autocomplete="list"
-          aria-activedescendant={
-            filteredActions[selectedIndex]
-              ? `command-${filteredActions[selectedIndex].id}`
-              : undefined
-          }
+        closeLabel="Close commands"
+        ref={searchRef}
+        value={query}
+        onChange={(event) => {
+          keyboardNavigation.current = false;
+          setQuery(event.target.value);
+          setActiveId(undefined);
+        }}
+        onKeyDown={onSearchKeyDown}
+        placeholder="Search commands or threads…"
+        aria-label="Search commands or threads"
+        role="combobox"
+        aria-expanded="true"
+        aria-controls="fern-command-options"
+        aria-autocomplete="list"
+        aria-activedescendant={selected ? `command-${selected.id}` : undefined}
       />
 
       <div
@@ -302,12 +298,9 @@ export function CommandPalette({
         aria-label="Commands and threads"
         tabIndex={-1}
       >
-        {filteredActions.length > 0 ? (
-          groups.filter((group) => group.actions.length).map((group) => <div key={group.label} role="group" aria-label={group.label}>
-            <div className="command-palette-group-label" aria-hidden="true">{group.label}</div>
-            {group.actions.map((action) => {
-              const index = filteredActions.indexOf(action);
-              return (
+        {resultGroups.map((group) => <div key={group.label} role="group" aria-label={group.label}>
+          {group.label !== "Thread search" && <div className="command-palette-group-label" aria-hidden="true">{group.label}</div>}
+          {group.actions.map((action) => (
             <button
               key={action.id}
               id={`command-${action.id}`}
@@ -315,30 +308,19 @@ export function CommandPalette({
               type="button"
               className="command-palette-action"
               role="option"
-              aria-selected={index === selectedIndex}
-              onMouseMove={() => { keyboardNavigation.current = false; setActiveIndex(index); }}
+              aria-selected={action.id === selected?.id}
+              onMouseMove={() => { keyboardNavigation.current = false; setActiveId(action.id); }}
               onClick={() => selectAction(action)}
             >
               <span className="command-palette-icon">{action.icon}</span>
               <span className="command-palette-copy">
-                <strong>{action.label}</strong>
+                <strong title={action.label}>{action.label}</strong>
                 <small>{action.description}</small>
               </span>
-              {action.shortcut ? (
-                <span className="command-palette-shortcut">
-                  {action.shortcut}
-                </span>
-              ) : null}
+              {action.shortcut && <span className="command-palette-shortcut">{action.shortcut}</span>}
             </button>
-              );
-            })}
-          </div>)
-        ) : (
-          <div className="command-palette-empty">
-            <ArrowDownUp size={17} aria-hidden="true" />
-            <span>No matching commands or threads.</span>
-          </div>
-        )}
+          ))}
+        </div>)}
       </div>
 
       <footer className="command-palette-footer">

@@ -1009,8 +1009,7 @@ export function App() {
           <button type="button" onClick={() => returnToDraft()}>Return to draft</button>
         </div>
       ) : null}
-      <CommandPalette
-        open={commandPaletteOpen}
+      {commandPaletteOpen && <CommandPalette
         threads={searchableThreads}
         onOpenThread={openThread}
         onOpenThreadSearch={searchThreadsByQuery}
@@ -1032,16 +1031,12 @@ export function App() {
         onOpenLibrary={openLibrary}
         onOpenData={openStorage}
         onOpenPreferences={openPreferences}
-        onToggleTheme={() =>
-          studio.updateSettings({
-            theme: studio.settings.theme === "dark" ? "light" : "dark",
-          })
-        }
+        onToggleTheme={toggleTheme}
         onToggleSidebar={toggleSidebar}
         onStop={() => void studio.stopGeneration()}
         onStopAudio={() => void tts.stopJob()}
         onStopText={() => void text.stop(text.status.job.threadId ?? text.activeThread.id)}
-      />
+      />}
     </div>
   );
 }
