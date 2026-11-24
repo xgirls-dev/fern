@@ -14,7 +14,7 @@ const responses = new Map<number, { queue: MarkdownQueue; receive: (response: Ch
 function markdownWorker(queue: MarkdownQueue) {
   const worker = workers.get(queue);
   if (worker) return worker;
-  const next = new Worker(new URL("../lib/chatMarkdown.worker.ts", import.meta.url), { type: "module" });
+  const next = new Worker(new URL("../lib/chatMarkdown.worker.ts", import.meta.url), { type: "module", name: queue });
   next.onmessage = ({ data }: MessageEvent<ChatMarkdownResponse>) => {
     const pending = responses.get(data.id);
     if (pending?.queue !== queue) return;
