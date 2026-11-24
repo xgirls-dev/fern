@@ -40,10 +40,21 @@ try {
   await expect(status).toHaveText("Loading model…");
   assert.equal(await page.evaluate(() => window.firstReplyFrame), true,
     "The first loading row should fit inside the conversation on its first frame");
+  update({ phase: "Checking hardware…" });
+  await expect(status).toHaveText("Checking hardware…");
+  await expect(stream).toContainText("Checking hardware…");
+  await page.clock.fastForward(25_100);
+  await expect(status).toHaveText("Still checking hardware…");
+  await expect(stream).toContainText("Still checking hardware…");
+  await expect(button("Stop generation")).toBeEnabled();
+  update({ phase: "Loading model…" });
+  await expect(status).toHaveText("Loading model…");
   await page.clock.fastForward(25_100);
   await expect(status).toHaveText("Still loading the model…");
   await expect(stream).toContainText("Still loading the model…");
   await expect(button("Stop generation")).toBeEnabled();
+  update({ phase: "Preparing conversation…" });
+  await expect(status).toHaveText("Preparing conversation…");
   update({ phase: "Waiting for the first token…" });
   await expect(status).toHaveText("Waiting for the first token…");
   await expect(stream).toContainText("Waiting for the first token…");

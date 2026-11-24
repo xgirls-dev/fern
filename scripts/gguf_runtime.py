@@ -183,6 +183,7 @@ class GGUFServer:
     def __init__(
         self, executable: Path, model: Path, projector: Path | None, device: str, backend: str,
         context_size: int = DEFAULT_CONTEXT_SIZE, *, gpu_projector: bool = False, load_options: dict[str, Any] | None = None,
+        on_phase: Callable[[str, str], None] | None = None,
     ):
         self.backend = backend
         self.device = device
@@ -207,6 +208,8 @@ class GGUFServer:
             if backend == "openvino":
                 env.update(GGML_OPENVINO_DEVICE=device)
             flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            if on_phase is not None and backend != "cpu":
+                on_phase("selecting-device", "Checking hardware…")
             discovery_started = time.perf_counter()
             selected = self._select_device(executable, env, flags)
             if backend != "cpu":
@@ -230,6 +233,8 @@ class GGUFServer:
             if gpu_projector or backend == "metal":
                 # llama.cpp emits GPU layer placement at trace verbosity.
                 command.extend(("-lv", "4"))
+            if on_phase is not None:
+                on_phase("loading-model", "Loading model…")
             server_started = time.perf_counter()
             with self.log_path.open("wb") as log:
                 self.process = subprocess.Popen(

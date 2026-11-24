@@ -70,6 +70,10 @@ def run_gguf(file: Path, device: str, projector: Path | None) -> int:
     threading.Thread(target=read_requests, daemon=True).start()
     server = None
     loaded_projector = None
+
+    def startup_phase(stage: str, text: str) -> None:
+        emit({"type": "phase", "stage": stage, "text": text})
+
     try:
         while pending := requests.get():
             request, cancellation = pending
@@ -116,11 +120,10 @@ def run_gguf(file: Path, device: str, projector: Path | None) -> int:
                     setup_started = time.perf_counter()
                     executable = ensure_runtime(runtime_root, backend, setup_progress)
                     load_timing["runtimeSetupMs"] = (time.perf_counter() - setup_started) * 1000
-                    emit({"type": "phase", "stage": "loading-model", "text": f"Loading the GGUF model with {backend}…"})
                     load_started = time.perf_counter()
                     server = GGUFServer(
                         executable, file, requested_projector, target, backend, context_size,
-                        gpu_projector=gpu_projector, load_options=load_options,
+                        gpu_projector=gpu_projector, load_options=load_options, on_phase=startup_phase,
                     )
                     load_timing.update(server.startup_timing)
                     loaded_projector = requested_projector
@@ -129,7 +132,7 @@ def run_gguf(file: Path, device: str, projector: Path | None) -> int:
                         "gguf": {"contextSize": server.context_size, "loadOptions": server.load_options},
                     }})
                     load_timing["modelReadyMs"] = (time.perf_counter() - load_started) * 1000
-                emit({"type": "phase", "stage": "preparing-conversation"})
+                emit({"type": "phase", "stage": "preparing-conversation", "text": "Preparing conversation…"})
                 try:
                     log_offset = server.log_path.stat().st_size
                 except OSError:
