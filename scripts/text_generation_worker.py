@@ -122,6 +122,7 @@ def run_gguf(file: Path, device: str, projector: Path | None) -> int:
                         executable, file, requested_projector, target, backend, context_size,
                         gpu_projector=gpu_projector, load_options=load_options,
                     )
+                    load_timing.update(server.startup_timing)
                     loaded_projector = requested_projector
                     emit({"type": "residency", "model": {
                         "backend": backend, "device": target, "enginePid": server.process.pid,
