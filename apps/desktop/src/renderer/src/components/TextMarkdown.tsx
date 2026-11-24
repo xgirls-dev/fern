@@ -202,9 +202,20 @@ export const TextMarkdown = memo(function TextMarkdown({ content, streaming = fa
   }, [blocks, cursor]);
   const hasBlocks = !!elements?.length;
   const formatting = !elements || (pending && (!hasBlocks || !receivingReply));
+  const waitingWithPreview = formatting && hasBlocks;
+  const [formattingDelayElapsed, setFormattingDelayElapsed] = useState(false);
+  useEffect(() => {
+    if (!waitingWithPreview) {
+      setFormattingDelayElapsed(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setFormattingDelayElapsed(true), 250);
+    return () => window.clearTimeout(timer);
+  }, [waitingWithPreview]);
   return <StreamingCode.Provider value={streaming}>
     {elements}
-    {formatting && <div data-chat-markdown-formatting="" data-chat-markdown-pending={!hasBlocks || undefined}>
+    {formatting && <div data-chat-markdown-formatting="" data-chat-markdown-pending={!hasBlocks || undefined}
+      hidden={waitingWithPreview && !formattingDelayElapsed}>
       <ProgressLabel className="text-thinking">Formatting response…</ProgressLabel>
     </div>}
     {hasBlocks && cursor && <span className="text-stream-cursor" data-waiting={cursor === "waiting" || undefined} aria-hidden="true" />}
