@@ -130,13 +130,16 @@ try {
     };
   });
   const sentQueries = () => page.evaluate(() => window.sentThreadQueries);
+  let workerRequested = false;
   await page.route(workerUrl, async (route) => {
+    workerRequested = true;
     await workerGate.promise;
     await route.continue();
   });
   await button("Search threads").click();
   const globalFind = page.getByRole("searchbox", { name: "Find a thread" });
-  await Promise.all([page.waitForRequest(workerUrl), globalFind.fill("Studio notebook")]);
+  await globalFind.fill("Studio notebook");
+  await expect.poll(() => workerRequested, { timeout: 10_000 }).toBe(true);
   await expect(page.locator(".thread-browser-open").filter({ hasText: "Studio notebook" })).toBeVisible();
   await globalFind.press("Enter");
   await globalFind.fill("hidden");
