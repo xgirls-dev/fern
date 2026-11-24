@@ -135,9 +135,13 @@ try {
   await button("Move", moveChat).click();
   await expectLocation("Local notes", "Studio plans", "chat");
   await page.setViewportSize({ width: 1440, height: 920 });
-  const folderIcon = await folder("Sources").locator("svg").last().boundingBox();
-  const chatIcon = await chat.locator("svg").first().boundingBox();
-  assert(Math.abs(folderIcon.x - chatIcon.x) < 1, "Sibling folders and chats should align on the same icon column.");
+  await expect.poll(async () => {
+    const [folderIcon, chatIcon] = await Promise.all([
+      folder("Sources").locator("svg").last().boundingBox(),
+      chat.locator("svg").first().boundingBox(),
+    ]);
+    return folderIcon && chatIcon ? Math.abs(folderIcon.x - chatIcon.x) : Infinity;
+  }, { message: "Sibling folders and chats should align on the same icon column after resizing." }).toBeLessThan(1);
 
   await item("Delete folder", await folderMenu("Studio plans")).click();
   const remove = page.getByRole("dialog", { name: "Delete folder", exact: true });
