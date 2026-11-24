@@ -1,4 +1,4 @@
-import { useId, useState } from "react";
+import { useId, useRef, useState } from "react";
 import MessageSquare from "lucide-react/dist/esm/icons/message-square.mjs";
 import { Button, ErrorMessage, InlineConfirmation, ModelCard, ModelCardActions, ModelCardHeading, ModelStatus } from "./ui/controls";
 import type { useTextChat } from "../hooks/useTextChat";
@@ -12,13 +12,14 @@ function gigabytes(bytes: number) {
 export function TextModelLibrary({ studio, recommendedId }: { studio: ReturnType<typeof useTextChat>; recommendedId?: string }) {
   const [removing, setRemoving] = useState<string | null>(null);
   const removalFocus = useReturnFocus();
+  const heading = useRef<HTMLHeadingElement | null>(null);
   const requirementsPrefix = useId();
   const { status, busy } = studio;
   const recommendations = status.recommendedModels ?? [];
   const ordered = recommendedId ? [...recommendations].sort((a, b) => Number(b.id === recommendedId) - Number(a.id === recommendedId)) : recommendations;
   const error = (studio.actionError?.threadId ? undefined : studio.actionError?.message) ?? studio.statusError ?? status.registryError;
   return <section aria-label="Text models">
-    <div className="models-section-heading"><div><h3>Text models</h3><p>Run private conversations on your device.</p></div><div className="text-model-import-actions">
+    <div className="models-section-heading"><div><h3 ref={heading} tabIndex={-1}>Text models</h3><p>Run private conversations on your device.</p></div><div className="text-model-import-actions">
       {window.studio.platform !== "darwin" && <Button type="button" disabled={busy} onClick={() => void studio.importModel()}>Add local model</Button>}
       {status.ggufAvailable && <Button type="button" disabled={busy} onClick={() => void studio.importModel("gguf")}>Import GGUF</Button>}
     </div></div>
@@ -71,9 +72,28 @@ export function TextModelLibrary({ studio, recommendedId }: { studio: ReturnType
         </ModelCard>;
       })}
     </div>
-    {status.models.length ? <div className="models-installed-list"><h3>Installed text models</h3>{status.models.map((model) => <article className="models-installed-row" key={model.id}>
-      <div><strong title={model.name}>{model.name}</strong><small title={model.path}>{model.installed ? model.format === "gguf" ? model.supportsVision ? "GGUF · Text and vision" : "GGUF · Text" : "Local OpenVINO model" : model.error ?? "Model files unavailable"}</small></div>
-      {removing === model.id ? <InlineConfirmation confirmLabel="Remove model" disabled={busy} onCancel={() => { setRemoving(null); removalFocus.restore(model.id); }} onConfirm={() => { void (async () => { if (await studio.deleteModel(model.id)) setRemoving(null); })(); }}>Remove from Fern? The files on disk will be kept.</InlineConfirmation> : <Button ref={removalFocus.register(model.id)} type="button" disabled={busy} aria-label={`Remove ${model.name}`} onClick={() => setRemoving(model.id)}>Remove</Button>}
-    </article>)}</div> : null}
+    {status.models.length ? <div className="models-installed-list"><h3>Local text models</h3>{status.models.map((model) => {
+      const managed = model.ownership === "managed";
+      const label = managed ? "Remove download" : "Unlink model";
+      const format = model.format === "gguf" ? model.supportsVision ? "GGUF · Text and vision" : "GGUF · Text" : "OpenVINO";
+      return <article className="models-installed-row" key={model.id}>
+        <div>
+          <strong title={model.name}>{model.name}</strong>
+          <small title={model.path}>{managed ? "Downloaded by Fern" : "Linked files"} · {model.installed ? format : model.error ?? "Model files unavailable"}</small>
+        </div>
+        {removing === model.id ? <InlineConfirmation confirmLabel={label} disabled={busy}
+          onCancel={() => { setRemoving(null); removalFocus.restore(model.id); }}
+          onConfirm={async () => {
+            if (await studio.deleteModel(model.id, managed ? "remove-download" : "unlink")) {
+              setRemoving(null);
+              heading.current?.focus({ preventScroll: true });
+            }
+          }}>
+          {managed ? "Delete this download from disk? Your chats and drafts stay." : "Unlink this model? Its files stay on disk."}
+        </InlineConfirmation> : <Button ref={removalFocus.register(model.id)} type="button" disabled={busy}
+          aria-label={managed ? `Remove download for ${model.name}` : `Unlink ${model.name}`}
+          onClick={() => setRemoving(model.id)}>{label}</Button>}
+      </article>;
+    })}</div> : null}
   </section>;
 }

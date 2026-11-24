@@ -1,4 +1,5 @@
 import hashlib
+import json
 import sys
 import tempfile
 import unittest
@@ -35,6 +36,62 @@ class FakeResponse:
 
 
 class TextModelDownloadTests(unittest.TestCase):
+    def test_gguf_removal_checks_shared_projector_and_can_retry_after_io_failure(self):
+        catalog_id = "gemma-4-e4b-gguf"
+        spec = download.model_spec(catalog_id)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            folder = root / spec["folder"]
+            folder.mkdir()
+            main, projector = download.model_files(folder, spec)
+            main.write_bytes(b"model")
+            projector.write_bytes(b"projector")
+            marker = folder / download.INSTALL_MARKER
+            marker.write_text(json.dumps({"modelId": catalog_id, "verifiedChecksums": True,
+                                          **{key: spec[key] for key in ("repo", "revision", "format")}}), encoding="utf-8")
+            model = {"id": "gemma", "path": str(main)}
+            other = {"id": "other", "name": "Another model", "path": str(root / "another.gguf"),
+                     "projectorPath": str(projector)}
+            removed = []
+            with self.assertRaisesRegex(ValueError, "Another model"):
+                download.remove_download(root, model, [model, other], removed.append)
+            self.assertTrue(main.is_file() and projector.is_file())
+            unlink = Path.unlink
+
+            def fail_on_projector(path, *args, **kwargs):
+                if path == projector:
+                    raise PermissionError("in use")
+                return unlink(path, *args, **kwargs)
+
+            with patch.object(Path, "unlink", fail_on_projector):
+                with self.assertRaisesRegex(ValueError, "Close any app using it and retry"):
+                    download.remove_download(root, model, [model], removed.append)
+            self.assertFalse(main.exists())
+            self.assertTrue(projector.is_file() and marker.is_file())
+            self.assertEqual(removed, [])
+            download.remove_download(root, model, [model], removed.append)
+            self.assertEqual(removed, ["gemma"])
+            self.assertFalse(folder.exists())
+
+    def test_removal_refuses_a_replaced_download_file_before_deleting_any_bytes(self):
+        catalog_id = "gemma-4-e4b-gguf"
+        spec = download.model_spec(catalog_id)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            folder = root / spec["folder"]
+            folder.mkdir()
+            main, projector = download.model_files(folder, spec)
+            main.write_bytes(b"model")
+            projector.mkdir()
+            marker = folder / download.INSTALL_MARKER
+            marker.write_text(json.dumps({"modelId": catalog_id, "verifiedChecksums": True,
+                                          **{key: spec[key] for key in ("repo", "revision", "format")}}), encoding="utf-8")
+            model = {"id": "gemma", "path": str(main)}
+            with self.assertRaisesRegex(ValueError, "file was moved or replaced"):
+                download.remove_download(root, model, [model], lambda _: self.fail("Model still has files"))
+            self.assertEqual(main.read_bytes(), b"model")
+            self.assertTrue(marker.is_file())
+
     def test_fresh_install_requirements_match_the_disk_check_and_projector_payload(self):
         model_id = "gemma-4-e4b-gguf"
         spec = download.model_spec(model_id)

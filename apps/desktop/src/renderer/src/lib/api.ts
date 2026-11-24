@@ -6,7 +6,7 @@ import type {
   DeviceId,
 } from "./types";
 import { repairMojibake, repairMojibakeDeep } from "./text";
-import type { GeneratedChatImage, GgufLoadOptions, TextJob, TextModel, TextPromptMessage, TextRuntimeStatus, TextSamplingOverrides } from "./textThreads";
+import type { GeneratedChatImage, GgufLoadOptions, TextJob, TextModel, TextModelRemoval, TextPromptMessage, TextRuntimeStatus, TextSamplingOverrides } from "./textThreads";
 import type { ChatImageOverrides } from "./chatImageSettings";
 import type { ChatDocument } from "./chatDocuments";
 
@@ -312,11 +312,12 @@ export function pauseTextModelDownload(jobId: string): Promise<{ modelInstall: N
   });
 }
 
-export function removeTextModel(modelId: string): Promise<{ models: TextModel[] }> {
+export function removeTextModel(modelId: string, action: TextModelRemoval):
+  Promise<Pick<TextRuntimeStatus, "models" | "recommendedModels">> {
   return requestJson("/api/text/models/remove", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ modelId }),
+    body: JSON.stringify({ modelId, action }),
   });
 }
 

@@ -11,11 +11,12 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 from threading import Event
 from typing import Callable
 
-from text_model_registry import inspect_model
+from text_model_registry import REQUIRED_FILES, inspect_model
 
 CATALOG_PATH = Path(__file__).with_name("text_model_catalog.json")
 DEFAULT_MODEL_ID = "qwen3-4b-instruct-2507"
@@ -29,6 +30,7 @@ REQUIRED_MODEL_FILES = (
     "vocab.json",
 )
 MINIMUM_FREE_BYTES = 512 * 1024 * 1024
+INSTALL_MARKER = ".fern-text-model.json"
 PREPARING_MODEL_FILES = "Preparing downloaded model files…"
 
 
@@ -98,6 +100,64 @@ def model_files(folder: Path, spec: dict) -> tuple[Path, Path | None]:
     if spec.get("format") == "gguf":
         return folder / spec["modelFile"], folder / spec["projectorFile"]
     return folder, None
+
+
+def managed_download_id(root: Path, model: dict, specs: dict) -> str | None:
+    for model_id, spec in specs.items():
+        folder = root / spec["folder"]
+        main, _ = model_files(folder, spec)
+        if Path(model["path"]) != main:
+            continue
+        marker = folder / INSTALL_MARKER
+        try:
+            if (folder.parent != root or folder.resolve() != folder or main.resolve() != main
+                    or marker.resolve() != marker or not marker.is_file()):
+                continue
+            metadata = json.loads(marker.read_text(encoding="utf-8"))
+        except (OSError, ValueError, RuntimeError):
+            continue
+        if (isinstance(metadata, dict) and metadata.get("modelId") == model_id
+                and metadata.get("verifiedChecksums") is True
+                and all(metadata.get(key) == spec[key] for key in ("repo", "revision", "format"))):
+            return model_id
+    return None
+
+
+def remove_download(root: Path, model: dict, models: list[dict], unregister: Callable[[str], None]) -> None:
+    catalog_id = managed_download_id(root, model, catalog())
+    if catalog_id is None:
+        raise ValueError("Fern could not verify this download. You can unlink the model and keep its files.")
+    spec = model_spec(catalog_id)
+    folder = root / spec["folder"]
+    with model_install_lock(root, spec):
+        if not managed_download_id(root, model, {catalog_id: spec}):
+            raise ValueError("The download changed on disk. Refresh Models and try again.")
+        for entry in models:
+            if entry["id"] == model["id"]:
+                continue
+            references = (entry.get("path"), entry.get("projectorPath"))
+            if any(path and Path(path).resolve().is_relative_to(folder) for path in references):
+                raise ValueError(f'“{entry["name"]}” uses files in this download. Unlink that model first.')
+        filenames = {file["path"] for file in spec["files"]}
+        if spec["format"] != "gguf":
+            filenames.update(REQUIRED_FILES)
+        targets = [folder / name for name in sorted(filenames)]
+        for target in targets:
+            if (not target.is_relative_to(folder) or target.resolve() != target
+                    or target.is_symlink() or (target.exists() and not target.is_file())):
+                raise ValueError("A download file was moved or replaced. Unlink the model to keep its files.")
+        for target in targets:
+            try:
+                target.unlink(missing_ok=True)
+            except OSError as error:
+                raise ValueError(f"Could not delete {target.name}. Close any app using it and retry.") from error
+        unregister(model["id"])
+        try:
+            (folder / INSTALL_MARKER).unlink(missing_ok=True)
+            folder.rmdir()
+        except OSError:
+            # The download is gone. Preserve any other files in its folder.
+            pass
 
 
 def has_partial_download(root: Path, spec: dict) -> bool:
@@ -240,7 +300,7 @@ def _install_model(model_id: str, model_root: str | Path, progress: Callable[[st
     stage = root / (spec["folder"] + ".download")
     if folder.parent != root or stage.parent != root:
         raise ValueError("Invalid text model installation path.")
-    marker = folder / ".fern-text-model.json"
+    marker = folder / INSTALL_MARKER
     if marker.is_file():
         try:
             current = json.loads(marker.read_text(encoding="utf-8"))
@@ -290,7 +350,7 @@ def _install_model(model_id: str, model_root: str | Path, progress: Callable[[st
         "tokenizersConvertedByFern": projector is None,
         "verifiedChecksums": True,
     }
-    (stage / ".fern-text-model.json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+    (stage / INSTALL_MARKER).write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
     previous = None
     if folder.exists():
         previous = root / (spec["folder"] + f".previous-{time.time_ns()}")
@@ -310,6 +370,12 @@ def install_model(model_id: str, model_root: str | Path, progress: Callable[[str
     spec = model_spec(model_id)
     root = Path(model_root).resolve()
     root.mkdir(parents=True, exist_ok=True)
+    with model_install_lock(root, spec):
+        return _install_model(model_id, root, progress, pause=pause)
+
+
+@contextmanager
+def model_install_lock(root: Path, spec: dict):
     lock_path = root / (spec["folder"] + ".install.lock")
     with lock_path.open("a+b") as lock_file:
         lock_file.seek(0, os.SEEK_END)
@@ -325,9 +391,9 @@ def install_model(model_id: str, model_root: str | Path, progress: Callable[[str
                 import fcntl
                 fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except (OSError, ImportError) as error:
-            raise RuntimeError("This text model is already being installed by another Fern process.") from error
+            raise RuntimeError("Another Fern process is already changing this text model.") from error
         try:
-            return _install_model(model_id, root, progress, pause=pause)
+            yield
         finally:
             if sys.platform == "win32":
                 import msvcrt
@@ -342,7 +408,7 @@ def installed_model(model_id: str, model_root: str | Path) -> bool:
     spec = model_spec(model_id)
     folder = Path(model_root).resolve() / spec["folder"]
     try:
-        metadata = json.loads((folder / ".fern-text-model.json").read_text(encoding="utf-8"))
+        metadata = json.loads((folder / INSTALL_MARKER).read_text(encoding="utf-8"))
         if spec.get("format") == "gguf":
             return metadata.get("modelId") == model_id and metadata.get("revision") == spec["revision"] and all(
                 (folder / file["path"]).stat().st_size == file["size"] for file in spec["files"]
