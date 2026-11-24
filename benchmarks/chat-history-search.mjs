@@ -16,6 +16,8 @@ const runs = positiveInteger("FERN_BENCH_RUNS", 5);
 const warmRuns = positiveInteger("FERN_BENCH_WARM_RUNS", 20);
 const reopen = process.env.FERN_BENCH_SEARCH_REOPEN === "1";
 const trace = process.env.FERN_BENCH_SEARCH_TRACE === "1";
+const coldPauseMs = Number(process.env.FERN_BENCH_SEARCH_COLD_PAUSE_MS ?? 0);
+assert(Number.isSafeInteger(coldPauseMs) && coldPauseMs >= 0, "FERN_BENCH_SEARCH_COLD_PAUSE_MS must be a nonnegative integer.");
 const opener = process.env.FERN_BENCH_SEARCH_OPENER ?? "pointer";
 const input = process.env.FERN_BENCH_SEARCH_INPUT ?? "fill";
 assert(["pointer", "keyboard"].includes(opener), "Choose pointer or keyboard for FERN_BENCH_SEARCH_OPENER.");
@@ -110,6 +112,37 @@ async function openElectron(scratch) {
     await app.close().catch(() => {});
     throw error;
   }
+}
+
+async function measureOpen(openerButton, field) {
+  await openerButton.evaluate((button) => {
+    // A native button dispatches click for both pointer and Enter activation.
+    button.addEventListener("click", () => {
+      const start = performance.now();
+      window.fernHistoryOpen = new Promise((resolve) => {
+        let frame;
+        const timeout = setTimeout(() => {
+          cancelAnimationFrame(frame);
+          resolve(null);
+        }, 30_000);
+        const tick = () => {
+          if (document.activeElement?.matches(".thread-browser input[type=search]")) {
+            clearTimeout(timeout);
+            resolve(performance.now() - start);
+          } else {
+            frame = requestAnimationFrame(tick);
+          }
+        };
+        frame = requestAnimationFrame(tick);
+      });
+    }, { capture: true, once: true });
+  });
+  if (opener === "keyboard") await openerButton.press("Enter");
+  else await openerButton.click();
+  await expect(field).toBeFocused();
+  const elapsed = await field.page().evaluate(() => window.fernHistoryOpen);
+  assert(Number.isFinite(elapsed), "Search did not report a focused frame.");
+  return elapsed;
 }
 
 async function measure(field, query) {
@@ -212,20 +245,20 @@ try {
       if (trace) await page.evaluate(() => performance.mark("fern:measure-thread-search"));
       await expect(page.getByRole("textbox", { name: "Message", exact: true })).toHaveValue(retainedDraft);
       const openSearch = page.getByRole("button", { name: "Search threads", exact: true });
-      const open = () => opener === "keyboard" ? openSearch.press("Enter") : openSearch.click();
-      await open();
       const field = page.getByRole("searchbox", { name: "Find a thread", exact: true });
-      await expect(field).toBeFocused();
-      cold.push(await measure(field, queries[0]));
+      const openToFocusFrameMs = await measureOpen(openSearch, field);
+      if (coldPauseMs) await new Promise((resolve) => setTimeout(resolve, coldPauseMs));
+      cold.push({ openToFocusFrameMs, ...await measure(field, queries[0]) });
       for (let index = 0; index < warmRuns; index += 1) {
+        let opening;
         if (reopen) {
           await field.press("Escape");
           await expect(field).toHaveCount(0);
-          await open();
+          opening = { openToFocusFrameMs: await measureOpen(openSearch, field) };
         }
         await expect(field).toBeFocused();
         if (!reopen && input === "keys") await field.press("ControlOrMeta+a");
-        warm.push(await measure(field, queries[(index + 1) % queries.length]));
+        warm.push({ ...opening, ...await measure(field, queries[(index + 1) % queries.length]) });
       }
       const lastQuery = queries[warmRuns % queries.length];
       await field.press("Enter");
@@ -240,7 +273,7 @@ try {
   }
   console.log(JSON.stringify({
     mode: mode === "renderer" ? mode : executable ? "packaged-electron" : "built-electron",
-    revision, startedAt, visible, userAgent, opener, input, reopen, trace,
+    revision, startedAt, visible, userAgent, opener, input, reopen, trace, coldPauseMs,
     host: { os: os.version(), arch: os.arch(), cpu: os.cpus()[0]?.model, cores: os.availableParallelism(), memoryBytes: os.totalmem() },
     fixture: { threads: threads.length, messages: threads.reduce((count, thread) => count + thread.messages.length, 0) },
     summary: { cold: summarize(cold), warm: summarize(warm) }, cold, warm,

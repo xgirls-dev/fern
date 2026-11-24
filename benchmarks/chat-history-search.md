@@ -29,8 +29,11 @@ FERN_E2E_VISIBLE=1 FERN_BENCH_SEARCH_INPUT=keys node benchmarks/chat-history-sea
 
 Set `FERN_BENCH_SEARCH_REOPEN=1` to close and reopen the dialog before each warm query. This measures a new search after returning to the chat. The default keeps the dialog open between queries.
 
+Set `FERN_BENCH_SEARCH_COLD_PAUSE_MS=150` to wait 150 ms after the first focused frame before entering the cold query. The default has no added pause. Compare these cases separately to see how startup overlaps the time before typing.
+
 ## Read the report
 
+- **Open to focused frame** measures search activation to the first animation frame with focus in the field. It is recorded on the initial open and on each measured reopen.
 - **First frame** is the time from the input event to the next animation frame. **Longest frame gap** tracks stalls until the search settles.
 - **First result frame** is the first frame at which the expected row is available. **Complete frame** is the first such frame after message search finishes. A long total can coexist with a responsive search field.
 - **Enter query** measures the time from the first input event until the full phrase is in the field. It includes the driver's timing between key events. Use **Complete after query** to compare the wait after the last character. Compare runs with the same opener, input method, and window visibility.
@@ -106,3 +109,17 @@ On November 24, 2026, the timing build based on `c5e02f8` ran five cold searches
 | Input to complete frame | 154.6 | 79.3 |
 
 Cold search sent 99 histories and parsed one Markdown field per run. Warm reopen queries sent zero changed histories. The cold worker dispatch interval was longer than the scan in all five runs. Result ordering and React commit were smaller costs for this fixture. The longest frame gap was 31.8 ms cold and 33.1 ms warm.
+
+## Open and prepare search
+
+Five alternating pairs on the same Mac compared `dfcd3e7` with a direct dialog that starts the search worker during browser idle time. Each fresh source-built Electron window ran one cold query and four warm reopens. There was no added pause before the first query. The 100 chats and 3,168 messages were identical.
+
+| Measurement (ms) | Baseline | Direct dialog with idle worker startup |
+| --- | ---: | ---: |
+| Cold open to focused frame, median | 348.7 | 48.6 |
+| Cold complete after query, median | 150.2 | 103.7 |
+| Cold worker dispatch, median | 71.4 | 12.7 |
+| Cold longest query frame gap | 25.5 | 44.9 |
+| Warm reopen complete, p95 | 70.1 | 76.9 |
+
+The direct dialog avoids a Suspense wait before focusing the field. The worker starts after opening if the browser has idle time. Chat history is posted with the first query. In a separate five-pair trial with the original dialog and a 150 ms pause after focus, starting the worker early reduced median cold query completion from 147.0 to 98.5 ms. Measurements use synthetic history and a visible source build.

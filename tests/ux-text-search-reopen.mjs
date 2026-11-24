@@ -31,6 +31,8 @@ const noMatches = dialog.getByRole("status").filter({ hasText: "No matching thre
 const searching = dialog.getByRole("status").filter({ hasText: "Searching chat messages" });
 const prompt = page.getByRole("log", { name: "Conversation" }).locator('[data-chat-message="question"]');
 const workerUpdates = () => page.evaluate(() => window.searchUpdates);
+const searchWorkers = () => page.workers().filter((worker) =>
+  /\/(?:assets\/threadSearch\.worker-[^/]+\.js|src\/lib\/threadSearch\.worker\.ts)(?:\?.*)?$/.test(worker.url()));
 const openSearch = async (query) => {
   await button("Search threads").click();
   await field.fill(query);
@@ -64,7 +66,12 @@ try {
   await page.route("**/api/text/job", (route) => route.fulfill({ json: state.textStatus.job }));
   await trackWorkers();
 
-  await openSearch("oxide glaze sample");
+  assert.equal(searchWorkers().length, 0, "Boot should leave the search worker unloaded");
+  await button("Search threads").click();
+  await expect(field).toBeFocused();
+  await expect.poll(() => searchWorkers().length).toBe(1);
+  assert.deepEqual(await workerUpdates(), [], "Opening search should leave chat history in the renderer");
+  await field.fill("oxide glaze sample");
   await expect(result(title)).toContainText("Oxide glaze sample.");
   assert.deepEqual((await workerUpdates()).at(-1).updated, [reference, notebook].sort());
   assert(await savedTextWorkspace(page), "Search should use the migrated chat workspace.");

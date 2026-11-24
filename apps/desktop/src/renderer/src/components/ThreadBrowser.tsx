@@ -49,11 +49,17 @@ export function ThreadBrowser({
   const noun = onNewChat ? "chat" : scope ? threadNouns[scope.kind] : "thread";
   const searchLabel = `Find ${scope && scope.kind !== "Chat" ? "an" : "a"} ${noun}`;
   const needle = query.trim();
-  const searching = !!needle;
   const pattern = chatSearchPattern(needle);
   const includesQuery = (value: string | undefined) => value !== undefined && value.normalize().search(pattern) !== -1;
-  const searchMessages = searching && (selectedKind === "All" || selectedKind === "Chat") && threads.some((thread) => thread.messages?.length);
-  const { matches, timing, loading, failed } = useThreadSearch(searchSession, threads, searchMessages ? needle : "");
+  const canSearchMessages = Boolean(searchSession) && (selectedKind === "All" || selectedKind === "Chat") &&
+    threads.some((thread) => thread.messages?.length);
+  const { matches, timing, loading, failed } = useThreadSearch(searchSession, threads, canSearchMessages ? needle : "");
+  useEffect(() => {
+    if (!searchSession || !canSearchMessages) return;
+    // Load the search code in an idle interval. Chat history is sent only with a query.
+    const callback = window.requestIdleCallback(searchSession.prepare);
+    return () => window.cancelIdleCallback(callback);
+  }, [canSearchMessages, searchSession]);
   const orderingStarted = timing ? performance.now() : 0;
   const filtered = threads.flatMap((thread) => {
     if (selectedKind !== "All" && threadKind(thread.id) !== selectedKind) return [];
