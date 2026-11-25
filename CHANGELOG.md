@@ -27,6 +27,7 @@ lands directly on `main` instead of through labeled pull requests.
 - Keep Stop responsive while Fern reads a large chat document.
 - Stop a GGUF load promptly when the model server is still starting.
 - Use the GGUF engine to detect its own hardware and avoid a text worker startup stall on Windows.
+- Load saved chat images once Fern connects to its local service when it reopens.
 
 ## [0.1.48] - 2026-11-20
 

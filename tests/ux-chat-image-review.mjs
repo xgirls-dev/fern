@@ -34,6 +34,7 @@ const legacyTextWorkspace = { activeId: id, threads: [{
 const { page, state, errors, dir, close } = await fixture({
   viewport: { width: 1440, height: 920 },
   legacyTextWorkspace,
+  holdApiOnReload: true,
   textStatus: {
     models: [{ id: "gemma", name: "Gemma", installed: true, format: "gguf", supportsVision: true }],
     ggufAvailable: true, runtimeAvailable: true, job: { id: null, status: "idle" },
@@ -41,13 +42,27 @@ const { page, state, errors, dir, close } = await fixture({
 });
 try {
   let redMissing = false;
+  let connecting = false;
+  const prematureRequests = [];
   for (const { name, color } of [...posters, archivedPoster]) {
-    await page.route(`**/outputs/${name}*`, (route) => redMissing && name === posters[0].name
-      ? route.fulfill({ status: 404 })
-      : route.fulfill({ contentType: "image/svg+xml", body: `<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512"><rect width="512" height="512" fill="#efdfc0"/><circle cx="256" cy="256" r="140" fill="${color}"/></svg>` }));
+    await page.route(`**/outputs/${name}*`, (route) => {
+      if (connecting) prematureRequests.push(name);
+      return connecting || (redMissing && name === posters[0].name)
+        ? route.fulfill({ status: 404 })
+        : route.fulfill({ contentType: "image/svg+xml", body: `<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512"><rect width="512" height="512" fill="#efdfc0"/><circle cx="256" cy="256" r="140" fill="${color}"/></svg>` });
+    });
   }
+  connecting = true;
+  await page.evaluate(() => sessionStorage.setItem("fern-fixture-hold-api", "1"));
   await page.reload();
   await page.getByRole("button", { name: "Text thread: Poster", exact: true }).click();
+  await expect(page.getByText("Opening saved image…", { exact: true })).toHaveCount(posters.length);
+  assert.deepEqual(prematureRequests, []);
+  connecting = false;
+  await page.evaluate(() => {
+    sessionStorage.removeItem("fern-fixture-hold-api");
+    window.dispatchEvent(new Event("fern-fixture-connect-api"));
+  });
   const open = page.getByRole("button", { name: "Review image 1: Red circle poster", exact: true });
   await open.waitFor();
   assert.equal(await page.getByText(/Image checked/).count(), 1);

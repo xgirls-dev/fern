@@ -1,4 +1,4 @@
-import { useCallback, useDeferredValue, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type Ref } from "react";
+import { useCallback, useDeferredValue, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type Ref } from "react";
 import Plus from "lucide-react/dist/esm/icons/plus.mjs";
 import ArrowDown from "lucide-react/dist/esm/icons/arrow-down.mjs";
 import RotateCcw from "lucide-react/dist/esm/icons/rotate-ccw.mjs";
@@ -42,7 +42,7 @@ import LoaderCircle from "lucide-react/dist/esm/icons/loader-circle.mjs";
 import type { useTextChat } from "../hooks/useTextChat";
 import { useTextScroll } from "../hooks/useTextScroll";
 import { useTextDraftField } from "../hooks/useTextDraftField";
-import { resolveAssetUrl } from "../lib/api";
+import { getApiBaseUrl, resolveAssetUrl, subscribeToApiBaseUrl } from "../lib/api";
 import type { ChatSearchMatch } from "../lib/chatSearch";
 import { notify } from "../lib/notifications";
 import { canContinueTextReply, countTextPromptCharacters, findChatImage, latestTextPrompt, matchesTextMessage, replyVersions, resolveTextModel, savedVersionForDeletedReply, showReplyVersion, TEXT_MESSAGE_CHARACTER_LIMIT, textModelReadiness, textPromptExceedsLimit, type GeneratedChatImage, type TextMessage } from "../lib/textThreads";
@@ -154,16 +154,19 @@ function ChatImage({ image, ordinal, checked, checkStatus, onOpen, onRetryCheck,
   onInclude?: () => void;
   showFindCaption?: boolean;
 }) {
-  const [failed, setFailed] = useState(false);
+  const origin = useSyncExternalStore(subscribeToApiBaseUrl, getApiBaseUrl);
+  const [failedSource, setFailedSource] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
+  const source = origin ? resolveAssetUrl(`/outputs/${encodeURIComponent(image.name)}`, String(revision)) : null;
+  const failed = source !== null && source === failedSource;
   const subject = image.prompt.trim().slice(0, 140) || image.name;
   return <figure className="text-generated-artifact">
-    {failed ? <div className="text-generated-unavailable">
+    {!source ? <div className="text-generated-unavailable" role="status">Opening saved image…</div> : failed ? <div className="text-generated-unavailable">
       <ImageOff size={18} aria-hidden="true" />
       <span role="status">Image unavailable. The file may have been moved or deleted.</span>
-      <Button variant="secondary" onClick={() => { setFailed(false); setRevision((value) => value + 1); }}>Retry preview</Button>
+      <Button variant="secondary" onClick={() => setRevision((value) => value + 1)}>Retry preview</Button>
     </div> : <button type="button" className="text-generated-image" aria-label={`Review image ${ordinal}: ${subject}`} onClick={onOpen}>
-      <img src={resolveAssetUrl(`/outputs/${encodeURIComponent(image.name)}`, String(revision))} alt={`Generated image ${ordinal}. Prompt: ${subject}`} width={image.width} height={image.height} onError={() => setFailed(true)} />
+      <img src={source} alt={`Generated image ${ordinal}. Prompt: ${subject}`} width={image.width} height={image.height} onError={() => setFailedSource(source)} />
     </button>}
     {!failed && <figcaption>
       {(checked || checkStatus || onRetryCheck || contextLabel) && <span className="text-artifact-status">
@@ -175,7 +178,7 @@ function ChatImage({ image, ordinal, checked, checkStatus, onOpen, onRetryCheck,
       <span className="text-artifact-metadata">{[image.modelLabel, `${image.width} × ${image.height}`].filter(Boolean).join(" · ")}</span>
     </figcaption>}
     {showFindCaption && <p className="text-find-image-caption" data-find-target>{image.prompt}</p>}
-    {!failed && !checkStatus && (onRetryCheck || onInclude) ? <div className="text-artifact-actions">
+    {source && !failed && !checkStatus && (onRetryCheck || onInclude) ? <div className="text-artifact-actions">
       {onRetryCheck ? <Button variant="secondary" disabled={!canRetryCheck} onClick={(event) => {
         event.currentTarget.closest<HTMLElement>("[data-chat-message]")?.focus({ preventScroll: true });
         onRetryCheck();
