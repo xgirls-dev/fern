@@ -252,27 +252,37 @@ class GGUFCompletionTests(unittest.TestCase):
             {"op": "generate", "contextSize": 4096, "messages": [{"role": "user", "content": "Another question."}]},
             {"op": "shutdown"},
         ]
-        stream = io.StringIO("".join(json.dumps(request) + "\n" for request in requests))
-        engines = [Mock(backend="cpu", gpu_projector=False, load_options={}, startup_timing={}) for _ in range(2)]
-        for pid, engine in enumerate(engines, start=42):
-            engine.context_size = 4096
-            engine.process.poll.return_value = None
-            engine.process.pid = pid
-            engine.generate.side_effect = lambda *_args: {"type": "result", "runtimeTiming": {}}
-        with (
-            patch.dict(os.environ, {"FERN_GGUF_RUNTIME_ROOT": "scratch"}),
-            patch("text_generation_worker.sys.platform", "darwin"),
-            patch("text_generation_worker.sys.stdin", stream),
-            patch("text_generation_worker.emit") as emit,
-            patch("gguf_runtime.ensure_runtime", return_value=Path("llama-server")),
-            patch("gguf_runtime.GGUFServer", side_effect=engines) as load,
+        for platform, device, backends in (
+            ("darwin", "CPU", ["cpu", "cpu"]),
+            ("win32", "AUTO", ["openvino", "vulkan"]),
         ):
-            projector = Path("projector.gguf")
-            self.assertEqual(run_gguf(Path("model.gguf"), "CPU", projector), 0)
-        self.assertEqual([call.args[2] for call in load.call_args_list], [None, projector])
-        self.assertEqual([engine.generate.call_count for engine in engines], [1, 2])
-        residents = [call.args[0]["model"] for call in emit.call_args_list if call.args[0]["type"] == "residency"]
-        self.assertEqual([record and record["enginePid"] for record in residents], [42, None, 43])
+            with self.subTest(platform=platform, device=device):
+                stream = io.StringIO("".join(json.dumps(request) + "\n" for request in requests))
+                engines = [
+                    Mock(backend=backend, context_size=4096, gpu_projector=False, load_options={}, startup_timing={})
+                    for backend in backends
+                ]
+                for pid, engine in enumerate(engines, start=42):
+                    engine.process.poll.return_value = None
+                    engine.process.pid = pid
+                    engine.generate.side_effect = lambda *_args: {"type": "result", "runtimeTiming": {}}
+                with (
+                    patch.dict(os.environ, {"FERN_GGUF_RUNTIME_ROOT": "scratch"}),
+                    patch("text_generation_worker.sys.platform", platform),
+                    patch("text_generation_worker.sys.stdin", stream),
+                    patch("text_generation_worker.emit") as emit,
+                    patch("gguf_runtime.ensure_runtime", return_value=Path("llama-server")),
+                    patch("gguf_runtime.GGUFServer", side_effect=engines) as load,
+                ):
+                    projector = Path("projector.gguf")
+                    self.assertEqual(run_gguf(Path("model.gguf"), device, projector), 0)
+                self.assertEqual([(call.args[2], call.args[4]) for call in load.call_args_list],
+                                 list(zip([None, projector], backends)))
+                self.assertEqual([engine.generate.call_count for engine in engines], [1, 2])
+                residents = [
+                    call.args[0]["model"] for call in emit.call_args_list if call.args[0]["type"] == "residency"
+                ]
+                self.assertEqual([record and record["enginePid"] for record in residents], [42, None, 43])
 
     def test_worker_reuses_engine_for_reply_settings_and_reloads_for_load_settings(self) -> None:
         from text_generation_worker import run_gguf

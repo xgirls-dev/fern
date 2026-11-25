@@ -95,11 +95,18 @@ def run_gguf(file: Path, device: str, projector: Path | None) -> int:
                 # Importing Python OpenVINO here duplicates that check and can stall
                 # the worker during NumPy initialization on Windows.
                 target = "CPU" if device == "CPU" else "GPU"
+                same_configuration = (
+                    server is not None and server.process is not None and server.process.poll() is None
+                    and server.context_size == context_size and server.load_options == load_options
+                )
                 if sys.platform == "darwin":
                     backend = "cpu" if target == "CPU" else "metal"
                 elif vision:
                     # The pinned OpenVINO build cannot prefill Gemma 4 vision.
                     backend = "cpu" if target == "CPU" else "vulkan"
+                elif same_configuration and server.backend == "vulkan":
+                    # The vision runtime also handles plain text. Keep its model loaded.
+                    backend = "vulkan"
                 else:
                     backend = "openvino"
                 emit({"type": "runtime", "backend": backend, "device": target})
@@ -109,8 +116,7 @@ def run_gguf(file: Path, device: str, projector: Path | None) -> int:
                     raise ValueError("This image conversation requires GPU vision. Select Available GPU in Preferences.")
                 load_timing = {}
                 if (
-                    server is None or server.process is None or server.process.poll() is not None
-                    or server.backend != backend or server.context_size != context_size or server.load_options != load_options
+                    not same_configuration or server.backend != backend
                     or (vision and (loaded_projector != requested_projector or server.gpu_projector != gpu_projector))
                 ):
                     if server is not None:
