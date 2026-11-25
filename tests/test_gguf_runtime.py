@@ -210,7 +210,7 @@ class GGUFCompletionTests(unittest.TestCase):
         requests.append({"op": "shutdown"})
         stream = io.StringIO("".join(json.dumps(request) + "\n" for request in requests))
         phases = []
-        engine = Mock(backend="cpu" if sys.platform == "darwin" else "openvino",
+        engine = Mock(backend="openvino",
                       context_size=4096, gpu_projector=False, load_options={}, startup_timing={"serverReadyMs": 500})
         engine.process.poll.return_value = None
         engine.process.pid = 42
@@ -222,19 +222,22 @@ class GGUFCompletionTests(unittest.TestCase):
 
         with (
             patch.dict(os.environ, {"FERN_GGUF_RUNTIME_ROOT": "scratch"}),
+            patch("text_generation_worker.sys.platform", "win32"),
             patch("text_generation_worker.sys.stdin", stream),
-            patch("text_generation_worker.resolve_text_device", return_value="CPU"),
+            patch("text_generation_worker.resolve_text_device") as python_probe,
             patch("text_generation_worker.emit", side_effect=phases.append),
             patch("text_generation_worker.time.perf_counter", side_effect=[10, 10.125, 10.25, 10.875]),
             patch("gguf_runtime.ensure_runtime", return_value=Path("llama-server")) as setup,
             patch("gguf_runtime.GGUFServer", side_effect=start_engine),
         ):
-            self.assertEqual(run_gguf(Path("model.gguf"), "CPU", None), 0)
+            self.assertEqual(run_gguf(Path("model.gguf"), "AUTO", None), 0)
+        python_probe.assert_not_called()
         setup.assert_called_once()
+        self.assertEqual(setup.call_args.args[1], "openvino")
         self.assertEqual([event["text"] for event in phases if event["type"] == "phase" and "text" in event],
                          ["Loading model…", "Preparing conversation…", "Preparing conversation…"])
         self.assertEqual([event["model"] for event in phases if event["type"] == "residency"],
-                         [{"backend": engine.backend, "device": "CPU", "enginePid": 42,
+                         [{"backend": engine.backend, "device": "GPU", "enginePid": 42,
                            "gguf": {"contextSize": 4096, "loadOptions": {}}}])
         self.assertEqual([event["runtimeTiming"] for event in phases if event["type"] == "result"], [
             {"prefillMs": 10, "runtimeSetupMs": 125, "modelReadyMs": 625, "serverReadyMs": 500},
@@ -295,7 +298,6 @@ class GGUFCompletionTests(unittest.TestCase):
         with (
             patch.dict(os.environ, {"FERN_GGUF_RUNTIME_ROOT": "scratch"}),
             patch("text_generation_worker.sys.stdin", stream),
-            patch("text_generation_worker.resolve_text_device", return_value="CPU"),
             patch("text_generation_worker.emit") as emit,
             patch("gguf_runtime.ensure_runtime", return_value=Path("llama-server")),
             patch("gguf_runtime.GGUFServer", side_effect=load),
