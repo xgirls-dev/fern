@@ -284,6 +284,59 @@ class GGUFCompletionTests(unittest.TestCase):
                 ]
                 self.assertEqual([record and record["enginePid"] for record in residents], [42, None, 43])
 
+    def test_worker_recovers_one_openvino_gpu_shape_error_before_streaming(self) -> None:
+        from gguf_runtime import GGUFComputeError
+        from text_generation_worker import run_gguf
+
+        first = {"op": "generate", "contextSize": 4096, "messages": [{"role": "user", "content": "A long prompt."}]}
+        follow_up = {**first, "messages": [{"role": "user", "content": "Another question."}]}
+        cases = (
+            ("GPU", False, "Argument shapes are inconsistent.", ["openvino", "vulkan"], 2),
+            ("GPU", True, "Argument shapes are inconsistent.", ["openvino"], 0),
+            ("GPU", False, "An unrelated compute error.", ["openvino"], 0),
+            ("CPU", False, "Argument shapes are inconsistent.", ["openvino"], 0),
+        )
+
+        for device, streaming, detail, expected, recovered in cases:
+            with self.subTest(device=device, streaming=streaming, detail=detail):
+                requests = [first, *([follow_up] if recovered else []), {"op": "shutdown"}]
+                stream = io.StringIO("".join(json.dumps(request) + "\n" for request in requests))
+                engines = [
+                    Mock(backend=backend, context_size=4096, load_options={}, startup_timing={})
+                    for backend in ("openvino", "vulkan")
+                ]
+                openvino, vulkan = engines
+                for pid, engine in enumerate(engines, 51):
+                    engine.process.poll.return_value = None
+                    engine.process.pid = pid
+                    engine.log_path.stat.return_value.st_size = 22
+
+                def reject(_request, _emit, cancellation):
+                    cancellation.streaming = streaming
+                    raise GGUFComputeError("Compute error.")
+
+                openvino.generate.side_effect = reject
+                openvino.runtime_log_tail.return_value = detail
+                vulkan.generate.side_effect = lambda *_args: {"type": "result", "runtimeTiming": {}}
+                with (
+                    patch.dict(os.environ, {"FERN_GGUF_RUNTIME_ROOT": "scratch"}),
+                    patch("text_generation_worker.sys.platform", "win32"),
+                    patch("text_generation_worker.sys.stdin", stream),
+                    patch("text_generation_worker.emit") as emit,
+                    patch("gguf_runtime.ensure_runtime", return_value=Path("llama-server")) as setup,
+                    patch("gguf_runtime.GGUFServer", side_effect=engines),
+                ):
+                    self.assertEqual(run_gguf(Path("model.gguf"), device, None), 0)
+                self.assertEqual([call.args[1] for call in setup.call_args_list], expected)
+                self.assertEqual(vulkan.generate.call_count, recovered)
+                event_types = [call.args[0]["type"] for call in emit.call_args_list]
+                self.assertEqual(event_types.count("result"), recovered)
+                self.assertEqual(event_types.count("error"), int(not recovered))
+                if recovered:
+                    openvino.close.assert_called_once_with(force=True)
+                    self.assertEqual([call.args[0] for call in vulkan.generate.call_args_list], [first, follow_up])
+                    openvino.runtime_log_tail.assert_called_once_with(after=22)
+
     def test_worker_reuses_engine_for_reply_settings_and_reloads_for_load_settings(self) -> None:
         from text_generation_worker import run_gguf
         base = {"op": "generate", "contextSize": 8192, "messages": [{"role": "user", "content": "Hello."}]}
