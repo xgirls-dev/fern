@@ -82,9 +82,10 @@ def run_gguf(file: Path, device: str, projector: Path | None) -> int:
             try:
                 if request.get("op") == "shutdown":
                     return 0
-                if request.get("op") != "generate":
+                load_only = request.get("op") == "load"
+                if not load_only and request.get("op") != "generate":
                     raise ValueError("Unsupported text worker request.")
-                vision = bool(request.get("tools")) or any(message.get("imagePath") for message in request["messages"])
+                vision = not load_only and (bool(request.get("tools")) or any(message.get("imagePath") for message in request["messages"]))
                 context_size = request.get("contextSize", DEFAULT_CONTEXT_SIZE)
                 load_options = request.get("loadOptions") or {}
                 if vision and not projector:
@@ -154,6 +155,9 @@ def run_gguf(file: Path, device: str, projector: Path | None) -> int:
                             "gguf": {"contextSize": server.context_size, "loadOptions": server.load_options},
                         }})
                         load_timing["modelReadyMs"] = (time.perf_counter() - load_started) * 1000
+                    if load_only:
+                        cancellation.check()
+                        return {"type": "result", "backend": engine, "device": target, "runtimeTiming": load_timing}
                     emit({"type": "phase", "stage": "preparing-conversation", "text": "Preparing conversation…"})
                     try:
                         log_offset = server.log_path.stat().st_size
@@ -236,7 +240,8 @@ def run(model_path: str, device: str, projector_path: str = "") -> int:
             request = json.loads(line)
             if request.get("op") == "shutdown":
                 return 0
-            if request.get("op") != "generate":
+            load_only = request.get("op") == "load"
+            if not load_only and request.get("op") != "generate":
                 raise ValueError("Unsupported text worker request.")
             emit({"type": "runtime", "backend": "openvino", "device": device})
             preparing = {"type": "phase", "stage": "preparing-conversation"}
@@ -247,6 +252,9 @@ def run(model_path: str, device: str, projector_path: str = "") -> int:
                 emit({"type": "residency", "model": {"backend": "openvino", "device": device}})
                 preparing["text"] = "Model ready. Preparing the conversation…"
 
+            if load_only:
+                emit({"type": "result", "backend": "openvino", "device": device})
+                continue
             emit(preparing)
 
             messages = request["messages"]

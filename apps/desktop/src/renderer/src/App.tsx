@@ -1060,7 +1060,8 @@ export function App() {
         onOpenThreadSearch={searchThreadsByQuery}
         running={studio.running}
         audioRunning={tts.status.status === "running" || tts.status.status === "setting_up" || tts.status.status === "stopping"}
-        textRunning={text.status.job.status === "running" || text.threads.some((thread) => !!thread.pendingJobId)}
+        textRunning={!!text.submittingModelLoad || text.status.job.status === "running" || text.threads.some((thread) => !!thread.pendingJobId)}
+        textModelLoading={!!text.submittingModelLoad || (text.status.job.status === "running" && text.status.job.modelLoad === true)}
         sidebarCollapsed={sidebarIsCollapsed}
         onClose={() => setCommandPaletteOpen(false)}
         onNewRender={newThread}
@@ -1080,7 +1081,7 @@ export function App() {
         onToggleSidebar={toggleSidebar}
         onStop={() => void studio.stopGeneration()}
         onStopAudio={() => void tts.stopJob()}
-        onStopText={() => void text.stop(text.status.job.threadId ?? text.activeThread.id)}
+        onStopText={() => void text.stop(text.submittingModelLoad?.threadId ?? text.status.job.threadId ?? text.activeThread.id)}
       />}
     </div>
   );

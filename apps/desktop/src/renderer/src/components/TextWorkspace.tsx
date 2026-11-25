@@ -240,6 +240,11 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   const contextSetting = useRef<HTMLInputElement>(null);
   const modelSetting = useRef<HTMLButtonElement>(null);
   const manageModels = useRef<HTMLButtonElement>(null);
+  const loadModelControl = useRef<HTMLButtonElement | null>(null);
+  const bindLoadModel = useCallback((button: HTMLButtonElement | null) => {
+    if (!button && loadModelControl.current === document.activeElement) manageModels.current?.focus({ preventScroll: true });
+    loadModelControl.current = button;
+  }, []);
   const unloadModelControl = useRef<HTMLButtonElement | null>(null);
   const bindUnloadModel = useCallback((button: HTMLButtonElement | null) => {
     if (!button && unloadModelControl.current === document.activeElement) manageModels.current?.focus({ preventScroll: true });
@@ -312,7 +317,11 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
     setFindRevision((value) => value + 1);
     onFindRequestHandled();
   }, [activeThread.id, findRequest, onFindRequestHandled]);
-  const runningHere = status.job.status === "running" && status.job.threadId === activeThread?.id;
+  const loadingJob = status.job.status === "running" && status.job.modelLoad ? status.job : null;
+  const loadingHere = loadingJob?.threadId === threadId;
+  const startingLoadHere = studio.submittingModelLoad?.threadId === threadId;
+  const loadingModel = loadingHere || startingLoadHere;
+  const runningHere = status.job.status === "running" && !loadingJob && status.job.threadId === threadId;
   const canFind = activeThread.messages.length > 0 || runningHere;
   useEffect(() => {
     if (!canFind || !focused) return;
@@ -412,11 +421,13 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   const canDeleteMessages = !responseHere && !deferredResponseHere;
   const displayJobId = activeThread.pendingJobId ?? (runningHere ? status.job.id : null);
   const serviceUnavailable = !!backendFailure || backendRestarting;
-  const failedStop = responseHere && !serviceUnavailable && !stopping && studio.stopFailure?.id === displayJobId ? studio.stopFailure : null;
+  const stopJobId = loadingHere ? loadingJob.id : startingLoadHere ? studio.submittingModelLoad?.id : displayJobId;
+  const failedStop = stopJobId && !serviceUnavailable && !stopping && studio.stopFailure?.id === stopJobId ? studio.stopFailure : null;
   const inspectionMessageId = displayJobId ? activeThread.messages.find((message) => message.inspectionJobId === displayJobId)?.id : undefined;
   const liveJob = displayJobId && status.job.id === displayJobId && status.job.threadId === activeThread.id ? status.job : null;
   const restoringReply = pendingHere && !liveJob && !studio.submitting;
-  const canStopReply = responseHere && !serviceUnavailable && studio.statusLoaded && !restoringReply;
+  const canStop = (responseHere || loadingHere || (startingLoadHere && status.supportsPendingStop === true))
+    && !serviceUnavailable && studio.statusLoaded && !restoringReply;
   const restorationLabel = studio.statusLoaded ? inspectionMessageId ? "Recovering image check…" : "Recovering response…"
     : "Checking for the previous response…";
   const replyContent = pendingReplyOutput?.content || liveJob?.partialText || "";
@@ -424,7 +435,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   const replyImages = liveJob?.images ?? pendingReplyOutput?.generatedImages;
   const replyImage = liveJob?.image ?? replyImages?.[0] ?? pendingReplyOutput?.generatedImage;
   useEffect(() => { setDeleteTarget(null); }, [activeThread.id, responseHere]);
-  const runningThread = status.job.status === "running" ? studio.threads.find((thread) => thread.id === status.job.threadId) : undefined;
+  const runningThread = status.job.status === "running" && !loadingJob ? studio.threads.find((thread) => thread.id === status.job.threadId) : undefined;
   const otherResponseThread = responseHere ? undefined : runningThread ?? studio.threads.find((thread) => thread.pendingJobId);
   const reconnecting = !serviceUnavailable && !!statusError && (responseHere || !!otherResponseThread);
   const creatingImage = phase.startsWith("Generating image") || phase.startsWith("Generating an image");
@@ -486,6 +497,10 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   [checkingImage, hasReplyContent, hasReplyReasoning, replyPaused, statusLabel, waitingForToken]);
   const unavailableReason = modelNotice?.label ?? (!modelAvailable ? "Choose an installed model to send" : incompatibleImages ? "Choose a vision model or remove the attachment" : "");
   const activity = responseHere ? replyProgress.label
+    : loadingJob && !serviceUnavailable ? statusError ? "Reconnecting to the model load…"
+      : loadingJob.phase === "Stopping generation…" || (loadingHere && stopping) ? "Cancelling model load…"
+      : loadingJob.phase || "Loading model…"
+    : startingLoadHere ? stopping ? "Cancelling model load…" : "Preparing model…"
     : reconnecting ? "Reconnecting to the running chat…"
     : studio.attachingDocument ? "Reading documents…"
     : otherResponseThread ? runningThread ? "A response is running in another chat" : "A response is starting in another chat" : "";
@@ -771,6 +786,8 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
     .some((key) => loadedSettings.loadOptions[key] !== loadOptions[key]);
   const reloadReason = contextNeedsReload && optionsNeedReload ? "Context length and loading options changed."
     : contextNeedsReload ? "Context length changed." : optionsNeedReload ? "Loading options changed." : null;
+  const showLoad = status.supportsModelLoad
+    && (loadingModel || (selected && !runtimeIssue && !statusError && (!loadedModel || reloadReason)));
   const imageModel = activeThread.imageModel === "auto" ? imageModels[0] : imageModels.find((item) => item.id === activeThread.imageModel);
   const imageSettings = imageModel ? chatImageSettings(imageModel, activeThread.imageRenderSettings?.[imageModel.id]) : undefined;
   const imageErrors = imageModel && imageSettings ? chatImageErrors(imageModel, imageSettings) : undefined;
@@ -914,8 +931,30 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
     (phaseVisibility?.phase === inlinePhase ? phaseVisibility.visible : followingLatest);
   const showDraftCount = !draftTooLong && draftCharacters !== undefined && draftCharacters >= PROMPT_COUNT_THRESHOLD;
   const composerHint = showDraftCount ? `${draftCharacters.toLocaleString()} / ${TEXT_MESSAGE_CHARACTER_LIMIT.toLocaleString()}`
-    : responseHere ? canStopReply && !stopping ? "Esc to stop" : ""
+    : loadingModel ? canStop && !stopping ? "Esc to cancel" : ""
+    : responseHere ? canStop && !stopping ? "Esc to stop" : ""
     : busy || attachingImage || modelNotice || incompatibleImages || draftTooLong ? "" : "Enter to send · Shift + Enter for newline";
+  const chatErrorNotice = (failedStop || localError) && <InlineNotice tone="error" announce actions={<>
+    {failedStop && <Button variant="secondary" onClick={() => {
+      if (panel === "settings") {
+        (loadModelControl.current ?? panelRef.current)?.focus({ preventScroll: true });
+        studio.stop(threadId);
+      } else stopFromComposer();
+    }}>{loadingModel ? "Try cancelling again" : "Try stopping again"}</Button>}
+    {!failedStop && localError?.recovery === "image-settings" && <Button variant="secondary" onClick={() => {
+      setFindThreadId(null);
+      setPanel("image");
+      panelRef.current?.focus({ preventScroll: true });
+      studio.dismissActionError(localError);
+    }}>Open image settings</Button>}
+    <Button variant="ghost" onClick={() => {
+      const focus = panel === "settings" ? loadModelControl.current ?? panelRef.current : inputRef.current;
+      focus?.focus({ preventScroll: true });
+      if (failedStop) studio.dismissStopFailure(failedStop.id);
+      else if (localError) studio.dismissActionError(localError);
+    }}>Dismiss error</Button>
+  </>}>{failedStop?.message ?? localError?.message}</InlineNotice>;
+  const loadProgressInInspector = loadingModel && panel === "settings";
 
   return (
     <section className={`text-workspace${empty ? " text-workspace--empty" : ""}`} aria-label={split ? pane === "primary" ? "Left chat" : "Right chat" : "Text conversation"}>
@@ -963,7 +1002,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
 
       <div className={`text-layout${panel ? " text-layout--inspecting" : ""}`}>
       <div className="text-main" onKeyDown={(event) => {
-        if (event.key !== "Escape" || !canStopReply || stopping || event.defaultPrevented || event.repeat
+        if (event.key !== "Escape" || !canStop || stopping || event.defaultPrevented || event.repeat
           || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || isComposingKey(event.nativeEvent)) return;
         const target = event.target;
         if (!(target instanceof Element) || !event.currentTarget.contains(target)) return;
@@ -1003,20 +1042,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
           actions={<Button variant="secondary" onClick={studio.retryStorage}>Retry saving chats</Button>}>
           {studio.storageError}
         </InlineNotice>}
-        {failedStop || localError ? <InlineNotice tone="error" announce actions={<>
-          {failedStop && <Button variant="secondary" onClick={stopFromComposer}>Try stopping again</Button>}
-          {!failedStop && localError?.recovery === "image-settings" && <Button variant="secondary" onClick={() => {
-            setFindThreadId(null);
-            setPanel("image");
-            panelRef.current?.focus({ preventScroll: true });
-            studio.dismissActionError(localError);
-          }}>Open image settings</Button>}
-          <Button variant="ghost" onClick={() => {
-            inputRef.current?.focus({ preventScroll: true });
-            if (failedStop) studio.dismissStopFailure(failedStop.id);
-            else if (localError) studio.dismissActionError(localError);
-          }}>Dismiss error</Button>
-        </>}>{failedStop?.message ?? localError?.message}</InlineNotice>
+        {chatErrorNotice ? (panel !== "settings" && chatErrorNotice)
           : catalogNotice && <InlineNotice tone="error" announce
             actions={<Button variant="secondary" onClick={() => { void studio.refresh(); }}>Refresh status</Button>}>
             {catalogNotice}
@@ -1118,11 +1144,11 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
               }
             }}
           />
-          <TextComposerControls busy={busy} canAttach={canAttach} canSend={canSend} documentCount={documents.length} focused={focused}
+          <TextComposerControls busy={busy} canAttach={canAttach} canSend={canSend} cancellingLoad={loadingModel} documentCount={documents.length} focused={focused}
             imageTooltip={activeThread.draftContextImage ? "Remove the selected conversation image to attach a new file"
               : attachingImage ? "Attaching image…" : "Attach chat image · Paste or drop an image"}
             mode={selected?.supportsReasoning ? activeThread.mode : undefined} model={selectedModel} models={modelOptions}
-            responding={canStopReply} stopping={stopping} stopRef={bindStopControl}
+            responding={canStop} stopping={stopping} stopRef={bindStopControl}
             sendTooltip={responseHere ? "" : attachingImage ? "Attaching image…"
               : activity || unavailableReason || (draftTooLong ? PROMPT_LIMIT_MESSAGE : "Send message")}
             onAttachDocuments={stageDocuments} onAttachImage={stageAttachment} onChangeMode={changeMode}
@@ -1131,7 +1157,8 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
         {draftTooLong && <p id={draftLimitId} role="status" className="text-composer-limit">{PROMPT_LIMIT_MESSAGE} Shorten the draft or choose a GGUF model.</p>}
         <div className="text-composer-hint">
           <div className="text-composer-hint-copy">
-            <span className={showPhaseInReply ? "sr-only" : undefined} role="status" aria-atomic="true">{modelNotice ? "" : activity || unavailableReason}</span>
+            <span className={showPhaseInReply ? "sr-only" : undefined} role="status" aria-atomic="true">
+              {modelNotice || loadProgressInInspector ? "" : activity || unavailableReason}</span>
             {otherResponseThread && <Button variant="ghost" className="text-open-running" onClick={() => studio.selectThread(otherResponseThread.id)}>Open running chat</Button>}
             {composerHint && <span className="text-keyboard-hint">{composerHint}</span>}
           </div>
@@ -1156,22 +1183,34 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
         </div>
         {panel === "settings" && <div className="text-inspector-body">
           <p className="text-panel-description">System prompt, maximum output, and sampling apply to the next reply.</p>
+          {chatErrorNotice}
           {busy && <p className="text-panel-description" role="status">{activity || studio.modelAction || "Settings are locked while a response is generating."}</p>}
           <div className="text-settings-grid">
             <label>Model<Select ref={modelSetting} aria-label="Settings model" value={selectedModel || null} placeholder="Choose a model" disabled={busy}
               options={settingsModelOptions}
               onChange={(id) => studio.selectModel(activeThread.id, id)} /></label>
             <div className="text-model-setting-actions">
+              {showLoad && <Button ref={bindLoadModel} variant="secondary"
+                disabled={busy && !loadingModel} aria-disabled={loadingModel && (!canStop || stopping) || undefined}
+                onClick={() => {
+                  if (loadingModel) {
+                    if (canStop && !stopping) studio.stop(threadId);
+                  } else if (!busy) void studio.loadModel(threadId);
+                }}>
+                {loadingModel ? stopping ? "Cancelling…" : "Cancel load" : reloadReason ? "Reload model" : "Load model"}
+              </Button>}
               <Button ref={manageModels} variant="ghost" onClick={openModels}>Manage models</Button>
               {status.supportsModelUnload && loadedModel && <Button ref={bindUnloadModel} variant="ghost" disabled={busy && !unloading}
                 aria-disabled={unloading || undefined} onClick={() => { if (!busy) void studio.unloadModel(loadedModel.modelId, threadId); }}>
                 {unloading ? "Unloading…" : "Unload model"}
               </Button>}
             </div>
-            {(selected?.format === "gguf" || loadsOnNextReply) && <p role="status" className="text-setting-help text-model-load-note">
+            {!loadingModel && (selected?.format === "gguf" || loadsOnNextReply || (status.supportsModelLoad && loadedModel)) && <p role="status" className="text-setting-help text-model-load-note">
               {reloadReason
                 ? <><strong>Reloads on the next reply.</strong> {reloadReason}</>
-                : loadsOnNextReply ? "The model loads on the next reply."
+                : status.supportsModelLoad && loadedModel ? "Model loaded."
+                  : loadsOnNextReply ? status.supportsModelLoad && selected?.supportsVision ? "The vision projector loads with the first image."
+                    : "The model loads on the next reply."
                   : "Changing context length or advanced loading options reloads a loaded model on the next reply."}
             </p>}
             {selected?.format === "gguf" && <TokenField key={`context-${activeThread.id}-${selected.id}`}

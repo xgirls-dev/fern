@@ -339,6 +339,17 @@ export function unloadTextModel(modelId: string): Promise<Required<Pick<TextRunt
   });
 }
 
+export function loadTextModel(payload: {
+  requestId: string;
+  threadId: string;
+  modelId: string;
+  device: "AUTO" | "CPU";
+  contextSize: number;
+  loadOptions?: GgufLoadOptions;
+}): Promise<TextJobAcceptance> {
+  return submitTextJob("/api/text/models/load", payload);
+}
+
 export function startTextGeneration(payload: {
   requestId: string;
   threadId: string;

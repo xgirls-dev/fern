@@ -178,13 +178,13 @@ os._exit(0)
                         with suppress(psutil.NoSuchProcess):
                             engine.kill()
 
-    def test_openvino_reuses_pipeline_for_system_prompt_and_sampling_changes(self):
+    def test_openvino_load_reuses_pipeline_for_system_prompt_and_sampling_changes(self):
         base = {"op": "generate", "messages": [{"role": "user", "content": "Hello."}],
                 "systemPrompt": "Keep it short.", "temperature": 0.8, "topP": 0.95, "maxNewTokens": 64}
         document = {"name": "Workshop.txt", "location": "Section 1", "text": "The intake code is ZY-4179."}
         follow_up = {**base, "systemPrompt": "Explain the details.", "temperature": 0.25, "topP": 0.8,
                      "maxNewTokens": 120, "sampling": {"topK": 16}, "contextSize": 4096, "documentPassages": [document]}
-        stream = io.StringIO("".join(json.dumps(request) + "\n" for request in (base, follow_up, {"op": "shutdown"})))
+        stream = io.StringIO("".join(json.dumps(request) + "\n" for request in ({"op": "load"}, base, follow_up, {"op": "shutdown"})))
         pipeline = Mock()
         pipeline.get_generation_config.side_effect = SimpleNamespace
         pipeline.generate.return_value = SimpleNamespace(
@@ -207,7 +207,8 @@ os._exit(0)
         template = pipeline.get_tokenizer.return_value.apply_chat_template
         self.assertIn(document["text"], template.call_args.args[0][-1]["content"])
         results = [call.args[0] for call in emit.call_args_list if call.args[0]["type"] == "result"]
-        self.assertNotIn("documentSources", results[0])
+        self.assertEqual(results[0], {"type": "result", "backend": "openvino", "device": "CPU"})
+        self.assertNotIn("documentSources", results[1])
         self.assertEqual(results[-1]["documentSources"], [{"number": 1, "name": document["name"],
                                                            "location": document["location"], "excerpt": document["text"]}])
         self.assertEqual([call.args[0]["type"] for call in emit.call_args_list].count("residency"), 1)
@@ -978,6 +979,65 @@ for line in sys.stdin:
         finally:
             server.shutdown()
             server.server_close()
+
+    def test_model_load_uses_the_text_slot_without_sending_a_prompt(self):
+        ready = threading.Event()
+        resident = {"modelId": self.model["id"], "backend": "openvino", "device": "CPU"}
+        with (
+            patch.object(api, "TEXT_MODEL_REGISTRY", self.registry),
+            patch.object(api, "TEXT_GENERATION_WORKER") as worker,
+            patch.object(api, "apple_silicon", return_value=False),
+            patch.object(api, "TEXT_CANCEL_EVENT", None),
+            patch.dict(api.TEXT_JOB, id=None, threadId=None, status="idle"),
+            ThreadingHTTPServer(("127.0.0.1", 0), api.Handler) as server,
+        ):
+            def load(**kwargs):
+                if not ready.wait(5):
+                    raise TimeoutError("Waited for the test to release model loading.")
+                worker.resident_model.return_value = resident
+                return {"type": "result", "backend": "openvino", "device": "CPU"}
+
+            worker.generate.side_effect = load
+            worker.resident_model.return_value = None
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+            base = f"http://127.0.0.1:{server.server_port}/api/text"
+
+            def post(path, payload):
+                request = urllib.request.Request(base + path, data=json.dumps(payload).encode(),
+                                                 headers={"Content-Type": "application/json"})
+                with urllib.request.urlopen(request, timeout=5) as response:
+                    return response.status, json.load(response)
+
+            payload = {"requestId": "load-model", "threadId": "text-thread-preload", "modelId": self.model["id"],
+                       "device": "CPU", "contextSize": 4096, "jobOnly": True}
+            try:
+                code, response = post("/models/load", payload)
+                self.assertEqual(code, 202)
+                self.assertTrue(response["textJob"]["modelLoad"])
+                self.assertEqual(response["textJob"]["status"], "running")
+                with self.assertRaises(urllib.error.HTTPError) as busy:
+                    post("/generate", {**payload, "requestId": "ordinary-reply",
+                                       "messages": [{"role": "user", "content": "Hello"}]})
+                with busy.exception as rejection:
+                    self.assertIn("already running", rejection.read().decode())
+                ready.set()
+                deadline = time.monotonic() + 5
+                while True:
+                    with urllib.request.urlopen(base + "/job", timeout=5) as response:
+                        job = json.load(response)
+                    if job["status"] != "running" or time.monotonic() >= deadline:
+                        break
+                    time.sleep(.01)
+                self.assertEqual(job["status"], "complete")
+                self.assertEqual(job["partialText"], "")
+                self.assertEqual(job["residentModel"], resident)
+                request = worker.generate.call_args.kwargs["request"]
+                self.assertEqual(request["op"], "load")
+                self.assertEqual(request["contextSize"], 4096)
+                self.assertNotIn("messages", request)
+            finally:
+                ready.set()
+                server.shutdown()
 
     def test_unload_guard_and_registry_through_the_api(self):
         with (
