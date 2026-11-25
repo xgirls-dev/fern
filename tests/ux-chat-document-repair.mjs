@@ -34,7 +34,7 @@ try {
   await page.route("**/api/text/job", (route) => route.fulfill({ json: state.textStatus.job }));
   await page.route("**/api/text/documents", (route) => {
     if (uploadError) return route.fulfill({ status: 400, json: { error: uploadError } });
-    const { name } = route.request().postDataJSON();
+    const name = decodeURIComponent(route.request().headers()["x-fern-document-name"]);
     assert([missing.name, replacement.name].includes(name));
     return route.fulfill({ status: 201, json: { document: name === missing.name ? missing : replacement } });
   });
