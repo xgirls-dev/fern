@@ -1,4 +1,5 @@
 import { cloneElement, memo, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from "react";
+import { flushSync } from "react-dom";
 
 import type { TextMessage } from "../lib/textThreads";
 
@@ -117,7 +118,7 @@ export const TextTranscriptWindow = memo(function TextTranscriptWindow({ threadI
   const [focused, setFocused] = useState<number | null>(null);
   const [selection, setSelection] = useState<[number, number] | null>(null);
   const [pinnedTailPages, setPinnedTailPages] = useState(1);
-  const sizedInitialViewport = useRef(false);
+  const previousPinnedTailPages = useRef(pinnedTailPages);
   const previousWindowed = useRef(windowed);
   const pages = useMemo(() => Array.from({ length: pageCount }, (_, index) => {
     const start = index * PAGE_SIZE;
@@ -199,24 +200,49 @@ export const TextTranscriptWindow = memo(function TextTranscriptWindow({ threadI
   const tailPages = Math.max(pinnedTailPages, initialTailPages);
   useLayoutEffect(() => {
     const container = root.current;
-    if (!windowed || sizedInitialViewport.current || !container) return;
+    const feed = container?.closest(".text-conversation");
+    if (!windowed || !container || !feed) return;
 
     // The tail moves when a placeholder is replaced with its real rows.
-    if (pinnedTailPages > 1) keepFollowingTail();
-    const viewportHeight = container.closest(".text-conversation")?.clientHeight;
-    if (!viewportHeight) {
-      // A compact split pane can open before it has a measurable viewport.
-      setPinnedTailPages(2);
-    } else if (pageCount > tailPages) {
+    if (pinnedTailPages > previousPinnedTailPages.current) keepFollowingTail();
+    previousPinnedTailPages.current = pinnedTailPages;
+    if (pageCount <= tailPages) return;
+
+    const tailFits = (height: number) => {
       const first = container.children[pageCount - tailPages].getBoundingClientRect();
       const last = container.children[pageCount - 1].getBoundingClientRect();
-      if (last.bottom - first.top < viewportHeight) {
-        // Mount enough real messages to cover the first frame even in a tall window.
-        setPinnedTailPages(tailPages + 1);
-        return;
-      }
+      return last.bottom - first.top >= height;
+    };
+    let height = feed.clientHeight;
+    let width = feed.clientWidth;
+    if (!height && pinnedTailPages === 1) {
+      // A compact split pane can open before it has a measurable viewport.
+      setPinnedTailPages(2);
+      return;
     }
-    sizedInitialViewport.current = true;
+    if (height && !tailFits(height)) {
+      setPinnedTailPages(tailPages + 1);
+      return;
+    }
+
+    const onResize = () => {
+      const nextHeight = feed.clientHeight;
+      const nextWidth = feed.clientWidth;
+      if (height === nextHeight && width === nextWidth) return;
+      height = nextHeight;
+      width = nextWidth;
+      if (height && !tailFits(height)) {
+        // Fill newly exposed space before paint, then let the scroll hook anchor the tail.
+        flushSync(() => setPinnedTailPages(tailPages + 1));
+      }
+    };
+    const resizeObserver = new ResizeObserver(onResize);
+    resizeObserver.observe(feed);
+    window.addEventListener("resize", onResize);
+    return () => {
+      window.removeEventListener("resize", onResize);
+      resizeObserver.disconnect();
+    };
   }, [keepFollowingTail, pageCount, pinnedTailPages, tailPages, windowed]);
 
   // A token only changes the tail. Reuse page elements until their inputs change.

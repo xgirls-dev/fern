@@ -3,9 +3,10 @@ import { expect } from "@playwright/test";
 import { fixture } from "./ui-fixture.mjs";
 
 const cases = [
-  { title: "Full last page", count: 120, height: 820 },
+  { title: "Full last page", count: 120, height: 820, firstFrameRows: 12 },
   { title: "Full last page in a tall window", count: 120, height: 1720 },
   { title: "One-message last page in a tall window", count: 121, height: 1720 },
+  { title: "Full last page before resize", count: 120, height: 710, firstFrameRows: 12, growTo: 1720 },
 ];
 const intro = { id: "text-thread-viewport-intro", title: "Introduction", messages: [], modelId: "local" };
 const threads = cases.map(({ title, count }, threadIndex) => ({
@@ -30,11 +31,12 @@ const { page, errors, close } = await fixture({
 });
 const threadButton = (title) => page.getByRole("button", { name: `Text thread: ${title}`, exact: true });
 
-async function openThread(title, targetId, expectedRows) {
+async function checkFirstFrame(title, targetId, { expectedRows, resizeTo } = {}) {
   const button = threadButton(title);
-  const capture = await button.evaluateHandle((element, { title, targetId }) => {
+  const capture = await button.evaluateHandle((element, { title, targetId, resizing }) => {
     let result;
-    element.addEventListener("click", () => {
+    const trigger = resizing ? window : element;
+    trigger.addEventListener(resizing ? "resize" : "click", () => {
       function measure() {
         if (document.querySelector(".text-header h2")?.textContent !== title) {
           requestAnimationFrame(measure);
@@ -56,14 +58,16 @@ async function openThread(title, targetId, expectedRows) {
       requestAnimationFrame(measure);
     }, { capture: true, once: true });
     return () => result;
-  }, { title, targetId });
+  }, { title, targetId, resizing: !!resizeTo });
 
   try {
-    await button.click();
+    if (resizeTo) await page.setViewportSize({ width: 1440, height: resizeTo });
+    else await button.click();
     let result;
     await expect.poll(async () => (result = await capture.evaluate((read) => read()))).toBeDefined();
-    assert(result.target > 0, `${title} should show ${targetId} on its first frame`);
-    assert.equal(result.deferred, false, `${title} should fill its first viewport with messages`);
+    const context = resizeTo ? `${title} after resizing` : title;
+    assert(result.target > 0, `${context} should show ${targetId} on its first frame`);
+    assert.equal(result.deferred, false, `${context} should fill its first viewport with messages`);
     if (expectedRows !== undefined) assert.equal(result.mounted, expectedRows, `${title} should mount just one page`);
   } finally {
     await capture.dispose();
@@ -71,9 +75,11 @@ async function openThread(title, targetId, expectedRows) {
 }
 
 try {
-  for (const [index, { title, count, height }] of cases.entries()) {
+  for (const [index, { title, count, height, firstFrameRows, growTo }] of cases.entries()) {
     await page.setViewportSize({ width: 1440, height });
-    await openThread(title, `note-${index}-${count - 1}`, index === 0 ? 12 : undefined);
+    const last = `note-${index}-${count - 1}`;
+    await checkFirstFrame(title, last, { expectedRows: firstFrameRows });
+    if (growTo) await checkFirstFrame(title, last, { resizeTo: growTo });
     await threadButton(intro.title).click();
   }
 
@@ -82,9 +88,9 @@ try {
   await page.getByRole("log", { name: "Conversation" }).press("Home");
   await expect(page.locator('[data-chat-message="note-1-0"]')).toBeInViewport();
   await threadButton(intro.title).click();
-  await openThread(tallThread, "note-1-0");
+  await checkFirstFrame(tallThread, "note-1-0");
   assert.deepEqual(errors, []);
-  console.log("Full and one-message tail pages fill the first frame, and opening a saved position shows the right message.");
+  console.log("The right messages fill the first frame after opening, resizing, and returning to a saved position.");
 } finally {
   await close();
 }
