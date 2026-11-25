@@ -42,6 +42,7 @@ _LINUX_ASSETS = {
     "cpu": ("ubuntu", 23784147, "f9506ca78e5a25665f726b0ee429cdc3d5cf3e02a10e4068c8af19dd79337ad7"),
 }
 _MAC_ARM64_ASSET = (17282660, "88ba080b2b24bb69012633588c763b7ed20ea60b3f9e7fcbd1a5434eded3e325")
+_METAL_DEVICE = "MTL0"
 RUNTIME_PLATFORM_ERROR = "Fern's managed GGUF runtime requires Windows or Linux x86-64, or Apple Silicon."
 _LINUX_DRIVER_HELP = "On Omarchy, run sudo pacman -Syu vulkan-intel vulkan-icd-loader, then retry."
 _WINDOWS_DISPLAY_CLASS = "{4d36e968-e325-11ce-bfc1-08002be10318}"
@@ -231,11 +232,12 @@ class GGUFServer:
             if backend == "openvino":
                 env.update(GGML_OPENVINO_DEVICE=device)
             flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-            if on_phase is not None and backend != "cpu":
+            discovers_device = backend not in ("cpu", "metal")
+            if on_phase is not None and discovers_device:
                 on_phase("selecting-device", "Checking hardware…")
-            discovery_started = time.perf_counter()
+            discovery_started = time.perf_counter() if discovers_device else None
             selected = self._select_device(executable, env, flags)
-            if backend != "cpu":
+            if discovery_started is not None:
                 self.startup_timing["deviceDiscoveryMs"] = (time.perf_counter() - discovery_started) * 1000
             command = [
                 str(executable), "--model", str(model), "--device", selected, "--n-gpu-layers",
@@ -289,6 +291,10 @@ class GGUFServer:
     def _select_device(self, executable: Path, env: dict[str, str], flags: int) -> str:
         if self.backend == "cpu":
             return "none"
+        if self.backend == "metal":
+            # The pinned Apple Silicon build exposes the system Metal device as MTL0.
+            # Let the model server validate it without initializing a second Metal process.
+            return _METAL_DEVICE
         if self.backend == "vulkan":
             try:
                 if sys.platform == "linux":
@@ -300,25 +306,14 @@ class GGUFServer:
                     f"Linux could not load Vulkan. {_LINUX_DRIVER_HELP}" if sys.platform == "linux" else
                     "Windows could not load Vulkan. Install or update your Intel graphics driver, then retry."
                 ) from error
-        try:
-            result = subprocess.run(
-                [str(executable), "--list-devices"], cwd=executable.parent,
-                env=env, capture_output=True, check=self.backend != "vulkan",
-                timeout=75 if self.backend == "metal" else 20, creationflags=flags,
-                text=True, encoding="utf-8", errors="replace",
-            )
-        except subprocess.TimeoutExpired as error:
-            if self.backend != "metal":
-                raise
-            output = ((error.stdout or b"") + (error.stderr or b"")).decode("utf-8", errors="replace")
-            raise RuntimeError(f"Timed out while detecting the Apple GPU. {output[-1600:]}") from error
+        result = subprocess.run(
+            [str(executable), "--list-devices"], cwd=executable.parent,
+            env=env, capture_output=True, check=self.backend != "vulkan",
+            timeout=20, creationflags=flags, text=True, encoding="utf-8", errors="replace",
+        )
         devices = result.stdout + result.stderr
         if self.backend == "openvino":
             match = re.search(rf"\b(OPENVINO\d+):\s+GGML_OPENVINO_DEVICE={self.device}(?:\s|\.)", devices)
-        elif self.backend == "metal":
-            match = re.search(r"\b(MTL\d*):\s+", devices)
-            if not match:
-                raise RuntimeError("Metal could not find an Apple GPU for local chat.")
         else:
             match = re.search(r"\b(Vulkan\d+):\s+.*Intel", devices, re.IGNORECASE)
             if not match:
@@ -339,6 +334,8 @@ class GGUFServer:
         while time.monotonic() < deadline:
             if self.process.poll() is not None:
                 detail = self.runtime_log_tail()
+                if self.backend == "metal" and f"invalid device: {_METAL_DEVICE}" in detail:
+                    raise RuntimeError("Metal could not find an Apple GPU for local chat.")
                 message = f"Could not load the GGUF model on {self.backend} {self.device}. {detail[-1400:]}"
                 if has_memory_failure(detail):
                     raise TextRuntimeMemoryError(message)
