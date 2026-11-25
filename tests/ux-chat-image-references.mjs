@@ -39,6 +39,13 @@ try {
   });
   const images = [1, 2].map((number) => ({ name: `batch-${number}.png`, width: 512, height: 512, modelLabel: "Klein", prompt: "Reference image" }));
   await page.route("**/outputs/batch-*.png*", (route) => route.fulfill({ contentType: "image/png", body: png }));
+  const reply = page.getByRole("article", { name: "Response in progress", exact: true });
+  state.textStatus.job = { ...state.textStatus.job, image: images[0], images, phase: "Releasing the image model…" };
+  await expect(reply.getByRole("button", { name: "Review image 1: Reference image" })).toBeVisible();
+  await expect(reply).toContainText("Releasing the image model…");
+  await expect(button("Stop generation")).toBeEnabled();
+  state.textStatus.job = { ...state.textStatus.job, phase: "Checking the generated image…" };
+  await expect(reply).toContainText("Checking image…");
   state.textStatus.job = { ...state.textStatus.job, image: images[0], images, status: "complete", partialText: "Two images are ready.",
     result: { inputTokens: 10, outputTokens: 5, generationSeconds: 1, tokensPerSecond: 5, visionChecked: true } };
   await page.getByText("Two images are ready.", { exact: true }).waitFor();

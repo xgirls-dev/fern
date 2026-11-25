@@ -440,12 +440,15 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   const otherResponseThread = responseHere ? undefined : runningThread ?? studio.threads.find((thread) => thread.pendingJobId);
   const reconnecting = !serviceUnavailable && !!statusError && (responseHere || !!otherResponseThread);
   const creatingImage = phase.startsWith("Generating image") || phase.startsWith("Generating an image");
+  const replyPaused = runningHere && studio.replyPaused;
+  const imageReleaseLabel = phase === "Releasing the image model…"
+    ? replyPaused ? "Still releasing the image model…" : phase : null;
   // Image batches publish previews before generation finishes. An existing
   // preview only implies review after the image generation phase ends.
-  const checkingImage = responseHere && !serviceUnavailable && !restoringReply && !reconnecting && !stopping && !creatingImage &&
+  const checkingImage = responseHere && !serviceUnavailable && !restoringReply && !reconnecting && !stopping && !creatingImage && !imageReleaseLabel &&
     (!!inspectionMessageId || runningHere && (/^Checking (the (generated )?)?image\b/.test(phase) || !!liveJob?.inspection || !!replyImage));
   const inspectionCaption = reconnecting ? (stopping ? "Reconnecting to stop…" : "Reconnecting to check the image…")
-    : stopping ? "Stopping image check…" : restoringReply ? restorationLabel : "Checking image…";
+    : stopping ? "Stopping image check…" : restoringReply ? restorationLabel : imageReleaseLabel ?? "Checking image…";
   const modelNotice: ModelReadiness | null = backendFailure
     ? { label: backendFailure.stage === "running" ? backendFailure.message : "Fern couldn’t start its local service.",
         detail: backendFailure.stage === "startup" ? backendFailure.message : undefined, tone: "error",
@@ -473,13 +476,13 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   const localError = actionError && (actionError.threadId ? actionError.threadId === threadId : focused) ? actionError : null;
   const catalogNotice = reconnecting || modelNotice?.tone === "error" ? null : catalogError;
   const undoBlocked = responseHere;
-  const replyPaused = runningHere && studio.replyPaused;
   const statusLabel = serviceUnavailable && responseHere ? "Response interrupted."
     : reconnecting ? stopping ? "Reconnecting to stop…" : "Reconnecting to the text runtime…"
     : stopping ? "Stopping…"
     : restoringReply ? restorationLabel
     : pendingHere ? liveJob && liveJob.status !== "idle" ? "Finishing response…" : "Starting response…"
     : creatingImage ? "Creating an image…"
+    : imageReleaseLabel ? imageReleaseLabel
     : phase.startsWith("Finding document") ? phase
     : phase.includes("Compacting") ? "Summarizing earlier messages…"
     : /download/i.test(phase) ? replyPaused ? "Still downloading the text runtime…" : "Downloading the text runtime…"
