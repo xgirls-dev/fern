@@ -75,9 +75,21 @@ try {
 
   await composer.press("Enter");
   await expect.poll(() => state.textRequests.length).toBe(1);
-  await expect(button("Stop generation")).toBeVisible();
+  const stop = button("Stop generation");
+  await expect(stop).toHaveCSS("background-color", "rgb(32, 32, 32)");
+  await expect(stop).toHaveCSS("color", "rgb(255, 255, 255)");
+  await stop.hover();
+  await expect(stop).toHaveCSS("background-color", "rgb(56, 56, 56)");
+  await expect(stop).toHaveCSS("color", "rgb(255, 255, 255)");
+  await button("Toggle theme").click();
+  await expect(stop).toHaveCSS("background-color", "rgb(236, 236, 236)");
+  await expect(stop).toHaveCSS("color", "rgb(33, 33, 33)");
+  await stop.hover();
+  await expect(stop).toHaveCSS("background-color", "rgb(255, 255, 255)");
+  await expect(stop).toHaveCSS("color", "rgb(33, 33, 33)");
+  await composer.focus();
   assert(await pressImeKey(composer, "Escape"));
-  await expect(button("Stop generation")).toBeVisible();
+  await expect(stop).toBeVisible();
   await composer.press("Escape");
   await expect.poll(() => state.textStatus.job.status).toBe("stopped");
   await expect(button("Send message")).toBeVisible();

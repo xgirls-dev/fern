@@ -68,7 +68,7 @@ export const TextComposerControls = memo(function TextComposerControls({
       <ModelMenu label="Text model" className="text-model-dropdown" triggerClassName="text-menu-trigger"
         value={model} disabled={busy} options={models} keyboardShortcut={chatModelShortcut} shortcutActive={focused}
         onManageModels={onManageModels} onChange={onChangeModel} onOpen={onOpenModelPicker} />
-      {responding ? <TooltipIconButton key="stop" ref={stopRef} variant="danger" shape="circle"
+      {responding ? <TooltipIconButton key="stop" ref={stopRef} variant="primary" shape="circle"
         className="composer-submit is-stop" disabled={stopping} onClick={onStop} aria-label="Stop generation" aria-keyshortcuts="Escape"
         tooltip={stopping ? "Stopping generation…" : "Stop generation · Esc"}>
         {stopping ? <LoaderCircle className="spinner" size={16} aria-hidden="true" /> : <Square size={14} fill="currentColor" aria-hidden="true" />}
