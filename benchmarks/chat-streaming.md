@@ -28,6 +28,8 @@ Set `FERN_BENCH_STREAM_TRACE=1` for a diagnostic replay. The `trace` section rec
 
 Set `FERN_BENCH_STREAM_CODE_LINES=350` to stress syntax coloring. This replay measures the formatted reply, the first colored code, the frame with all code lines colored, and the longest frame gap while colors arrive.
 
+Set `FERN_BENCH_STREAM_HISTORY=3000` to stream after a saved transcript. The fixture seeds the same synthetic history in each profile and opens it before sending the prompt. Compare runs with the same message count.
+
 ## Read the report
 
 - **Send to first frame** measures the first frame opportunity after the click or Enter. **Send to reply commit** measures the first streaming row mutation in the DOM. **Send to feedback** measures the first frame with that row present.

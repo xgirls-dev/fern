@@ -546,9 +546,9 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   const revealId = focusedMessageId ?? requestedEdit ?? activeMatch?.messageId;
   const revealIndex = revealId ? transcript.findIndex(({ messageId }) => messageId === revealId) : -1;
   const revealKey = transcript[revealIndex]?.key;
-  const restoreIndex = restoreAnchorId ? transcript.findIndex(({ messageId }, index) =>
-    messageId === restoreAnchorId || activeThread.messages[index]?.id === restoreAnchorId,
-  ) : -1;
+  const restoreIndex = useMemo(() => restoreAnchorId ? transcript.findIndex(({ messageId }, index) =>
+    messageId === restoreAnchorId || messages[index]?.id === restoreAnchorId,
+  ) : -1, [messages, restoreAnchorId, transcript]);
 
   useLayoutEffect(() => {
     const previous = previousFindPreview.current;

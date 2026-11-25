@@ -7,7 +7,7 @@ import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { _electron as electron, expect } from "@playwright/test";
-import { fixture } from "../tests/ui-fixture.mjs";
+import { fixture, savedTextWorkspace } from "../tests/ui-fixture.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const mode = process.argv[2] ?? "renderer";
@@ -20,6 +20,8 @@ const visible = mode === "electron" && process.env.FERN_E2E_VISIBLE === "1";
 const trace = process.env.FERN_BENCH_STREAM_TRACE === "1";
 const codeLines = Number(process.env.FERN_BENCH_STREAM_CODE_LINES ?? 1);
 assert(Number.isInteger(codeLines) && codeLines > 0 && codeLines <= 350, "Choose 1–350 lines of code.");
+const historyMessages = Number(process.env.FERN_BENCH_STREAM_HISTORY ?? 0);
+assert(Number.isInteger(historyMessages) && historyMessages >= 0 && historyMessages <= 12_000, "Choose 0–12,000 saved messages.");
 const sampleCount = 100;
 const appendIntervalMs = 50;
 const phase = "Waiting for the first token…";
@@ -123,6 +125,27 @@ try {
   await page.emulateMedia({ reducedMotion: "no-preference" });
   const composer = page.getByRole("textbox", { name: "Message", exact: true });
   const send = page.getByRole("button", { name: "Send message", exact: true });
+  if (historyMessages) {
+    const id = "text-thread-stream-benchmark";
+    await composer.waitFor();
+    await savedTextWorkspace(page, {
+      activeId: id,
+      threads: [{
+        id, title: "Streaming benchmark", modelId: "local",
+        messages: Array.from({ length: historyMessages }, (_, index) => ({
+          id: `saved-${index}`, role: index % 2 ? "assistant" : "user",
+          content: `Saved workshop note ${index + 1}. Review the schedule, room assignments, and handouts before the next meeting.`,
+          createdAt: index + 1,
+        })),
+      }],
+    });
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await expect(page.getByRole("heading", { name: "Streaming benchmark", exact: true })).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByText(new RegExp(`^Saved workshop note ${historyMessages}\\.`))).toBeVisible({ timeout: 20_000 });
+    await page.locator(".text-transcript-page").last().evaluate((pageElement) => {
+      pageElement.dataset.benchmarkSavedTail = "true";
+    });
+  }
   const browser = await page.evaluate(() => ({ userAgent: navigator.userAgent, width: innerWidth, height: innerHeight, devicePixelRatio }));
   await composer.fill("Draft workshop notes and end with a short table and code example.");
   await (sendMethod === "enter" ? composer : send).evaluate((trigger, { sampleCount, markerPattern, sendMethod, eventsOrigin, trace, codeLines }) => {
@@ -200,11 +223,12 @@ try {
 
     window.fernStreamingMeasurement = new Promise((resolve) => {
       const conversation = document.querySelector(".text-conversation");
+      const currentReply = () => conversation.querySelector(".text-transcript-page:last-child > .text-message--assistant:last-child");
       let traceMutations;
       let terminalCommitted;
       const committed = new Map();
       function recordCommit() {
-        const row = conversation.querySelector(".text-message--assistant");
+        const row = currentReply();
         const body = row?.querySelector(".text-message-content");
         const now = performance.now();
         if (terminal !== undefined && terminalCommitted === undefined && row && !row.classList.contains("text-message--streaming") &&
@@ -249,7 +273,7 @@ try {
           if (formattedAt === undefined) maxFrameGapMs = Math.max(maxFrameGapMs, now - previous);
           else syntaxMaxFrameGapMs = Math.max(syntaxMaxFrameGapMs, now - previous);
           previous = now;
-          const row = conversation.querySelector(".text-message--assistant");
+          const row = currentReply();
           const body = row?.querySelector(".text-message-content");
           const stream = row?.classList.contains("text-message--streaming");
           if (stream) firstFeedback ??= now;
@@ -336,6 +360,7 @@ try {
 
   const measurement = await page.evaluate(() => window.fernStreamingMeasurement);
   assert(!measurement.error, measurement.error);
+  if (historyMessages) await expect(page.locator("[data-benchmark-saved-tail]")).toHaveCount(1);
   const { samples, trace: frameTrace, ...milestones } = measurement;
   assert.equal(samples.length, sampleCount);
   for (const [key, value] of Object.entries(milestones)) assert(Number.isFinite(value) && value >= 0, key);
@@ -345,7 +370,7 @@ try {
   console.log(JSON.stringify({
     revision, mode, visible, sendMethod, browser, fixture: "deterministic server-sent events",
     host: { os: os.version(), arch: os.arch(), cpu: os.cpus()[0]?.model, memoryBytes: os.totalmem() },
-    sampleCount, appendIntervalMs, codeLines, workload, milestones,
+    sampleCount, appendIntervalMs, codeLines, workload, historyMessages, milestones,
     receiptToFrameMs: summarize(samples.map(({ receiptToFrameMs }) => receiptToFrameMs)), samples,
     ...(frameTrace ? { trace: frameTrace } : {}),
   }, null, 2));
