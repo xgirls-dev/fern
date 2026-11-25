@@ -13,12 +13,15 @@ export function observeChatReply(send, { measureStop = false } = {}) {
       button.addEventListener("click", () => {
         const sent = performance.now();
         const NativeEventSource = window.EventSource;
+        const nativeFetch = window.fetch;
         let firstEvent = null;
         let firstAnswerEvent = null;
         let terminalEvent = null;
         let feedback = null;
         let firstAnswerFrame = null;
         let stopKey = null;
+        let stopRequest = null;
+        let stopFeedback = null;
         let sendReady = null;
         let settled = null;
         let lastFrame = sent;
@@ -31,6 +34,7 @@ export function observeChatReply(send, { measureStop = false } = {}) {
           cancelAnimationFrame(animation);
           feed.removeEventListener("keydown", recordStop, true);
           if (window.EventSource === TimedEventSource) window.EventSource = NativeEventSource;
+          if (window.fetch === timedFetch) window.fetch = nativeFetch;
           resolve(value);
         }
 
@@ -39,7 +43,15 @@ export function observeChatReply(send, { measureStop = false } = {}) {
             stopKey ??= performance.now();
           }
         }
-        if (measureStop) feed.addEventListener("keydown", recordStop, true);
+        function timedFetch(input, options) {
+          const url = new URL(input instanceof Request ? input.url : input, location.href);
+          if (stopKey !== null && url.pathname === "/api/text/stop") stopRequest ??= performance.now();
+          return nativeFetch.call(this, input, options);
+        }
+        if (measureStop) {
+          feed.addEventListener("keydown", recordStop, true);
+          window.fetch = timedFetch;
+        }
 
         class TimedEventSource extends NativeEventSource {
           constructor(url, options) {
@@ -74,8 +86,10 @@ export function observeChatReply(send, { measureStop = false } = {}) {
             if (!reply.classList.contains("text-message--streaming") &&
                 !content?.querySelector("[data-chat-markdown-formatting]")) settled ??= now;
           }
-          if (stopKey !== null && composer.querySelector('button[aria-label="Send message"]:enabled:not([aria-disabled="true"])')) {
-            sendReady ??= now;
+          if (stopKey !== null) {
+            if (composer.querySelector('button[aria-label="Send message"]:enabled:not([aria-disabled="true"])')) sendReady ??= now;
+            const stopPending = composer.querySelector('button[aria-label="Stop generation"]:is(:disabled,[aria-disabled="true"])');
+            if (stopPending || sendReady !== null) stopFeedback ??= now;
           }
           if (settled !== null && (!measureStop || sendReady !== null)) {
             const afterSend = (at) => at === null ? null : at - sent;
@@ -87,7 +101,8 @@ export function observeChatReply(send, { measureStop = false } = {}) {
               terminalEventMs: afterSend(terminalEvent),
               settledFrameMs: afterSend(settled),
               maxFrameGapMs: maxFrameGap,
-              ...(measureStop ? { stopKeyMs: afterSend(stopKey), sendReadyFrameMs: afterSend(sendReady) } : {}),
+              ...(measureStop ? { stopKeyMs: afterSend(stopKey), stopRequestMs: afterSend(stopRequest),
+                stopFeedbackFrameMs: afterSend(stopFeedback), sendReadyFrameMs: afterSend(sendReady) } : {}),
             });
             return;
           }
@@ -146,6 +161,7 @@ export async function measureWarmStop(page, readJob, modelId) {
   assert.equal(stopped.id, running.id);
   assert(stopped.partialText?.trim(), "The stopped job should retain a partial answer.");
   const stopRenderer = await readReplyTiming(stoppedTiming);
+  assert(Number.isFinite(stopRenderer.stopRequestMs), "Stop should issue a request to the text runtime.");
 
   const followUpTiming = await observeChatReply(send);
   const request = page.waitForRequest((entry) => entry.method() === "POST" &&
@@ -166,6 +182,8 @@ export async function measureWarmStop(page, readJob, modelId) {
   const followUpRenderer = await readReplyTiming(followUpTiming);
 
   return {
+    stopToRequestMs: stopRenderer.stopRequestMs - stopRenderer.stopKeyMs,
+    stopToFeedbackFrameMs: stopRenderer.stopFeedbackFrameMs - stopRenderer.stopKeyMs,
     stopToBackendEventMs: stopRenderer.terminalEventMs === null ? null : stopRenderer.terminalEventMs - stopRenderer.stopKeyMs,
     stopToSendReadyFrameMs: stopRenderer.sendReadyFrameMs - stopRenderer.stopKeyMs,
     stopToSettledFrameMs: stopRenderer.settledFrameMs - stopRenderer.stopKeyMs,

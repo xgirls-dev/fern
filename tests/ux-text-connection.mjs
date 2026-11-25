@@ -155,10 +155,24 @@ try {
   const stoppedId = state.textStatus.job.id;
   const stoppedReply = page.locator(`[data-chat-message="response-${stoppedId}"]`);
   shortenedStoppedReasoning = "The reasoning";
-  await button("Stop generation").click();
+  const immediateStops = await button("Stop generation").evaluate((control) => {
+    const fetch = window.fetch;
+    const requested = [];
+    window.fetch = (input, options) => {
+      if (new URL(input, location.href).pathname === "/api/text/stop") requested.push(JSON.parse(options.body).requestId);
+      return fetch(input, options);
+    };
+    try {
+      control.click();
+      control.click();
+      return requested;
+    } finally { window.fetch = fetch; }
+  });
+  assert.deepEqual(immediateStops, [stoppedId], "The running job should receive one Stop request during the input event");
   await expect(stoppedReply).toContainText("Stopped during reasoning");
   await expect(stoppedReply.getByText(reasoningOnly)).toBeVisible();
   await expect(replyStatus).toHaveText("Response stopped. Partial reply available.");
+  assert.equal(stops.filter((id) => id === stoppedId).length, 1);
   release(2);
 
   await send("Keep the visible response if the final answer is empty");

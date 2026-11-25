@@ -554,6 +554,33 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     };
   }, [finishSubmission, invalidatePoll, pollStatus, ready, setStatus, supportsJobPolling, watchedJobId, watchedThreadId]);
 
+  const requestStop = useCallback((requestId: string, awaiting?: { threadId: string; modelId: string | null; modelLoad?: true }) => {
+    if (stopDispatched.current === requestId) return;
+    stopDispatched.current = requestId;
+    void stopTextGeneration(requestId, awaiting?.threadId).then((receipt) => {
+      if (!receipt?.cancelledBeforeStart || !awaiting || stopDispatched.current !== requestId) return;
+      const pending = submission.current;
+      if (pending?.id === requestId) finishSubmission(pending);
+      if (awaiting.modelLoad) {
+        stopDispatched.current = null;
+        setStoppingId((current) => current === requestId ? null : current);
+        return;
+      }
+      const observedAt = Date.now();
+      const job: TextJob = { ...idleStatus.job, id: requestId, threadId: awaiting.threadId, modelId: awaiting.modelId,
+        status: "stopped", finishedAt: observedAt / 1000 };
+      setChatState((current) => {
+        const workspace = settleTextJob(current.workspace, job, current.lastRunningJob, current.status.models, observedAt);
+        return workspace === current.workspace ? current : { ...current, workspace };
+      });
+    }).catch((error: unknown) => {
+      if (stopDispatched.current !== requestId) return;
+      stopDispatched.current = null;
+      setStoppingId((current) => current === requestId ? null : current);
+      setStopFailure({ id: requestId, message: error instanceof Error ? error.message : "Could not stop text generation." });
+    });
+  }, [finishSubmission]);
+
   useEffect(() => {
     if (!ready || !statusLoaded || !stoppingId) return;
     const running = status.job.status === "running" && status.job.id === stoppingId;
@@ -565,34 +592,14 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
       setStoppingId(null);
       return;
     }
-    const awaitingThreadId = !running && status.supportsPendingStop ? thread?.id ?? pendingLoad?.threadId : undefined;
-    if ((!running && !awaitingThreadId) || statusError || stopDispatched.current === stoppingId ||
-        (running && status.job.phase === "Stopping generation…")) return;
-    stopDispatched.current = stoppingId;
-    void stopTextGeneration(stoppingId, awaitingThreadId).then((receipt) => {
-      if (!receipt?.cancelledBeforeStart || !awaitingThreadId || stopDispatched.current !== stoppingId) return;
-      const pending = submission.current;
-      if (pending?.id === stoppingId) finishSubmission(pending);
-      if (pendingLoad) {
-        stopDispatched.current = null;
-        setStoppingId((current) => current === stoppingId ? null : current);
-        return;
-      }
-      if (!thread) return;
-      const observedAt = Date.now();
-      const job: TextJob = { ...idleStatus.job, id: stoppingId, threadId: thread.id, modelId: thread.modelId,
-        status: "stopped", finishedAt: observedAt / 1000 };
-      setChatState((current) => {
-        const workspace = settleTextJob(current.workspace, job, current.lastRunningJob, current.status.models, observedAt);
-        return workspace === current.workspace ? current : { ...current, workspace };
-      });
-    }).catch((error: unknown) => {
-      if (stopDispatched.current !== stoppingId) return;
-      stopDispatched.current = null;
-      setStoppingId((current) => current === stoppingId ? null : current);
-      setStopFailure({ id: stoppingId, message: error instanceof Error ? error.message : "Could not stop text generation." });
-    });
-  }, [finishSubmission, ready, status.job, status.supportsPendingStop, statusError, statusLoaded, stoppingId, threads]);
+    if (statusError) return;
+    if (running) {
+      if (status.job.phase !== "Stopping generation…") requestStop(stoppingId);
+    } else if (status.supportsPendingStop) {
+      if (pendingLoad) requestStop(stoppingId, { threadId: pendingLoad.threadId, modelId: null, modelLoad: true });
+      else if (thread) requestStop(stoppingId, { threadId: thread.id, modelId: thread.modelId });
+    }
+  }, [ready, requestStop, status.job, status.supportsPendingStop, statusError, statusLoaded, stoppingId, threads]);
 
   // The model process may be gone while its last render is already on disk.
   useEffect(() => {
@@ -1327,19 +1334,19 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     }
   }, [acceptJob, beginSubmission, busy, computeDevice, finishSubmission, getThread, ready, setWorkspace, submissionIsMissing, updateThread]);
 
-  const runningJobId = status.job.status === "running" ? status.job.id : null;
-  const runningThreadId = status.job.threadId;
   const stop = useCallback((threadId: string) => {
     const sending = submission.current;
-    const requestId = getThread(threadId)?.pendingJobId ??
-      (runningThreadId === threadId ? runningJobId : null) ??
+    const job = statusRef.current.job;
+    const runningHere = job.status === "running" && job.threadId === threadId;
+    const requestId = getThread(threadId)?.pendingJobId ?? (runningHere ? job.id : null) ??
       (sending?.modelLoad && sending.threadId === threadId ? sending.id : null);
     if (ready && statusLoaded && requestId && requestId !== stoppingId) {
       setActionError(null);
       setStopFailure(null);
       setStoppingId(requestId);
+      if (runningHere && job.id === requestId && !statusError && job.phase !== "Stopping generation…") requestStop(requestId);
     }
-  }, [getThread, ready, runningJobId, runningThreadId, statusLoaded, stoppingId, setActionError]);
+  }, [getThread, ready, requestStop, setActionError, statusError, statusLoaded, stoppingId]);
 
   const selectModel = useCallback((threadId: string, modelId: string) => {
     const activeThread = getThread(threadId);
