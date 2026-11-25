@@ -168,6 +168,7 @@ const BACKEND_CONNECT_INTERVAL_MS = 500;
 export function useStudio(computeDevice: "GPU" | "CPU" = "GPU") {
   const [ready, setReady] = useState(false);
   const [connecting, setConnecting] = useState(false);
+  const [backendStartupError, setBackendStartupError] = useState<string | null>(null);
   const [workspace, setWorkspace] = useState(() =>
     loadThreadWorkspace(loadSettings()),
   );
@@ -678,32 +679,27 @@ export function useStudio(computeDevice: "GPU" | "CPU" = "GPU") {
 
   useEffect(() => {
     let cancelled = false;
-
-    const boot = async () => {
-      try {
-        const url = await window.studio.getApiBaseUrl();
-        if (cancelled) return;
-        setApiBaseUrl(url);
-        setReady(true);
-        await connectBackend();
-      } catch (err) {
-        if (cancelled) return;
-        setReady(true);
-        setError(err instanceof Error ? err.message : "Backend startup failed");
-      }
-    };
-
-    void boot();
-    const unsubscribeUrl = window.studio.onApiBaseUrl((url) => {
+    let connectedUrl: string | null = null;
+    const connected = (url: string) => {
+      if (cancelled || connectedUrl === url) return;
+      connectedUrl = url;
       setApiBaseUrl(url);
+      setBackendStartupError(null);
       setReady(true);
       void connectBackend();
-    });
-    const unsubscribeError = window.studio.onBackendError((message) => {
-      setReady(true);
+    };
+    const failed = (message: string) => {
+      if (cancelled) return;
+      connectedUrl = null;
+      setBackendStartupError(message);
+      setReady(false);
       setConnecting(false);
-      setError(message);
+    };
+    void window.studio.getApiBaseUrl().then(connected, (err: unknown) => {
+      failed(err instanceof Error ? err.message : "Could not start Fern’s local service.");
     });
+    const unsubscribeUrl = window.studio.onApiBaseUrl(connected);
+    const unsubscribeError = window.studio.onBackendError(failed);
 
     return () => {
       cancelled = true;
@@ -711,6 +707,18 @@ export function useStudio(computeDevice: "GPU" | "CPU" = "GPU") {
       unsubscribeError();
     };
   }, [connectBackend]);
+
+  const retryBackendStartup = useCallback(async () => {
+    if (!window.studio.retryBackend) return;
+    setBackendStartupError(null);
+    setConnecting(true);
+    try {
+      await window.studio.retryBackend();
+    } catch (error) {
+      setBackendStartupError(error instanceof Error ? error.message : "Could not restart Fern’s local service.");
+      setConnecting(false);
+    }
+  }, []);
 
   const running = status?.job.status === "running";
   const runtimeStatus = status?.runtime ?? null;
@@ -1150,6 +1158,8 @@ export function useStudio(computeDevice: "GPU" | "CPU" = "GPU") {
     deleteThread,
     ready,
     connecting,
+    backendStartupError,
+    retryBackendStartup: window.studio.retryBackend ? retryBackendStartup : undefined,
     settings,
     updateSettings,
     status,

@@ -3,39 +3,44 @@ import type { StudioApi } from "./types";
 
 let cachedApiBaseUrl: string | null = null;
 let cachedBackendError: string | null = null;
-const apiUrlWaiters = new Set<(url: string) => void>();
-const backendErrorListeners = new Set<(message: string) => void>();
+const apiUrlWaiters = new Set<{ resolve: (url: string) => void; reject: (error: Error) => void }>();
+
+ipcRenderer.on("studio:backend-starting", () => {
+  cachedApiBaseUrl = null;
+  cachedBackendError = null;
+});
 
 ipcRenderer.on("studio:api-base-url", (_event, url: string) => {
   cachedApiBaseUrl = url;
-  for (const resolve of apiUrlWaiters) {
-    resolve(url);
-  }
+  cachedBackendError = null;
+  for (const waiter of apiUrlWaiters) waiter.resolve(url);
   apiUrlWaiters.clear();
 });
 
 ipcRenderer.on("studio:backend-error", (_event, message: string) => {
   cachedBackendError = message;
-  for (const listener of backendErrorListeners) {
-    listener(message);
-  }
+  cachedApiBaseUrl = null;
+  for (const waiter of apiUrlWaiters) waiter.reject(new Error(message));
+  apiUrlWaiters.clear();
 });
 
 function waitForApiBaseUrl(timeoutMs = 90_000): Promise<string> {
   if (cachedApiBaseUrl) {
     return Promise.resolve(cachedApiBaseUrl);
   }
+  if (cachedBackendError) return Promise.reject(new Error(cachedBackendError));
 
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
-      apiUrlWaiters.delete(resolve);
-      reject(new Error("Timed out waiting for the OpenVINO backend."));
+      apiUrlWaiters.delete(waiter);
+      reject(new Error("Timed out waiting for Fern’s local service."));
     }, timeoutMs);
 
-    apiUrlWaiters.add((url) => {
-      clearTimeout(timer);
-      resolve(url);
-    });
+    const waiter = {
+      resolve: (url: string) => { clearTimeout(timer); resolve(url); },
+      reject: (error: Error) => { clearTimeout(timer); reject(error); },
+    };
+    apiUrlWaiters.add(waiter);
 
     ipcRenderer.send("studio:request-api-base-url");
   });
@@ -47,6 +52,7 @@ const studioApi: StudioApi = {
   architecture: process.arch,
   appVersion: process.argv.find((argument) => argument.startsWith("--fern-app-version="))?.slice("--fern-app-version=".length),
   getApiBaseUrl: () => waitForApiBaseUrl(),
+  retryBackend: () => ipcRenderer.invoke("studio:retry-backend"),
   adjustZoom: (action) => ipcRenderer.invoke("studio:adjust-zoom", action),
 
   onApiBaseUrl: (listener) => {

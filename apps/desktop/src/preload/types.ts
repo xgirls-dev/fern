@@ -20,6 +20,7 @@ export interface StudioApi {
   architecture?: string;
   appVersion?: string;
   getApiBaseUrl: () => Promise<string>;
+  retryBackend?: () => Promise<void>;
   adjustZoom: (action: "in" | "out" | "reset") => Promise<number>;
   onApiBaseUrl: (listener: (url: string) => void) => () => void;
   onBackendError: (listener: (message: string) => void) => () => void;

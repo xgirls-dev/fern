@@ -1,7 +1,7 @@
 import { createServer, defaultClientConditions, preview } from "vite";
 import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-export async function fixture({ builtRenderer = false, firstRun = false, imageCount = 3, threadCount = 1, textStatus = null, textJobEvents, legacyTextWorkspace = null, imageGenerationTime = 65, platform = "win32", viewport = { width: 1440, height: 900 }, installedModels = [{ id: "9b", label: "Klein 9B" }], holdApiOnReload = false } = {}) {
+export async function fixture({ builtRenderer = false, firstRun = false, imageCount = 3, threadCount = 1, textStatus = null, textJobEvents, legacyTextWorkspace = null, imageGenerationTime = 65, platform = "win32", viewport = { width: 1440, height: 900 }, installedModels = [{ id: "9b", label: "Klein 9B" }], holdApiOnReload = false, backendStartupFailure } = {}) {
   builtRenderer ||= process.env.FERN_UI_BUILT === "1";
   const address = { host: "127.0.0.1", port: 0 };
   const serveJobEvents = ({ middlewares }) => {
@@ -71,7 +71,7 @@ export async function fixture({ builtRenderer = false, firstRun = false, imageCo
     referenceLabel: "",
   }));
   await page.addInitScript(
-    ({ firstRun, threads, platform, legacyTextWorkspace, holdApiOnReload }) => {
+    ({ firstRun, threads, platform, legacyTextWorkspace, holdApiOnReload, backendStartupFailure }) => {
       let maximized = false;
       const maximizedListeners = new Set();
       const holdApi = holdApiOnReload && sessionStorage.getItem("fern-fixture-hold-api") === "1";
@@ -79,10 +79,19 @@ export async function fixture({ builtRenderer = false, firstRun = false, imageCo
         {
           platform,
           getApiBaseUrl: async () => {
+            if (backendStartupFailure) throw new Error(backendStartupFailure);
             if (holdApi) await new Promise((resolve) => window.addEventListener("fern-fixture-connect-api", resolve, { once: true }));
             return location.origin;
           },
-          onApiBaseUrl: () => () => {},
+          retryBackend: async () => {
+            await fetch("/fixture/backend-retry", { method: "POST" });
+            window.dispatchEvent(new Event("fern-fixture-backend-ready"));
+          },
+          onApiBaseUrl: (listener) => {
+            const connected = () => listener(location.origin);
+            window.addEventListener("fern-fixture-backend-ready", connected);
+            return () => window.removeEventListener("fern-fixture-backend-ready", connected);
+          },
           onBackendError: () => () => {},
           onThemeChanged: () => () => {},
           onWindowMaximizedChanged: (listener) => {
@@ -117,7 +126,7 @@ export async function fixture({ builtRenderer = false, firstRun = false, imageCo
         localStorage.setItem("fern-text-threads:v1", JSON.stringify(legacyTextWorkspace));
       }
     },
-    { firstRun, threads, platform, legacyTextWorkspace, holdApiOnReload },
+    { firstRun, threads, platform, legacyTextWorkspace, holdApiOnReload, backendStartupFailure },
   );
   const svg =
     "data:image/svg+xml," +

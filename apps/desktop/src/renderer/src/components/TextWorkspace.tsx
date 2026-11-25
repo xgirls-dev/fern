@@ -199,6 +199,8 @@ export interface TextWorkspaceProps {
   onOpenThreadSearch: () => void;
   onClosePane: () => void;
   sidebarCollapsed?: boolean;
+  backendStartupError?: string | null;
+  onRetryBackendStartup?: () => void;
   onSetupModels: (task: SetupTask, threadId: string) => void;
   focusRequest?: number;
   findRequest?: { threadId: string; query: string } | null;
@@ -212,7 +214,7 @@ export interface TextWorkspaceProps {
 }
 
 export function TextWorkspace({ studio, thread: activeThread, pane, focused, split, onChooseChat, onOpenThreadSearch, onClosePane,
-  sidebarCollapsed = false, onSetupModels, focusRequest = 0, findRequest, onFindRequestHandled, imageGpuAvailable,
+  sidebarCollapsed = false, backendStartupError, onRetryBackendStartup, onSetupModels, focusRequest = 0, findRequest, onFindRequestHandled, imageGpuAvailable,
   onOpenImage, onNewChat, onCreateImage, onCreateSpeech, onOpenCompute }: TextWorkspaceProps) {
   const { status, statusError, actionError, busy } = studio;
   const { refreshModels } = studio;
@@ -428,7 +430,10 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
     (!!inspectionMessageId || runningHere && (/^Checking (the (generated )?)?image\b/.test(phase) || !!liveJob?.inspection || !!replyImage));
   const inspectionCaption = reconnecting ? (stopping ? "Reconnecting to stop…" : "Reconnecting to check the image…")
     : stopping ? "Stopping image check…" : restoringReply ? restorationLabel : "Checking image…";
-  const modelNotice: ModelReadiness | null = responseHere || otherResponseThread ? null
+  const modelNotice: ModelReadiness | null = backendStartupError
+    ? { label: "Fern couldn’t start its local service.", detail: backendStartupError, tone: "error",
+        action: onRetryBackendStartup ? { label: "Retry starting Fern", run: onRetryBackendStartup } : undefined }
+    : responseHere || otherResponseThread ? null
     : installing ? { label: `${repairing ? "Repairing" : "Installing"} ${installName ?? "a chat model"}`, detail: install.phase,
         tone: "pending", action: { label: repairing ? "View model repair" : "View model download", run: openModels } }
     : studio.modelAction ? { label: studio.modelAction, tone: "pending" }
