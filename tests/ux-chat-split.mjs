@@ -66,6 +66,59 @@ try {
   assert(leftBox.x + leftBox.width <= rightBox.x, "The chats should appear in separate columns.");
   assert.equal(leftBox.y, rightBox.y);
 
+  const modelMenu = page.getByRole("menu", { name: "Text model", exact: true });
+  const rightModel = button("Text model: Qwen", right);
+  const rightDraft = message(right);
+  await rightDraft.fill("Keep this draft while choosing a model.");
+  await rightDraft.evaluate((field) => field.setSelectionRange(5, 15, "backward"));
+  await rightDraft.dispatchEvent("keydown", { key: "L", code: "KeyL", ctrlKey: true, shiftKey: true, isComposing: true });
+  await expect(modelMenu).toHaveCount(0);
+  await rightDraft.press("Control+Shift+L");
+  await expect(rightModel).toHaveAttribute("aria-expanded", "true");
+  await expect(rightModel).toHaveAttribute("aria-keyshortcuts", "Control+Shift+L");
+  await expect(button("Text model: Gemma", left)).toHaveAttribute("aria-expanded", "false");
+  await expect(modelMenu.getByRole("menuitemradio", { name: "Qwen", exact: true })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(rightDraft).toBeFocused();
+  assert.deepEqual(await rightDraft.evaluate((field) => [field.selectionStart, field.selectionEnd, field.selectionDirection]), [5, 15, "backward"]);
+
+  await rightDraft.press("Control+Shift+L");
+  await expect(modelMenu.getByRole("menuitemradio", { name: "Qwen", exact: true })).toBeFocused();
+  await page.keyboard.press("ArrowUp");
+  await expect(modelMenu.getByRole("menuitemradio", { name: "Gemma", exact: true })).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(button("Text model: Gemma", right)).toBeVisible();
+  await expect(rightDraft).toBeFocused();
+  await expect(rightDraft).toHaveValue("Keep this draft while choosing a model.");
+  // Keep the opening animation pending until after keyboard navigation.
+  const delayedMenu = await page.addStyleTag({ content: `
+    @keyframes test-model-menu-opening { from { opacity: .99 } to { opacity: 1 } }
+    .ui-model-menu[data-open] {
+      animation: test-model-menu-opening 1s linear paused;
+      animation-duration: 1s !important;
+      animation-fill-mode: both;
+    }
+  ` });
+  await rightDraft.press("Control+Shift+L");
+  await expect(modelMenu.getByRole("menuitemradio", { name: "Gemma", exact: true })).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  const nextModel = modelMenu.getByRole("menuitemradio", { name: "Qwen", exact: true });
+  await expect(nextModel).toBeFocused();
+  await modelMenu.evaluate(async (menu) => {
+    const animations = menu.getAnimations();
+    if (!animations.length) throw new Error("Expected a pending opening animation");
+    for (const animation of animations) animation.finish();
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  });
+  await expect(nextModel).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(rightModel).toBeVisible();
+  await delayedMenu.evaluate((style) => style.remove());
+  await rightDraft.press("Control+Shift+L");
+  await message(left).click();
+  await expect(modelMenu).toHaveCount(0);
+  await expect(message(left)).toBeFocused();
+
   const dividerOffset = (percent) => () => divider.evaluate((element, ratio) => {
     const layout = element.parentElement.getBoundingClientRect();
     return Math.abs(element.getBoundingClientRect().left - (layout.left + layout.width * ratio / 100));
@@ -164,6 +217,9 @@ try {
   await button("Stop generation", right).waitFor();
   assert(await button("Send message", left).isDisabled());
   assert.equal(await message(left).inputValue(), "Continue the left draft");
+  await message(left).press("Control+Shift+L");
+  await expect(modelMenu).toHaveCount(0);
+  await expect(message(left)).toBeFocused();
   await complete("Right answer.", right);
 
   await button("Send message", left).click();

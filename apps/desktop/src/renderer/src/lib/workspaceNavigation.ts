@@ -36,7 +36,9 @@ export const shortcuts = {
   sidebar: { key: "b", label: "Toggle sidebar", shift: false, alt: false },
 } as const;
 
-type Shortcut = (typeof shortcuts)[keyof typeof shortcuts];
+export const chatModelShortcut = { key: "l", label: "Choose a chat model", shift: true, alt: false } as const;
+
+export type Shortcut = (typeof shortcuts)[keyof typeof shortcuts] | typeof chatModelShortcut;
 
 export function shortcutLabel(shortcut: Shortcut): string {
   return [

@@ -55,7 +55,7 @@ export function useDropdownActions({ dismissOnResize = false, trigger: externalT
 
 export function Dropdown({
   trigger, triggerTooltip, triggerTooltipSide, children, label, align = "start", side = "bottom",
-  className = "", finalFocus, open, onOpenChange, onOpenChangeComplete, portalContainer, collisionPadding,
+  className = "", finalFocus, open, onOpenChange, onOpenChangeComplete, onItemHighlighted, portalContainer, collisionPadding,
 }: {
   trigger: ReactElement;
   triggerTooltip?: string;
@@ -67,8 +67,9 @@ export function Dropdown({
   className?: string;
   finalFocus?: ComponentProps<typeof Menu.Popup>["finalFocus"];
   open?: boolean;
-  onOpenChange?: (open: boolean) => void;
+  onOpenChange?: ComponentProps<typeof Menu.Root>["onOpenChange"];
   onOpenChangeComplete?: (open: boolean) => void;
+  onItemHighlighted?: ComponentProps<typeof Menu.Root>["onItemHighlighted"];
   portalContainer?: ComponentProps<typeof Menu.Portal>["container"];
   collisionPadding?: ComponentProps<typeof Menu.Positioner>["collisionPadding"];
 }) {
@@ -76,7 +77,8 @@ export function Dropdown({
     const button = <Menu.Trigger render={trigger} />;
     return triggerTooltip ? <Tooltip content={triggerTooltip} side={triggerTooltipSide ?? side}>{button}</Tooltip> : button;
   }, [side, trigger, triggerTooltip, triggerTooltipSide]);
-  return <Menu.Root modal={false} open={open} onOpenChange={onOpenChange} onOpenChangeComplete={onOpenChangeComplete}>
+  return <Menu.Root modal={false} open={open} onOpenChange={onOpenChange} onOpenChangeComplete={onOpenChangeComplete}
+    onItemHighlighted={onItemHighlighted}>
     {menuTrigger}
     <DropdownPopup {...{ portalContainer, align, side, collisionPadding, className, label, finalFocus }}>{children}</DropdownPopup>
   </Menu.Root>;

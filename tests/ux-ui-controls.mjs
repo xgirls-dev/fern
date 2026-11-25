@@ -59,7 +59,7 @@ try {
   await expect(page.getByRole("tooltip").filter({ hasText: "Install and manage models" })).toBeVisible();
   const modelButton = button("Text model: Local model");
   await modelButton.hover();
-  await expect(page.getByRole("tooltip").filter({ hasText: /^Local model$/ })).toBeVisible();
+  await expect(page.getByRole("tooltip").filter({ hasText: /^Local model · Ctrl Shift L$/ })).toBeVisible();
   await modelButton.press("ArrowDown");
   const modelMenu = page.getByRole("menu", { name: "Text model", exact: true });
   const availableModels = modelMenu.getByRole("group", { name: "Available", exact: true });
