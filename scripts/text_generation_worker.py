@@ -39,7 +39,7 @@ def emit(payload: dict[str, Any]) -> None:
 
 def run_gguf(file: Path, device: str, projector: Path | None) -> int:
     from chat_context import DEFAULT_CONTEXT_SIZE
-    from gguf_runtime import CompletionCancellation, GGUFComputeError, GGUFServer, ensure_runtime
+    from gguf_runtime import CompletionCancellation, GGUFComputeError, GGUFServer, ensure_runtime, windows_arc_b390
 
     runtime_root = Path(os.environ["FERN_GGUF_RUNTIME_ROOT"])
     requests: SimpleQueue[tuple[dict[str, Any], CompletionCancellation] | None] = SimpleQueue()
@@ -70,6 +70,7 @@ def run_gguf(file: Path, device: str, projector: Path | None) -> int:
     threading.Thread(target=read_requests, daemon=True).start()
     server = None
     loaded_projector = None
+    arc_b390 = None
 
     def startup_phase(stage: str, text: str) -> None:
         emit({"type": "phase", "stage": stage, "text": text})
@@ -99,6 +100,7 @@ def run_gguf(file: Path, device: str, projector: Path | None) -> int:
                     server is not None and server.process is not None and server.process.poll() is None
                     and server.context_size == context_size and server.load_options == load_options
                 )
+                preferred_vulkan = False
                 if sys.platform == "darwin":
                     backend = "cpu" if target == "CPU" else "metal"
                 elif vision:
@@ -107,6 +109,11 @@ def run_gguf(file: Path, device: str, projector: Path | None) -> int:
                 elif same_configuration and server.backend == "vulkan":
                     # The vision runtime also handles plain text. Keep its model loaded.
                     backend = "vulkan"
+                elif sys.platform == "win32" and target == "GPU" and request.get("ggufArchitecture") == "gemma4":
+                    if arc_b390 is None:
+                        arc_b390 = windows_arc_b390()
+                    preferred_vulkan = arc_b390
+                    backend = "vulkan" if preferred_vulkan else "openvino"
                 else:
                     backend = "openvino"
                 requested_projector = projector if vision else None
@@ -158,16 +165,25 @@ def run_gguf(file: Path, device: str, projector: Path | None) -> int:
 
                 try:
                     result = complete(backend, same_configuration)
-                except GGUFComputeError:
-                    if (backend != "openvino" or target != "GPU" or cancellation.streaming
-                            or "argument shapes are inconsistent" not in server.runtime_log_tail(after=log_offset or 0).lower()):
+                except InterruptedError:
+                    raise
+                except (OSError, RuntimeError) as error:
+                    if preferred_vulkan and server is None and text_runtime_error_code(error) != OUT_OF_MEMORY:
+                        cancellation.check()
+                        arc_b390 = False
+                        startup_phase("setting-up-runtime", "Vulkan setup failed. Trying OpenVINO…")
+                        result = complete("openvino", False)
+                    elif (isinstance(error, GGUFComputeError) and backend == "openvino" and target == "GPU"
+                          and not cancellation.streaming
+                          and "argument shapes are inconsistent" in server.runtime_log_tail(after=log_offset or 0).lower()):
+                        cancellation.check()
+                        startup_phase("setting-up-runtime", "Switching GPU runtimes…")
+                        emit({"type": "residency", "model": None})
+                        server.close(force=True)
+                        server = None
+                        result = complete("vulkan", False)
+                    else:
                         raise
-                    cancellation.check()
-                    startup_phase("setting-up-runtime", "Switching GPU runtimes…")
-                    emit({"type": "residency", "model": None})
-                    server.close(force=True)
-                    server = None
-                    result = complete("vulkan", False)
                 emit(result)
             except InterruptedError:
                 # A disconnected prompt prefill can still hold the inference slot.

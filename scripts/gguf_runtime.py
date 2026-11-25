@@ -44,6 +44,7 @@ _LINUX_ASSETS = {
 _MAC_ARM64_ASSET = (17282660, "88ba080b2b24bb69012633588c763b7ed20ea60b3f9e7fcbd1a5434eded3e325")
 RUNTIME_PLATFORM_ERROR = "Fern's managed GGUF runtime requires Windows or Linux x86-64, or Apple Silicon."
 _LINUX_DRIVER_HELP = "On Omarchy, run sudo pacman -Syu vulkan-intel vulkan-icd-loader, then retry."
+_WINDOWS_DISPLAY_CLASS = "{4d36e968-e325-11ce-bfc1-08002be10318}"
 
 
 class VulkanDriverError(RuntimeError):
@@ -52,6 +53,24 @@ class VulkanDriverError(RuntimeError):
 
 class GGUFComputeError(RuntimeError):
     pass
+
+
+def windows_arc_b390() -> bool:
+    """Select the measured GPU only when Windows reports it as the sole PCI display adapter."""
+    if sys.platform != "win32":
+        return False
+    pnputil = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "pnputil.exe"
+    try:
+        result = subprocess.run(
+            [str(pnputil), "/enum-devices", "/connected", "/class", _WINDOWS_DISPLAY_CLASS],
+            stdin=subprocess.DEVNULL, capture_output=True, check=True, timeout=1,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    # PCI instance IDs use ASCII independently of Windows' display language.
+    adapters = re.findall(rb"PCI\\VEN_([0-9A-F]{4})&DEV_([0-9A-F]{4})(?:&[^\s\\]+)*\\[^\s]+", result.stdout.upper())
+    return adapters == [(b"8086", b"B080")]
 
 
 class CompletionCancellation:

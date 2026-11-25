@@ -13,6 +13,8 @@ const dataRoot = process.env.FERN_E2E_DATA_ROOT ?? path.join(scratch, "workspace
 const existingModelRoot = process.env.FERN_E2E_TEXT_MODEL_ROOT;
 const sourceApp = process.env.FERN_E2E_APP_SOURCE;
 const mac = process.platform === "darwin";
+const textBackend = mac ? "Metal" : (process.env.FERN_E2E_GGUF_TEXT_BACKEND ?? "OpenVINO");
+assert(["Metal", "OpenVINO", "Vulkan"].includes(textBackend), "Choose a supported expected GGUF backend.");
 const packagedExecutable = mac
   ? path.join(desktop, "release-macos", "mac-arm64", "Fern.app", "Contents", "MacOS", "Fern")
   : path.join(desktop, "release", "win-unpacked", "Fern.exe");
@@ -145,7 +147,7 @@ try {
     assert.equal(response.job.modelId, installed.id);
     assert.equal(response.job.result.mode, test.mode);
     assert.equal(response.job.result.device, "GPU");
-    const expectedBackend = mac ? "Metal" : test.modality === "text" ? "OpenVINO" : "Vulkan";
+    const expectedBackend = test.modality === "text" || mac ? textBackend : "Vulkan";
     assert.equal(response.job.result.backend, expectedBackend);
     assert(response.job.result.outputTokens > 0 && response.job.result.inputTokens > 0, "Token counts must be positive");
     assert.match(response.job.partialText, test.answer);

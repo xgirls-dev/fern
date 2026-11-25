@@ -974,7 +974,7 @@ def run_text_generation(payload: dict[str, Any], job_id: str, cancel_event: thre
                     str(Path(sys.executable)), "-u", str(SCRIPTS / "text_generation_worker.py"), model["path"], device,
                     *([model["projectorPath"]] if model.get("projectorPath") else []),
                 ],
-                request={**request, "op": "generate"},
+                request={**request, "op": "generate", "ggufArchitecture": model.get("architecture")},
                 cwd=ROOT,
                 env={
                     **os.environ,
