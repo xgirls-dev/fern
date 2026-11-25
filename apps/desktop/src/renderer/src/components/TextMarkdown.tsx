@@ -1,4 +1,4 @@
-import { cloneElement, createContext, Fragment, isValidElement, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentPropsWithoutRef } from "react";
+import { createContext, Fragment, isValidElement, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentPropsWithoutRef } from "react";
 import { jsx, jsxs } from "react/jsx-runtime";
 import { toJsxRuntime } from "hast-util-to-jsx-runtime";
 import type { Element, RootContent } from "hast";
@@ -10,12 +10,9 @@ import { useChatMarkdown } from "../hooks/useChatMarkdown";
 import { useClipboardCopy } from "../hooks/useClipboardCopy";
 import { highlightChatCode } from "../lib/textCodeHighlight";
 import { Button } from "./ui/controls";
-import { ProgressLabel } from "./ui/ProgressLabel";
 import { Tooltip } from "./ui/Tooltip";
 
 const StreamingCode = createContext(false);
-type StreamCursor = "active" | "waiting";
-type StreamTailProps = { "data-stream-tail"?: StreamCursor };
 
 function useCodeOverflow(source: string | undefined, wrap: boolean | null) {
   const ref = useRef<HTMLPreElement>(null);
@@ -47,7 +44,7 @@ function useCodeOverflow(source: string | undefined, wrap: boolean | null) {
   return { ref, overflowing };
 }
 
-function CodeBlock({ children, "data-stream-tail": streamTail }: ComponentPropsWithoutRef<"pre"> & StreamTailProps) {
+function CodeBlock({ children }: ComponentPropsWithoutRef<"pre">) {
   const streaming = useContext(StreamingCode);
   const code = isValidElement<{ className?: string; children?: unknown }>(children) ? children.props : undefined;
   const language = code?.className?.match(/\blanguage-([\w+#.-]+)/)?.[1];
@@ -62,7 +59,7 @@ function CodeBlock({ children, "data-stream-tail": streamTail }: ComponentPropsW
     if (text instanceof Text && text.data === source) return highlightChatCode(text, language.toLowerCase());
   }, [language, ref, source, streaming]);
   const scrollable = overflowing && !wrap;
-  return <div className="text-code-block" data-wrapped={wrap || undefined} data-stream-tail={streamTail}>
+  return <div className="text-code-block" data-wrapped={wrap || undefined}>
     <div className="text-code-toolbar">
       <span>{language ?? "Code"}</span>
       <div className="text-code-actions">
@@ -88,7 +85,7 @@ function cellText(cell: HTMLTableCellElement) {
   return /^[=+@-]/.test(normalized) && !signedNumber ? `'${value}` : value;
 }
 
-function MarkdownTable({ children, "data-stream-tail": streamTail }: ComponentPropsWithoutRef<"table"> & StreamTailProps) {
+function MarkdownTable({ children }: ComponentPropsWithoutRef<"table">) {
   const table = useRef<HTMLTableElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
   const [overflowing, setOverflowing] = useState(false);
@@ -122,7 +119,7 @@ function MarkdownTable({ children, "data-stream-tail": streamTail }: ComponentPr
     const rows = Array.from(table.current.rows, (row) => Array.from(row.cells, cellText).join("\t"));
     void copy(rows.join("\n"));
   };
-  return <div className="text-table-block" data-fitted={fitted || undefined} data-tight-fit={fitted && tightFit || undefined} data-stream-tail={streamTail}>
+  return <div className="text-table-block" data-fitted={fitted || undefined} data-tight-fit={fitted && tightFit || undefined}>
     <div className="text-table-toolbar">
       {(overflowing || fitted !== null) && <Button variant="ghost" aria-label="Fit table to chat" aria-pressed={!!fitted} onClick={() => {
         if (!fitted && scroller.current) scroller.current.scrollLeft = 0;
@@ -173,17 +170,16 @@ function isTable(node: RootContent): node is Element {
   return node.type === "element" && node.tagName === "table";
 }
 
-const MarkdownBlock = memo(function MarkdownBlock({ node, cursor }: { node: RootContent; cursor?: StreamCursor }) {
-  const element = useMemo(() => isTable(node)
+const MarkdownBlock = memo(function MarkdownBlock({ node }: { node: RootContent }) {
+  return isTable(node)
     ? <MarkdownTable>{node.children.map((section, index) => section.type === "element"
       ? <MarkdownTableSection key={index} node={section} /> : null)}</MarkdownTable>
-    : markdownElement(node), [node]);
-  return cursor && isValidElement<StreamTailProps>(element) ? cloneElement(element, { "data-stream-tail": cursor }) : element;
-}, (previous, next) => previous.cursor === next.cursor && (previous.node === next.node ||
-  (!isTable(next.node) && !isTable(previous.node) && JSON.stringify(previous.node) === JSON.stringify(next.node))));
+    : markdownElement(node);
+}, (previous, next) => previous.node === next.node ||
+  (!isTable(next.node) && !isTable(previous.node) && JSON.stringify(previous.node) === JSON.stringify(next.node)));
 
-export const TextMarkdown = memo(function TextMarkdown({ content, streaming = false, receivingReply = streaming, cursor, preserveSelection = false }: {
-  content: string; streaming?: boolean; receivingReply?: boolean; cursor?: StreamCursor; preserveSelection?: boolean;
+export const TextMarkdown = memo(function TextMarkdown({ content, streaming = false, receivingReply = streaming, preserveSelection = false }: {
+  content: string; streaming?: boolean; receivingReply?: boolean; preserveSelection?: boolean;
 }) {
   const { blocks: parsed, pending } = useChatMarkdown(content, streaming, receivingReply);
   const rendered = useRef(parsed);
@@ -193,13 +189,8 @@ export const TextMarkdown = memo(function TextMarkdown({ content, streaming = fa
   }, [parsed, preserveSelection]);
   const blocks = preserveSelection ? rendered.current : parsed;
   // Incoming text can outpace the Markdown worker. Reuse the rendered list
-  // until the worker publishes different blocks or the cursor changes.
-  const elements = useMemo(() => {
-    if (!blocks) return null;
-    let tail = cursor ? blocks.length - 1 : -1;
-    while (tail >= 0 && blocks[tail].type !== "element") tail -= 1;
-    return blocks.map((block, index) => <MarkdownBlock key={index} node={block} cursor={index === tail ? cursor : undefined} />);
-  }, [blocks, cursor]);
+  // until the worker publishes different blocks.
+  const elements = useMemo(() => blocks?.map((block, index) => <MarkdownBlock key={index} node={block} />), [blocks]);
   const hasBlocks = !!elements?.length;
   const formatting = !elements || (pending && (!hasBlocks || !receivingReply));
   const waitingWithPreview = formatting && hasBlocks;
@@ -216,8 +207,7 @@ export const TextMarkdown = memo(function TextMarkdown({ content, streaming = fa
     {elements}
     {formatting && <div data-chat-markdown-formatting="" data-chat-markdown-pending={!hasBlocks || undefined}
       hidden={waitingWithPreview && !formattingDelayElapsed}>
-      <ProgressLabel className="text-thinking">Formatting response…</ProgressLabel>
+      <span className="text-thinking">Formatting response…</span>
     </div>}
-    {hasBlocks && cursor && <span className="text-stream-cursor" data-waiting={cursor === "waiting" || undefined} aria-hidden="true" />}
   </StreamingCode.Provider>;
 });

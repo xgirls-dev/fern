@@ -82,23 +82,20 @@ try {
   const first = "The first tokens stay on screen.";
   state.textStatus.job = { ...state.textStatus.job, partialText: first };
   await expect(stream).toContainText(first);
-  const cursor = stream.locator(".text-stream-cursor");
-  await expect(cursor).toBeAttached();
+  await expect(composerStatus).toHaveText("Responding…");
   await expect(reasoning).toHaveText("Reasoning");
 
   state.textStatus.job = { ...state.textStatus.job, phase: "Generating an image…", partialText: "The first", partialReasoning: "Start with" };
   await expect(stream.getByText("Creating an image…", { exact: true })).toBeVisible();
   await expect(stream).toContainText(first);
   await expect(stream.getByText("Start with a concise observation.")).toBeVisible();
-  await expect(cursor).toHaveCount(0);
   state.textStatus.job = { ...state.textStatus.job, phase: "Waiting for the first token…" };
-  await expect(cursor).toBeAttached();
+  await expect(composerStatus).toHaveText("Responding…");
 
   pollingOffline = true;
   await expect(composerStatus).toHaveText("Reconnecting to the text runtime…");
   await expect(stream.getByText("Reconnecting to the text runtime…", { exact: true })).toBeVisible();
   await expect(stream).toContainText(first);
-  await expect(cursor).toHaveCount(0);
   await expect(page.getByRole("alert")).toHaveCount(0);
   pollingOffline = false;
   await button("Stop generation").focus();

@@ -38,6 +38,8 @@ try {
   });
   await button("Send message").click();
   await expect(status).toHaveText("Loading model…");
+  await expect(stream.locator(".text-reply-stage")).toHaveText("Loading model…");
+  await expect(stream.locator(".text-reply-stage svg")).toHaveCount(0);
   assert.equal(await page.evaluate(() => window.firstReplyFrame), true,
     "The first loading row should fit inside the conversation on its first frame");
   update({ phase: "Checking hardware…" });
@@ -83,43 +85,37 @@ try {
   const fence = "```";
   const opening = "A short example:";
   const code = stream.locator("pre code");
-  const cursor = stream.locator(".text-stream-cursor");
-  const inlineCursor = stream.getByText(opening, { exact: true });
-  const inlineStyle = () => inlineCursor.evaluate((line) => {
-    const style = getComputedStyle(line, "::after");
-    return [style.content, style.animationName, style.opacity];
-  });
-  update({ partialText: opening });
-  await expect(inlineCursor).toBeVisible();
-  await expect.poll(async () => (await inlineStyle()).slice(0, 2)).toEqual(['""', "none"]);
   await page.emulateMedia({ reducedMotion: "no-preference" });
-  await expect.poll(async () => (await inlineStyle()).slice(0, 2)).toEqual(['""', "text-cursor-pulse"]);
-  await expect(cursor).toBeHidden();
+  update({ partialText: opening });
+  const paragraph = stream.getByText(opening, { exact: true });
+  const inlineMarker = () => paragraph.evaluate((line) => getComputedStyle(line, "::after").content);
+  const markers = stream.locator(".text-stream-cursor, [data-stream-tail]");
+  await expect(paragraph).toBeVisible();
+  await expect.poll(inlineMarker).toBe("none");
+  await expect(markers).toHaveCount(0);
+  await expect(status).toHaveText("Responding…");
   await page.clock.fastForward(8_100);
   await expect(status).toHaveText("Waiting for more text…");
-  await expect.poll(inlineStyle).toEqual(['""', "none", "0.55"]);
+  await expect.poll(inlineMarker).toBe("none");
   await page.emulateMedia({ reducedMotion: "reduce" });
 
   const example = `${opening}\n\n${fence}python\nprint(1)\n`;
   update({ partialText: example });
   await expect(code).toContainText("print(1)");
-  await expect.poll(async () => (await inlineStyle())[0]).toBe("none");
-  await expect(cursor).toBeVisible();
+  await expect(markers).toHaveCount(0);
   await expect(status).toHaveText("Responding…");
   await expect(summary).toHaveText("Reasoning");
   await code.evaluate((element) => { element.dataset.originalExample = "true"; });
   const before = await code.boundingBox();
   await page.clock.fastForward(8_100);
   await expect(status).toHaveText("Waiting for more text…");
-  await expect(cursor).toHaveAttribute("data-waiting", "true");
-  await expect(cursor).toBeVisible();
+  await expect(markers).toHaveCount(0);
   await expect(code).toHaveAttribute("data-original-example", "true");
   assert.deepEqual(await code.boundingBox(), before);
 
   update({ partialText: `${example}print(2)\n` });
   await expect(code).toContainText("print(2)");
   await expect(status).toHaveText("Responding…");
-  await expect(cursor).not.toHaveAttribute("data-waiting");
 
   update({ status: "complete", partialText: `${example}print(2)\n${fence}` });
   await expect(stream).toHaveCount(0);
