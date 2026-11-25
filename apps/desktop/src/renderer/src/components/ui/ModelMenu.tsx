@@ -30,6 +30,7 @@ export function ModelMenu({ label, value, options, disabled, triggerLabel, class
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
   const shortcutOrigin = useRef<HTMLElement | null>(null);
+  const navigated = useRef(false);
   const optionList = useRef<HTMLDivElement>(null);
   const manageAction = useRef<HTMLElement>(null);
   const focusedOption = useRef<string | undefined>(undefined);
@@ -88,11 +89,15 @@ export function ModelMenu({ label, value, options, disabled, triggerLabel, class
     } : undefined}
     open={open && !disabled} onOpenChange={(next, { reason }) => {
       focusedOption.current = undefined;
+      navigated.current = false;
       if (next) onOpen?.();
       else if (reason !== "escape-key" && reason !== "item-press") shortcutOrigin.current = null;
       setOpen(next);
     }}
-    onOpenChangeComplete={(next) => { if (next && shortcutOrigin.current) defaultOption()?.focus(); }}
+    onItemHighlighted={(_, { reason }) => { if (reason !== "none") navigated.current = true; }}
+    onOpenChangeComplete={(next) => {
+      if (next && shortcutOrigin.current && !navigated.current) defaultOption()?.focus();
+    }}
     trigger={<Button ref={trigger} variant="ghost" className={`composer-model-trigger ${triggerClassName}`}
       aria-label={`${label}: ${name}`} disabled={disabled}
       aria-keyshortcuts={shortcutHint?.replace(/^Cmd/, "Meta").replace(/^Ctrl/, "Control").replaceAll(" ", "+")}>

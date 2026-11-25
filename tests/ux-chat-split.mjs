@@ -85,15 +85,35 @@ try {
   await rightDraft.press("Control+Shift+L");
   await expect(modelMenu.getByRole("menuitemradio", { name: "Qwen", exact: true })).toBeFocused();
   await page.keyboard.press("ArrowUp");
+  await expect(modelMenu.getByRole("menuitemradio", { name: "Gemma", exact: true })).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(button("Text model: Gemma", right)).toBeVisible();
   await expect(rightDraft).toBeFocused();
   await expect(rightDraft).toHaveValue("Keep this draft while choosing a model.");
+  // Keep the opening animation pending until after keyboard navigation.
+  const delayedMenu = await page.addStyleTag({ content: `
+    @keyframes test-model-menu-opening { from { opacity: .99 } to { opacity: 1 } }
+    .ui-model-menu[data-open] {
+      animation: test-model-menu-opening 1s linear paused;
+      animation-duration: 1s !important;
+      animation-fill-mode: both;
+    }
+  ` });
   await rightDraft.press("Control+Shift+L");
   await expect(modelMenu.getByRole("menuitemradio", { name: "Gemma", exact: true })).toBeFocused();
   await page.keyboard.press("ArrowDown");
+  const nextModel = modelMenu.getByRole("menuitemradio", { name: "Qwen", exact: true });
+  await expect(nextModel).toBeFocused();
+  await modelMenu.evaluate(async (menu) => {
+    const animations = menu.getAnimations();
+    if (!animations.length) throw new Error("Expected a pending opening animation");
+    for (const animation of animations) animation.finish();
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  });
+  await expect(nextModel).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(rightModel).toBeVisible();
+  await delayedMenu.evaluate((style) => style.remove());
   await rightDraft.press("Control+Shift+L");
   await message(left).click();
   await expect(modelMenu).toHaveCount(0);
