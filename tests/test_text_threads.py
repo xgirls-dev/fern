@@ -784,6 +784,27 @@ for line in sys.stdin:
                 resolve_text_device('AUTO')
             self.assertEqual(resolve_text_device('CPU'), 'CPU')
 
+    def test_unavailable_documents_fail_the_reply_before_starting_inference(self):
+        directory = self.root / "chat-documents"
+        present = api.store_document(directory, "Notes.txt", base64.b64encode(b"Meet on Monday.").decode("ascii"))
+        missing_ids = ["doc-" + suffix * 64 for suffix in ("a", "b")]
+        with (
+            patch.object(api, "DATA_DIR", self.root),
+            patch.object(api, "TEXT_MODEL_REGISTRY", self.registry),
+            patch.object(api.TEXT_GENERATION_WORKER, "generate") as generate,
+            patch.dict(api.TEXT_JOB, {"id": "missing-documents", "status": "running", "partialText": ""}, clear=True),
+        ):
+            api.run_text_generation({
+                "modelId": self.model["id"], "device": "CPU", "contextSize": 4096,
+                "messages": [{"role": "user", "content": "When should I go?"}],
+                "documentIds": [present["id"], *missing_ids],
+            }, "missing-documents", threading.Event())
+            job = api.text_job_snapshot()
+            self.assertEqual(job["status"], "failed")
+            self.assertEqual(job["unavailableDocumentIds"], missing_ids)
+            self.assertEqual(job["failureDiagnostics"]["stage"], "finding-documents")
+            generate.assert_not_called()
+
     def test_chat_image_tool_returns_an_artifact_to_the_same_text_worker(self):
         event = threading.Event()
         call = {"id": "image-call", "type": "function", "function": {"name": "generate_image", "arguments": '{"prompt":"red teapot"}'}}

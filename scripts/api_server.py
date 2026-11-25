@@ -67,7 +67,7 @@ from text_model_download import managed_download_id, remove_download as remove_t
 from gguf_metadata import is_projector, read_metadata as read_gguf_metadata
 from gguf_runtime import RUNTIME_PLATFORM_ERROR, apple_silicon, runtime_supported as gguf_runtime_supported
 from chat_image_tools import CHAT_IMAGE_SIZE, IMAGE_MODEL_PRIORITY, IMAGE_TOOL, chat_image_overrides, image_tool_prompt
-from chat_documents import document_ids, retrieve_passages, store_document
+from chat_documents import ChatDocumentsUnavailable, document_ids, retrieve_passages, store_document
 from chat_context import DEFAULT_CONTEXT_SIZE, validate_context_size, validate_gguf_load_options
 from tts_model_download import model_download_details as tts_model_download_details
 from tts_model_download import model_ready as tts_export_ready, require_fresh_install_space as require_tts_install_space
@@ -160,7 +160,7 @@ TEXT_JOB: dict[str, Any] = {
     "id": None, "threadId": None, "modelId": None, "status": "idle",
     "phase": None, "partialText": "", "partialReasoning": "", "startedAt": None, "finishedAt": None,
     "result": None, "image": None, "error": None, "errorCode": None, "failureDiagnostics": None, "residentModel": None,
-    "modelLoad": False,
+    "modelLoad": False, "unavailableDocumentIds": None,
 }
 
 
@@ -885,7 +885,7 @@ def start_text_job(payload: dict[str, Any], request_id: Any, admit_before: Any =
             images=[],
             inspection=payload.get("inspectionImage") is not None,
             modelLoad=model_load,
-            error=None, errorCode=None, failureDiagnostics=None, residentModel=None,
+            error=None, errorCode=None, failureDiagnostics=None, residentModel=None, unavailableDocumentIds=None,
         )
         text_job_changed()
     threading.Thread(target=run_text_generation, args=(payload, job_id, cancel_event), daemon=True).start()
@@ -1118,6 +1118,7 @@ def run_text_generation(payload: dict[str, Any], job_id: str, cancel_event: thre
                                 phase=stopped_phase if stopped else failed_phase,
                                 error=None if stopped else (str(error) or type(error).__name__)[-1000:],
                                 errorCode=error.code if not stopped and isinstance(error, TextWorkerError) else None,
+                                unavailableDocumentIds=error.document_ids if not stopped and isinstance(error, ChatDocumentsUnavailable) else None,
                                 failureDiagnostics=None if stopped else diagnostics)
 
 
@@ -3390,7 +3391,7 @@ class Handler(BaseHTTPRequestHandler):
                 TEXT_GENERATION_WORKER.close()
                 with TEXT_JOB_LOCK:
                     TEXT_JOB.update(id=None, threadId=None, status="idle", partialText="", partialReasoning="", result=None, image=None, error=None,
-                                    errorCode=None, failureDiagnostics=None, residentModel=None, modelLoad=False)
+                                    errorCode=None, failureDiagnostics=None, residentModel=None, modelLoad=False, unavailableDocumentIds=None)
                     text_job_changed()
                 INTEL_MEDIA.close()
                 flux2.release_pipeline()

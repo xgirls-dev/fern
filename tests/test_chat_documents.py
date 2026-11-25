@@ -98,3 +98,20 @@ class ChatDocumentTests(unittest.TestCase):
             document_ids(["../not-a-document"])
         with self.assertRaisesRegex(ValueError, "attached document is missing"):
             retrieve_passages(self.root, ["doc-" + "a" * 64], [{"role": "user", "content": "Look up policy"}], 8192)
+
+    def test_retrieval_names_all_unavailable_ids_and_same_file_repairs_corrupt_record(self):
+        good = self.attach("Overview.txt", b"Meet on Monday.")
+        missing = self.attach("Schedule.txt", b"The workshop begins at noon.")
+        damaged = self.attach("Address.txt", b"Use the east entrance.")
+        (self.root / f"{missing['id']}.json").unlink()
+        (self.root / f"{damaged['id']}.json").write_text('{"document": {}, "passages": [null]}', encoding="utf-8")
+        ids = [document["id"] for document in (good, missing, damaged)]
+        messages = [{"role": "user", "content": "When and where should I go?"}]
+
+        with self.assertRaises(ValueError) as failure:
+            retrieve_passages(self.root, ids, messages, 8192)
+        self.assertEqual(failure.exception.document_ids, [missing["id"], damaged["id"]])
+        self.assertEqual(self.attach("Schedule.txt", b"The workshop begins at noon."), missing)
+        self.assertEqual(self.attach("Address.txt", b"Use the east entrance."), damaged)
+        self.assertEqual([item["name"] for item in retrieve_passages(self.root, ids, messages, 8192)],
+                         ["Overview.txt", "Schedule.txt", "Address.txt"])

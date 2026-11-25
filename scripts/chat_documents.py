@@ -38,6 +38,14 @@ STOP_WORDS = set(
 )
 
 
+class ChatDocumentsUnavailable(ValueError):
+    def __init__(self, ids: list[str]):
+        super().__init__("An attached document is missing or unreadable. Replace or remove it, then retry."
+                         if len(ids) == 1 else
+                         "Some attached documents are missing or unreadable. Replace or remove them, then retry.")
+        self.document_ids = ids
+
+
 def document_ids(value: Any) -> list[str]:
     if value is None:
         return []
@@ -117,18 +125,22 @@ def _path(directory: Path, document_id: str) -> Path:
     return directory / f"{document_id}.json"
 
 
-def _read(path: Path, missing: bool = False) -> dict[str, Any] | None:
+def _read(path: Path) -> dict[str, Any] | None:
     try:
         record = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(record, dict) or not isinstance(record.get("document"), dict) or not isinstance(record.get("passages"), list):
-            raise ValueError("Invalid document record")
-        return record
-    except FileNotFoundError:
-        if missing:
-            return None
-        raise ValueError("An attached document is missing. Remove it from the chat and attach it again.") from None
-    except (OSError, ValueError) as error:
-        raise ValueError("An attached document is unreadable. Remove it from the chat and attach it again.") from error
+    except (OSError, ValueError):
+        return None
+    if not isinstance(record, dict):
+        return None
+    document, passages = record.get("document"), record.get("passages")
+    if (not isinstance(document, dict) or document.get("id") != path.stem
+        or not isinstance(document.get("name"), str) or not document["name"]
+        or type(document.get("bytes")) is not int or not 0 < document["bytes"] <= MAX_DOCUMENT_BYTES
+        or not isinstance(passages, list) or not passages
+        or any(not isinstance(item, dict) or not isinstance(item.get("location"), str)
+               or not isinstance(item.get("text"), str) or not item["text"] for item in passages)):
+        return None
+    return record
 
 
 def store_document(directory: Path, name: Any, encoded: Any, *,
@@ -151,7 +163,7 @@ def store_document(directory: Path, name: Any, encoded: Any, *,
     document_id = f"doc-{digest}"
     path = _path(directory, document_id)
     guard = storage_guard if storage_guard is not None else nullcontext()
-    if record := _read(path, missing=True):
+    if record := _read(path):
         with guard:
             return record["document"]
 
@@ -205,10 +217,16 @@ def _sample_document_order(passages: list[dict[str, str]]) -> Iterator[dict[str,
 
 def retrieve_passages(directory: Path, ids: list[str], messages: list[dict[str, Any]], context_size: int) -> list[dict[str, str]]:
     passages = []
+    unavailable = []
     for document_id in ids:
         record = _read(_path(directory, document_id))
+        if record is None:
+            unavailable.append(document_id)
+            continue
         name = record["document"]["name"]
-        passages.extend({"name": name, **passage} for passage in record["passages"])
+        passages.extend({"name": name, "location": passage["location"], "text": passage["text"]} for passage in record["passages"])
+    if unavailable:
+        raise ChatDocumentsUnavailable(unavailable)
     if not passages:
         return []
     size = sum(len(passage["text"]) + len(passage["name"]) + 32 for passage in passages)
