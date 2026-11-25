@@ -1,4 +1,5 @@
 import { cloneElement, memo, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from "react";
+import { flushSync } from "react-dom";
 
 import type { TextMessage } from "../lib/textThreads";
 
@@ -95,13 +96,14 @@ const TranscriptPage = memo(function TranscriptPage({ index, first, last, estima
     style={mounted ? undefined : { height: rememberedHeight }}>{liveReply ? [...rows, liveReply] : rows}</div>;
 });
 
-export const TextTranscriptWindow = memo(function TextTranscriptWindow({ threadId, items, revealIndex, restoreIndex, renderItem, liveReply }: {
+export const TextTranscriptWindow = memo(function TextTranscriptWindow({ threadId, items, revealIndex, restoreIndex, renderItem, liveReply, keepFollowingTail }: {
   threadId: string;
   items: readonly TextTranscriptItem[];
   revealIndex: number;
   restoreIndex: number;
   renderItem: (index: number) => ReactElement;
   liveReply?: ReactElement;
+  keepFollowingTail: () => void;
 }) {
   const windowed = items.length > TEXT_TRANSCRIPT_WINDOW_THRESHOLD;
   const pageCount = Math.ceil(items.length / PAGE_SIZE);
@@ -115,6 +117,8 @@ export const TextTranscriptWindow = memo(function TextTranscriptWindow({ threadI
   const [canDeferPages, setCanDeferPages] = useState(windowed);
   const [focused, setFocused] = useState<number | null>(null);
   const [selection, setSelection] = useState<[number, number] | null>(null);
+  const [pinnedTailPages, setPinnedTailPages] = useState(1);
+  const previousPinnedTailPages = useRef(pinnedTailPages);
   const previousWindowed = useRef(windowed);
   const pages = useMemo(() => Array.from({ length: pageCount }, (_, index) => {
     const start = index * PAGE_SIZE;
@@ -192,15 +196,64 @@ export const TextTranscriptWindow = memo(function TextTranscriptWindow({ threadI
 
   const revealPage = Math.floor(revealIndex / PAGE_SIZE);
   const hasLiveReply = Boolean(liveReply);
+  const initialTailPages = hasLiveReply || items.length % PAGE_SIZE !== 0 ? 2 : 1;
+  const tailPages = Math.max(pinnedTailPages, initialTailPages);
+  useLayoutEffect(() => {
+    const container = root.current;
+    const feed = container?.closest(".text-conversation");
+    if (!windowed || !container || !feed) return;
+
+    // The tail moves when a placeholder is replaced with its real rows.
+    if (pinnedTailPages > previousPinnedTailPages.current) keepFollowingTail();
+    previousPinnedTailPages.current = pinnedTailPages;
+    if (pageCount <= tailPages) return;
+
+    const tailFits = (height: number) => {
+      const first = container.children[pageCount - tailPages].getBoundingClientRect();
+      const last = container.children[pageCount - 1].getBoundingClientRect();
+      return last.bottom - first.top >= height;
+    };
+    let height = feed.clientHeight;
+    let width = feed.clientWidth;
+    if (!height && pinnedTailPages === 1) {
+      // A compact split pane can open before it has a measurable viewport.
+      setPinnedTailPages(2);
+      return;
+    }
+    if (height && !tailFits(height)) {
+      setPinnedTailPages(tailPages + 1);
+      return;
+    }
+
+    const onResize = () => {
+      const nextHeight = feed.clientHeight;
+      const nextWidth = feed.clientWidth;
+      if (height === nextHeight && width === nextWidth) return;
+      height = nextHeight;
+      width = nextWidth;
+      if (height && !tailFits(height)) {
+        // Fill newly exposed space before paint, then let the scroll hook anchor the tail.
+        flushSync(() => setPinnedTailPages(tailPages + 1));
+      }
+    };
+    const resizeObserver = new ResizeObserver(onResize);
+    resizeObserver.observe(feed);
+    window.addEventListener("resize", onResize);
+    return () => {
+      window.removeEventListener("resize", onResize);
+      resizeObserver.disconnect();
+    };
+  }, [keepFollowingTail, pageCount, pinnedTailPages, tailPages, windowed]);
+
   // A token only changes the tail. Reuse page elements until their inputs change.
   const pageElements = useMemo(() => pages.map((page, index) => {
-    const mounted = !windowed || !canDeferPages || index >= pageCount - 2 || nearby.has(index) || nearTarget(index, revealPage) ||
+    const mounted = !windowed || !canDeferPages || index >= pageCount - tailPages || nearby.has(index) || nearTarget(index, revealPage) ||
       nearTarget(index, restorePage) || index === focused || !!selection && index >= selection[0] && index <= selection[1];
     const hasTail = hasLiveReply && index === pageCount - 1;
     return <TranscriptPage key={index} index={index} first={page.first} last={page.last}
       estimate={page.estimatedHeight} cache={cache.pages} windowed={windowed} renderItem={mounted ? renderItem : undefined}
       storedCount={page.count - (hasTail ? 1 : 0)} />;
-  }), [cache, canDeferPages, focused, hasLiveReply, nearby, pageCount, pages, renderItem, restorePage, revealPage, selection, windowed]);
+  }), [cache, canDeferPages, focused, hasLiveReply, nearby, pageCount, pages, renderItem, restorePage, revealPage, selection, tailPages, windowed]);
   if (!pageCount) return null;
 
   // Keep every page in the same keyed list when a new tail page is added.

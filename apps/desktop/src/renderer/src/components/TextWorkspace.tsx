@@ -269,7 +269,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
     setFindThreadId(null);
     findTrigger.current?.focus({ preventScroll: true });
   }, []);
-  const { feedRef, transcriptRef, historyVisible, followingLatest, showScrollButton, restoreAnchorId, restoreReasoningId, jumpToLatest, revealMessage,
+  const { feedRef, transcriptRef, historyVisible, followingLatest, showScrollButton, restoreAnchorId, restoreReasoningId, jumpToLatest, keepFollowingTail, revealMessage,
     onScroll, onFocus: onHistoryFocus, onKeyDown: onHistoryKeyDown } = useTextScroll(activeThread.id, { paneFocused: focused });
   const { fieldRef: inputRef, bindField: bindDraftField } = useTextDraftField(`composer:${activeThread.id}`, activeThread.draft, 200);
   const modelActionControl = useRef<HTMLButtonElement | null>(null);
@@ -1043,7 +1043,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
         ) : null}
 
         <TextTranscriptWindow key={threadId} threadId={threadId} items={transcript} revealIndex={revealIndex} restoreIndex={restoreIndex}
-          renderItem={renderStoredRow} liveReply={liveReply} />
+          renderItem={renderStoredRow} liveReply={liveReply} keepFollowingTail={keepFollowingTail} />
         {lastMessage?.role === "user" && !busy && <Button variant="secondary" className="text-retry" disabled={!canRetry} onClick={retry}><RotateCcw size={15} aria-hidden="true" />Retry response</Button>}
 
         </div>

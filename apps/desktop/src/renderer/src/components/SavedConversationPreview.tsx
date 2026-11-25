@@ -31,7 +31,7 @@ export function SavedConversationPreview({ threadId, version, initialQuery, onCl
     key: message.id, estimatedHeight: estimateTextRowHeight(message),
   })), [messages]);
   const revealIndex = match ? messages.findIndex(({ id }) => id === match.messageId) : -1;
-  const { feedRef, transcriptRef, historyVisible, revealMessage, onScroll, onKeyDown, onFocus } = useTextScroll(viewId, { persistPosition: false });
+  const { feedRef, transcriptRef, historyVisible, keepFollowingTail, revealMessage, onScroll, onKeyDown, onFocus } = useTextScroll(viewId, { persistPosition: false });
 
   useLayoutEffect(() => {
     if (match && historyVisible && revealIndex >= 0) return revealMessage(match.messageId, match, "start");
@@ -57,7 +57,7 @@ export function SavedConversationPreview({ threadId, version, initialQuery, onCl
       aria-live="off" tabIndex={0} onScroll={onScroll} onFocusCapture={onFocus} onKeyDown={onKeyDown}>
       <div ref={transcriptRef} className="text-transcript">
         <TextTranscriptWindow threadId={viewId} items={items} revealIndex={revealIndex}
-          restoreIndex={-1} renderItem={renderItem} />
+          restoreIndex={-1} renderItem={renderItem} keepFollowingTail={keepFollowingTail} />
       </div>
     </div>
   </>;

@@ -185,6 +185,14 @@ export function useTextScroll(threadId: string, { persistPosition = true, paneFo
     setFollowingLatest(following.current);
   }, [persistPosition, threadId]);
 
+  const keepFollowingTail = useCallback(() => {
+    const feed = feedRef.current;
+    if (!feed || !following.current || layout.current.hidden) return;
+    feed.scrollTop = feed.scrollHeight;
+    lastTop.current = feed.scrollTop;
+    lastGap.current = distanceFromTail(feed);
+  }, []);
+
   const pauseFollowing = useCallback((feed: HTMLElement) => {
     if (!following.current) return;
     following.current = false;
@@ -368,9 +376,7 @@ export function useTextScroll(threadId: string, { persistPosition = true, paneFo
         onScroll();
         return;
       }
-      feed.scrollTop = feed.scrollHeight;
-      lastTop.current = feed.scrollTop;
-      lastGap.current = distanceFromTail(feed);
+      keepFollowingTail();
     });
     observer.observe(feed);
     observer.observe(transcript);
@@ -389,7 +395,7 @@ export function useTextScroll(threadId: string, { persistPosition = true, paneFo
       feed.removeEventListener("wheel", onWheel);
       document.removeEventListener("selectionchange", onSelection);
     };
-  }, [onScroll, pauseFollowing, persistPosition, savePosition, threadId]);
+  }, [keepFollowingTail, onScroll, pauseFollowing, persistPosition, savePosition, threadId]);
 
   useLayoutEffect(() => {
     if (!paneFocused || !layout.current.hidden) return;
@@ -421,5 +427,5 @@ export function useTextScroll(threadId: string, { persistPosition = true, paneFo
 
   return { feedRef, transcriptRef, historyVisible, followingLatest, showScrollButton: canScroll && !followingLatest,
     restoreAnchorId: restoreAnchor?.id, restoreReasoningId: restoreAnchor?.line?.section === "reasoning" ? restoreAnchor.id : undefined,
-    jumpToLatest, revealMessage, onScroll, onFocus, onKeyDown };
+    jumpToLatest, keepFollowingTail, revealMessage, onScroll, onFocus, onKeyDown };
 }
