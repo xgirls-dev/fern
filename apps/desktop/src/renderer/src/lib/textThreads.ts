@@ -207,6 +207,7 @@ export interface TextJob {
   image?: GeneratedChatImage | null;
   images?: GeneratedChatImage[];
   inspection?: boolean;
+  modelLoad?: boolean;
   startedAt: number | null;
   finishedAt: number | null;
   result: TextMessage["metrics"] | null;
@@ -250,6 +251,7 @@ export interface TextRuntimeStatus {
   supportsJobPolling?: boolean;
   supportsJobEvents?: boolean;
   supportsPendingStop?: boolean;
+  supportsModelLoad?: boolean;
   supportsModelUnload?: boolean;
   devices: TextDevice[];
   job: TextJob;

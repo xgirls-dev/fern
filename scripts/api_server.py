@@ -160,6 +160,7 @@ TEXT_JOB: dict[str, Any] = {
     "id": None, "threadId": None, "modelId": None, "status": "idle",
     "phase": None, "partialText": "", "partialReasoning": "", "startedAt": None, "finishedAt": None,
     "result": None, "image": None, "error": None, "errorCode": None, "failureDiagnostics": None, "residentModel": None,
+    "modelLoad": False,
 }
 
 
@@ -784,6 +785,7 @@ def text_runtime_snapshot() -> dict[str, Any]:
         "supportsJobPolling": True,
         "supportsJobEvents": True,
         "supportsPendingStop": True,
+        "supportsModelLoad": True,
         "supportsModelUnload": True,
         "models": models,
         "recommendedModels": recommended,
@@ -848,6 +850,7 @@ def record_pending_text_stop(request_id: str, thread_id: str) -> bool:
 
 def start_text_job(payload: dict[str, Any], request_id: Any, admit_before: Any = None) -> dict[str, Any] | None:
     global TEXT_CANCEL_EVENT
+    model_load = bool(payload.get("modelLoad"))
     with TTS_JOB_LOCK:
         audio_busy = TTS_JOB.get("status") in ("running", "setting_up", "stopping")
     with FLUX_JOB_LOCK:
@@ -861,8 +864,10 @@ def start_text_job(payload: dict[str, Any], request_id: Any, admit_before: Any =
         if TEXT_PENDING_STOPS.get((job_id, payload["threadId"]), 0) > time.monotonic():
             return {
                 "id": job_id, "threadId": payload["threadId"], "modelId": payload["modelId"],
-                "status": "stopped", "phase": "Generation stopped.", "partialText": "", "startedAt": None,
+                "status": "stopped", "phase": "Model load cancelled." if model_load else "Generation stopped.",
+                "partialText": "", "startedAt": None,
                 "finishedAt": time.time(), "result": None, "error": None,
+                **({"modelLoad": True} if model_load else {}),
             }
         if TEXT_JOB.get("id") == job_id and TEXT_JOB.get("threadId") == payload["threadId"]:
             return None
@@ -875,10 +880,11 @@ def start_text_job(payload: dict[str, Any], request_id: Any, admit_before: Any =
         TEXT_CANCEL_EVENT = cancel_event
         TEXT_JOB.update(
             id=job_id, threadId=payload["threadId"], modelId=payload["modelId"],
-            status="running", phase="Queued…", partialText="", partialReasoning="",
+            status="running", phase="Preparing model…" if model_load else "Queued…", partialText="", partialReasoning="",
             startedAt=time.time(), finishedAt=None, result=None, image=payload.get("inspectionImage"),
             images=[],
             inspection=payload.get("inspectionImage") is not None,
+            modelLoad=model_load,
             error=None, errorCode=None, failureDiagnostics=None, residentModel=None,
         )
         text_job_changed()
@@ -924,7 +930,9 @@ def record_text_image_context(result: dict[str, Any], request: dict[str, Any]) -
 
 
 def run_text_generation(payload: dict[str, Any], job_id: str, cancel_event: threading.Event) -> None:
-    diagnostics = {"stage": "preparing-conversation", "requestedDevice": payload.get("device")}
+    model_load = bool(payload.get("modelLoad"))
+    start_stage = "loading-model" if model_load else "preparing-conversation"
+    diagnostics = {"stage": start_stage, "requestedDevice": payload.get("device")}
     try:
         image_model = payload.get("imageModel")
         inspection_image = payload.get("inspectionImage")
@@ -948,7 +956,8 @@ def run_text_generation(payload: dict[str, Any], job_id: str, cancel_event: thre
             raise ValueError("Add this text model again; its files are no longer available.")
         device = payload["device"]
         diagnostics["runtime"] = "gguf" if model.get("format") == "gguf" else "openvino"
-        append_text_event(job_id, phase="Preparing conversation…")
+        if not model_load:
+            append_text_event(job_id, phase="Preparing conversation…")
         passages = []
         if attachments := payload.get("documentIds"):
             diagnostics["stage"] = "finding-documents"
@@ -958,7 +967,7 @@ def run_text_generation(payload: dict[str, Any], job_id: str, cancel_event: thre
             raise InterruptedError()
 
         def generate(request: dict[str, Any]) -> dict[str, Any]:
-            diagnostics["stage"] = "preparing-conversation"
+            diagnostics["stage"] = start_stage
 
             def append_output(token: str, *, reasoning: bool = False) -> None:
                 if token:
@@ -975,7 +984,7 @@ def run_text_generation(payload: dict[str, Any], job_id: str, cancel_event: thre
                     str(Path(sys.executable)), "-u", str(SCRIPTS / "text_generation_worker.py"), model["path"], device,
                     *([model["projectorPath"]] if model.get("projectorPath") else []),
                 ],
-                request={**request, "op": "generate", "ggufArchitecture": model.get("architecture")},
+                request={**request, "op": "load" if model_load else "generate", "ggufArchitecture": model.get("architecture")},
                 cwd=ROOT,
                 env={
                     **os.environ,
@@ -997,6 +1006,15 @@ def run_text_generation(payload: dict[str, Any], job_id: str, cancel_event: thre
         if passages:
             request["documentPassages"] = passages
         result = generate(request)
+        if model_load:
+            with TEXT_JOB_LOCK:
+                if cancel_event.is_set():
+                    raise InterruptedError()
+                resident = TEXT_GENERATION_WORKER.resident_model()
+                if not resident or resident.get("modelId") != payload["modelId"]:
+                    raise RuntimeError("The model engine exited before it was ready.")
+                finish_text_job(status="complete", phase="Model ready.", finishedAt=time.time())
+            return
         diagnostics["stage"] = "checking-reply"
         calls = result.pop("toolCalls", [])
         if inspection_image and result.get("text", "").strip():
@@ -1082,16 +1100,22 @@ def run_text_generation(payload: dict[str, Any], job_id: str, cancel_event: thre
                     partialText=result.get("text", ""), partialReasoning=result.get("reasoning", ""),
                     result=result, error=None,
                 )
-    except InterruptedError:
-        with TEXT_JOB_LOCK:
-            if TEXT_JOB.get("id") == job_id:
-                finish_text_job(status="stopped", finishedAt=time.time(), phase="Generation stopped.", error=None)
     except Exception as error:
+        stopped = isinstance(error, InterruptedError) or cancel_event.is_set()
+        if stopped and model_load:
+            try:
+                TEXT_GENERATION_WORKER.unload(payload["modelId"])
+            except (OSError, subprocess.SubprocessError) as cleanup_error:
+                error = cleanup_error
+                stopped = False
+        stopped_phase = "Model load cancelled." if model_load else "Generation stopped."
+        failed_phase = "Model load failed." if model_load else "Generation failed."
         with TEXT_JOB_LOCK:
             if TEXT_JOB.get("id") == job_id:
-                stopped = cancel_event.is_set()
+                if not model_load:
+                    stopped = stopped or cancel_event.is_set()
                 finish_text_job(status="stopped" if stopped else "failed", finishedAt=time.time(),
-                                phase="Generation stopped." if stopped else "Generation failed.",
+                                phase=stopped_phase if stopped else failed_phase,
                                 error=None if stopped else (str(error) or type(error).__name__)[-1000:],
                                 errorCode=error.code if not stopped and isinstance(error, TextWorkerError) else None,
                                 failureDiagnostics=None if stopped else diagnostics)
@@ -2914,7 +2938,7 @@ class Handler(BaseHTTPRequestHandler):
 
         if VIDEO_JOBS.running() and parsed.path in (
             "/api/flux2/generate", "/api/text/generate", "/api/text/inspect-image",
-            "/api/text/models/install", "/api/tts/setup", "/api/tts/generate",
+            "/api/text/models/install", "/api/text/models/load", "/api/tts/setup", "/api/tts/generate",
             "/api/storage/cleanup-cache", "/api/storage/clear-local-data",
         ):
             self.send_json(409, {"error": "Finish or stop the current video generation first."})
@@ -3033,8 +3057,9 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(400, {"error": str(error)})
             return
 
-        if parsed.path == "/api/text/generate":
+        if parsed.path in ("/api/text/generate", "/api/text/models/load"):
             try:
+                model_load = parsed.path.endswith("/load")
                 payload = self.read_json_body(too_large="The conversation exceeds Fern's 60 MB request limit.")
                 model_id = payload.get("modelId")
                 if not isinstance(model_id, str) or len(model_id) > 64:
@@ -3044,7 +3069,7 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError("Add the selected text model again.")
                 if model.get("format") == "gguf" and not gguf_runtime_supported():
                     raise ValueError(RUNTIME_PLATFORM_ERROR)
-                mode = payload.get("mode", "instant")
+                mode = "instant" if model_load else payload.get("mode", "instant")
                 if mode not in ("instant", "reasoning"):
                     raise ValueError("Choose Instant or Reasoning mode.")
                 if mode == "reasoning" and not model.get("supportsReasoning"):
@@ -3056,6 +3081,20 @@ class Handler(BaseHTTPRequestHandler):
                 gguf = model.get("format") == "gguf"
                 if apple_silicon() and not gguf:
                     raise ValueError("Choose a GGUF model on this Mac.")
+                if model_load:
+                    context_size = validate_context_size(payload.get("contextSize"), model.get("maxContextSize"))
+                    load_options = validate_gguf_load_options(payload.get("loadOptions"), context_size)
+                    if load_options and not gguf:
+                        raise ValueError("These load settings require a GGUF model.")
+                    device = payload.get("device", "AUTO")
+                    if device not in ("AUTO", "GPU", "CPU"):
+                        raise ValueError("Choose Auto, Intel GPU, or CPU.")
+                    job = start_text_job({
+                        "modelLoad": True, "threadId": thread_id, "modelId": model_id, "device": device,
+                        "contextSize": context_size, "loadOptions": load_options,
+                    }, payload.get("requestId"), payload.get("admitBefore"))
+                    self.send_json(202, text_job_receipt(payload, job))
+                    return
                 if not isinstance(messages, list) or not messages:
                     raise ValueError("The conversation must contain at least one message.")
                 if not gguf and len(messages) > 100:
@@ -3351,7 +3390,7 @@ class Handler(BaseHTTPRequestHandler):
                 TEXT_GENERATION_WORKER.close()
                 with TEXT_JOB_LOCK:
                     TEXT_JOB.update(id=None, threadId=None, status="idle", partialText="", partialReasoning="", result=None, image=None, error=None,
-                                    errorCode=None, failureDiagnostics=None, residentModel=None)
+                                    errorCode=None, failureDiagnostics=None, residentModel=None, modelLoad=False)
                     text_job_changed()
                 INTEL_MEDIA.close()
                 flux2.release_pipeline()

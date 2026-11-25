@@ -26,6 +26,7 @@ interface CommandPaletteProps {
   onOpenVideo: () => void;
   onStopVideo: () => void;
   textRunning: boolean;
+  textModelLoading: boolean;
   threads: readonly PaletteThread[];
   onOpenThread: (id: string) => void;
   onOpenThreadSearch: (query: string) => void;
@@ -63,6 +64,7 @@ export function CommandPalette({
   onOpenVideo,
   onStopVideo,
   textRunning,
+  textModelLoading,
   threads,
   onOpenThread,
   onOpenThreadSearch,
@@ -161,7 +163,9 @@ export function CommandPalette({
         : []),
       ...(videoRunning ? [{ id: "stop-video", label: "Stop video generation", description: "Cancel the active video render", icon: <Square size={16} fill="currentColor" aria-hidden="true" />, onSelect: onStopVideo }] : []),
       ...(audioRunning ? [{ id: "stop-audio", label: "Stop audio job", description: "Cancel Qwen3-TTS setup or generation", icon: <Square size={16} fill="currentColor" aria-hidden="true" />, onSelect: onStopAudio }] : []),
-      ...(textRunning ? [{ id: "stop-text", label: "Stop text generation", description: "Stop the active local LLM response", icon: <Square size={16} fill="currentColor" aria-hidden="true" />, onSelect: onStopText }] : []),
+      ...(textRunning ? [{ id: "stop-text", label: textModelLoading ? "Cancel model load" : "Stop text generation",
+        description: textModelLoading ? "Stop loading the local chat model" : "Stop the active local LLM response",
+        icon: <Square size={16} fill="currentColor" aria-hidden="true" />, onSelect: onStopText }] : []),
     ],
     [
       onNewRender,
@@ -184,6 +188,7 @@ export function CommandPalette({
       onOpenVideo,
       onStopVideo,
       textRunning,
+      textModelLoading,
       sidebarCollapsed,
     ],
   );
