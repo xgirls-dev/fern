@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { expect } from "@playwright/test";
-import { chooseMessageAction, fixture } from "./ui-fixture.mjs";
+import { chooseMessageAction, fixture, savedTextWorkspace } from "./ui-fixture.mjs";
 
 const models = [
   { id: "gemma", name: "Gemma", installed: true, format: "gguf", maxContextSize: 65536, supportsVision: true, supportsTools: true },
@@ -295,6 +295,11 @@ try {
   await editor.press("Escape");
   await leftUndo.press("Control+z");
   await expect(left.getByText("Left answer.", { exact: true })).toBeVisible();
+  await expect.poll(async () => {
+    const workspace = await savedTextWorkspace(page);
+    return ["text-thread-writing", "text-thread-research"].map((id) =>
+      workspace.threads.find((thread) => thread.id === id)?.messages.at(-1)?.content);
+  }).toEqual(["Left answer.", "Right answer."]);
   await page.reload();
   await right.getByText("Right answer.", { exact: true }).waitFor();
   await left.getByText("Left answer.", { exact: true }).waitFor();
