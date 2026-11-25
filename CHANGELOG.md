@@ -25,6 +25,7 @@ lands directly on `main` instead of through labeled pull requests.
 - Resume typing at the same caret after attaching a document. The chat composer shows when it can accept a document drop even if a conversation image is already selected.
 - Keep Stop responsive while Fern reads a large chat document.
 - Stop a GGUF load promptly when the model server is still starting.
+- Use the GGUF engine to detect its own hardware and avoid a text worker startup stall on Windows.
 
 ## [0.1.48] - 2026-11-20
 

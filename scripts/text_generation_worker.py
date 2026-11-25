@@ -88,16 +88,20 @@ def run_gguf(file: Path, device: str, projector: Path | None) -> int:
                 load_options = request.get("loadOptions") or {}
                 if vision and not projector:
                     raise ValueError("Add the model's vision projector before sending an image.")
+                if device not in ("AUTO", "GPU", "CPU"):
+                    raise ValueError("Choose Auto, Intel GPU, or CPU.")
                 emit({"type": "phase", "stage": "selecting-device"})
+                # The GGUF engine enumerates its own devices before loading the model.
+                # Importing Python OpenVINO here duplicates that check and can stall
+                # the worker during NumPy initialization on Windows.
+                target = "CPU" if device == "CPU" else "GPU"
                 if sys.platform == "darwin":
-                    target = "CPU" if device == "CPU" else "GPU"
                     backend = "cpu" if target == "CPU" else "metal"
                 elif vision:
                     # The pinned OpenVINO build cannot prefill Gemma 4 vision.
-                    target = "CPU" if device == "CPU" else "GPU"
                     backend = "cpu" if target == "CPU" else "vulkan"
                 else:
-                    target, backend = resolve_text_device(device), "openvino"
+                    backend = "openvino"
                 emit({"type": "runtime", "backend": backend, "device": target})
                 gpu_projector = vision and (backend == "metal" or bool(request.get("requireGpuVision")))
                 requested_projector = projector if vision else None
