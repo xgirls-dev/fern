@@ -2854,6 +2854,19 @@ code {
 }
 
 @media (max-height: 680px) {
+  .text-composer:has(> .text-draft-image):has(> .text-document-attachments) {
+    display: grid; grid-template-columns: fit-content(40%) minmax(0, 1fr); column-gap: 10px;
+  }
+  .text-composer:has(> .text-draft-image):has(> .text-document-attachments)
+    > :not(.text-draft-image, .text-document-attachments, .text-latest-reply-link) { grid-column: 1 / -1; }
+  .text-composer:has(> .text-draft-image) > .text-document-attachments { grid-column: 2; align-self: start; }
+  .text-composer:has(> .text-document-attachments) > .text-draft-image { grid-column: 1; min-width: 0; align-self: start; }
+  .text-composer:has(> .text-document-attachments) > .text-draft-context { width: auto; }
+  .text-composer:has(> .text-document-attachments) > .text-draft-image:not(.text-draft-context) {
+    display: flex; align-items: center; gap: 6px;
+  }
+  .text-composer:has(> .text-document-attachments) > .text-draft-image:not(.text-draft-context) img { width: 48px; height: 48px; }
+  .text-composer:has(> .text-document-attachments) > .text-draft-image:not(.text-draft-context) button { position: static; }
   .text-generated-image img { max-height: min(280px, 42vh); }
   .text-workspace--empty .text-composer-area { padding-bottom: 12px; }
   .text-empty-state h3 { font-size: 24px; }
