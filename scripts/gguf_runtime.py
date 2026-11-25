@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import ctypes
+import hashlib
 import http.client
 import json
 import os
@@ -43,6 +44,7 @@ _LINUX_ASSETS = {
 }
 _MAC_ARM64_ASSET = (17282660, "88ba080b2b24bb69012633588c763b7ed20ea60b3f9e7fcbd1a5434eded3e325")
 _METAL_DEVICE = "MTL0"
+_COMPACTION_CACHE_LIMIT = 8
 RUNTIME_PLATFORM_ERROR = "Fern's managed GGUF runtime requires Windows or Linux x86-64, or Apple Silicon."
 _LINUX_DRIVER_HELP = "On Omarchy, run sudo pacman -Syu vulkan-intel vulkan-icd-loader, then retry."
 _WINDOWS_DISPLAY_CLASS = "{4d36e968-e325-11ce-bfc1-08002be10318}"
@@ -216,6 +218,7 @@ class GGUFServer:
         self.load_options = load_options or {}
         self.startup_timing: dict[str, float] = {}
         self.history: dict[str, CompactedHistory] = {}
+        self.compaction_summaries: dict[bytes, str] = {}
         self.process: subprocess.Popen[bytes] | None = None
         self.diagnostics = tempfile.TemporaryDirectory(prefix="fern-llama-")
         self.log_path = Path(self.diagnostics.name) / "runtime.log"
@@ -393,6 +396,11 @@ class GGUFServer:
         return len(tokens) + 384 * sum(bool(turn.get("imagePath")) for turn in messages)
 
     def _summarize(self, transcript: str) -> str:
+        # Forks and retried versions can ask this engine to summarize identical text.
+        key = hashlib.sha256(transcript.encode("utf-8", "surrogatepass")).digest()
+        if cached := self.compaction_summaries.pop(key, None):
+            self.compaction_summaries[key] = cached
+            return cached
         tokens = self._post("/tokenize", {"content": transcript, "parse_special": False})["tokens"]
         half = self.context_size // 4
         if len(tokens) > half * 2:
@@ -414,6 +422,9 @@ class GGUFServer:
         summary = result["choices"][0]["message"].get("content", "").strip()
         if not summary:
             raise RuntimeError("The local model could not compact the earlier conversation. Choose a larger context.")
+        if len(self.compaction_summaries) == _COMPACTION_CACHE_LIMIT:
+            self.compaction_summaries.pop(next(iter(self.compaction_summaries)))
+        self.compaction_summaries[key] = summary
         return summary
 
     @contextmanager

@@ -61,6 +61,12 @@ try {
   await expect(status).toHaveText("Still loading the model…");
   await expect(stream).toContainText("Still loading the model…");
   await expect(button("Stop generation")).toBeEnabled();
+  update({ phase: "Compacting earlier turns…" });
+  await expect(status).toHaveText("Summarizing earlier messages…");
+  await expect(stream).toContainText("Summarizing earlier messages…");
+  await page.clock.fastForward(25_100);
+  await expect(status).toHaveText("Still summarizing earlier messages…");
+  await expect(button("Stop generation")).toBeEnabled();
   update({ phase: "Preparing conversation…" });
   await expect(status).toHaveText("Preparing conversation…");
   update({ phase: "Waiting for the first token…" });
