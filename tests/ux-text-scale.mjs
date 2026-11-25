@@ -60,10 +60,25 @@ try {
   await page.keyboard.press("Escape");
   await expect(row("row-211")).toContainText("Reply 211");
 
+  const watchedPages = await page.evaluateHandle(() => {
+    const observe = IntersectionObserver.prototype.observe;
+    const observed = [];
+    IntersectionObserver.prototype.observe = function (target) {
+      if (target.hasAttribute("data-chat-page")) observed.push(Number(target.dataset.chatPage));
+      observe.call(this, target);
+    };
+    return () => {
+      IntersectionObserver.prototype.observe = observe;
+      return observed;
+    };
+  });
   await composer.fill("Continue the long conversation");
   await button("Send message").click();
   const stream = feed.locator(".text-message--streaming");
   await expect(stream).toBeVisible();
+  assert.deepEqual(await watchedPages.evaluate((stopWatching) => stopWatching()), [35],
+    "Sending at a page boundary should observe only the new transcript page");
+  await watchedPages.dispose();
   await stream.evaluate((element) => { element.dataset.streamingNode = "true"; });
   const match = await find("Prompt 96");
   await expect(match).toContainText("Prompt 96");
