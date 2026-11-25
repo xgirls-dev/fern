@@ -18,6 +18,7 @@ from unittest.mock import ANY, Mock, patch
 from http.server import ThreadingHTTPServer
 
 from PIL import Image
+import psutil
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import api_server as api
@@ -75,14 +76,17 @@ class TextThreadsTests(unittest.TestCase):
 
     def test_chat_runtime_only_reports_resident_live_engines(self):
         script = self.root / "engine_fixture.py"
-        script.write_text("""import json, subprocess, sys
+        script.write_text("""import json, os, subprocess, sys
 def emit(**data):
     print("FERN_TEXT_EVENT:" + json.dumps(data), flush=True)
 
 engine = None
 try:
     for line in sys.stdin:
-        action = json.loads(line)["action"]
+        request = json.loads(line)
+        if request.get("op") == "shutdown":
+            break
+        action = request["action"]
         if action == "gguf":
             engine = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
             emit(type="residency", model={"backend": "cpu", "device": "CPU", "enginePid": engine.pid,
@@ -93,7 +97,7 @@ try:
             engine = None
         else:
             emit(type="residency", model={"backend": "openvino", "device": "GPU"})
-        emit(type="result")
+        emit(type="result", workerPid=os.getpid(), enginePid=engine.pid if engine is not None else None)
 finally:
     if engine is not None:
         engine.terminate()
@@ -103,9 +107,9 @@ finally:
         model_id = self.model["id"]
 
         def generate(action):
-            worker.generate(model_path=str(self.folder), device="GPU", command=[sys.executable, "-u", str(script)],
-                            request={"action": action, "modelId": model_id}, cwd=self.root, env=dict(os.environ),
-                            on_token=lambda _: None, on_phase=lambda _: None)
+            return worker.generate(model_path=str(self.folder), device="GPU", command=[sys.executable, "-u", str(script)],
+                                   request={"action": action, "modelId": model_id}, cwd=self.root, env=dict(os.environ),
+                                   on_token=lambda _: None, on_phase=lambda _: None)
 
         try:
             with patch.object(api, "TEXT_GENERATION_WORKER", worker), patch.object(api, "TEXT_MODEL_REGISTRY", self.registry):
@@ -121,6 +125,13 @@ finally:
                                  {"modelId": model_id, "backend": "openvino", "device": "GPU"})
                 worker.close()
                 self.assertIsNone(api.text_runtime_snapshot()["residentModel"])
+                started = generate("gguf")
+                worker.unload("stale-model-id")
+                self.assertEqual(api.text_runtime_snapshot()["residentModel"]["modelId"], model_id)
+                worker.unload(model_id)
+                self.assertIsNone(api.text_runtime_snapshot()["residentModel"])
+                self.assertFalse(psutil.pid_exists(started["workerPid"]))
+                self.assertFalse(psutil.pid_exists(started["enginePid"]))
         finally:
             worker.close()
 
@@ -924,6 +935,49 @@ for line in sys.stdin:
         finally:
             server.shutdown()
             server.server_close()
+
+    def test_unload_guard_and_registry_through_the_api(self):
+        with (
+            patch.object(api, "TEXT_MODEL_REGISTRY", self.registry),
+            patch.object(api, "TEXT_GENERATION_WORKER") as worker,
+            ThreadingHTTPServer(("127.0.0.1", 0), api.Handler) as server,
+        ):
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+            base = f"http://127.0.0.1:{server.server_port}/api/text"
+            model_id = self.model["id"]
+
+            def unload(model):
+                request = urllib.request.Request(f"{base}/models/unload",
+                    data=json.dumps({"modelId": model}).encode(), headers={"Content-Type": "application/json"})
+                with urllib.request.urlopen(request, timeout=5) as response:
+                    return json.load(response)
+
+            try:
+                worker.resident_model.return_value = {"modelId": model_id, "backend": "openvino", "device": "GPU"}
+                with patch.dict(api.TEXT_JOB, status="running"):
+                    with self.assertRaises(urllib.error.HTTPError) as busy:
+                        unload(model_id)
+                    with busy.exception as response:
+                        self.assertEqual(response.code, 409)
+                with self.assertRaises(urllib.error.HTTPError) as invalid:
+                    unload("")
+                with invalid.exception as response:
+                    self.assertEqual(response.code, 400)
+                worker.unload.assert_not_called()
+                with patch.dict(api.TEXT_JOB, status="complete"):
+                    worker.resident_model.return_value = None
+                    self.assertEqual(unload(model_id), {"residentModel": None})
+                    worker.unload.assert_called_once_with(model_id)
+                    with urllib.request.urlopen(f"{base}/status", timeout=5) as response:
+                        status = json.load(response)
+                    self.assertTrue(status["supportsModelUnload"])
+                    self.assertIsNone(status["residentModel"])
+                    self.assertEqual(status["job"]["status"], "complete")
+                    self.assertEqual([(model["id"], model["installed"]) for model in status["models"]], [(model_id, True)])
+                self.assertTrue(all((self.folder / name).is_file() for name in REQUIRED_FILES))
+                worker.close.assert_not_called()
+            finally:
+                server.shutdown()
 
     def test_job_only_status_and_targeted_stop(self):
         server = ThreadingHTTPServer(("127.0.0.1", 0), api.Handler)

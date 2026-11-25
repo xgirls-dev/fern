@@ -9,7 +9,8 @@ const draft = "Continue from the answer I saved.";
 const { page, state, errors, close } = await fixture({
   viewport: { width: 800, height: 640 },
   textStatus: { models: [managed, linked], recommendedModels: [recommendation],
-    ggufAvailable: true, runtimeAvailable: false, job: { status: "idle", id: null } },
+    ggufAvailable: true, runtimeAvailable: false, supportsModelUnload: true,
+    residentModel: { modelId: managed.id, backend: "vulkan", device: "GPU" }, job: { status: "idle", id: null } },
   legacyTextWorkspace: {
     activeId: "text-thread-ownership",
     threads: [{
@@ -28,6 +29,11 @@ const confirmation = library.getByRole("group", { name: "Confirm removal" });
 const operations = [];
 
 try {
+  await page.route("**/api/text/models/unload", (route) => {
+    assert.deepEqual(route.request().postDataJSON(), { modelId: managed.id });
+    state.textStatus.residentModel = null;
+    return route.fulfill({ json: { residentModel: null } });
+  });
   await page.route("**/api/text/models/remove", (route) => {
     const request = route.request().postDataJSON();
     operations.push(request);
@@ -47,6 +53,15 @@ try {
   await expect.poll(() => library.locator(".models-installed-row").evaluateAll((rows) =>
     rows.every((row) => row.scrollWidth <= row.clientWidth))).toBe(true);
   const remove = button("Remove download for River 3B");
+  const unload = button("Unload River 3B");
+  await expect(unload).toBeEnabled();
+  await expect(button("Unload Spruce 4B")).toHaveCount(0);
+  await unload.focus();
+  await unload.press("Enter");
+  await expect(unload).toHaveCount(0);
+  await expect(library.getByRole("heading", { name: "Text models", exact: true })).toBeFocused();
+  await expect(remove).toBeEnabled();
+  await expect(button("Unlink Spruce 4B")).toBeEnabled();
   await remove.click();
   await expect(confirmation).toHaveAccessibleDescription("Delete this download from disk? Your chats and drafts stay.");
   await expect(confirmation.getByRole("button", { name: "Cancel" })).toBeFocused();

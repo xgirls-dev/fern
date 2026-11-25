@@ -330,6 +330,15 @@ export function removeTextModel(modelId: string, action: TextModelRemoval):
   });
 }
 
+export function unloadTextModel(modelId: string): Promise<Required<Pick<TextRuntimeStatus, "residentModel">>> {
+  return requestJson("/api/text/models/unload", {
+    method: "POST",
+    signal: AbortSignal.timeout(20_000),
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ modelId }),
+  });
+}
+
 export function startTextGeneration(payload: {
   requestId: string;
   threadId: string;

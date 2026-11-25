@@ -784,6 +784,7 @@ def text_runtime_snapshot() -> dict[str, Any]:
         "supportsJobPolling": True,
         "supportsJobEvents": True,
         "supportsPendingStop": True,
+        "supportsModelUnload": True,
         "models": models,
         "recommendedModels": recommended,
         "imageToolModels": chat_image_catalog(),
@@ -2954,6 +2955,22 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(202, text_runtime_snapshot())
             except Exception as error:
                 self.send_json(400, {"error": str(error)})
+            return
+
+        if parsed.path == "/api/text/models/unload":
+            try:
+                model_id = self.read_json_body().get("modelId")
+                if not isinstance(model_id, str) or not 1 <= len(model_id) <= 64:
+                    raise ValueError("Choose a text model to unload.")
+                if text_job_running():
+                    self.send_json(409, {"error": "Finish or stop the current chat response before unloading the model."})
+                    return
+                TEXT_GENERATION_WORKER.unload(model_id)
+                self.send_json(200, {"residentModel": TEXT_GENERATION_WORKER.resident_model()})
+            except ValueError as error:
+                self.send_json(400, {"error": str(error)})
+            except (OSError, subprocess.SubprocessError) as error:
+                self.send_json(500, {"error": f"Could not unload the text model. {error}"})
             return
 
         if parsed.path in ("/api/text/models/import", "/api/text/models/remove"):

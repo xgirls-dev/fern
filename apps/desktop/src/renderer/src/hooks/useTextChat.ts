@@ -11,6 +11,7 @@ import {
   removeTextModel,
   startTextGeneration,
   stopTextGeneration,
+  unloadTextModel,
   uploadChatImage,
   uploadChatDocument,
   type TextJobAcceptance,
@@ -69,6 +70,7 @@ const idleStatus: TextRuntimeStatus = {
   devices: ["AUTO", "GPU", "CPU"],
   job: { id: null, threadId: null, modelId: null, status: "idle", phase: null, partialText: "", startedAt: null, finishedAt: null, result: null, error: null },
 };
+const UNLOADING_MODEL = "Unloading model…";
 
 interface TextSubmission {
   id: string;
@@ -962,6 +964,25 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     }
   }, [setStatus]);
 
+  const unloadModel = useCallback(async (modelId: string, threadId?: string) => {
+    if (busy || modelActionRef.current || submission.current || statusRef.current.residentModel?.modelId !== modelId) return;
+    modelActionRef.current = true;
+    setModelAction(UNLOADING_MODEL);
+    setActionError(null);
+    try {
+      const { residentModel } = await unloadTextModel(modelId);
+      invalidatePoll();
+      setStatus((current) => ({ ...current, residentModel }));
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Could not unload this model.", threadId);
+      invalidatePoll();
+      setRefreshKey((value) => value + 1);
+    } finally {
+      modelActionRef.current = false;
+      setModelAction(null);
+    }
+  }, [busy, invalidatePoll, setActionError, setStatus]);
+
   const installRecommendedModel = useCallback(async (id: string, repair = false) => {
     if (modelActionRef.current) return;
     modelActionRef.current = true;
@@ -1004,7 +1025,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
   const generateReply = useCallback(async (thread: TextThread, input: string, { retry = false, sourceId, revision, continueFrom, rewriteId }: {
     retry?: boolean; sourceId?: string; revision?: { messageId: string; version: TextPromptVersion }; continueFrom?: string; rewriteId?: string;
   } = {}) => {
-    if (busy || submission.current || (!retry && !revision && !continueFrom && attachmentRequests.current.has(thread.id))) return;
+    if (busy || modelActionRef.current || submission.current || (!retry && !revision && !continueFrom && attachmentRequests.current.has(thread.id))) return;
     const status = statusRef.current;
     if (continueFrom) {
       const last = thread.messages.at(-1);
@@ -1182,7 +1203,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
   }, [getThread, busy, updateThread, setActionError]);
 
   const retryInspection = useCallback(async (threadId: string, messageId: string) => {
-    if (busy || submission.current) return;
+    if (busy || modelActionRef.current || submission.current) return;
     const status = statusRef.current;
     const thread = getThread(threadId);
     const message = thread?.messages.find((item) => item.id === messageId);
@@ -1309,7 +1330,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
   return {
     sidebarThreads,
     workspaceSnapshot: () => workspaceRef.current,
-    threads: storageReady ? threads : [], activeThread, status, statusLoaded, modelAction, submitting, draftAttachments: attachmentStates, attachingDocument, attachmentReady, savingAttachment, statusError, actionError, dismissActionError, storageReady, storageError, retryStorage, busy, computeDevice,
+    threads: storageReady ? threads : [], activeThread, status, statusLoaded, modelAction, unloadingModel: modelAction === UNLOADING_MODEL, submitting, draftAttachments: attachmentStates, attachingDocument, attachmentReady, savingAttachment, statusError, actionError, dismissActionError, storageReady, storageError, retryStorage, busy, computeDevice,
     pendingReplyOutput: (thread: TextThread) => pendingTextReply(thread, liveJobRef.current),
     primaryThread, secondaryThread, activePane, splitPercent: workspace.splitPercent ?? 50, compareThread, closePane, resizePanes, focusPane,
     folders: workspace.folders ?? EMPTY_CHAT_FOLDERS, organize,
@@ -1323,6 +1344,6 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
         && (status.job.id === stoppingId || status.job.phase === "Stopping generation…"),
     newThread, selectThread, copyThread, exportTranscript, resetWorkspace, renameThread, archiveThread, deleteThread, deleteMessage,
     messageDeletions, undoMessageDeletion, dismissMessageDeletion,
-    updateThread, importModel, deleteModel, installRecommendedModel, pauseRecommendedModel, attachImages, clearAttachment, send, retry, continueReply, retryInspection, selectReply, revisePrompt, restorePromptVersion, stop, refresh, refreshModels, selectModel, setDevice,
+    updateThread, importModel, deleteModel, unloadModel, installRecommendedModel, pauseRecommendedModel, attachImages, clearAttachment, send, retry, continueReply, retryInspection, selectReply, revisePrompt, restorePromptVersion, stop, refresh, refreshModels, selectModel, setDevice,
   };
 }
