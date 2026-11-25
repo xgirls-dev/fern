@@ -11,6 +11,7 @@ import type { ChatImageOverrides } from "./chatImageSettings";
 import type { ChatDocument } from "./chatDocuments";
 
 let apiBaseUrl = "";
+const apiBaseUrlListeners = new Set<() => void>();
 let cachedImages: FluxStatusResponse["images"] = [];
 let imagesFetchedAt = 0;
 export function invalidateImages() {
@@ -18,15 +19,21 @@ export function invalidateImages() {
 }
 
 export function setApiBaseUrl(url: string): void {
-  if (apiBaseUrl !== url.replace(/\/$/, "")) {
-    cachedImages = [];
-    invalidateImages();
-  }
-  apiBaseUrl = url.replace(/\/$/, "");
+  const next = url.replace(/\/$/, "");
+  if (apiBaseUrl === next) return;
+  apiBaseUrl = next;
+  cachedImages = [];
+  invalidateImages();
+  for (const listener of apiBaseUrlListeners) listener();
 }
 
 export function getApiBaseUrl(): string {
   return apiBaseUrl;
+}
+
+export function subscribeToApiBaseUrl(listener: () => void): () => void {
+  apiBaseUrlListeners.add(listener);
+  return () => { apiBaseUrlListeners.delete(listener); };
 }
 
 export function resolveAssetUrl(

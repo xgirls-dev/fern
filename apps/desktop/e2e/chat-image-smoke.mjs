@@ -45,9 +45,10 @@ try {
   assert.match(initial.imageToolModels[0].id, /^4b(?:-lora)?$/);
   await page.locator(".sidebar-new-menu > button").click();
   await page.getByRole("menuitem", { name: "Chat", exact: true }).click();
+  await expect(page.getByRole("textbox", { name: "Message", exact: true })).toBeFocused();
   await page.getByRole("button", { name: "Chat settings" }).click();
   await page.getByRole("button", { name: "Image", exact: true }).click();
-  await expect(page.getByRole("combobox", { name: "Image generation model" })).toHaveValue("auto");
+  await expect(page.getByRole("combobox", { name: "Image generation model", exact: true })).toHaveText(/^Auto\b/);
   await page.getByRole("button", { name: "Model", exact: true }).click();
   await page.getByLabel("Temperature", { exact: true }).press("Home");
   await page.getByRole("button", { name: "Close chat settings" }).click();

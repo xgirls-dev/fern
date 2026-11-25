@@ -1,7 +1,7 @@
 import { createServer, defaultClientConditions, preview } from "vite";
 import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-export async function fixture({ builtRenderer = false, firstRun = false, imageCount = 3, threadCount = 1, textStatus = null, textJobEvents, legacyTextWorkspace = null, imageGenerationTime = 65, platform = "win32", viewport = { width: 1440, height: 900 }, installedModels = [{ id: "9b", label: "Klein 9B" }] } = {}) {
+export async function fixture({ builtRenderer = false, firstRun = false, imageCount = 3, threadCount = 1, textStatus = null, textJobEvents, legacyTextWorkspace = null, imageGenerationTime = 65, platform = "win32", viewport = { width: 1440, height: 900 }, installedModels = [{ id: "9b", label: "Klein 9B" }], holdApiOnReload = false } = {}) {
   builtRenderer ||= process.env.FERN_UI_BUILT === "1";
   const address = { host: "127.0.0.1", port: 0 };
   const serveJobEvents = ({ middlewares }) => {
@@ -71,13 +71,17 @@ export async function fixture({ builtRenderer = false, firstRun = false, imageCo
     referenceLabel: "",
   }));
   await page.addInitScript(
-    ({ firstRun, threads, platform, legacyTextWorkspace }) => {
+    ({ firstRun, threads, platform, legacyTextWorkspace, holdApiOnReload }) => {
       let maximized = false;
       const maximizedListeners = new Set();
+      const holdApi = holdApiOnReload && sessionStorage.getItem("fern-fixture-hold-api") === "1";
       window.studio = new Proxy(
         {
           platform,
-          getApiBaseUrl: async () => location.origin,
+          getApiBaseUrl: async () => {
+            if (holdApi) await new Promise((resolve) => window.addEventListener("fern-fixture-connect-api", resolve, { once: true }));
+            return location.origin;
+          },
           onApiBaseUrl: () => () => {},
           onBackendError: () => () => {},
           onThemeChanged: () => () => {},
@@ -113,7 +117,7 @@ export async function fixture({ builtRenderer = false, firstRun = false, imageCo
         localStorage.setItem("fern-text-threads:v1", JSON.stringify(legacyTextWorkspace));
       }
     },
-    { firstRun, threads, platform, legacyTextWorkspace },
+    { firstRun, threads, platform, legacyTextWorkspace, holdApiOnReload },
   );
   const svg =
     "data:image/svg+xml," +

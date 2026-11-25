@@ -78,7 +78,7 @@ try {
   const openThread = async () => {
     await page.locator(".sidebar-new-menu > button").click();
     await page.getByRole("menuitem", { name: "Chat", exact: true }).click();
-    await page.getByLabel("Message", { exact: true }).waitFor();
+    await expect(page.getByRole("textbox", { name: "Message", exact: true })).toBeFocused();
   };
 
   await openThread();
