@@ -115,6 +115,7 @@ export const TextTranscriptWindow = memo(function TextTranscriptWindow({ threadI
   const [canDeferPages, setCanDeferPages] = useState(windowed);
   const [focused, setFocused] = useState<number | null>(null);
   const [selection, setSelection] = useState<[number, number] | null>(null);
+  const previousWindowed = useRef(windowed);
   const pages = useMemo(() => Array.from({ length: pageCount }, (_, index) => {
     const start = index * PAGE_SIZE;
     const page = items.slice(start, start + PAGE_SIZE);
@@ -169,6 +170,8 @@ export const TextTranscriptWindow = memo(function TextTranscriptWindow({ threadI
   useLayoutEffect(() => { cache.nearby = nearby; }, [cache, nearby]);
 
   useLayoutEffect(() => {
+    const wasUnwindowed = !previousWindowed.current;
+    previousWindowed.current = windowed;
     if (!windowed) return;
     const trackSelection = () => {
       const selected = window.getSelection();
@@ -181,7 +184,8 @@ export const TextTranscriptWindow = memo(function TextTranscriptWindow({ threadI
         return current?.[0] === first && current[1] === last ? current : [first, last];
       });
     };
-    trackSelection();
+    // Only an existing transcript can already contain a selection when windowing starts.
+    if (wasUnwindowed) trackSelection();
     document.addEventListener("selectionchange", trackSelection);
     return () => document.removeEventListener("selectionchange", trackSelection);
   }, [windowed]);
