@@ -82,12 +82,16 @@ try {
   await page.getByRole("dialog", { name: "Choose a chat", exact: true }).getByRole("button", { name: /^Handbook/ }).click();
   await page.setViewportSize({ width: 864, height: 620 });
   const right = page.getByRole("region", { name: "Right chat", exact: true });
+  await expect(hint(right)).toBeHidden();
   await send("Add a note to the handbook.", right);
+  await expect(hint(right)).toHaveText("Esc to stop");
+  await expect(hint(right)).toBeVisible();
   await expect(status(right)).toHaveClass(/sr-only/);
   const history = right.getByRole("log", { name: "Conversation" });
   await history.press("Home");
   await expect(status(right)).not.toHaveClass(/sr-only/);
   await expect(status(right)).toHaveText("Loading model…");
+  await expect(hint(right)).toBeVisible();
   await capture("07-compact-split-reading");
   await button("Jump to latest message", right).click();
   await expect(status(right)).toHaveClass(/sr-only/);

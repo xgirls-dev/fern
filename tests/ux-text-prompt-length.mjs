@@ -45,7 +45,11 @@ try {
   assert.equal(state.textRequests.length, 0);
   await composer.fill(boundaryPrompt);
   await expect(composer).toHaveValue(boundaryPrompt);
-  await expect(page.locator(".text-keyboard-hint")).toHaveText("20,000 / 20,000");
+  const viewport = page.viewportSize();
+  await page.setViewportSize({ width: 550, height: viewport.height });
+  const count = page.getByText("20,000 / 20,000", { exact: true });
+  await expect(count).toBeVisible();
+  await page.setViewportSize(viewport);
   await expect(send).toBeEnabled();
 
   await page.getByRole("button", { name: "Edit message", exact: true }).click();
