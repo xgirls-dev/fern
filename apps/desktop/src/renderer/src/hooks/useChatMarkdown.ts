@@ -151,13 +151,17 @@ export function useChatMarkdown(content: string, streaming: boolean, receivingRe
   }, []);
 
   useEffect(() => {
-    if (!receivingReply || workerFailed) return;
-    // Start loading the parser while the reply is still being prepared.
-    try {
-      markdownWorker("live");
-    } catch {
-      // The first large parse can retry startup and fall back if it still fails.
-    }
+    if (!receivingReply || workerFailed || workers.has("live")) return;
+    // Let Send's feedback paint before starting the parser. A large reply
+    // can still start the worker immediately when it needs a parse.
+    const idle = window.requestIdleCallback(() => {
+      try {
+        markdownWorker("live");
+      } catch {
+        // The first large parse can retry startup and fall back if it still fails.
+      }
+    }, { timeout: 100 });
+    return () => window.cancelIdleCallback(idle);
   }, [receivingReply, workerFailed]);
 
   useEffect(() => {

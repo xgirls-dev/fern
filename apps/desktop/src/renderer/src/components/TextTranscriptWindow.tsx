@@ -2,11 +2,17 @@ import { cloneElement, memo, useLayoutEffect, useMemo, useRef, useState, type Re
 
 import type { TextMessage } from "../lib/textThreads";
 
+const rowHeights = new WeakMap<TextMessage, number>();
+
 export function estimateTextRowHeight(message: TextMessage) {
+  const remembered = rowHeights.get(message);
+  if (remembered !== undefined) return remembered;
   const sample = message.content.slice(0, 30_000);
   const lines = sample.split("\n").reduce((total, line) => total + Math.max(1, Math.ceil(line.length / 84)), 0);
   const illustration = message.generatedImage ? 420 : message.image ? 220 : 0;
-  return 64 + lines * 25 + illustration + (message.reasoning ? 26 : 0) + (message.error ? 24 : 0);
+  const estimate = 64 + lines * 25 + illustration + (message.reasoning ? 26 : 0) + (message.error ? 24 : 0);
+  rowHeights.set(message, estimate);
+  return estimate;
 }
 
 const PAGE_SIZE = 12;
@@ -76,12 +82,10 @@ const TranscriptPage = memo(function TranscriptPage({ index, first, last, estima
   useLayoutEffect(() => {
     const page = element.current;
     if (!windowed || !mounted || !page) return;
-    const measure = () => {
-      const height = page.getBoundingClientRect().height;
+    const observer = new ResizeObserver(([entry]) => {
+      const height = entry.borderBoxSize[0]?.blockSize ?? entry.contentRect.height;
       if (height > 0) cache.set(index, { first, last, height });
-    };
-    measure();
-    const observer = new ResizeObserver(measure);
+    });
     observer.observe(page);
     return () => observer.disconnect();
   }, [cache, first, index, last, mounted, windowed]);

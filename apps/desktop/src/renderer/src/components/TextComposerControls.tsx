@@ -43,6 +43,9 @@ export const TextComposerControls = memo(function TextComposerControls({
   const documentInput = useRef<HTMLInputElement>(null);
   const attachmentInput = useRef<HTMLInputElement>(null);
   const documentsFull = documentCount >= MAX_CHAT_DOCUMENTS;
+  const stopLabel = cancellingLoad ? "Cancel model load" : "Stop generation";
+  const actionLabel = responding ? stopLabel : "Send message";
+  const stopTooltip = stopping ? (cancellingLoad ? "Cancelling model load…" : "Stopping generation…") : `${stopLabel} · Esc`;
 
   return <div className="text-composer-bottom">
     <div className="text-composer-model-controls">
@@ -69,16 +72,15 @@ export const TextComposerControls = memo(function TextComposerControls({
       <ModelMenu label="Text model" className="text-model-dropdown" triggerClassName="text-menu-trigger"
         value={model} disabled={busy} options={models} keyboardShortcut={chatModelShortcut} shortcutActive={focused}
         onManageModels={onManageModels} onChange={onChangeModel} onOpen={onOpenModelPicker} />
-      {responding ? <TooltipIconButton key="stop" ref={stopRef} variant="primary" shape="circle"
-        className="composer-submit is-stop" disabled={stopping} onClick={onStop} aria-keyshortcuts="Escape"
-        aria-label={cancellingLoad ? "Cancel model load" : "Stop generation"}
-        tooltip={cancellingLoad ? stopping ? "Cancelling model load…" : "Cancel model load · Esc"
-          : stopping ? "Stopping generation…" : "Stop generation · Esc"}>
-        {stopping ? <LoaderCircle className="spinner" size={16} aria-hidden="true" /> : <Square size={14} fill="currentColor" aria-hidden="true" />}
-      </TooltipIconButton> : <TooltipIconButton key="send" type="submit" variant="primary" shape="circle"
-        className="composer-submit" disabled={!canSend} aria-label="Send message" tooltip={sendTooltip}>
-        <Send size={20} aria-hidden="true" />
-      </TooltipIconButton>}
+      <TooltipIconButton ref={responding ? stopRef : undefined} type={responding ? "button" : "submit"} variant="primary" shape="circle"
+        className={responding ? "composer-submit is-stop" : "composer-submit"}
+        disabled={responding ? stopping : !canSend} onClick={responding ? onStop : undefined}
+        aria-keyshortcuts={responding ? "Escape" : undefined} aria-label={actionLabel}
+        tooltip={responding ? stopTooltip : sendTooltip} dismissTooltipOn={actionLabel}>
+        {!responding ? <Send size={20} aria-hidden="true" /> : stopping
+          ? <LoaderCircle className="spinner" size={16} aria-hidden="true" />
+          : <Square size={14} fill="currentColor" aria-hidden="true" />}
+      </TooltipIconButton>
     </div>
   </div>;
 });
