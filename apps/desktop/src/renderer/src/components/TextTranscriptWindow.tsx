@@ -55,23 +55,23 @@ function pageOf(node: Node | null, container: HTMLElement | null): number | null
   return page && container?.contains(page) ? Number(page.dataset.chatPage) : null;
 }
 
-const TranscriptPage = memo(function TranscriptPage({ index, first, last, estimate, mounted, windowed, cache, renderItem, storedCount, liveReply }: {
+const TranscriptPage = memo(function TranscriptPage({ index, first, last, estimate, windowed, cache, renderItem, storedCount, liveReply }: {
   index: number;
   first: string;
   last: string;
   estimate: number;
-  mounted: boolean;
   windowed: boolean;
   cache: Map<number, Measurement>;
-  renderItem: (index: number) => ReactElement;
+  renderItem?: (index: number) => ReactElement;
   storedCount: number;
   liveReply?: ReactElement;
 }) {
   const element = useRef<HTMLDivElement>(null);
+  const mounted = !!renderItem;
   const cached = cache.get(index);
   const rememberedHeight = cached?.first === first && cached.last === last ? cached.height : estimate;
-  const rows = useMemo(() => mounted ? Array.from({ length: storedCount }, (_, offset) => renderItem(index * PAGE_SIZE + offset)) : [],
-    [index, mounted, renderItem, storedCount]);
+  const rows = useMemo(() => renderItem ? Array.from({ length: storedCount }, (_, offset) => renderItem(index * PAGE_SIZE + offset)) : [],
+    [index, renderItem, storedCount]);
 
   useLayoutEffect(() => {
     const page = element.current;
@@ -103,6 +103,8 @@ export const TextTranscriptWindow = memo(function TextTranscriptWindow({ threadI
   const pageCount = Math.ceil(items.length / PAGE_SIZE);
   const restorePage = Math.floor(restoreIndex / PAGE_SIZE);
   const root = useRef<HTMLDivElement>(null);
+  const pageObserver = useRef<IntersectionObserver | null>(null);
+  const observedPages = useRef<Element[]>([]);
   const [cache] = useState(() => measurementsFor(threadId));
   const [nearby, setNearby] = useState(() => restorePage < 0 ? cache.nearby
     : new Set([...cache.nearby, restorePage - 1, restorePage, restorePage + 1].filter((index) => index >= 0 && index < pageCount)));
@@ -138,8 +140,26 @@ export const TextTranscriptWindow = memo(function TextTranscriptWindow({ threadI
       });
       setCanDeferPages(true);
     }, { root: feed, rootMargin: OVERSCAN });
-    for (const page of container.children) observer.observe(page);
-    return () => observer.disconnect();
+    pageObserver.current = observer;
+    return () => {
+      observer.disconnect();
+      pageObserver.current = null;
+      observedPages.current = [];
+    };
+  }, [windowed]);
+
+  useLayoutEffect(() => {
+    const observer = pageObserver.current;
+    const pages = root.current?.children;
+    if (!observer || !pages) return;
+    // Page elements keep their index keys when the transcript grows or shrinks.
+    const observed = observedPages.current;
+    for (const page of observed.splice(pageCount)) observer.unobserve(page);
+    for (let index = observed.length; index < pageCount; index += 1) {
+      const page = pages[index];
+      observer.observe(page);
+      observed.push(page);
+    }
   }, [pageCount, windowed]);
 
   useLayoutEffect(() => { cache.nearby = nearby; }, [cache, nearby]);
@@ -170,7 +190,7 @@ export const TextTranscriptWindow = memo(function TextTranscriptWindow({ threadI
       nearTarget(index, restorePage) || index === focused || !!selection && index >= selection[0] && index <= selection[1];
     const hasTail = hasLiveReply && index === pageCount - 1;
     return <TranscriptPage key={index} index={index} first={page.first} last={page.last}
-      estimate={page.estimatedHeight} cache={cache.pages} mounted={mounted} windowed={windowed} renderItem={renderItem}
+      estimate={page.estimatedHeight} cache={cache.pages} windowed={windowed} renderItem={mounted ? renderItem : undefined}
       storedCount={page.count - (hasTail ? 1 : 0)} />;
   }), [cache, canDeferPages, focused, hasLiveReply, nearby, pageCount, pages, renderItem, restorePage, revealPage, selection, windowed]);
   if (!pageCount) return null;
