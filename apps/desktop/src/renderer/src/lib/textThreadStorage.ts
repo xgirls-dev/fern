@@ -19,6 +19,7 @@ const HEADER = "header";
 const LEGACY = "fern-text-threads:v1";
 const DRAFT_CHECKPOINT = "fern-text-draft-checkpoint:v1";
 const TURN_CHECKPOINT = "fern-text-turn-checkpoint:v1";
+const TRANSCRIPT_EDIT_CHECKPOINT = "fern-text-transcript-edit-checkpoint:v1";
 
 type ThreadRecord = Omit<TextThread, "messages">;
 type DraftRecord = Pick<TextThread, "id" | "draft" | "draftImage" | "draftContextImage" | "draftContextImageThreadId" | "promptEdit" | "updatedAt">;
@@ -30,6 +31,16 @@ type Transcript = { id: string; messages: TextThread["messages"] };
 type ExitCheckpoint = { activeId: string; drafts: DraftRecord[]; newThreads: ThreadRecord[]; replies?: ReplyCheckpoint[] };
 type TurnBase = Pick<TextThread, "updatedAt" | "pendingJobId"> & { count: number; lastId?: string };
 type TurnCheckpoint = { thread: TextThread; base?: TurnBase };
+type TranscriptEdit = {
+  id: string;
+  base: TurnBase;
+  updatedAt: number;
+  start: number;
+  removed: string[];
+  before?: string;
+  after?: string;
+  added: TextMessage[];
+};
 type TurnExitCheckpoint = { activeId: string; membershipRevision?: string; turns: TurnCheckpoint[] };
 
 function openDatabase(): Promise<IDBDatabase> {
@@ -189,23 +200,78 @@ function addedTurnsCheckpoint(thread: TextThread, saved: TextThread | undefined)
   if (!saved) return { thread };
   const count = saved.messages.length;
   const messages = thread.messages.slice(count);
-  // Only append to an unchanged prefix. Deletions and revisions stay in the normal transaction.
+  // Keep question submission and answer recovery on their job-aware path.
   if (!messages.some((message) => message.role === "user") || saved.messages.some((message, index) => message !== thread.messages[index])) return;
   return {
     thread: { ...thread, messages },
-    base: { count, lastId: saved.messages.at(-1)?.id, updatedAt: saved.updatedAt, pendingJobId: saved.pendingJobId },
+    base: transcriptBase(saved),
   };
 }
 
+function transcriptBase(thread: TextThread): TurnBase {
+  return { count: thread.messages.length, lastId: thread.messages.at(-1)?.id, updatedAt: thread.updatedAt, pendingJobId: thread.pendingJobId };
+}
+
+function matchesTranscriptBase(thread: TextThread, base: TurnBase) {
+  return thread.messages.length === base.count && thread.messages.at(-1)?.id === base.lastId &&
+    thread.updatedAt === base.updatedAt && (thread.pendingJobId ?? null) === (base.pendingJobId ?? null);
+}
+
 function matchTurnBase(current: TextThread, base: TurnBase | undefined, captured: TextThread): boolean {
-  if (base) {
-    return current.messages.length === base.count && current.messages.at(-1)?.id === base.lastId &&
-      current.updatedAt === base.updatedAt && (current.pendingJobId ?? null) === (base.pendingJobId ?? null);
-  }
+  if (base) return matchesTranscriptBase(current, base);
   // A transaction for the empty chat can commit just before the window closes.
   // A newer empty transcript may be the result of deleting its messages.
   const first = captured.messages[0];
   return !current.messages.length && !current.pendingJobId && first?.role === "user" && current.updatedAt < first.createdAt;
+}
+
+function messageVersionKey(message?: TextMessage): string | undefined {
+  if (!message) return;
+  return JSON.stringify([message.id, message.promptVersionId, message.alternatives?.map(({ id }) => id),
+    message.promptAlternatives?.map(({ id, response }) => [id, response?.id])]);
+}
+
+function transcriptEditCheckpoint(thread: TextThread, saved: TextThread): TranscriptEdit | undefined {
+  const { messages } = thread;
+  const previous = saved.messages;
+  // A conversation version switch needs its snapshots and active transcript to commit together.
+  if (messages === previous || thread.versions !== saved.versions || thread.pendingJobId || saved.pendingJobId) return;
+  let start = 0;
+  while (start < previous.length && start < messages.length && previous[start] === messages[start]) start++;
+  if (start === previous.length && start === messages.length) return;
+  let beforeEnd = previous.length;
+  let afterEnd = messages.length;
+  while (beforeEnd > start && afterEnd > start && previous[beforeEnd - 1] === messages[afterEnd - 1]) {
+    beforeEnd--;
+    afterEnd--;
+  }
+  return { id: thread.id, base: transcriptBase(saved), updatedAt: thread.updatedAt, start,
+    before: messageVersionKey(previous[start - 1]), after: messageVersionKey(previous[beforeEnd]),
+    removed: previous.slice(start, beforeEnd).map((message) => messageVersionKey(message)!), added: messages.slice(start, afterEnd) };
+}
+
+function matchesTranscriptEdit(thread: TextThread, edit: TranscriptEdit) {
+  return edit?.id === thread.id && !!edit.base && matchesTranscriptBase(thread, edit.base) &&
+    Number.isFinite(edit.updatedAt) && Number.isSafeInteger(edit.start) && edit.start >= 0 &&
+    Array.isArray(edit.removed) && Array.isArray(edit.added) && edit.start + edit.removed.length <= thread.messages.length &&
+    messageVersionKey(thread.messages[edit.start - 1]) === edit.before &&
+    messageVersionKey(thread.messages[edit.start + edit.removed.length]) === edit.after &&
+    edit.removed.every((key, index) => messageVersionKey(thread.messages[edit.start + index]) === key);
+}
+
+function recoverTranscriptEdits(workspace: TextThreadWorkspace, raw: string | null): TextThreadWorkspace {
+  const edits = parseLocal(raw) as TranscriptEdit[] | null;
+  if (!Array.isArray(edits) || !edits.length) return workspace;
+  const threads = workspace.threads.map((thread) => {
+    if (thread.pendingJobId) return thread;
+    const edit = edits.find((item) => matchesTranscriptEdit(thread, item));
+    if (!edit) return thread;
+    const added = restoreTextThreads({ threads: [{ ...thread, messages: edit.added, versions: undefined }] })?.threads[0]?.messages;
+    if (!added || added.length !== edit.added.length) return thread;
+    const messages = [...thread.messages.slice(0, edit.start), ...added, ...thread.messages.slice(edit.start + edit.removed.length)];
+    return { ...thread, messages, updatedAt: edit.updatedAt };
+  });
+  return { ...workspace, threads };
 }
 
 function recoverAddedTurns(workspace: TextThreadWorkspace, raw: string | null, membershipRevision: string | undefined): TextThreadWorkspace {
@@ -264,6 +330,7 @@ export async function seedTextWorkspace(workspace: TextThreadWorkspace): Promise
 
 export function createTextThreadStorage() {
   let saved: TextThreadWorkspace | undefined;
+  let writing: TextThreadWorkspace | undefined;
   let membershipRevision: string | undefined;
   let loading: Promise<TextThreadWorkspace> | undefined;
   let writes = Promise.resolve();
@@ -271,8 +338,13 @@ export function createTextThreadStorage() {
   const save = (workspace: TextThreadWorkspace) => {
     const next = writes.catch(() => undefined).then(async () => {
       if (saved === workspace) return;
-      membershipRevision = await writeDatabase(workspace, saved, membershipRevision);
-      saved = workspace;
+      writing = workspace;
+      try {
+        membershipRevision = await writeDatabase(workspace, saved, membershipRevision);
+        saved = workspace;
+      } finally {
+        writing = undefined;
+      }
     });
     writes = next;
     return next;
@@ -288,12 +360,14 @@ export function createTextThreadStorage() {
         const migrated = !saved ? restoreTextThreads(parseLocal(legacy)) : undefined;
         const checkpoint = readLocal(DRAFT_CHECKPOINT);
         const turns = readLocal(TURN_CHECKPOINT);
+        const edits = readLocal(TRANSCRIPT_EDIT_CHECKPOINT);
         const resumed = recoverAddedTurns(saved ?? migrated ?? createTextWorkspace(), turns, membershipRevision);
-        const restored = recoverExitCheckpoint(resumed, checkpoint);
+        const restored = recoverExitCheckpoint(recoverTranscriptEdits(resumed, edits), checkpoint);
         await save(restored);
         if (migrated) clearLocal(LEGACY, legacy);
         clearLocal(DRAFT_CHECKPOINT, checkpoint);
         clearLocal(TURN_CHECKPOINT, turns);
+        clearLocal(TRANSCRIPT_EDIT_CHECKPOINT, edits);
         return restored;
       })().catch((error: unknown) => { loading = undefined; throw error; });
       return loading;
@@ -303,17 +377,30 @@ export function createTextThreadStorage() {
       if (!saved) return;
       if (saved === workspace) {
         clearLocal(TURN_CHECKPOINT, readLocal(TURN_CHECKPOINT));
+        clearLocal(TRANSCRIPT_EDIT_CHECKPOINT, readLocal(TRANSCRIPT_EDIT_CHECKPOINT));
         return;
       }
       const previous = new Map(saved.threads.map((thread) => [thread.id, thread]));
+      const pending = new Map(writing?.threads.map((thread) => [thread.id, thread]));
       const drafts: DraftRecord[] = [];
       const newThreads: ThreadRecord[] = [];
       const replies: ReplyCheckpoint[] = [];
       const turns: TurnCheckpoint[] = [];
+      const edits: TranscriptEdit[] = [];
       for (const thread of workspace.threads) {
         const old = previous.get(thread.id);
         const added = addedTurnsCheckpoint(thread, old);
         if (added) turns.push(added);
+        else if (old) {
+          const edit = transcriptEditCheckpoint(thread, old);
+          if (edit) edits.push(edit);
+        }
+        // The current write can reach disk before its completion runs in the exiting renderer.
+        const inFlight = pending.get(thread.id);
+        if (old && inFlight && (inFlight.messages !== old.messages || inFlight.updatedAt !== old.updatedAt)) {
+          const edit = transcriptEditCheckpoint(thread, inFlight);
+          if (edit) edits.push(edit);
+        }
         const finished = finishedReplyCheckpoint(thread, old);
         if (finished) {
           replies.push(finished);
@@ -338,11 +425,16 @@ export function createTextThreadStorage() {
           localStorage.setItem(TURN_CHECKPOINT, JSON.stringify({ activeId: workspace.activeId, membershipRevision, turns } satisfies TurnExitCheckpoint));
         } catch { /* Draft and reply recovery use a separate checkpoint. */ }
       } else clearLocal(TURN_CHECKPOINT, readLocal(TURN_CHECKPOINT));
+      if (edits.length) {
+        try { localStorage.setItem(TRANSCRIPT_EDIT_CHECKPOINT, JSON.stringify(edits)); }
+        catch { /* The normal IndexedDB save can still succeed. */ }
+      } else clearLocal(TRANSCRIPT_EDIT_CHECKPOINT, readLocal(TRANSCRIPT_EDIT_CHECKPOINT));
     },
     clearLegacy() {
       clearLocal(LEGACY, readLocal(LEGACY));
       clearLocal(DRAFT_CHECKPOINT, readLocal(DRAFT_CHECKPOINT));
       clearLocal(TURN_CHECKPOINT, readLocal(TURN_CHECKPOINT));
+      clearLocal(TRANSCRIPT_EDIT_CHECKPOINT, readLocal(TRANSCRIPT_EDIT_CHECKPOINT));
     },
   };
 }
