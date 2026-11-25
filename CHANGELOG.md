@@ -9,6 +9,7 @@ lands directly on `main` instead of through labeled pull requests.
 ### Added
 
 - Save workspace backups from Local data. Restore a backup into a separate workspace and switch back to the original with its chats and media.
+- Open the model picker for the focused chat with Ctrl+Shift+L or Cmd+Shift+L on Mac. When opened from the composer, selecting a model or pressing Escape returns focus to the draft.
 
 ### Improved
 

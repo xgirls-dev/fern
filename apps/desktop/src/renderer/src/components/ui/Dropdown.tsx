@@ -67,7 +67,7 @@ export function Dropdown({
   className?: string;
   finalFocus?: ComponentProps<typeof Menu.Popup>["finalFocus"];
   open?: boolean;
-  onOpenChange?: (open: boolean) => void;
+  onOpenChange?: ComponentProps<typeof Menu.Root>["onOpenChange"];
   onOpenChangeComplete?: (open: boolean) => void;
   portalContainer?: ComponentProps<typeof Menu.Portal>["container"];
   collisionPadding?: ComponentProps<typeof Menu.Positioner>["collisionPadding"];

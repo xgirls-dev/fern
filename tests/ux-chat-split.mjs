@@ -66,6 +66,36 @@ try {
   assert(leftBox.x + leftBox.width <= rightBox.x, "The chats should appear in separate columns.");
   assert.equal(leftBox.y, rightBox.y);
 
+  const modelMenu = page.getByRole("menu", { name: "Text model", exact: true });
+  const rightModel = button("Text model: Qwen", right);
+  const rightDraft = message(right);
+  await rightDraft.fill("Keep this draft while choosing a model.");
+  await rightDraft.evaluate((field) => field.setSelectionRange(5, 15, "backward"));
+  await rightDraft.dispatchEvent("keydown", { key: "L", code: "KeyL", ctrlKey: true, shiftKey: true, isComposing: true });
+  await expect(modelMenu).toHaveCount(0);
+  await rightDraft.press("Control+Shift+L");
+  await expect(rightModel).toHaveAttribute("aria-expanded", "true");
+  await expect(rightModel).toHaveAttribute("aria-keyshortcuts", "Control+Shift+L");
+  await expect(button("Text model: Gemma", left)).toHaveAttribute("aria-expanded", "false");
+  await expect(modelMenu.getByRole("menuitemradio", { name: "Gemma", exact: true })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(rightDraft).toBeFocused();
+  assert.deepEqual(await rightDraft.evaluate((field) => [field.selectionStart, field.selectionEnd, field.selectionDirection]), [5, 15, "backward"]);
+
+  await rightDraft.press("Control+Shift+L");
+  await page.keyboard.press("Enter");
+  await expect(button("Text model: Gemma", right)).toBeVisible();
+  await expect(rightDraft).toBeFocused();
+  await expect(rightDraft).toHaveValue("Keep this draft while choosing a model.");
+  await rightDraft.press("Control+Shift+L");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
+  await expect(rightModel).toBeVisible();
+  await rightDraft.press("Control+Shift+L");
+  await message(left).click();
+  await expect(modelMenu).toHaveCount(0);
+  await expect(message(left)).toBeFocused();
+
   const dividerOffset = (percent) => () => divider.evaluate((element, ratio) => {
     const layout = element.parentElement.getBoundingClientRect();
     return Math.abs(element.getBoundingClientRect().left - (layout.left + layout.width * ratio / 100));
@@ -164,6 +194,9 @@ try {
   await button("Stop generation", right).waitFor();
   assert(await button("Send message", left).isDisabled());
   assert.equal(await message(left).inputValue(), "Continue the left draft");
+  await message(left).press("Control+Shift+L");
+  await expect(modelMenu).toHaveCount(0);
+  await expect(message(left)).toBeFocused();
   await complete("Right answer.", right);
 
   await button("Send message", left).click();

@@ -9,7 +9,7 @@ import type { ModelStatus } from "../lib/types";
 import type { ComputePreference } from "../hooks/useComputePreference";
 import { resolveTextModel, textModelReadiness, type TextRuntimeStatus, type TextThread } from "../lib/textThreads";
 import { Button, ChoiceCard, PageHeader, Select, ToggleRow } from "./ui/controls";
-import { shortcutLabel, shortcuts } from "../lib/workspaceNavigation";
+import { chatModelShortcut, shortcutLabel, shortcuts } from "../lib/workspaceNavigation";
 
 interface PreferencesViewProps {
   active: boolean;
@@ -263,7 +263,7 @@ export function PreferencesView({
             <Command size={17} aria-hidden="true" />
           </div>
           <div className="shortcut-list">
-            {Object.values(shortcuts).map((shortcut) => <div key={shortcut.label}>
+            {[...Object.values(shortcuts), chatModelShortcut].map((shortcut) => <div key={shortcut.label}>
               <span>{shortcut.label}</span>
               <span className="kbd">{shortcutLabel(shortcut)}</span>
             </div>)}

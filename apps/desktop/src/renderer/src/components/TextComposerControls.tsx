@@ -6,6 +6,7 @@ import Paperclip from "lucide-react/dist/esm/icons/paperclip.mjs";
 import Square from "lucide-react/dist/esm/icons/square.mjs";
 import { CHAT_DOCUMENT_ACCEPT, MAX_CHAT_DOCUMENTS } from "../lib/chatDocuments";
 import type { TextMode } from "../lib/textThreads";
+import { chatModelShortcut } from "../lib/workspaceNavigation";
 import { ModelMenu, type ModelMenuOption } from "./ui/ModelMenu";
 import { Select } from "./ui/Select";
 import { TooltipIconButton } from "./ui/Tooltip";
@@ -14,13 +15,14 @@ const RESPONSE_MODES = [{ value: "instant", label: "Instant" }, { value: "reason
 
 // Reply chunks change the transcript without changing these action controls.
 export const TextComposerControls = memo(function TextComposerControls({
-  busy, canAttach, canSend, documentCount, imageTooltip, mode, model, models, responding, sendTooltip, stopping,
+  busy, canAttach, canSend, documentCount, focused, imageTooltip, mode, model, models, responding, sendTooltip, stopping,
   onAttachDocuments, onAttachImage, onChangeMode, onChangeModel, onManageModels, onOpenModelPicker, onStop, stopRef,
 }: {
   busy: boolean;
   canAttach: boolean;
   canSend: boolean;
   documentCount: number;
+  focused: boolean;
   imageTooltip: string;
   mode?: TextMode;
   model: string;
@@ -64,7 +66,8 @@ export const TextComposerControls = memo(function TextComposerControls({
     </div>
     <div className="composer-send-tools">
       <ModelMenu label="Text model" className="text-model-dropdown" triggerClassName="text-menu-trigger"
-        value={model} disabled={busy} options={models} onManageModels={onManageModels} onChange={onChangeModel} onOpen={onOpenModelPicker} />
+        value={model} disabled={busy} options={models} keyboardShortcut={chatModelShortcut} shortcutActive={focused}
+        onManageModels={onManageModels} onChange={onChangeModel} onOpen={onOpenModelPicker} />
       {responding ? <TooltipIconButton key="stop" ref={stopRef} variant="danger" shape="circle"
         className="composer-submit is-stop" disabled={stopping} onClick={onStop} aria-label="Stop generation"
         tooltip={stopping ? "Stopping generation…" : "Stop generation · Esc in composer"}>

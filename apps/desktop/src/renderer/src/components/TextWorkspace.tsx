@@ -1079,7 +1079,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
               }
             }}
           />
-          <TextComposerControls busy={busy} canAttach={canAttach} canSend={canSend} documentCount={documents.length}
+          <TextComposerControls busy={busy} canAttach={canAttach} canSend={canSend} documentCount={documents.length} focused={focused}
             imageTooltip={activeThread.draftContextImage ? "Remove the selected conversation image to attach a new file"
               : attachingImage ? "Attaching image…" : "Attach chat image · Paste or drop an image"}
             mode={selected?.supportsReasoning ? activeThread.mode : undefined} model={selectedModel} models={modelOptions}
