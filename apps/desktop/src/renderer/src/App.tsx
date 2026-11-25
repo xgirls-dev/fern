@@ -498,7 +498,7 @@ export function App() {
   };
   const startupDialogOpen = !runtimeDismissed;
   const connectionPending = studio.connecting || !studio.status;
-  const connectionError = studio.connectionError ??
+  const connectionError = studio.backendStartupError ?? studio.connectionError ??
     (studio.ready && !studio.status && !studio.connecting ? studio.error : null);
   const showImageRuntimeStatus = activeSection === "create" &&
     (connectionPending || studio.runtimeNeedsAttention ||
@@ -640,6 +640,8 @@ export function App() {
               <ChatWorkspace
                 studio={text}
                 storagePlaceholder={chatPlaceholder}
+                backendStartupError={studio.backendStartupError}
+                onRetryBackendStartup={studio.retryBackendStartup}
                 sidebarCollapsed={sidebarIsCollapsed}
                 onOpenThreadSearch={openChatThreadSearch}
                 onSetupModels={openModelSetup}

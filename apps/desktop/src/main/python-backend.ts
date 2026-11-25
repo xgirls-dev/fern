@@ -3,6 +3,7 @@ import { getApiScriptPath, getPythonEnvironment, getPythonExecutable, getProject
 
 const HEALTH_TIMEOUT_MS = 60_000;
 const HEALTH_INTERVAL_MS = 250;
+const HEALTH_PROBE_TIMEOUT_MS = 2_000;
 
 export class PythonBackend {
   private process: ChildProcess | null = null;
@@ -121,10 +122,10 @@ export class PythonBackend {
     while (Date.now() < deadline) {
       checkProcess();
       try {
-        const response = await fetch(`${this.baseUrl}/api/health`);
-        if (response.ok) {
-          return;
-        }
+        const response = await fetch(`${this.baseUrl}/api/health`, {
+          signal: AbortSignal.timeout(Math.min(HEALTH_PROBE_TIMEOUT_MS, Math.max(1, deadline - Date.now()))),
+        });
+        if (response.ok) return;
       } catch {
         // Backend still booting.
       }

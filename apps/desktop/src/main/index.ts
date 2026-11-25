@@ -24,6 +24,8 @@ const isDev = !app.isPackaged;
 let mainWindow: BrowserWindow | null = null;
 let backend: PythonBackend | null = null;
 let backendReady = false;
+let backendStartupError: string | null = null;
+let backendStartup: Promise<void> | null = null;
 let isShuttingDown = false;
 let workspaces: WorkspaceProfiles;
 let removeWallpaperConnection: (() => void) | undefined;
@@ -44,6 +46,46 @@ async function allocatePort(): Promise<number> {
     probe.close((error) => (error ? reject(error) : resolve()));
   });
   return port;
+}
+
+function publishBackendState(channel: "studio:backend-starting" | "studio:api-base-url" | "studio:backend-error", message?: string) {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) window.webContents.send(channel, message);
+  }
+}
+
+function startBackend(allowWallpaperConnection: boolean): Promise<void> {
+  if (isShuttingDown || backendReady) return Promise.resolve();
+  if (backendStartup) return backendStartup;
+  backendStartupError = null;
+  publishBackendState("studio:backend-starting");
+  backendStartup = (async () => {
+    try {
+      await backend?.stop();
+      const port = await allocatePort();
+      if (isShuttingDown) return;
+      const current = new PythonBackend(port);
+      backend = current;
+      await current.start();
+      if (isShuttingDown) return;
+      backendReady = true;
+      if (allowWallpaperConnection) {
+        try {
+          removeWallpaperConnection = publishWallpaperConnection(port, getOutputsDir());
+        } catch (error) {
+          console.warn("Could not connect the Omarchy wallpaper panel:", error);
+        }
+      }
+      publishBackendState("studio:api-base-url", current.baseUrl);
+    } catch (error) {
+      if (isShuttingDown) return;
+      backendStartupError = error instanceof Error ? error.message : "Could not start Fern’s local service.";
+      publishBackendState("studio:backend-error", backendStartupError);
+    } finally {
+      backendStartup = null;
+    }
+  })();
+  return backendStartup;
 }
 
 function resolvePreloadPath(): string {
@@ -490,6 +532,8 @@ function registerIpc(): void {
   ipcMain.on("studio:request-api-base-url", (event) => {
     if (backend && backendReady) {
       event.sender.send("studio:api-base-url", backend.baseUrl);
+    } else if (backendStartupError) {
+      event.sender.send("studio:backend-error", backendStartupError);
     }
   });
 
@@ -618,42 +662,11 @@ async function bootstrap(): Promise<void> {
   buildMenu();
   registerIpc();
 
-  const port = await allocatePort();
-  backend = new PythonBackend(port);
-  const pendingBaseUrl = `http://127.0.0.1:${port}`;
-
   mainWindow = createWindow();
   if (setupWindow && !setupWindow.isDestroyed()) setupWindow.close();
-
-  void (async () => {
-    try {
-      await backend?.start();
-      backendReady = Boolean(backend);
-      const baseUrl = backend?.baseUrl ?? pendingBaseUrl;
-      if (backendReady && !isShuttingDown && app.isPackaged && !profileOverride) {
-        try {
-          removeWallpaperConnection = publishWallpaperConnection(port, getOutputsDir());
-        } catch (error) {
-          console.warn("Could not connect the Omarchy wallpaper panel:", error);
-        }
-      }
-      for (const window of BrowserWindow.getAllWindows()) {
-        if (!window.isDestroyed()) {
-          window.webContents.send("studio:api-base-url", baseUrl);
-        }
-      }
-    } catch (error) {
-      const message =
-        error instanceof Error
-          ? error.message
-          : "Failed to start the OpenVINO backend.";
-      for (const window of BrowserWindow.getAllWindows()) {
-        if (!window.isDestroyed()) {
-          window.webContents.send("studio:backend-error", message);
-        }
-      }
-    }
-  })();
+  const allowWallpaperConnection = app.isPackaged && !profileOverride;
+  ipcMain.handle("studio:retry-backend", () => startBackend(allowWallpaperConnection));
+  void startBackend(allowWallpaperConnection);
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0 && backend) {
