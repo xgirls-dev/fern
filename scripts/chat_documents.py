@@ -151,24 +151,28 @@ def _read(path: Path) -> dict[str, Any] | None:
     return record
 
 
-def store_document(directory: Path, name: Any, encoded: Any, *,
+def store_document(directory: Path, name: Any, content: Any, *,
                    storage_guard: AbstractContextManager[None] | None = None) -> dict[str, Any]:
     if not isinstance(name, str) or not 1 <= len(name) <= 255 or any(char in name for char in "/\\\0\r\n"):
         raise ValueError("Choose a document with a valid filename.")
     suffix = Path(name).suffix.lower()
     if suffix not in SUFFIXES:
         raise ValueError("Choose a PDF, DOCX, TXT, or Markdown document.")
-    if not isinstance(encoded, str) or len(encoded) > 4 * ((MAX_DOCUMENT_BYTES + 2) // 3):
-        raise ValueError("Choose a document up to 20 MB.")
-    try:
-        data = base64.b64decode(encoded, validate=True)
-    except ValueError as error:
-        raise ValueError("The document upload is incomplete or invalid. Attach it again.") from error
+    if isinstance(content, bytes):
+        data = content
+    else:
+        if not isinstance(content, str) or len(content) > 4 * ((MAX_DOCUMENT_BYTES + 2) // 3):
+            raise ValueError("Choose a document up to 20 MB.")
+        try:
+            data = base64.b64decode(content, validate=True)
+        except ValueError as error:
+            raise ValueError("The document upload is incomplete or invalid. Attach it again.") from error
     if not data or len(data) > MAX_DOCUMENT_BYTES:
         raise ValueError("Choose a non-empty document up to 20 MB.")
 
-    digest = hashlib.sha256(name.encode("utf-8") + b"\0" + data).hexdigest()
-    document_id = f"doc-{digest}"
+    digest = hashlib.sha256(name.encode("utf-8") + b"\0")
+    digest.update(data)
+    document_id = f"doc-{digest.hexdigest()}"
     path = _path(directory, document_id)
     guard = storage_guard if storage_guard is not None else nullcontext()
     if record := _read(path):

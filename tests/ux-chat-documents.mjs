@@ -6,7 +6,7 @@ const model = { id: "gemma", name: "Gemma", installed: true, format: "gguf", max
 const { page, state, errors, close } = await fixture({
   textStatus: { models: [model], runtimeAvailable: true, ggufAvailable: true, job: { id: null, status: "idle" } },
 });
-const name = "Launch notes.txt";
+const name = "Étage & 北 notes.txt";
 const document = { id: `doc-${"a".repeat(64)}`, name, bytes: 32 };
 const file = { name, mimeType: "text/plain", buffer: Buffer.from("The launch color is marigold.") };
 const draft = "Keep this draft while the attachment is retried.";
@@ -18,7 +18,9 @@ const uploads = [];
 let uploadError;
 await page.route("**/api/text/documents", async (route) => {
   if (uploadError) return route.fulfill({ status: 400, json: { error: uploadError } });
-  uploads.push(route.request().postDataJSON());
+  const request = route.request();
+  assert.equal(request.headers()["content-type"], "application/octet-stream");
+  uploads.push({ name: decodeURIComponent(request.headers()["x-fern-document-name"]), body: request.postDataBuffer() });
   await route.fulfill({ status: 201, json: { document } });
 });
 
@@ -65,7 +67,7 @@ try {
   await interruptSaving();
   await upload.setInputFiles(file);
   await documents.getByText(name, { exact: true }).waitFor();
-  assert.equal(Buffer.from(uploads[0].content, "base64").toString(), file.buffer.toString());
+  assert.deepEqual(uploads[0], { name, body: file.buffer });
   await expect(button("Retry saving chats")).toBeVisible();
   assert.deepEqual(await savedDocuments(), []);
   await page.reload();

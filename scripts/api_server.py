@@ -67,7 +67,7 @@ from text_model_download import managed_download_id, remove_download as remove_t
 from gguf_metadata import is_projector, read_metadata as read_gguf_metadata
 from gguf_runtime import RUNTIME_PLATFORM_ERROR, apple_silicon, runtime_supported as gguf_runtime_supported
 from chat_image_tools import CHAT_IMAGE_SIZE, IMAGE_MODEL_PRIORITY, IMAGE_TOOL, chat_image_overrides, image_tool_prompt
-from chat_documents import ChatDocumentsUnavailable, document_ids, read_document_source, retrieve_passages, store_document
+from chat_documents import MAX_DOCUMENT_BYTES, ChatDocumentsUnavailable, document_ids, read_document_source, retrieve_passages, store_document
 from chat_context import DEFAULT_CONTEXT_SIZE, validate_context_size, validate_gguf_load_options
 from tts_model_download import model_download_details as tts_model_download_details
 from tts_model_download import model_ready as tts_export_ready, require_fresh_install_space as require_tts_install_space
@@ -2555,7 +2555,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Fern-Document-Name")
 
     def send_json(self, status: int, data: dict[str, Any], *, no_store: bool = False) -> None:
         body = json.dumps(data).encode("utf-8")
@@ -2838,9 +2838,19 @@ class Handler(BaseHTTPRequestHandler):
             storage_revision = CHAT_ATTACHMENT_STORAGE_REVISION
             try:
                 with CHAT_DOCUMENT_UPLOAD_LOCK:
-                    payload = self.read_json_body(too_large="Choose a document up to 20 MB.")
+                    if self.headers.get_content_type() == "application/octet-stream":
+                        length = int(self.headers.get("Content-Length", "0"))
+                        if not 0 < length <= MAX_DOCUMENT_BYTES:
+                            raise ValueError("Choose a non-empty document up to 20 MB.")
+                        name = urllib.parse.unquote(self.headers.get("X-Fern-Document-Name", ""), errors="strict")
+                        content = self.rfile.read(length)
+                        if len(content) != length:
+                            raise ValueError("The document upload is incomplete or invalid. Attach it again.")
+                    else:
+                        payload = self.read_json_body(too_large="Choose a document up to 20 MB.")
+                        name, content = payload.get("name"), payload.get("content")
                     document = store_document(
-                        DATA_DIR / "chat-documents", payload.get("name"), payload.get("content"),
+                        DATA_DIR / "chat-documents", name, content,
                         storage_guard=publish_chat_attachment(storage_revision, "document"),
                     )
                 self.send_json(201, {"document": document})

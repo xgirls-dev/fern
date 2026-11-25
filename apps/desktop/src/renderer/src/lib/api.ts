@@ -290,18 +290,20 @@ export function uploadChatImage(image: string, cancel?: AbortSignal): Promise<{ 
 }
 
 export async function uploadChatDocument(file: File): Promise<{ document: ChatDocument }> {
-  const content = await new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result).split(",", 2)[1]);
-    reader.onerror = () => reject(new Error("Fern could not read the document. Try attaching it again."));
-    reader.readAsDataURL(file);
-  });
-  return requestJson("/api/text/documents", {
-    method: "POST",
-    signal: AbortSignal.timeout(120_000),
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name: file.name, content }),
-  });
+  try {
+    return await requestJson("/api/text/documents", {
+      method: "POST",
+      signal: AbortSignal.timeout(120_000),
+      headers: {
+        "Content-Type": "application/octet-stream",
+        "X-Fern-Document-Name": encodeURIComponent(file.name),
+      },
+      body: file,
+    });
+  } catch (error) {
+    if (error instanceof TypeError) throw new Error("Fern could not upload the document. Try attaching it again.", { cause: error });
+    throw error;
+  }
 }
 
 export async function fetchChatDocumentSource(reference: ChatDocumentReference, cancel: AbortSignal): Promise<ChatDocumentPreview> {

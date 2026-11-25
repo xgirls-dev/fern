@@ -9,6 +9,7 @@ import threading
 import time
 import unittest
 import urllib.request
+import urllib.parse
 import urllib.error
 import os
 from concurrent.futures import ThreadPoolExecutor
@@ -528,7 +529,8 @@ os._exit(0)
         resume_extraction = threading.Event()
         cancel = threading.Event()
         read_parts = chat_documents._document_parts
-        note = base64.b64encode(b"Review the glaze under daylight.").decode("ascii")
+        name = "Étage & 北 notes.txt"
+        note = b"Review the glaze under daylight."
         identity = {"requestId": "document-running", "threadId": "text-thread-document", "jobOnly": True}
 
         def read_later(data, suffix):
@@ -541,10 +543,12 @@ os._exit(0)
             worker = threading.Thread(target=server.serve_forever, daemon=True)
             worker.start()
 
-            def post(endpoint, payload):
+            def post(endpoint, payload, headers=None):
                 url = f"http://127.0.0.1:{server.server_port}/api/text/{endpoint}"
-                request = urllib.request.Request(url, data=json.dumps(payload).encode(),
-                                                 headers={"Content-Type": "application/json"})
+                if headers is None:
+                    payload = json.dumps(payload).encode()
+                    headers = {"Content-Type": "application/json"}
+                request = urllib.request.Request(url, data=payload, headers=headers)
                 with urllib.request.urlopen(request, timeout=5) as response:
                     return response.status, json.load(response)
 
@@ -558,7 +562,9 @@ os._exit(0)
                     patch.object(api.INTEL_MEDIA, "interrupt"),
                     ThreadPoolExecutor(max_workers=1) as uploads,
                 ):
-                    attached = uploads.submit(post, "documents", {"name": "Notes.txt", "content": note})
+                    headers = {"Content-Type": "application/octet-stream",
+                               "X-Fern-Document-Name": urllib.parse.quote(name)}
+                    attached = uploads.submit(post, "documents", note, headers)
                     try:
                         self.assertTrue(extracting.wait(5))
                         status, receipt = post("stop", identity)
@@ -571,7 +577,18 @@ os._exit(0)
                     status, result = attached.result()
                     self.assertEqual(status, 201, result)
                     document = result["document"]
+                    self.assertEqual(document["name"], name)
+                    self.assertEqual(document["bytes"], len(note))
                     self.assertTrue((self.root / "chat-documents" / (document["id"] + ".json")).is_file())
+
+                    legacy = {"name": name, "content": base64.b64encode(note).decode("ascii")}
+                    self.assertEqual(post("documents", legacy), (201, result))
+                    with patch.object(api, "MAX_DOCUMENT_BYTES", len(note) - 1):
+                        with self.assertRaises(urllib.error.HTTPError) as oversized:
+                            post("documents", note, headers)
+                    self.assertEqual(oversized.exception.code, 400)
+                    with oversized.exception as response:
+                        self.assertIn("20 MB", json.load(response)["error"])
             finally:
                 server.shutdown()
                 worker.join(timeout=5)
