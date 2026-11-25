@@ -256,8 +256,9 @@ body {
   outline-offset: 2px;
 }
 .text-composer.is-file-over { border-color: var(--chat-action); outline: 2px solid var(--chat-action); outline-offset: 2px; }
-.text-composer .composer-submit.ui-icon-button--primary { background: var(--chat-action); color: var(--chat-action-text); }
-.text-composer .composer-submit.ui-icon-button--primary:hover:not(:disabled) { background: color-mix(in srgb, var(--chat-action) 85%, var(--foreground)); }
+.text-composer .composer-submit.ui-icon-button--primary:not(.is-stop) { background: var(--chat-action); color: var(--chat-action-text); }
+.text-composer .composer-submit.ui-icon-button--primary:not(.is-stop):hover:not(:disabled) { background: color-mix(in srgb, var(--chat-action) 85%, var(--foreground)); }
+.text-composer .composer-submit.is-stop:hover:not(:disabled) { color: var(--background); }
 .text-composer > textarea { display: block; width: 100%; min-height: 48px; max-height: 200px; resize: none; padding: 0 4px 10px; border: 0; outline: none; background: transparent; color: var(--foreground); font-size: 14px; line-height: 1.6; }
 .text-composer > textarea::placeholder { color: var(--muted); }
 .text-workspace .text-composer > textarea:focus-visible { outline: none; }
