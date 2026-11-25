@@ -40,6 +40,9 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run package:macos
+        env:
+          # The repository's preview uses the ad-hoc identity and no signing credentials.
+          CSC_FOR_PULL_REQUEST: ${{ github.event_name == 'pull_request' && 'true' || 'false' }}
       - name: Check signature and Finder app startup
         run: |
           app_path=apps/desktop/release-macos/mac-arm64/Fern.app
