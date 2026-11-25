@@ -9,7 +9,7 @@ export class PythonBackend {
   private process: ChildProcess | null = null;
   readonly port: number;
 
-  constructor(port: number) {
+  constructor(port: number, private readonly onUnexpectedExit: () => void) {
     this.port = port;
   }
 
@@ -28,7 +28,7 @@ export class PythonBackend {
 
     this.process = spawn(
       python,
-      [script, "--port", String(this.port), "--cors"],
+      [script, "--port", String(this.port), "--cors", "--desktop"],
       {
         cwd: root,
         env: getPythonEnvironment(),
@@ -50,19 +50,32 @@ export class PythonBackend {
     let spawnError: Error | undefined;
     proc.once("error", (error) => {
       spawnError = error;
-      this.process = null;
+      if (this.process === proc) this.process = null;
     });
     proc.on("exit", (code, signal) => {
       if (code !== 0 && code !== null) {
         console.error(`Python backend exited with code ${code} (${signal ?? "no signal"})`);
       }
+      if (this.process !== proc) return;
       this.process = null;
+      // Workers can outlive the service. Windows gives the service a job
+      // object, and Unix keeps its children in the service's process group.
+      if (process.platform !== "win32" && proc.pid) {
+        try {
+          process.kill(-proc.pid, "SIGKILL");
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ESRCH") console.error("Could not stop Fern's backend workers:", error);
+        }
+      }
+      this.onUnexpectedExit();
     });
 
-    await this.waitForHealth(() => {
+    const checkProcess = () => {
       if (spawnError) throw spawnError;
       if (this.process !== proc) throw new Error("Fern's Python backend exited during startup.");
-    });
+    };
+    await this.waitForHealth(checkProcess);
+    checkProcess();
   }
 
   async stop(): Promise<void> {

@@ -321,6 +321,18 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     submission.current = null;
     setSubmitting(false);
   }, []);
+  useLayoutEffect(() => {
+    if (ready) return;
+    invalidatePoll();
+    if (submission.current) finishSubmission(submission.current);
+    const interrupted = liveJobRef.current;
+    setWorkspace((current) => checkpointTextReply(current, interrupted));
+    setStatusLoaded(false);
+    setStatusError(null);
+    stopDispatched.current = null;
+    setStoppingId(null);
+    setStopFailure(null);
+  }, [finishSubmission, invalidatePoll, ready, setWorkspace]);
   const acceptJob = useCallback((accepted: TextJobAcceptance, pending: TextSubmission) => {
     if (submission.current !== pending) return;
     const job = "textJob" in accepted ? accepted.textJob : accepted.job?.job;
@@ -532,7 +544,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
   }, [finishSubmission, invalidatePoll, pollStatus, ready, setStatus, supportsJobPolling, watchedJobId, watchedThreadId]);
 
   useEffect(() => {
-    if (!stoppingId) return;
+    if (!ready || !statusLoaded || !stoppingId) return;
     const running = status.job.status === "running" && status.job.id === stoppingId;
     const thread = threads.find((item) => item.pendingJobId === stoppingId);
     if (!running && !thread) {
@@ -561,7 +573,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
       setStoppingId((current) => current === stoppingId ? null : current);
       setStopFailure({ id: stoppingId, message: error instanceof Error ? error.message : "Could not stop text generation." });
     });
-  }, [finishSubmission, status.job, status.supportsPendingStop, statusError, stoppingId, threads]);
+  }, [finishSubmission, ready, status.job, status.supportsPendingStop, statusError, statusLoaded, stoppingId, threads]);
 
   // The model process may be gone while its last render is already on disk.
   useEffect(() => {
@@ -1025,7 +1037,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
   const generateReply = useCallback(async (thread: TextThread, input: string, { retry = false, sourceId, revision, continueFrom, rewriteId }: {
     retry?: boolean; sourceId?: string; revision?: { messageId: string; version: TextPromptVersion }; continueFrom?: string; rewriteId?: string;
   } = {}) => {
-    if (busy || modelActionRef.current || submission.current || (!retry && !revision && !continueFrom && attachmentRequests.current.has(thread.id))) return;
+    if (!ready || busy || modelActionRef.current || submission.current || (!retry && !revision && !continueFrom && attachmentRequests.current.has(thread.id))) return;
     const status = statusRef.current;
     if (continueFrom) {
       const last = thread.messages.at(-1);
@@ -1142,7 +1154,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     } finally {
       finishSubmission(receipt);
     }
-  }, [acceptJob, beginSubmission, busy, computeDevice, finishSubmission, imageGpuAvailable, setWorkspace, submissionIsMissing, updateThread]);
+  }, [acceptJob, beginSubmission, busy, computeDevice, finishSubmission, imageGpuAvailable, ready, setWorkspace, submissionIsMissing, updateThread]);
 
   const send = useCallback((threadId: string, input: string, rewriteId?: string) => {
     const thread = getThread(threadId);
@@ -1250,12 +1262,12 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
   const stop = useCallback((threadId: string) => {
     const requestId = getThread(threadId)?.pendingJobId ??
       (runningThreadId === threadId ? runningJobId : null);
-    if (requestId && requestId !== stoppingId) {
+    if (ready && requestId && requestId !== stoppingId) {
       setActionError(null);
       setStopFailure(null);
       setStoppingId(requestId);
     }
-  }, [getThread, runningJobId, runningThreadId, stoppingId, setActionError]);
+  }, [getThread, ready, runningJobId, runningThreadId, stoppingId, setActionError]);
 
   const selectModel = useCallback((threadId: string, modelId: string) => {
     const activeThread = getThread(threadId);

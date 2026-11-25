@@ -92,7 +92,11 @@ export async function fixture({ builtRenderer = false, firstRun = false, imageCo
             window.addEventListener("fern-fixture-backend-ready", connected);
             return () => window.removeEventListener("fern-fixture-backend-ready", connected);
           },
-          onBackendError: () => () => {},
+          onBackendError: (listener) => {
+            const failed = (event) => listener(event.detail.message, event.detail.stage);
+            window.addEventListener("fern-fixture-backend-error", failed);
+            return () => window.removeEventListener("fern-fixture-backend-error", failed);
+          },
           onThemeChanged: () => () => {},
           onWindowMaximizedChanged: (listener) => {
             maximizedListeners.add(listener);

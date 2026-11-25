@@ -19,12 +19,13 @@ import { registerWorkspaceIpc } from "./workspace-backup";
 import { WorkspaceProfiles } from "./workspace-profiles";
 import { publishWallpaperConnection } from "./wallpaper-connection";
 import { getAppIconPath, getOutputsDir, resolveProjectRoot } from "./paths";
+import type { BackendFailure, BackendFailureStage } from "../preload/types";
 
 const isDev = !app.isPackaged;
 let mainWindow: BrowserWindow | null = null;
 let backend: PythonBackend | null = null;
 let backendReady = false;
-let backendStartupError: string | null = null;
+let backendFailure: BackendFailure | null = null;
 let backendStartup: Promise<void> | null = null;
 let isShuttingDown = false;
 let workspaces: WorkspaceProfiles;
@@ -48,23 +49,30 @@ async function allocatePort(): Promise<number> {
   return port;
 }
 
-function publishBackendState(channel: "studio:backend-starting" | "studio:api-base-url" | "studio:backend-error", message?: string) {
+function publishBackendState(channel: "studio:backend-starting" | "studio:api-base-url" | "studio:backend-error", message?: string, stage?: BackendFailureStage) {
   for (const window of BrowserWindow.getAllWindows()) {
-    if (!window.isDestroyed()) window.webContents.send(channel, message);
+    if (!window.isDestroyed()) window.webContents.send(channel, message, stage);
   }
 }
 
 function startBackend(allowWallpaperConnection: boolean): Promise<void> {
   if (isShuttingDown || backendReady) return Promise.resolve();
   if (backendStartup) return backendStartup;
-  backendStartupError = null;
+  backendFailure = null;
   publishBackendState("studio:backend-starting");
   backendStartup = (async () => {
     try {
       await backend?.stop();
       const port = await allocatePort();
       if (isShuttingDown) return;
-      const current = new PythonBackend(port);
+      const current = new PythonBackend(port, () => {
+        if (isShuttingDown || backend !== current || !backendReady) return;
+        backendReady = false;
+        removeWallpaperConnection?.();
+        removeWallpaperConnection = undefined;
+        backendFailure = { message: "Fern’s local service stopped unexpectedly.", stage: "running" };
+        publishBackendState("studio:backend-error", backendFailure.message, backendFailure.stage);
+      });
       backend = current;
       await current.start();
       if (isShuttingDown) return;
@@ -79,8 +87,8 @@ function startBackend(allowWallpaperConnection: boolean): Promise<void> {
       publishBackendState("studio:api-base-url", current.baseUrl);
     } catch (error) {
       if (isShuttingDown) return;
-      backendStartupError = error instanceof Error ? error.message : "Could not start Fern’s local service.";
-      publishBackendState("studio:backend-error", backendStartupError);
+      backendFailure = { message: error instanceof Error ? error.message : "Could not start Fern’s local service.", stage: "startup" };
+      publishBackendState("studio:backend-error", backendFailure.message, backendFailure.stage);
     } finally {
       backendStartup = null;
     }
@@ -532,8 +540,8 @@ function registerIpc(): void {
   ipcMain.on("studio:request-api-base-url", (event) => {
     if (backend && backendReady) {
       event.sender.send("studio:api-base-url", backend.baseUrl);
-    } else if (backendStartupError) {
-      event.sender.send("studio:backend-error", backendStartupError);
+    } else if (backendFailure) {
+      event.sender.send("studio:backend-error", backendFailure.message, backendFailure.stage);
     }
   });
 
