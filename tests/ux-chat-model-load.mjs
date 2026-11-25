@@ -47,8 +47,11 @@ try {
   await expect(composer).toHaveValue(draft);
   await button("Chat settings").click();
   const load = button("Load model");
+  const loadPosition = await load.boundingBox();
   await load.click();
   await expect(button("Cancel model load")).toBeVisible();
+  const cancelPosition = await button("Cancel load").boundingBox();
+  assert(loadPosition && cancelPosition && Math.abs(loadPosition.y - cancelPosition.y) < 1);
   await expect.poll(() => loads.length).toBe(1);
   assert.equal(loads[0].threadId, threadId);
   assert.equal(loads[0].modelId, model.id);

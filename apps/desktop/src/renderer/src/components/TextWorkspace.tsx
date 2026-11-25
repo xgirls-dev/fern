@@ -1184,7 +1184,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
         {panel === "settings" && <div className="text-inspector-body">
           <p className="text-panel-description">System prompt, maximum output, and sampling apply to the next reply.</p>
           {chatErrorNotice}
-          {busy && <p className="text-panel-description" role="status">{activity || studio.modelAction || "Settings are locked while a response is generating."}</p>}
+          {busy && !loadingModel && <p className="text-panel-description" role="status">{activity || studio.modelAction || "Settings are locked while a response is generating."}</p>}
           <div className="text-settings-grid">
             <label>Model<Select ref={modelSetting} aria-label="Settings model" value={selectedModel || null} placeholder="Choose a model" disabled={busy}
               options={settingsModelOptions}
@@ -1205,11 +1205,12 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
                 {unloading ? "Unloading…" : "Unload model"}
               </Button>}
             </div>
-            {!loadingModel && (selected?.format === "gguf" || loadsOnNextReply || (status.supportsModelLoad && loadedModel)) && <p role="status" className="text-setting-help text-model-load-note">
-              {reloadReason
+            {(loadingModel || selected?.format === "gguf" || loadsOnNextReply || (status.supportsModelLoad && loadedModel)) && <p role="status" className="text-setting-help text-model-load-note">
+              {loadingModel ? activity : reloadReason
                 ? <><strong>Reloads on the next reply.</strong> {reloadReason}</>
                 : status.supportsModelLoad && loadedModel ? "Model loaded."
-                  : loadsOnNextReply ? status.supportsModelLoad && selected?.supportsVision ? "The vision projector loads with the first image."
+                  : loadsOnNextReply ? status.supportsModelLoad
+                    ? selected?.supportsVision ? "The vision projector loads with the first image." : "Sending a message also loads the model."
                     : "The model loads on the next reply."
                   : "Changing context length or advanced loading options reloads a loaded model on the next reply."}
             </p>}
