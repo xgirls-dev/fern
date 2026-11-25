@@ -139,7 +139,10 @@ body {
 .text-draft-image button { position: absolute; top: 6px; right: 6px; background: var(--card); }
 .text-draft-context .ui-icon-button { position: static; background: transparent; }
 .text-composer[data-attachment-drop] { outline: var(--ui-focus-ring); outline-offset: 2px; }
-.text-document-attachments { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; padding: 0; list-style: none; }
+.text-document-attachments {
+  display: flex; flex-wrap: wrap; gap: 6px; max-height: clamp(40px, calc(40px + (100dvh - 520px) / 2), 180px);
+  overflow-y: auto; overscroll-behavior-y: contain; margin: 4px -2px 8px; padding: 2px; list-style: none;
+}
 .text-document-attachments li { display: flex; align-items: center; gap: 6px; max-width: min(100%, 260px); padding-inline: 8px 2px; border-radius: 7px; background: var(--secondary-bg); font-size: 12px; }
 .text-document-attachments li > span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .text-document-attachments svg, .text-document-attachments button { flex: 0 0 auto; }
@@ -287,7 +290,8 @@ body {
 .text-composer .composer-submit.ui-icon-button--primary:not(.is-stop) { background: var(--chat-action); color: var(--chat-action-text); }
 .text-composer .composer-submit.ui-icon-button--primary:not(.is-stop):hover:not(:disabled) { background: color-mix(in srgb, var(--chat-action) 85%, var(--foreground)); }
 .text-composer .composer-submit.is-stop:hover:not(:disabled) { color: var(--background); }
-.text-composer > textarea { display: block; width: 100%; min-height: 48px; max-height: 200px; resize: none; padding: 0 4px 10px; border: 0; outline: none; background: transparent; color: var(--foreground); font-size: 14px; line-height: 1.6; }
+/* Leave the reply visible when a long draft is open at the desktop minimum height. */
+.text-composer > textarea { display: block; width: 100%; min-height: 48px; max-height: clamp(72px, calc(72px + (100dvh - 520px) / 2), 200px); resize: none; padding: 0 4px 10px; border: 0; outline: none; background: transparent; color: var(--foreground); font-size: 14px; line-height: 1.6; }
 .text-composer > textarea::placeholder { color: var(--muted); }
 .text-workspace .text-composer > textarea:focus-visible { outline: none; }
 .text-composer-bottom { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
