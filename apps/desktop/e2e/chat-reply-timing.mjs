@@ -173,3 +173,44 @@ export async function measureWarmStop(page, readJob, modelId) {
     followUp: { backend: followUp.result.backend, device: followUp.result.device, runtime, renderer: followUpRenderer },
   };
 }
+
+export async function measureUnloadAndReload(page, readStatus, modelId, { prompt, answer }) {
+  const button = (name) => page.getByRole("button", { name, exact: true });
+  const composer = page.getByRole("textbox", { name: "Message", exact: true });
+  const send = button("Send message");
+  const unload = button("Unload model");
+  const before = await readStatus();
+  assert.equal(before.residentModel?.modelId, modelId);
+
+  await composer.fill(prompt);
+  await button("Chat settings").click();
+  const unloaded = page.waitForResponse((response) => response.request().method() === "POST" &&
+    new URL(response.url()).pathname === "/api/text/models/unload");
+  await unload.click();
+  const receipt = await unloaded;
+  assert(receipt.ok(), `Model unload returned HTTP ${receipt.status()}.`);
+  assert.equal((await receipt.json()).residentModel, null);
+  const unloadRequestMs = receipt.request().timing().responseEnd;
+  assert(Number.isFinite(unloadRequestMs) && unloadRequestMs >= 0);
+  await expect(unload).toHaveCount(0);
+  await expect(composer).toHaveValue(prompt);
+  assert.equal((await readStatus()).residentModel, null);
+  await button("Close chat settings").click();
+
+  const timing = await observeChatReply(send);
+  const request = page.waitForRequest((entry) => entry.method() === "POST" &&
+    new URL(entry.url()).pathname === "/api/text/generate");
+  await send.click();
+  const { requestId } = (await request).postDataJSON();
+  const reply = page.locator(`[data-chat-message=${JSON.stringify("response-" + requestId)}]`);
+  await expect(reply.getByRole("button", { name: "More message actions", exact: true })).toBeVisible({ timeout });
+  await expect(reply.locator(".text-message-content")).toContainText(answer, { timeout });
+  const { job, residentModel } = await readStatus();
+  assert.equal(job.status, "complete");
+  assert.equal(job.id, requestId);
+  assert.equal(job.modelId, modelId);
+  assert.deepEqual(residentModel, before.residentModel, "Reload should restore the same model and engine configuration.");
+  const { runtimeTiming: runtime, backend, device } = job.result;
+  assert(Number.isFinite(runtime?.modelReadyMs), "Send after eviction should load a new model instance.");
+  return { unloadRequestMs, reload: { backend, device, runtime, renderer: await readReplyTiming(timing) } };
+}

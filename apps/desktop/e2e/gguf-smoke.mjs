@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { _electron as electron, expect } from "@playwright/test";
-import { measureWarmStop, observeChatReply, readReplyTiming } from "./chat-reply-timing.mjs";
+import { measureUnloadAndReload, measureWarmStop, observeChatReply, readReplyTiming } from "./chat-reply-timing.mjs";
 
 const desktop = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const scratch = await mkdtemp(path.join(os.tmpdir(), "fern-gguf-"));
@@ -166,6 +166,11 @@ try {
       assert.equal(warmStop.followUp.backend, expectedBackend);
       assert.equal(warmStop.followUp.device, "GPU");
       report.push({ modality: "text", mode: "instant", journey: "warm-stop-and-follow-up", ...warmStop });
+      console.log(JSON.stringify(report.at(-1)));
+      const eviction = await measureUnloadAndReload(page, status, installed.id, { prompt: firstPrompt, answer: /\bparis\b/i });
+      assert.equal(eviction.reload.backend, expectedBackend);
+      assert.equal(eviction.reload.device, "GPU");
+      report.push({ modality: "text", mode: "instant", journey: "unload-and-reload", ...eviction });
       console.log(JSON.stringify(report.at(-1)));
     }
   }
