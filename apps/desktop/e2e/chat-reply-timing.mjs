@@ -18,7 +18,7 @@ export function observeChatReply(send, { measureStop = false } = {}) {
         let terminalEvent = null;
         let feedback = null;
         let firstAnswerFrame = null;
-        let stopClick = null;
+        let stopKey = null;
         let sendReady = null;
         let settled = null;
         let lastFrame = sent;
@@ -29,17 +29,17 @@ export function observeChatReply(send, { measureStop = false } = {}) {
         function finish(value) {
           clearTimeout(watchdog);
           cancelAnimationFrame(animation);
-          composer.removeEventListener("click", recordStop, true);
+          feed.removeEventListener("keydown", recordStop, true);
           if (window.EventSource === TimedEventSource) window.EventSource = NativeEventSource;
           resolve(value);
         }
 
         function recordStop(event) {
-          if (event.target instanceof Element && event.target.closest('button[aria-label="Stop generation"]')) {
-            stopClick ??= performance.now();
+          if (event.key === "Escape" && event.target instanceof Element && event.target.matches(".text-message--streaming")) {
+            stopKey ??= performance.now();
           }
         }
-        if (measureStop) composer.addEventListener("click", recordStop, true);
+        if (measureStop) feed.addEventListener("keydown", recordStop, true);
 
         class TimedEventSource extends NativeEventSource {
           constructor(url, options) {
@@ -74,7 +74,7 @@ export function observeChatReply(send, { measureStop = false } = {}) {
             if (!reply.classList.contains("text-message--streaming") &&
                 !content?.querySelector("[data-chat-markdown-formatting]")) settled ??= now;
           }
-          if (stopClick !== null && composer.querySelector('button[aria-label="Send message"]:enabled:not([aria-disabled="true"])')) {
+          if (stopKey !== null && composer.querySelector('button[aria-label="Send message"]:enabled:not([aria-disabled="true"])')) {
             sendReady ??= now;
           }
           if (settled !== null && (!measureStop || sendReady !== null)) {
@@ -87,7 +87,7 @@ export function observeChatReply(send, { measureStop = false } = {}) {
               terminalEventMs: afterSend(terminalEvent),
               settledFrameMs: afterSend(settled),
               maxFrameGapMs: maxFrameGap,
-              ...(measureStop ? { stopClickMs: afterSend(stopClick), sendReadyFrameMs: afterSend(sendReady) } : {}),
+              ...(measureStop ? { stopKeyMs: afterSend(stopKey), sendReadyFrameMs: afterSend(sendReady) } : {}),
             });
             return;
           }
@@ -118,7 +118,6 @@ export async function readReplyTiming(handle) {
 export async function measureWarmStop(page, readJob, modelId) {
   const composer = page.getByRole("textbox", { name: "Message", exact: true });
   const send = page.getByRole("button", { name: "Send message", exact: true });
-  const stop = page.getByRole("button", { name: "Stop generation", exact: true });
   const reply = page.locator(".text-message--assistant").last();
   const responseText = (row) => row.locator(".text-message-content");
 
@@ -132,8 +131,14 @@ export async function measureWarmStop(page, readJob, modelId) {
   assert.equal(running.modelId, modelId);
 
   await composer.fill(followUpPrompt);
-  await stop.click();
+  await composer.press("Shift+Tab");
+  const goToReply = page.getByRole("button", { name: "Go to latest reply", exact: true });
+  await expect(goToReply).toBeFocused();
+  await goToReply.press("Enter");
+  await expect(streaming).toBeFocused();
+  await page.keyboard.press("Escape");
   await expect(reply.getByText("Stopped · Partial response", { exact: true })).toBeVisible({ timeout });
+  await expect(reply).toBeFocused();
   await expect(send).toBeEnabled({ timeout });
   await expect(composer).toHaveValue(followUpPrompt);
   const stopped = await readJob();
@@ -161,9 +166,9 @@ export async function measureWarmStop(page, readJob, modelId) {
   const followUpRenderer = await readReplyTiming(followUpTiming);
 
   return {
-    stopToBackendEventMs: stopRenderer.terminalEventMs === null ? null : stopRenderer.terminalEventMs - stopRenderer.stopClickMs,
-    stopToSendReadyFrameMs: stopRenderer.sendReadyFrameMs - stopRenderer.stopClickMs,
-    stopToSettledFrameMs: stopRenderer.settledFrameMs - stopRenderer.stopClickMs,
+    stopToBackendEventMs: stopRenderer.terminalEventMs === null ? null : stopRenderer.terminalEventMs - stopRenderer.stopKeyMs,
+    stopToSendReadyFrameMs: stopRenderer.sendReadyFrameMs - stopRenderer.stopKeyMs,
+    stopToSettledFrameMs: stopRenderer.settledFrameMs - stopRenderer.stopKeyMs,
     stoppedReply: stopRenderer,
     followUp: { backend: followUp.result.backend, device: followUp.result.device, runtime, renderer: followUpRenderer },
   };

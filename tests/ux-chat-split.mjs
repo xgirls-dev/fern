@@ -220,6 +220,15 @@ try {
   await message(left).press("Control+Shift+L");
   await expect(modelMenu).toHaveCount(0);
   await expect(message(left)).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(button("Stop generation", right)).toBeVisible();
+  await button("Find in chat", right).click();
+  await expect(findField(right)).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(findField(right)).toHaveCount(0);
+  await expect(button("Find in chat", right)).toBeFocused();
+  await expect(button("Stop generation", right)).toBeVisible();
+  assert.equal(state.textStatus.job.status, "running");
   await complete("Right answer.", right);
 
   await button("Send message", left).click();

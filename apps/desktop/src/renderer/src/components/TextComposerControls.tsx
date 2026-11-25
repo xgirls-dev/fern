@@ -69,8 +69,8 @@ export const TextComposerControls = memo(function TextComposerControls({
         value={model} disabled={busy} options={models} keyboardShortcut={chatModelShortcut} shortcutActive={focused}
         onManageModels={onManageModels} onChange={onChangeModel} onOpen={onOpenModelPicker} />
       {responding ? <TooltipIconButton key="stop" ref={stopRef} variant="danger" shape="circle"
-        className="composer-submit is-stop" disabled={stopping} onClick={onStop} aria-label="Stop generation"
-        tooltip={stopping ? "Stopping generation…" : "Stop generation · Esc in composer"}>
+        className="composer-submit is-stop" disabled={stopping} onClick={onStop} aria-label="Stop generation" aria-keyshortcuts="Escape"
+        tooltip={stopping ? "Stopping generation…" : "Stop generation · Esc"}>
         {stopping ? <LoaderCircle className="spinner" size={16} aria-hidden="true" /> : <Square size={14} fill="currentColor" aria-hidden="true" />}
       </TooltipIconButton> : <TooltipIconButton key="send" type="submit" variant="primary" shape="circle"
         className="composer-submit" disabled={!canSend} aria-label="Send message" tooltip={sendTooltip}>

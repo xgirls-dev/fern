@@ -80,6 +80,29 @@ try {
   await expect(button("Stop generation")).toBeVisible();
   await composer.press("Escape");
   await expect.poll(() => state.textStatus.job.status).toBe("stopped");
+  await expect(button("Send message")).toBeVisible();
+
+  await composer.fill("Tell me more.");
+  await composer.press("Enter");
+  await expect.poll(() => state.textRequests.length).toBe(2);
+  state.textStatus.job = { ...state.textStatus.job, partialText: "This partial reply should stay visible." };
+  const liveReply = page.locator(".text-message--streaming");
+  await expect(liveReply).toContainText("This partial reply should stay visible.");
+  await composer.fill("Keep this draft.");
+  await composer.press("Shift+Tab");
+  const goToReply = button("Go to latest reply");
+  await expect(goToReply).toBeFocused();
+  await goToReply.press("Enter");
+  await expect(liveReply).toBeFocused();
+  assert(await pressImeKey(liveReply, "Escape"));
+  await liveReply.press("Shift+Escape");
+  await expect(button("Stop generation")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect.poll(() => state.textStatus.job.status).toBe("stopped");
+  const stoppedReply = page.getByRole("article", { name: "Model response", exact: true }).last();
+  await expect(stoppedReply).toContainText("This partial reply should stay visible.");
+  await expect(stoppedReply).toBeFocused();
+  await expect(composer).toHaveValue("Keep this draft.");
 
   assert.deepEqual(errors, []);
   console.log("IME candidate keys preserve chat drafts, match position, search dialogs, and running replies.");
