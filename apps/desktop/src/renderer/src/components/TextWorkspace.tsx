@@ -255,7 +255,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
     findTrigger.current?.focus({ preventScroll: true });
   }, []);
   const { feedRef, transcriptRef, historyVisible, followingLatest, showScrollButton, restoreAnchorId, restoreReasoningId, jumpToLatest, revealMessage,
-    onScroll, onFocus: onHistoryFocus, onKeyDown: onHistoryKeyDown } = useTextScroll(activeThread.id);
+    onScroll, onFocus: onHistoryFocus, onKeyDown: onHistoryKeyDown } = useTextScroll(activeThread.id, { paneFocused: focused });
   const { fieldRef: inputRef, bindField: bindDraftField } = useTextDraftField(`composer:${activeThread.id}`, activeThread.draft, 200);
   const modelActionControl = useRef<HTMLButtonElement | null>(null);
   const bindModelAction = useCallback((button: HTMLButtonElement | null) => {

@@ -26,6 +26,7 @@ lands directly on `main` instead of through labeled pull requests.
 
 ### Fixed
 
+- Restore the reading position in the first frame when showing a hidden chat pane.
 - Keep the reading position when an earlier message changes height or when returning to a chat in a compact split pane.
 - Recover a chat deletion or Undo when a reload interrupts saving the active transcript.
 - Resume typing at the same caret after attaching a document. The chat composer shows when it can accept a document drop even if a conversation image is already selected.

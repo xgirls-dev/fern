@@ -46,7 +46,26 @@ try {
   await render();
   state.textStatus.job = { ...state.textStatus.job, partialText: "A streamed update in the other pane.\n\n".repeat(34) };
   await expect(right.getByRole("article", { name: "Response in progress" })).toContainText("A streamed update in the other pane.");
+  const firstFrame = await page.evaluateHandle(() => ({
+    offset: new Promise((resolve) => {
+      const pane = document.querySelector('[data-chat-pane="primary"]');
+      const observer = new MutationObserver(() => {
+        if (pane.getAttribute("data-focused") !== "true") return;
+        observer.disconnect();
+        requestAnimationFrame(() => {
+          const row = pane.querySelector('[data-chat-message="row-96"]');
+          const viewport = pane.querySelector(".text-conversation");
+          resolve(row && row.getBoundingClientRect().top - viewport.getBoundingClientRect().top);
+        });
+      });
+      observer.observe(pane, { attributes: true, attributeFilter: ["data-focused"] });
+    }),
+  }));
   await page.getByRole("group", { name: "Chat panes" }).getByRole("button", { name: "Left chat", exact: true }).click();
+  const firstOffset = await firstFrame.evaluate(({ offset }) => offset);
+  await firstFrame.dispose();
+  expect(firstOffset).not.toBeNull();
+  expect(Math.abs(firstOffset - expected)).toBeLessThan(10);
   await expect(left).toBeVisible();
   await expect.poll(() => feed.evaluate((element) => element.clientWidth)).toBeGreaterThan(beforeWidth);
   await expect(anchor).toBeInViewport();

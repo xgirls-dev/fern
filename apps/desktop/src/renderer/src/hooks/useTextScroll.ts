@@ -157,7 +157,7 @@ function rememberPosition(threadId: string, feed: HTMLElement, following: boolea
   saveChatReadingPosition(threadId, position);
 }
 
-export function useTextScroll(threadId: string, persistPosition = true) {
+export function useTextScroll(threadId: string, { persistPosition = true, paneFocused = false } = {}) {
   const feedRef = useRef<HTMLDivElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const following = useRef(true);
@@ -390,6 +390,20 @@ export function useTextScroll(threadId: string, persistPosition = true) {
       document.removeEventListener("selectionchange", onSelection);
     };
   }, [onScroll, pauseFollowing, persistPosition, savePosition, threadId]);
+
+  useLayoutEffect(() => {
+    if (!paneFocused || !layout.current.hidden) return;
+    const feed = feedRef.current;
+    if (!feed?.clientHeight) return;
+    if (following.current) {
+      feed.scrollTop = feed.scrollHeight;
+      return;
+    }
+    const position = pendingRestore.current ?? (persistPosition ? getChatReadingPosition(threadId) : undefined);
+    // Reposition for the first frame. The resize observer finishes restoration
+    // after layout, keeping the saved page mounted until the viewport is measured.
+    if (position) restorePosition(feed, position);
+  }, [paneFocused, persistPosition, threadId]);
 
   useLayoutEffect(() => {
     if (!persistPosition) return;
