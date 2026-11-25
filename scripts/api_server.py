@@ -933,12 +933,23 @@ def run_text_generation(payload: dict[str, Any], job_id: str, cancel_event: thre
     model_load = bool(payload.get("modelLoad"))
     start_stage = "loading-model" if model_load else "preparing-conversation"
     diagnostics = {"stage": start_stage, "requestedDevice": payload.get("device")}
+
+    def release_apple_image_worker() -> None:
+        if GENERATION_WORKER.process is None:
+            return
+        diagnostics["stage"] = "releasing-image-runtime"
+        append_text_event(job_id, phase="Releasing the image model…")
+        GENERATION_WORKER.close(cancel_event=cancel_event)
+        diagnostics["stage"] = start_stage
+
     try:
         image_model = payload.get("imageModel")
         inspection_image = payload.get("inspectionImage")
         if image_model not in INTEL_MEDIA_CATALOG and not inspection_image:
             INTEL_MEDIA.close()
-        if not image_model and not inspection_image:
+        if apple_silicon():
+            release_apple_image_worker()
+        elif not image_model and not inspection_image:
             GENERATION_WORKER.close()
         TAME_PONY_GENERATION_WORKER.close()
         CUSTOM_IMAGE_GENERATION_WORKER.close()
@@ -1039,6 +1050,8 @@ def run_text_generation(payload: dict[str, Any], job_id: str, cancel_event: thre
             image = generate_chat_image(image_model, prompt, payload["threadId"], job_id, cancel_event, payload.get("imageSettings"),
                                         message_image=payload["messages"][-1].get("imagePath"), on_image=show_image)
             show_image(image)
+            if image_model == APPLE_IMAGE_ID:
+                release_apple_image_worker()
             append_text_event(job_id, phase="Checking the generated image…")
             prior = result.get("text", "").strip()
             tool_reply = json.dumps({

@@ -6,6 +6,7 @@ const stages = {
   "selecting-device": "Selecting the device",
   "setting-up-runtime": "Setting up the runtime",
   "loading-model": "Loading the model",
+  "releasing-image-runtime": "Releasing the image model",
   "waiting-for-first-token": "Processing the prompt",
   "generating-reply": "Generating the reply",
   "checking-reply": "Checking the result",
