@@ -12,6 +12,7 @@ import urllib.request
 import urllib.error
 import os
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import suppress
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import ANY, Mock, patch
@@ -134,6 +135,48 @@ finally:
                 self.assertFalse(psutil.pid_exists(started["enginePid"]))
         finally:
             worker.close()
+
+    def test_unload_releases_engine_when_the_worker_cannot_reap_it(self):
+        script = self.root / "unload_fixture.py"
+        script.write_text("""import json, os, subprocess, sys, time
+sys.stdin.readline()
+engine = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"],
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+for event in (
+    {"type": "residency", "model": {"backend": "cpu", "device": "CPU", "enginePid": engine.pid}},
+    {"type": "result", "workerPid": os.getpid(), "enginePid": engine.pid},
+):
+    print("FERN_TEXT_EVENT:" + json.dumps(event), flush=True)
+sys.stdin.readline()
+if sys.argv[1] == "hang":
+    time.sleep(30)
+os._exit(0)
+""", encoding="utf-8")
+        model_id = self.model["id"]
+        for mode in ("exit", "hang"):
+            with self.subTest(mode=mode):
+                worker = TextGenerationProcess()
+                engine = None
+                try:
+                    started = worker.generate(
+                        model_path=str(self.folder), device="CPU", command=[sys.executable, "-u", str(script), mode],
+                        request={"modelId": model_id}, cwd=self.root, env=dict(os.environ),
+                        on_token=lambda _: None, on_phase=lambda _: None,
+                    )
+                    engine = psutil.Process(started["enginePid"])
+                    self.assertEqual(engine.ppid(), started["workerPid"])
+                    self.assertIsNotNone(worker.resident_model())
+                    with patch("text_generation_process.UNLOAD_TIMEOUT", 0.25):
+                        worker.unload(model_id)
+                    self.assertFalse(psutil.pid_exists(started["workerPid"]))
+                    self.assertIsNone(worker.resident_model())
+                    with suppress(psutil.NoSuchProcess):
+                        self.assertEqual(engine.status(), psutil.STATUS_ZOMBIE)
+                finally:
+                    worker.close()
+                    if engine is not None:
+                        with suppress(psutil.NoSuchProcess):
+                            engine.kill()
 
     def test_openvino_reuses_pipeline_for_system_prompt_and_sampling_changes(self):
         base = {"op": "generate", "messages": [{"role": "user", "content": "Hello."}],

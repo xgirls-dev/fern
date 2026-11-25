@@ -7,13 +7,17 @@ import subprocess
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from text_runtime_errors import OUT_OF_MEMORY, has_memory_failure
+
+if TYPE_CHECKING:
+    import psutil
 
 
 EVENT_PREFIX = "FERN_TEXT_EVENT:"
 STOP_TIMEOUT = 0.8
+UNLOAD_TIMEOUT = 6
 
 
 class TextWorkerError(RuntimeError):
@@ -56,6 +60,25 @@ def terminate_tree(process: subprocess.Popen[str] | None) -> None:
         process.terminate()
 
 
+def stop_unloaded_engine(engine: psutil.Process) -> None:
+    import psutil
+
+    try:
+        if not engine.is_running() or engine.status() == psutil.STATUS_ZOMBIE:
+            return
+        engine.kill()
+        try:
+            engine.wait(timeout=2)
+        except psutil.TimeoutExpired:
+            # An orphan may remain a zombie until its new parent reaps it.
+            if engine.is_running() and engine.status() != psutil.STATUS_ZOMBIE:
+                raise
+    except psutil.NoSuchProcess:
+        pass
+    except psutil.Error as error:
+        raise OSError("The model engine did not exit.") from error
+
+
 class TextGenerationProcess:
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -65,7 +88,7 @@ class TextGenerationProcess:
         self._key: tuple[str, str, tuple[str, ...]] | None = None
         self._residency: tuple[subprocess.Popen[str], dict[str, Any]] | None = None
 
-    def resident_model(self) -> dict[str, Any] | None:
+    def _live_residency(self) -> tuple[dict[str, Any], psutil.Process | None] | None:
         with self._control_lock:
             residency = self._residency
         if residency is None:
@@ -73,6 +96,7 @@ class TextGenerationProcess:
         worker, model = residency
         if worker.poll() is not None:
             return None
+        engine = None
         if engine_pid := model.get("enginePid"):
             # GGUF weights live in the worker's server child, which can exit
             # independently while the Python worker remains available.
@@ -88,8 +112,15 @@ class TextGenerationProcess:
                 return None
         with self._control_lock:
             if self._residency is residency and self._process is worker and worker.poll() is None:
-                return {key: model[key] for key in ("modelId", "backend", "device", "gguf") if key in model}
+                return model, engine
         return None
+
+    def resident_model(self) -> dict[str, Any] | None:
+        live = self._live_residency()
+        if live is None:
+            return None
+        model, _ = live
+        return {key: model[key] for key in ("modelId", "backend", "device", "gguf") if key in model}
 
     def _stop_unlocked(self) -> None:
         process = self._process
@@ -117,20 +148,27 @@ class TextGenerationProcess:
 
     def unload(self, model_id: str) -> None:
         with self._lock:
-            model = self.resident_model()
-            if model is None or model["modelId"] != model_id:
+            live = self._live_residency()
+            if live is None or live[0]["modelId"] != model_id:
                 return
+            _, engine = live
             process = self._process
             assert process is not None and process.stdin is not None
             try:
                 # Let the idle worker reap its GGUF engine before it exits.
                 process.stdin.write('{"op":"shutdown"}\n')
                 process.stdin.flush()
-                process.wait(timeout=6)
+                process.wait(timeout=UNLOAD_TIMEOUT)
             except (OSError, subprocess.TimeoutExpired):
-                pass  # The normal stop path handles a broken pipe or stalled worker.
+                process.kill()
             finally:
-                self._stop_unlocked()
+                try:
+                    self._stop_unlocked()
+                finally:
+                    # Keep the validated process handle across a worker crash or
+                    # timeout, when the engine might already have a new parent.
+                    if engine is not None:
+                        stop_unloaded_engine(engine)
 
     def interrupt(self) -> None:
         # Terminating before acquiring _lock releases a request blocked on stdout.
