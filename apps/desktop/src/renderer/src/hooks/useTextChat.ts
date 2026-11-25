@@ -327,12 +327,13 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     if (submission.current) finishSubmission(submission.current);
     const interrupted = liveJobRef.current;
     setWorkspace((current) => checkpointTextReply(current, interrupted));
+    setStatus((current) => current.residentModel ? { ...current, residentModel: null } : current);
     setStatusLoaded(false);
     setStatusError(null);
     stopDispatched.current = null;
     setStoppingId(null);
     setStopFailure(null);
-  }, [finishSubmission, invalidatePoll, ready, setWorkspace]);
+  }, [finishSubmission, invalidatePoll, ready, setStatus, setWorkspace]);
   const acceptJob = useCallback((accepted: TextJobAcceptance, pending: TextSubmission) => {
     if (submission.current !== pending) return;
     const job = "textJob" in accepted ? accepted.textJob : accepted.job?.job;
@@ -1215,7 +1216,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
   }, [getThread, busy, updateThread, setActionError]);
 
   const retryInspection = useCallback(async (threadId: string, messageId: string) => {
-    if (busy || modelActionRef.current || submission.current) return;
+    if (!ready || busy || modelActionRef.current || submission.current) return;
     const status = statusRef.current;
     const thread = getThread(threadId);
     const message = thread?.messages.find((item) => item.id === messageId);
@@ -1255,19 +1256,19 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     } finally {
       finishSubmission(receipt);
     }
-  }, [acceptJob, beginSubmission, busy, computeDevice, finishSubmission, getThread, setWorkspace, submissionIsMissing, updateThread]);
+  }, [acceptJob, beginSubmission, busy, computeDevice, finishSubmission, getThread, ready, setWorkspace, submissionIsMissing, updateThread]);
 
   const runningJobId = status.job.status === "running" ? status.job.id : null;
   const runningThreadId = status.job.threadId;
   const stop = useCallback((threadId: string) => {
     const requestId = getThread(threadId)?.pendingJobId ??
       (runningThreadId === threadId ? runningJobId : null);
-    if (ready && requestId && requestId !== stoppingId) {
+    if (ready && statusLoaded && requestId && requestId !== stoppingId) {
       setActionError(null);
       setStopFailure(null);
       setStoppingId(requestId);
     }
-  }, [getThread, ready, runningJobId, runningThreadId, stoppingId, setActionError]);
+  }, [getThread, ready, runningJobId, runningThreadId, statusLoaded, stoppingId, setActionError]);
 
   const selectModel = useCallback((threadId: string, modelId: string) => {
     const activeThread = getThread(threadId);

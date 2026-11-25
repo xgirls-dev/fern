@@ -416,6 +416,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   const inspectionMessageId = displayJobId ? activeThread.messages.find((message) => message.inspectionJobId === displayJobId)?.id : undefined;
   const liveJob = displayJobId && status.job.id === displayJobId && status.job.threadId === activeThread.id ? status.job : null;
   const restoringReply = pendingHere && !liveJob && !studio.submitting;
+  const canStopReply = responseHere && !serviceUnavailable && studio.statusLoaded && !restoringReply;
   const restorationLabel = studio.statusLoaded ? inspectionMessageId ? "Recovering image check…" : "Recovering response…"
     : "Checking for the previous response…";
   const replyContent = pendingReplyOutput?.content || liveJob?.partialText || "";
@@ -798,7 +799,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
     return <ChatImage key={image.name} image={image} ordinal={index + 1} showFindCaption={showFindCaption}
       checked={firstImage && message?.metrics?.visionChecked} checkStatus={checkStatus}
       onRetryCheck={canRecover ? () => void studio.retryInspection(threadId, message.id) : undefined}
-      canRetryCheck={!busy && !!selected?.supportsVision && !runtimeIssue}
+      canRetryCheck={studio.attachmentReady && !busy && !!selected?.supportsVision && !runtimeIssue}
       contextLabel={draftContextName === image.name
         ? "Selected for next message"
         : message && latestContext?.imageNames?.includes(image.name) ? "Used in the latest response" : undefined}
@@ -809,7 +810,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
       } : undefined}
       onOpen={() => onOpenImage(collection[index], collection)} />;
   }, [attachingImage, busy, checkingImage, displayJobId, draftContextName, draftImage, imageCollection, inputRef, inspectionCaption, latestContext, onOpenImage, replyImage?.name,
-    runtimeIssue, selected?.supportsVision, studio.clearAttachment, studio.retryInspection, studio.updateThread, threadId]);
+    runtimeIssue, selected?.supportsVision, studio.attachmentReady, studio.clearAttachment, studio.retryInspection, studio.updateThread, threadId]);
 
   const renderRow = useCallback((row: TranscriptRow, index: number, live?: { progress: TextReplyProgress; previous: boolean }) => {
     const { message } = row;
@@ -824,7 +825,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
     const hasImage = !!(message.image || message.includedImage);
     const editUnavailable = busy ? "Finish the current response before sending this revision."
       : !modelAvailable ? "Choose an installed model to send this revision."
-      : runtimeIssue ? "The text runtime is unavailable."
+      : runtimeIssue || !studio.attachmentReady ? "The text runtime is unavailable."
       : hasImage && !selected?.supportsVision ? "Choose a vision model to send this image."
       : revisionTooLong ? PROMPT_LIMIT_MESSAGE : "";
     return <TextChatMessage
@@ -870,7 +871,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
             : { label: "Browse models", run: openModels }
         : undefined}
       onContinue={latest && !preview && !live && canContinueTextReply(message) ? continueReply : undefined}
-      canContinue={latest && !busy && modelAvailable && !runtimeIssue}
+      canContinue={studio.attachmentReady && latest && !busy && modelAvailable && !runtimeIssue}
       onSelectVersion={!user && !live && message.alternatives?.length ? selectVersion : undefined}
       busy={(latest && busy) || !!match}
     />;
@@ -878,7 +879,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
     deleteMessage, deleteTarget, editMessage, forkReply, hasAlternativeModel, hasAlternativeVisionModel, jumpToLatest, lastMessage, messages,
     modelAvailable, openModels, openRecoverySetting, promptEdit, promptNeedsVision, revisionTooLong, renderChatImage,
     replaceablePrompt?.id, requestDelete, requestedEdit, restoreReasoningId, retry, runtimeIssue, selectVersion, selected?.supportsVision,
-    studio.restorePromptVersion, studio.send, studio.updateThread, threadId]);
+    studio.attachmentReady, studio.restorePromptVersion, studio.send, studio.updateThread, threadId]);
   const renderStoredRow = useCallback((index: number) => renderRow(storedRows[index], index), [renderRow, storedRows]);
   const liveReply = useMemo(() => {
     if (!streamingMessage || !liveKey || !liveMessageId) return;
@@ -913,7 +914,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
     (phaseVisibility?.phase === inlinePhase ? phaseVisibility.visible : followingLatest);
   const showDraftCount = !draftTooLong && draftCharacters !== undefined && draftCharacters >= PROMPT_COUNT_THRESHOLD;
   const composerHint = showDraftCount ? `${draftCharacters.toLocaleString()} / ${TEXT_MESSAGE_CHARACTER_LIMIT.toLocaleString()}`
-    : responseHere ? stopping || serviceUnavailable ? "" : "Esc to stop"
+    : responseHere ? canStopReply && !stopping ? "Esc to stop" : ""
     : busy || attachingImage || modelNotice || incompatibleImages || draftTooLong ? "" : "Enter to send · Shift + Enter for newline";
 
   return (
@@ -1103,7 +1104,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
             }}
             onKeyDown={(event) => {
               if (isComposingKey(event.nativeEvent)) return;
-              if (event.key === "Escape" && (runningHere || pendingHere)) {
+              if (event.key === "Escape" && canStopReply) {
                 event.preventDefault();
                 void studio.stop(activeThread.id);
               }
@@ -1117,7 +1118,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
             imageTooltip={activeThread.draftContextImage ? "Remove the selected conversation image to attach a new file"
               : attachingImage ? "Attaching image…" : "Attach chat image · Paste or drop an image"}
             mode={selected?.supportsReasoning ? activeThread.mode : undefined} model={selectedModel} models={modelOptions}
-            responding={responseHere && !serviceUnavailable} stopping={stopping} stopRef={bindStopControl}
+            responding={canStopReply} stopping={stopping} stopRef={bindStopControl}
             sendTooltip={responseHere ? "" : attachingImage ? "Attaching image…"
               : activity || unavailableReason || (draftTooLong ? PROMPT_LIMIT_MESSAGE : "Send message")}
             onAttachDocuments={stageDocuments} onAttachImage={stageAttachment} onChangeMode={changeMode}

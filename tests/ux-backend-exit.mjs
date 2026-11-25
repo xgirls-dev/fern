@@ -15,9 +15,23 @@ const composer = page.getByRole("textbox", { name: "Message", exact: true });
 const partial = "Keep this partial answer.";
 const draft = "Keep the follow-up draft too.";
 let resolveStalePoll;
+let resolveReplacementStatus;
+let resolveRecovery;
+let holdReplacementStatus = false;
 let holdNextPoll = false;
 
 try {
+  await page.route("**/api/text/recover-image?*", async (route) => {
+    await new Promise((resolve) => { resolveRecovery = resolve; });
+    await route.fulfill({ json: { image: null } });
+  });
+  await page.route("**/api/text/status", async (route) => {
+    if (holdReplacementStatus) {
+      holdReplacementStatus = false;
+      await new Promise((resolve) => { resolveReplacementStatus = resolve; });
+    }
+    await route.fulfill({ json: state.textStatus });
+  });
   await page.route("**/api/text/job", async (route) => {
     let job = state.textStatus.job;
     if (holdNextPoll) {
@@ -31,6 +45,7 @@ try {
   await page.route("**/fixture/backend-retry", async (route) => {
     restartCount++;
     state.textStatus.job = idle;
+    holdReplacementStatus = true;
     await route.fulfill({ json: { ok: true } });
   });
   await composer.fill("Show me a partial reply.");
@@ -51,6 +66,14 @@ try {
   const restart = button("Restart local service");
   await restart.focus();
   await restart.press("Enter");
+  await expect.poll(() => typeof resolveReplacementStatus).toBe("function");
+  await expect(button("Stop generation")).toHaveCount(0);
+  await expect(button("Send message")).toBeDisabled();
+  resolveReplacementStatus();
+  await expect.poll(() => typeof resolveRecovery).toBe("function");
+  await expect(button("Stop generation")).toHaveCount(0);
+  await expect(page.getByText(partial, { exact: true })).toBeVisible();
+  resolveRecovery();
   await expect(page.getByText("The backend restarted. The partial response was recovered.", { exact: true })).toBeVisible();
   const latePoll = page.waitForResponse("**/api/text/job");
   resolveStalePoll();
@@ -67,5 +90,7 @@ try {
   console.log("The service can restart while the interrupted answer and follow-up draft remain in Chat.");
 } finally {
   resolveStalePoll?.();
+  resolveReplacementStatus?.();
+  resolveRecovery?.();
   await close();
 }
