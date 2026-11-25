@@ -20,6 +20,7 @@ lands directly on `main` instead of through labeled pull requests.
 - Show when chat is checking hardware before it begins loading a GGUF model.
 - Keep streaming replies free of animated dots. The composer shows when Fern is responding or waiting for more text.
 - Reuse the loaded Vulkan chat model when switching from an image conversation to plain text.
+- Start Gemma 4 GGUF chat on Vulkan on Windows systems with the tested Intel Arc B390 adapter.
 
 ### Fixed
 

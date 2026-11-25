@@ -284,6 +284,58 @@ class GGUFCompletionTests(unittest.TestCase):
                 ]
                 self.assertEqual([record and record["enginePid"] for record in residents], [42, None, 43])
 
+    def test_windows_arc_probe_requires_the_tested_pci_adapter(self) -> None:
+        import subprocess
+        from gguf_runtime import windows_arc_b390
+
+        adapter = rb"Instance ID: PCI\VEN_8086&DEV_B080&SUBSYS_22128086\3&11583659&0&10"
+        with patch("gguf_runtime.sys.platform", "win32"), patch("gguf_runtime.subprocess.run") as run:
+            run.return_value.stdout = adapter
+            self.assertTrue(windows_arc_b390())
+            run.return_value.stdout = adapter + b"\n" + rb"Instance ID: PCI\VEN_10DE&DEV_1234\1&0"
+            self.assertFalse(windows_arc_b390())
+            run.return_value.stdout = adapter.replace(b"B080", b"46A6")
+            self.assertFalse(windows_arc_b390())
+            run.side_effect = subprocess.TimeoutExpired("pnputil", 1)
+            self.assertFalse(windows_arc_b390())
+
+    def test_worker_prefers_vulkan_for_gemma_on_arc_and_falls_back_when_setup_fails(self) -> None:
+        from gguf_runtime import VulkanDriverError
+        from text_generation_worker import run_gguf
+
+        cases = (
+            ("win32", "AUTO", "gemma4", True, False, ["vulkan"]),
+            ("win32", "GPU", "gemma4", True, True, ["vulkan", "openvino"]),
+            ("win32", "GPU", "gemma4", False, False, ["openvino"]),
+            ("win32", "GPU", "qwen3", True, False, ["openvino"]),
+            ("win32", "CPU", "gemma4", True, False, ["openvino"]),
+            ("linux", "GPU", "gemma4", True, False, ["openvino"]),
+        )
+        for platform, device, architecture, adapter, driver_failure, expected in cases:
+            with self.subTest(platform=platform, device=device, architecture=architecture, driver_failure=driver_failure):
+                request = {"op": "generate", "ggufArchitecture": architecture,
+                           "messages": [{"role": "user", "content": "Hello."}]}
+                stream = io.StringIO("".join(json.dumps(item) + "\n" for item in (request, request, {"op": "shutdown"})))
+                engine = Mock(backend=expected[-1], context_size=8192, load_options={}, startup_timing={})
+                engine.process.poll.return_value = None
+                engine.generate.side_effect = lambda *_args: {"type": "result", "runtimeTiming": {}}
+                with (
+                    patch.dict(os.environ, {"FERN_GGUF_RUNTIME_ROOT": "scratch"}),
+                    patch("text_generation_worker.sys.platform", platform),
+                    patch("text_generation_worker.sys.stdin", stream),
+                    patch("text_generation_worker.emit") as emit,
+                    patch("gguf_runtime.windows_arc_b390", return_value=adapter) as probe,
+                    patch("gguf_runtime.ensure_runtime", return_value=Path("llama-server")) as setup,
+                    patch("gguf_runtime.GGUFServer",
+                          side_effect=[VulkanDriverError("Driver unavailable"), engine] if driver_failure else [engine]),
+                ):
+                    engine.process.pid = 42
+                    self.assertEqual(run_gguf(Path("model.gguf"), device, None), 0)
+                self.assertEqual([call.args[1] for call in setup.call_args_list], expected)
+                self.assertEqual(probe.call_count, int(platform == "win32" and device != "CPU" and architecture == "gemma4"))
+                self.assertEqual(engine.generate.call_count, 2)
+                self.assertEqual(sum(call.args[0]["type"] == "result" for call in emit.call_args_list), 2)
+
     def test_worker_recovers_one_openvino_gpu_shape_error_before_streaming(self) -> None:
         from gguf_runtime import GGUFComputeError
         from text_generation_worker import run_gguf
