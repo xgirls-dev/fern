@@ -18,9 +18,13 @@ const { page, errors, close } = await fixture({
     { id: "prompt", role: "user", content: "When is the workshop?", createdAt: 1 },
     { id: "reply", role: "assistant", content: answer, status: "complete", createdAt: 2,
       metrics: { inputTokens: 100, outputTokens: 35, generationSeconds: 2, tokensPerSecond: 17.5, documentSources: [first, older] } },
+    { id: "prompt-two", role: "user", content: "Show the source again.", createdAt: 3 },
+    { id: "reply-two", role: "assistant", content: "**[1] Schedule.pdf · Page 9**\n\nThe answer uses [1].", status: "complete", createdAt: 4,
+      metrics: { inputTokens: 130, outputTokens: 20, generationSeconds: 2, tokensPerSecond: 10, documentSources: [first] } },
   ] }] },
 });
 const transcript = page.getByRole("log");
+const replies = transcript.getByRole("article", { name: "Model response", exact: true });
 const composer = page.getByRole("textbox", { name: "Message", exact: true });
 const trigger = (number, file, location) => transcript.getByRole("button", { name: `Open source [${number}], ${file}, ${location}`, exact: true });
 const citations = trigger(1, first.name, first.location);
@@ -45,6 +49,8 @@ try {
   await expect(transcript.locator("code")).toHaveText("array[1]");
   await expect(transcript.getByRole("link", { name: "Unknown [1]", exact: true })).toBeVisible();
   await expect(transcript.getByText(/stay as written \[3\]/)).toBeVisible();
+  await expect(replies.last().getByText("The answer uses [1].", { exact: true })).toBeVisible();
+  await expect(replies.last().getByRole("button", { name: /^Open source/ })).toHaveCount(0);
   await expect.poll(() => requests.length).toBe(0);
 
   const inline = citations.first();
@@ -72,8 +78,8 @@ try {
 
   await page.reload();
   await expect(composer).toHaveValue(draft);
-  await transcript.getByText("Document sources", { exact: true }).click();
-  const sourceList = transcript.locator(".text-document-sources");
+  await replies.last().getByText("Document sources", { exact: true }).click();
+  const sourceList = replies.last().locator(".text-document-sources");
   const listTrigger = sourceList.getByRole("button", { name: `Open source [1], ${first.name}, ${first.location}`, exact: true });
   available = false;
   await listTrigger.click();
@@ -87,7 +93,7 @@ try {
   await expect(listTrigger).toBeFocused();
   assert.equal(requests.length, 3);
   assert.deepEqual(errors, []);
-  console.log("Inline citations and source lists open the exact passage, preserve the draft and focus, and fall back to saved excerpts.");
+  console.log("Inline citations and source lists open the exact passage, reject conflicting numbers, preserve focus and drafts, and keep saved excerpts.");
 } finally {
   release();
   await close();

@@ -186,8 +186,34 @@ function citeText(node: Text, sources: ReadonlyMap<number, ChatDocumentSource>):
   return children;
 }
 
+function skipsCitations(node: Element) {
+  return node.tagName === "a" || node.tagName === "code" || node.tagName === "pre";
+}
+
+function citationHeaderText(node: RootContent): string {
+  if (node.type === "text") return node.value;
+  if (node.type !== "element" || skipsCitations(node)) return "";
+  if (node.tagName === "br") return "\n";
+  const contents = node.children.map(citationHeaderText).join("");
+  return node.tagName === "li" || node.tagName === "p" ? `${contents}\n` : contents;
+}
+
+function inlineDocumentSources(blocks: readonly RootContent[], documents: readonly ChatDocumentSource[]) {
+  const sources = new Map(documents.map((source) => [source.number, source]));
+  for (const block of blocks) {
+    // A model can copy the numbered source headers and renumber them. Keep
+    // conflicting numbers as text so they cannot point at a different page.
+    const headers = citationHeaderText(block).matchAll(/^[ \t]*\[([1-9]\d?)\][ \t]+([^\n]+?)[ \t]+·[ \t]+((?:Page|Section) \d+)\b/gm);
+    for (const [, number, name, location] of headers) {
+      const source = sources.get(Number(number));
+      if (source && (source.name !== name || source.location !== location)) sources.delete(Number(number));
+    }
+  }
+  return sources;
+}
+
 function citeElement(node: Element, sources: ReadonlyMap<number, ChatDocumentSource>): Element {
-  if (node.tagName === "a" || node.tagName === "code" || node.tagName === "pre") return node;
+  if (skipsCitations(node)) return node;
   return { ...node, children: node.children.flatMap((child) => child.type === "text" ? citeText(child, sources)
     : child.type === "element" ? [citeElement(child, sources)] : [child]) };
 }
@@ -237,9 +263,11 @@ export const TextMarkdown = memo(function TextMarkdown({ content, streaming = fa
   // Incoming text can outpace the Markdown worker. Reuse the rendered list
   // until the worker publishes different blocks.
   const elements = useMemo(() => blocks?.map((block, index) => <MarkdownBlock key={index} node={block} />), [blocks]);
-  const citations = useMemo(() => documentSources?.length && onOpenSource && !receivingReply && !preserveSelection
-    ? { sources: new Map(documentSources.map((source) => [source.number, source])), onOpen: onOpenSource }
-    : undefined, [documentSources, onOpenSource, preserveSelection, receivingReply]);
+  const citations = useMemo(() => {
+    if (!blocks || pending || !documentSources?.length || !onOpenSource || receivingReply || preserveSelection) return;
+    const sources = inlineDocumentSources(blocks, documentSources);
+    return sources.size ? { sources, onOpen: onOpenSource } : undefined;
+  }, [blocks, documentSources, onOpenSource, pending, preserveSelection, receivingReply]);
   const hasBlocks = !!elements?.length;
   const formatting = !elements || (pending && (!hasBlocks || !receivingReply));
   const waitingWithPreview = formatting && hasBlocks;
