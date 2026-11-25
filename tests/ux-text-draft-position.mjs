@@ -44,8 +44,23 @@ try {
   const first = await setPosition(composer, 604, 628, 220);
   assert(first.top > 0);
 
+  await composer.evaluate((element) => {
+    const target = document.querySelector('button[aria-label="Text thread: Scratch chat"]');
+    const scrollTop = Object.getOwnPropertyDescriptor(Element.prototype, "scrollTop");
+    window.leavingDraftReads = 0;
+    target.addEventListener("click", () => {
+      Object.defineProperty(element, "scrollTop", {
+        get() {
+          window.leavingDraftReads += 1;
+          return scrollTop.get.call(this);
+        },
+        set: scrollTop.set,
+      });
+    }, { capture: true, once: true });
+  });
   await open("Scratch chat");
   await expect(composer).toHaveValue("Another draft");
+  assert.equal(await page.evaluate(() => window.leavingDraftReads), 0, "Detaching a draft should not synchronously read its scrollTop.");
   await composer.focus();
   const undo = await page.evaluate(() => navigator.platform.startsWith("Mac")) ? "Meta+z" : "Control+z";
   await composer.press(undo);

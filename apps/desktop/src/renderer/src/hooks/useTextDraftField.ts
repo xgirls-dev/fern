@@ -22,14 +22,22 @@ function fitDraftField(field: HTMLTextAreaElement, maxHeight: number) {
 export function useTextDraftField(key: string, value: string, maxHeight: number) {
   const fieldRef = useRef<HTMLTextAreaElement>(null);
   const initialized = useRef<HTMLTextAreaElement | null>(null);
+  const scrollTop = useRef(0);
+  const rememberScroll = useCallback(() => {
+    if (fieldRef.current) scrollTop.current = fieldRef.current.scrollTop;
+  }, []);
   const bindField = useCallback((field: HTMLTextAreaElement | null) => {
     const leaving = fieldRef.current;
-    if (!field && leaving?.value) {
-      draftViews.set(key, { text: leaving.value, start: leaving.selectionStart, end: leaving.selectionEnd,
-        direction: leaving.selectionDirection, scrollTop: leaving.scrollTop });
+    if (leaving) {
+      leaving.removeEventListener("scroll", rememberScroll);
+      // Reading scrollTop while React unmounts the textarea can force a layout.
+      if (leaving.value) draftViews.set(key, { text: leaving.value, start: leaving.selectionStart, end: leaving.selectionEnd,
+        direction: leaving.selectionDirection, scrollTop: scrollTop.current });
     }
     fieldRef.current = field;
-  }, [key]);
+    scrollTop.current = 0;
+    field?.addEventListener("scroll", rememberScroll, { passive: true });
+  }, [key, rememberScroll]);
 
   useLayoutEffect(() => {
     const field = fieldRef.current;
@@ -41,7 +49,10 @@ export function useTextDraftField(key: string, value: string, maxHeight: number)
     draftViews.delete(key);
     if (saved?.text === value) {
       field.setSelectionRange(saved.start, saved.end, saved.direction);
-      field.scrollTop = saved.scrollTop;
+      if (saved.scrollTop) {
+        field.scrollTop = saved.scrollTop;
+        scrollTop.current = field.scrollTop;
+      }
     } else field.setSelectionRange(value.length, value.length);
   }, [key, maxHeight, value]);
 
