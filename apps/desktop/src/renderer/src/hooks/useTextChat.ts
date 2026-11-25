@@ -434,13 +434,14 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     if (!storageReady) return;
     const previous = scheduledWorkspace.current;
     scheduledWorkspace.current = workspace;
-    const historyChanged = previous.activeId !== workspace.activeId || previous.threads.length !== workspace.threads.length ||
+    const saveImmediately = previous.activeId !== workspace.activeId || previous.threads.length !== workspace.threads.length ||
       workspace.threads.some((thread, index) => {
         const before = previous.threads[index];
         return !before || before.id !== thread.id || before.messages !== thread.messages ||
-          before.versions !== thread.versions || before.pendingJobId !== thread.pendingJobId;
+          before.versions !== thread.versions || before.pendingJobId !== thread.pendingJobId ||
+          before.documents !== thread.documents;
       });
-    if (historyChanged) { persist(); return; }
+    if (saveImmediately) { persist(); return; }
     const timer = window.setTimeout(persist, 180);
     return () => window.clearTimeout(timer);
   }, [persist, storageReady, workspace]);

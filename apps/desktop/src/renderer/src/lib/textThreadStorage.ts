@@ -1,3 +1,4 @@
+import { normalizeChatDocuments } from "./chatDocuments";
 import {
   createTextWorkspace,
   finishTextReply,
@@ -22,7 +23,7 @@ const TURN_CHECKPOINT = "fern-text-turn-checkpoint:v1";
 const TRANSCRIPT_EDIT_CHECKPOINT = "fern-text-transcript-edit-checkpoint:v1";
 
 type ThreadRecord = Omit<TextThread, "messages">;
-type DraftRecord = Pick<TextThread, "id" | "draft" | "draftImage" | "draftContextImage" | "draftContextImageThreadId" | "promptEdit" | "updatedAt">;
+type DraftRecord = Pick<TextThread, "id" | "draft" | "draftImage" | "draftContextImage" | "draftContextImageThreadId" | "documents" | "promptEdit" | "updatedAt">;
 type ReplyCheckpoint = { id: string; jobId: string } & (
   { preview: TextReplyPreview } | { message: TextMessage; selectedId?: string }
 );
@@ -151,10 +152,13 @@ function sameDraft(left: DraftRecord, right: DraftRecord) {
 }
 
 function recoverDraft(thread: TextThread, draft: DraftRecord | undefined): TextThread {
-  if (!draft || !Number.isFinite(draft.updatedAt) || draft.updatedAt < thread.updatedAt || sameDraft(thread, draft)) return thread;
+  if (!draft || !Number.isFinite(draft.updatedAt) || draft.updatedAt < thread.updatedAt) return thread;
+  const documents = normalizeChatDocuments(draft.documents);
+  if (sameDraft(thread, draft) && documents === undefined) return thread;
   const { draft: text, draftImage, draftContextImage, draftContextImageThreadId, promptEdit, updatedAt } = draft;
   const editing = promptEdit && thread.messages.some((message) => message.role === "user" && message.id === promptEdit.messageId);
-  return { ...thread, draft: text, draftImage, draftContextImage, draftContextImageThreadId, promptEdit: editing ? promptEdit : undefined, updatedAt };
+  return { ...thread, draft: text, draftImage, draftContextImage, draftContextImageThreadId,
+    documents: documents ?? thread.documents, promptEdit: editing ? promptEdit : undefined, updatedAt };
 }
 
 function recoverReplyCheckpoint(thread: TextThread, checkpoint: ReplyCheckpoint | undefined): TextThread {
@@ -410,9 +414,10 @@ export function createTextThreadStorage() {
         if (!old && !thread.messages.length) {
           const { messages, ...record } = thread;
           newThreads.push(record);
-        } else if (!old || !sameDraft(thread, old)) {
+        } else if (!old || !sameDraft(thread, old) || thread.documents !== old.documents) {
           const { id, draft, draftImage, draftContextImage, draftContextImageThreadId, promptEdit, updatedAt } = thread;
-          drafts.push({ id, draft, draftImage, draftContextImage, draftContextImageThreadId, promptEdit, updatedAt });
+          const documents = thread.documents !== old?.documents ? thread.documents ?? [] : undefined;
+          drafts.push({ id, draft, draftImage, draftContextImage, draftContextImageThreadId, documents, promptEdit, updatedAt });
         }
       }
       if (drafts.length || newThreads.length || replies.length || workspace.activeId !== saved.activeId) {
