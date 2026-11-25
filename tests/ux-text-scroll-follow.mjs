@@ -19,6 +19,7 @@ const goToReply = page.getByRole("button", { name: "Go to latest reply", exact: 
 const reply = feed.locator(".text-message--assistant");
 const position = () => feed.evaluate((element) => ({
   top: element.scrollTop,
+  height: element.clientHeight,
   gap: element.scrollHeight - element.clientHeight - element.scrollTop,
 }));
 const atLatest = () => expect.poll(async () => (await position()).gap).toBeLessThanOrEqual(2);
@@ -85,7 +86,11 @@ try {
   assert(reading.gap < 48, `Expected a small scroll away from the tail, got ${reading.gap}px`);
 
   await composer.fill(followUpDraft);
-  await expect.poll(async () => (await position()).gap).toBeGreaterThan(reading.gap + 100);
+  await expect.poll(async () => (await position()).height).toBeLessThan(reading.height);
+  await expect.poll(async () => {
+    const expandedDraft = await position();
+    return expandedDraft.gap + expandedDraft.height;
+  }).toBeCloseTo(reading.gap + reading.height, 0);
   await expect.poll(async () => (await position()).top).toBeCloseTo(reading.top, 0);
   await composer.fill("");
 
