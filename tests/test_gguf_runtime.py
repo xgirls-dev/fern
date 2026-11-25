@@ -181,31 +181,31 @@ class GGUFCompletionTests(unittest.TestCase):
         process.terminate.assert_not_called()
         process.wait.assert_called_once()
 
-    def test_metal_startup_reports_discovery_readiness_and_placement_separately(self) -> None:
+    def test_metal_startup_loads_and_verifies_placement_without_a_separate_probe(self) -> None:
         process = Mock()
         process.poll.return_value = 0
         on_phase = Mock()
 
-        def select_device(*_args):
-            on_phase.assert_called_once_with("selecting-device", "Checking hardware…")
-            return "MTL0"
-
-        def launch(_command, **options):
-            on_phase.assert_called_with("loading-model", "Loading model…")
-            options["stdout"].write(b"offloaded 38/38 layers to GPU\n")
+        def launch(command, **options):
+            on_phase.assert_called_once_with("loading-model", "Loading model…")
+            self.assertEqual(command[command.index("--device") + 1], "MTL0")
+            self.assertIn("--mmproj-offload", command)
+            options["stdout"].write(b"offloaded 38/38 layers to GPU\nmtmd_backends: using MTL0 backend\n")
             return process
 
         with (
-            patch.object(GGUFServer, "_select_device", side_effect=select_device),
+            patch("gguf_runtime.subprocess.run") as probe,
             patch.object(GGUFServer, "_wait_ready"),
             patch("gguf_runtime.subprocess.Popen", side_effect=launch),
-            patch("gguf_runtime.time.perf_counter", side_effect=[1, 1.25, 2, 2.5, 3, 3.125]),
+            patch("gguf_runtime.time.perf_counter", side_effect=[2, 2.5, 3, 3.125]),
         ):
-            server = GGUFServer(Path("llama-server"), Path("model.gguf"), None, "GPU", "metal", on_phase=on_phase)
+            server = GGUFServer(
+                Path("llama-server"), Path("model.gguf"), Path("projector.gguf"), "GPU", "metal",
+                gpu_projector=True, on_phase=on_phase,
+            )
         self.addCleanup(server.close)
-        self.assertEqual(server.startup_timing, {
-            "deviceDiscoveryMs": 250, "serverReadyMs": 500, "placementVerificationMs": 125,
-        })
+        probe.assert_not_called()
+        self.assertEqual(server.startup_timing, {"serverReadyMs": 500, "placementVerificationMs": 125})
 
     def test_worker_reports_setup_and_model_ready_only_when_loading(self) -> None:
         from text_generation_worker import run_gguf
@@ -590,16 +590,20 @@ class VulkanRuntimeTests(unittest.TestCase):
                 machine.return_value = "x86_64"
                 self.assertFalse(runtime_supported())
 
-    def test_metal_does_not_pick_a_cpu_device(self) -> None:
-        server = object.__new__(GGUFServer)
-        server.backend = "metal"
-        server.device = "GPU"
-        result = subprocess.CompletedProcess([], 0, stdout="Available devices:\n  MTL0: Apple M1\n", stderr="")
-        with patch("gguf_runtime.subprocess.run", return_value=result):
-            self.assertEqual(server._select_device(Path("llama-server"), {}, 0), "MTL0")
-            result.stdout = "Available devices:\n"
-            with self.assertRaisesRegex(RuntimeError, "could not find an Apple GPU"):
-                server._select_device(Path("llama-server"), {}, 0)
+    def test_metal_rejects_a_missing_gpu_without_falling_back_to_cpu(self) -> None:
+        process = Mock()
+        process.poll.return_value = 1
+
+        def launch(_command, **options):
+            options["stdout"].write(b"error while handling argument \"--device\": invalid device: MTL0\n")
+            return process
+
+        with (
+            patch("gguf_runtime.subprocess.Popen", side_effect=launch) as server,
+            self.assertRaisesRegex(RuntimeError, "could not find an Apple GPU"),
+        ):
+            GGUFServer(Path("llama-server"), Path("model.gguf"), None, "GPU", "metal")
+        server.assert_called_once()
 
     def test_missing_windows_vulkan_loader_requests_driver(self) -> None:
         server = object.__new__(GGUFServer)

@@ -69,6 +69,70 @@ class GenerationLifecycleTests(unittest.TestCase):
         process.close.assert_called_once()
         self.assertIsNone(worker.process)
 
+    def test_gpu_handoff_waits_for_exit_after_the_normal_kill_timeout(self):
+        worker = GenerationWorker()
+        process = worker.process = Mock()
+        clock = 0.0
+        killed_at = None
+
+        def kill():
+            nonlocal killed_at
+            killed_at = clock
+
+        def join(*, timeout):
+            nonlocal clock
+            clock += timeout
+
+        process.kill.side_effect = kill
+        process.join.side_effect = join
+        process.is_alive.side_effect = lambda: killed_at is None or clock - killed_at < 6
+        with patch("generation_worker.monotonic", side_effect=lambda: clock):
+            worker.close(cancel_event=threading.Event())
+        process.kill.assert_called_once()
+        process.close.assert_called_once()
+        self.assertIsNone(worker.process)
+
+    def test_gpu_handoff_cancellation_keeps_the_worker_tracked(self):
+        worker = GenerationWorker()
+        process = worker.process = Mock()
+        connection = worker.connection = Mock()
+        cancel = threading.Event()
+        process.is_alive.return_value = True
+        process.join.side_effect = lambda **_: cancel.set()
+
+        with self.assertRaises(InterruptedError):
+            worker.close(cancel_event=cancel)
+        process.join.assert_called_once()
+        connection.close.assert_called_once()
+        process.close.assert_not_called()
+        self.assertIs(worker.process, process)
+        self.assertIsNone(worker.connection)
+
+        process.is_alive.return_value = False
+        worker.close()
+        process.close.assert_called_once()
+        self.assertIsNone(worker.process)
+
+    def test_apple_chat_can_stop_during_the_image_handoff(self):
+        job_id = "apple-chat-after-image"
+        cancel = threading.Event()
+        with (
+            patch.object(api_server, "apple_silicon", return_value=True),
+            patch.object(api_server.INTEL_MEDIA, "close"),
+            patch.object(api_server.GENERATION_WORKER, "process", Mock()),
+            patch.object(api_server.GENERATION_WORKER, "close", side_effect=InterruptedError) as release,
+            patch.object(api_server.TEXT_GENERATION_WORKER, "generate") as generate,
+            patch.object(api_server, "append_text_event") as phase,
+            patch.object(api_server, "finish_text_job") as finish,
+            patch.dict(api_server.TEXT_JOB, {"id": job_id, "status": "running"}),
+        ):
+            api_server.run_text_generation({"device": "GPU"}, job_id, cancel)
+        phase.assert_called_once_with(job_id, phase="Releasing the image model…")
+        release.assert_called_once_with(cancel_event=cancel)
+        generate.assert_not_called()
+        self.assertEqual(finish.call_args.kwargs["status"], "stopped")
+        self.assertIsNone(finish.call_args.kwargs["error"])
+
     def test_tts_stop_discards_partial_wav_and_allows_next_job(self):
         with tempfile.TemporaryDirectory() as directory:
             outputs = Path(directory)

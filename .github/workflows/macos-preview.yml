@@ -9,13 +9,23 @@ on:
         default: false
   push:
     branches: [main]
+  pull_request:
+    paths:
+      - .github/workflows/macos-preview.yml
+      - scripts/gguf_runtime.py
+      - apps/desktop/e2e/gguf-smoke.mjs
+      - apps/desktop/e2e/macos-gpu-smoke.py
 
 permissions:
   contents: read
 
 jobs:
   build:
-    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[build-macos-preview]')
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && contains(github.event.head_commit.message, '[build-macos-preview]')) ||
+      (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository &&
+       contains(github.event.pull_request.title, '[test-macos-gpu]'))
     runs-on: macos-15
     timeout-minutes: 35
     steps:
@@ -30,6 +40,9 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run package:macos
+        env:
+          # The repository's preview uses the ad-hoc identity and no signing credentials.
+          CSC_FOR_PULL_REQUEST: ${{ github.event_name == 'pull_request' && 'true' || 'false' }}
       - name: Check signature and Finder app startup
         run: |
           app_path=apps/desktop/release-macos/mac-arm64/Fern.app
@@ -44,7 +57,9 @@ jobs:
           retention-days: 1
 
   gpu-smoke:
-    if: inputs.gpu_smoke || contains(github.event.head_commit.message, '[test-macos-gpu]')
+    if: >-
+      inputs.gpu_smoke || contains(github.event.head_commit.message, '[test-macos-gpu]') ||
+      github.event_name == 'pull_request'
     needs: build
     runs-on: macos-15
     timeout-minutes: 45

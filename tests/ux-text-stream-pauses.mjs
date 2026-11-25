@@ -42,6 +42,12 @@ try {
   await expect(stream.locator(".text-reply-stage svg")).toHaveCount(0);
   assert.equal(await page.evaluate(() => window.firstReplyFrame), true,
     "The first loading row should fit inside the conversation on its first frame");
+  update({ phase: "Releasing the image model…" });
+  await expect(status).toHaveText("Releasing the image model…");
+  await expect(stream).toContainText("Releasing the image model…");
+  await page.clock.fastForward(25_100);
+  await expect(status).toHaveText("Still releasing the image model…");
+  await expect(button("Stop generation")).toBeEnabled();
   update({ phase: "Checking hardware…" });
   await expect(status).toHaveText("Checking hardware…");
   await expect(stream).toContainText("Checking hardware…");

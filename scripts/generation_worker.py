@@ -4,6 +4,7 @@ from __future__ import annotations
 import multiprocessing
 from pathlib import Path
 from threading import Event, Lock
+from time import monotonic
 
 
 class GenerationCancelled(RuntimeError):
@@ -88,18 +89,33 @@ class GenerationWorker:
         self.connection = None
         self.lock = Lock()
 
-    def close(self):
-        if self.lock.acquire(blocking=False):
-            try:
-                self._close_unlocked(graceful=True)
-            finally:
-                self.lock.release()
-            return
-        self.interrupt()
-        with self.lock:
-            self._close_unlocked()
+    def close(self, *, cancel_event: Event | None = None):
+        idle = self.lock.acquire(blocking=False)
+        if not idle:
+            self.interrupt()
+            while not self.lock.acquire(timeout=0.1 if cancel_event is not None else -1):
+                if cancel_event is not None and cancel_event.is_set():
+                    raise InterruptedError("Stopped while waiting for the image worker.")
+        try:
+            self._close_unlocked(graceful=idle, cancel_event=cancel_event)
+        finally:
+            self.lock.release()
 
-    def _close_unlocked(self, *, graceful=False):
+    @staticmethod
+    def _join(process, timeout: float, cancel_event: Event | None):
+        if cancel_event is None:
+            process.join(timeout=timeout)
+            return
+        deadline = monotonic() + timeout
+        while process.is_alive():
+            if cancel_event.is_set():
+                raise InterruptedError("Stopped while waiting for the image worker.")
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                return
+            process.join(timeout=min(0.1, remaining))
+
+    def _close_unlocked(self, *, graceful=False, cancel_event: Event | None = None):
         if self.connection is not None:
             self.connection.close()
             self.connection = None
@@ -108,13 +124,14 @@ class GenerationWorker:
             return
         # Closing the pipe lets the idle loop exit and release its runtime.
         if graceful:
-            process.join(timeout=0.75)
+            self._join(process, 0.75, cancel_event)
         if process.is_alive():
             process.terminate()
-            process.join(timeout=2)
+            self._join(process, 2, cancel_event)
         if process.is_alive():
             process.kill()
-            process.join(timeout=4)
+            # A GPU handoff can outlast normal cleanup even after the process is killed.
+            self._join(process, 30 if cancel_event is not None else 4, cancel_event)
         if process.is_alive():
             raise RuntimeError("The image worker is still releasing GPU resources. Try again in a moment.")
         process.close()
