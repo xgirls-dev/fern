@@ -38,7 +38,7 @@ body {
 .is-split .chat-pane[data-focused="true"] .text-header { background: var(--secondary-bg); }
 .is-split .text-header-actions { gap: 4px; }
 .is-split .workspace-settings-button { min-width: var(--ui-control-height); padding-inline: 8px; }
-.is-split .workspace-settings-button span, .is-split .text-keyboard-hint { display: none; }
+.is-split .workspace-settings-button span, .is-split .text-keyboard-hint:not([data-essential]) { display: none; }
 .is-split .workspace-thread-title h2 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .is-split .text-layout--inspecting { grid-template-columns: minmax(0, 1fr); }
 .is-split .text-layout--inspecting .text-main { display: none; }
@@ -275,7 +275,10 @@ body {
 .text-composer { position: relative; padding: 14px 12px 10px; border: 1px solid var(--border-strong); border-radius: var(--ui-composer-radius); background: var(--composer-bg); box-shadow: var(--ui-composer-shadow); }
 .text-latest-reply-link { position: absolute; z-index: 2; inset-inline-end: 12px; inset-block-start: 8px; }
 .text-latest-reply-link:not(:focus) { clip-path: inset(50%); pointer-events: none; }
-.text-composer:not(.is-file-over):has(> textarea:focus-visible),
+.text-composer:not(.is-file-over):has(> textarea:focus-visible) {
+  outline: 2px solid color-mix(in srgb, var(--foreground) 65%, var(--composer-bg));
+  outline-offset: -1px;
+}
 .prompt-composer:has(#prompt:focus-visible) {
   outline: var(--ui-focus-ring);
   outline-offset: 2px;
@@ -343,7 +346,7 @@ body {
 @media (max-width: 560px) {
   .text-message-content { font-size: 14px; }
   .text-composer .text-menu-trigger { max-width: 135px; padding-inline: 4px; }
-  .text-keyboard-hint { display: none; }
+  .text-keyboard-hint:not([data-essential]) { display: none; }
   .text-composer-model-controls { gap: 0; }
   .text-empty-state h3 { font-size: 24px; }
 }

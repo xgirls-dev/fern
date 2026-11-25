@@ -942,9 +942,9 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   const showPhaseInReply = inlinePhase !== null &&
     (phaseVisibility?.phase === inlinePhase ? phaseVisibility.visible : followingLatest);
   const showDraftCount = !draftTooLong && draftCharacters !== undefined && draftCharacters >= PROMPT_COUNT_THRESHOLD;
+  const stopHint = canStop && !stopping ? (loadingModel ? "Esc to cancel" : "Esc to stop") : "";
   const composerHint = showDraftCount ? `${draftCharacters.toLocaleString()} / ${TEXT_MESSAGE_CHARACTER_LIMIT.toLocaleString()}`
-    : loadingModel ? canStop && !stopping ? "Esc to cancel" : ""
-    : responseHere ? canStop && !stopping ? "Esc to stop" : ""
+    : loadingModel || responseHere ? stopHint
     : busy || attachingImage || modelNotice || incompatibleImages || draftTooLong ? "" : "Enter to send · Shift + Enter for newline";
   const chatErrorNotice = (failedStop || localError) && <InlineNotice tone="error" announce actions={<>
     {failedStop && <Button variant="secondary" onClick={() => {
@@ -1176,7 +1176,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
             <span className={showPhaseInReply ? "sr-only" : undefined} role="status" aria-atomic="true">
               {modelNotice || loadProgressInInspector ? "" : activity || unavailableReason}</span>
             {otherResponseThread && <Button variant="ghost" className="text-open-running" onClick={() => studio.selectThread(otherResponseThread.id)}>Open running chat</Button>}
-            {composerHint && <span className="text-keyboard-hint">{composerHint}</span>}
+            {composerHint && <span className="text-keyboard-hint" data-essential={showDraftCount || !!stopHint || undefined}>{composerHint}</span>}
           </div>
           {showScrollButton && <TooltipIconButton ref={bindScrollLatestControl} shape="circle" className="text-scroll-latest"
             aria-label="Jump to latest message" tooltip="Jump to latest message" onClick={() => {
