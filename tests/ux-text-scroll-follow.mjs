@@ -63,6 +63,21 @@ try {
   await atLatest();
   const bounds = await feed.boundingBox();
   await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+  await page.mouse.wheel(0, -12);
+  await expect(jump).toBeVisible();
+  const beforeReflow = await position();
+  assert(beforeReflow.gap > 2 && beforeReflow.gap <= 24);
+  const prompt = feed.locator(".text-message--user").first();
+  // Model a layout update in an earlier message while the reader is just above the live tail.
+  await prompt.evaluate((element) => { element.style.paddingBlockEnd = "200px"; });
+  await expect.poll(async () => (await position()).top - beforeReflow.top).toBeGreaterThan(190);
+  await expect(feed).not.toHaveAttribute("data-following", "true");
+  await expect.poll(async () => (await position()).gap).toBeCloseTo(beforeReflow.gap, 0);
+  await page.mouse.wheel(0, 80);
+  await atLatest();
+  await expect(jump).toHaveCount(0);
+  await prompt.evaluate((element) => { element.style.paddingBlockEnd = ""; });
+  await atLatest();
   await page.mouse.wheel(0, -26);
   await expect.poll(async () => (await position()).gap).toBeGreaterThan(20);
   await expect(jump).toBeVisible();
@@ -85,8 +100,8 @@ try {
   await expect.poll(async () => (await position()).gap).toBeGreaterThan(300);
   await expect(jump).toBeVisible();
 
-  // Model a line landing just as a downward scroll reaches the previous tail.
-  await feed.evaluate((element) => { element.scrollTop = element.scrollHeight - element.clientHeight - 16; });
+  // Leave one line of tolerance when scrolling back to the live reply.
+  await page.mouse.wheel(0, (await position()).gap - 16);
   await atLatest();
   await page.mouse.wheel(0, -64);
   await expect(jump).toBeVisible();
