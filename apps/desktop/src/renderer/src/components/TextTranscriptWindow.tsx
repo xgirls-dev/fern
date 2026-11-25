@@ -1,4 +1,4 @@
-import { memo, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from "react";
+import { cloneElement, memo, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from "react";
 
 import type { TextMessage } from "../lib/textThreads";
 
@@ -162,19 +162,24 @@ export const TextTranscriptWindow = memo(function TextTranscriptWindow({ threadI
     return () => document.removeEventListener("selectionchange", trackSelection);
   }, [windowed]);
 
-  if (!pageCount) return null;
   const revealPage = Math.floor(revealIndex / PAGE_SIZE);
-  // Keep the same keyed rows as the chat grows. Wait for an intersection
-  // reading before deferring pages in a chat that was already visible.
+  const hasLiveReply = Boolean(liveReply);
+  // A token only changes the tail. Reuse page elements until their inputs change.
+  const pageElements = useMemo(() => pages.map((page, index) => {
+    const mounted = !windowed || !canDeferPages || index >= pageCount - 2 || nearby.has(index) || nearTarget(index, revealPage) ||
+      nearTarget(index, restorePage) || index === focused || !!selection && index >= selection[0] && index <= selection[1];
+    const hasTail = hasLiveReply && index === pageCount - 1;
+    return <TranscriptPage key={index} index={index} first={page.first} last={page.last}
+      estimate={page.estimatedHeight} cache={cache.pages} mounted={mounted} windowed={windowed} renderItem={renderItem}
+      storedCount={page.count - (hasTail ? 1 : 0)} />;
+  }), [cache, canDeferPages, focused, hasLiveReply, nearby, pageCount, pages, renderItem, restorePage, revealPage, selection, windowed]);
+  if (!pageCount) return null;
+
+  // Keep every page in the same keyed list when a new tail page is added.
+  const children = liveReply ? pageElements.slice() : pageElements;
+  if (liveReply) children[pageCount - 1] = cloneElement(pageElements[pageCount - 1], { liveReply });
   return <div ref={root} className="text-transcript-pages" onFocusCapture={(event) => setFocused(pageOf(event.target, root.current))}
     onBlurCapture={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setFocused(null); }}>
-    {pages.map((page, index) => {
-      const mounted = !windowed || !canDeferPages || index >= pageCount - 2 || nearby.has(index) || nearTarget(index, revealPage) || nearTarget(index, restorePage) || index === focused ||
-        !!selection && index >= selection[0] && index <= selection[1];
-      const tail = index === pageCount - 1 ? liveReply : undefined;
-      return <TranscriptPage key={index} index={index} first={page.first} last={page.last}
-        estimate={page.estimatedHeight} cache={cache.pages} mounted={mounted} windowed={windowed} renderItem={renderItem}
-        storedCount={page.count - (tail ? 1 : 0)} liveReply={tail} />;
-    })}
+    {children}
   </div>;
 });
