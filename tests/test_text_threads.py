@@ -181,7 +181,8 @@ os._exit(0)
     def test_openvino_load_reuses_pipeline_for_system_prompt_and_sampling_changes(self):
         base = {"op": "generate", "messages": [{"role": "user", "content": "Hello."}],
                 "systemPrompt": "Keep it short.", "temperature": 0.8, "topP": 0.95, "maxNewTokens": 64}
-        document = {"name": "Workshop.txt", "location": "Section 1", "text": "The intake code is ZY-4179."}
+        document = {"name": "Workshop.txt", "location": "Section 1", "text": "The intake code is ZY-4179.",
+                    "documentId": "doc-" + "b" * 64, "passageIndex": 0}
         follow_up = {**base, "systemPrompt": "Explain the details.", "temperature": 0.25, "topP": 0.8,
                      "maxNewTokens": 120, "sampling": {"topK": 16}, "contextSize": 4096, "documentPassages": [document]}
         stream = io.StringIO("".join(json.dumps(request) + "\n" for request in ({"op": "load"}, base, follow_up, {"op": "shutdown"})))
@@ -209,8 +210,13 @@ os._exit(0)
         results = [call.args[0] for call in emit.call_args_list if call.args[0]["type"] == "result"]
         self.assertEqual(results[0], {"type": "result", "backend": "openvino", "device": "CPU"})
         self.assertNotIn("documentSources", results[1])
-        self.assertEqual(results[-1]["documentSources"], [{"number": 1, "name": document["name"],
-                                                           "location": document["location"], "excerpt": document["text"]}])
+        source, = results[-1]["documentSources"]
+        self.assertEqual(source["excerpt"], document["text"])
+        self.assertEqual(source["name"], document["name"])
+        self.assertEqual(source["location"], document["location"])
+        self.assertEqual(source["reference"]["documentId"], document["documentId"])
+        self.assertEqual(source["reference"]["passageIndex"], 0)
+        self.assertEqual(source["reference"]["quotedCharacters"], len(document["text"]))
         self.assertEqual([call.args[0]["type"] for call in emit.call_args_list].count("residency"), 1)
 
     def test_text_model_status_surfaces_fresh_install_disk_and_companion_requirements(self):

@@ -12,7 +12,7 @@ import zipfile
 from collections import Counter, deque
 from contextlib import AbstractContextManager, nullcontext
 from pathlib import Path
-from typing import Any, Callable, Iterator
+from typing import Any, Callable, Iterator, TypedDict
 
 from defusedxml import ElementTree
 from defusedxml.common import DefusedXmlException
@@ -44,6 +44,14 @@ class ChatDocumentsUnavailable(ValueError):
                          if len(ids) == 1 else
                          "Some attached documents are missing or unreadable. Replace or remove them, then retry.")
         self.document_ids = ids
+
+
+class DocumentPassage(TypedDict):
+    name: str
+    location: str
+    text: str
+    documentId: str
+    passageIndex: int
 
 
 def document_ids(value: Any) -> list[str]:
@@ -201,7 +209,7 @@ def _terms(text: str) -> set[str]:
     return terms
 
 
-def _sample_document_order(passages: list[dict[str, str]]) -> Iterator[dict[str, str]]:
+def _sample_document_order(passages: list[DocumentPassage]) -> Iterator[DocumentPassage]:
     yield passages[0]
     if len(passages) < 2:
         return
@@ -215,7 +223,7 @@ def _sample_document_order(passages: list[dict[str, str]]) -> Iterator[dict[str,
             spans.extend(((start, middle), (middle + 1, end)))
 
 
-def retrieve_passages(directory: Path, ids: list[str], messages: list[dict[str, Any]], context_size: int) -> list[dict[str, str]]:
+def retrieve_passages(directory: Path, ids: list[str], messages: list[dict[str, Any]], context_size: int) -> list[DocumentPassage]:
     passages = []
     unavailable = []
     for document_id in ids:
@@ -224,7 +232,9 @@ def retrieve_passages(directory: Path, ids: list[str], messages: list[dict[str, 
             unavailable.append(document_id)
             continue
         name = record["document"]["name"]
-        passages.extend({"name": name, "location": passage["location"], "text": passage["text"]} for passage in record["passages"])
+        passages.extend({"name": name, "location": passage["location"], "text": passage["text"],
+                         "documentId": document_id, "passageIndex": index}
+                        for index, passage in enumerate(record["passages"]))
     if unavailable:
         raise ChatDocumentsUnavailable(unavailable)
     if not passages:
@@ -255,14 +265,39 @@ def retrieve_passages(directory: Path, ids: list[str], messages: list[dict[str, 
     return selected
 
 
+def _passage_fingerprint(passage: dict[str, Any]) -> str:
+    return hashlib.sha256(f"{passage['location']}\0{passage['text']}".encode("utf-8")).hexdigest()
+
+
+def read_document_source(directory: Path, document_id: str, index: int, characters: int, fingerprint: str) -> dict[str, Any] | None:
+    if index < 0 or not 1 <= characters <= PASSAGE_CHARS or not re.fullmatch(r"[a-f0-9]{64}", fingerprint):
+        raise ValueError("Choose a valid document source.")
+    record = _read(_path(directory, document_id))
+    if not record or index >= len(record["passages"]):
+        return None
+    passages = record["passages"]
+    passage = passages[index]
+    if characters > len(passage["text"]) or _passage_fingerprint(passage) != fingerprint:
+        return None
+
+    def nearby(position: int) -> dict[str, str] | None:
+        if not 0 <= position < len(passages):
+            return None
+        other = passages[position]
+        return {"location": other["location"], "text": other["text"][:PASSAGE_CHARS]}
+
+    return {"quoted": passage["text"][:characters], "remaining": passage["text"][characters:PASSAGE_CHARS],
+            "before": nearby(index - 1), "after": nearby(index + 1)}
+
+
 def add_document_context(
     messages: list[dict[str, Any]],
-    passages: list[dict[str, str]],
+    passages: list[dict[str, Any]],
     budget: int,
     measure: Callable[[list[dict[str, Any]]], int],
     *,
     chars_per_unit: int,
-) -> tuple[list[dict[str, Any]], list[dict[str, str | int]], int]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int]:
     baseline = measure(messages)
     room = budget - baseline
     if room <= 0:
@@ -279,7 +314,11 @@ def add_document_context(
             excerpt = passage["text"][:remaining - len(header)].rstrip()
             entries.append(f"{header}\n{excerpt}")
             preview = excerpt[:599] + "…" if len(excerpt) > 600 else excerpt
-            sources.append({"number": index, "name": passage["name"], "location": passage["location"], "excerpt": preview})
+            source = {"number": index, "name": passage["name"], "location": passage["location"], "excerpt": preview}
+            if "documentId" in passage and "passageIndex" in passage:
+                source["reference"] = {"documentId": passage["documentId"], "passageIndex": passage["passageIndex"],
+                                       "quotedCharacters": len(excerpt), "fingerprint": _passage_fingerprint(passage)}
+            sources.append(source)
             remaining -= len(header) + len(excerpt) + 3
         if not sources:
             break

@@ -67,7 +67,7 @@ from text_model_download import managed_download_id, remove_download as remove_t
 from gguf_metadata import is_projector, read_metadata as read_gguf_metadata
 from gguf_runtime import RUNTIME_PLATFORM_ERROR, apple_silicon, runtime_supported as gguf_runtime_supported
 from chat_image_tools import CHAT_IMAGE_SIZE, IMAGE_MODEL_PRIORITY, IMAGE_TOOL, chat_image_overrides, image_tool_prompt
-from chat_documents import ChatDocumentsUnavailable, document_ids, retrieve_passages, store_document
+from chat_documents import ChatDocumentsUnavailable, document_ids, read_document_source, retrieve_passages, store_document
 from chat_context import DEFAULT_CONTEXT_SIZE, validate_context_size, validate_gguf_load_options
 from tts_model_download import model_download_details as tts_model_download_details
 from tts_model_download import model_ready as tts_export_ready, require_fresh_install_space as require_tts_install_space
@@ -2557,11 +2557,13 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
 
-    def send_json(self, status: int, data: dict[str, Any]) -> None:
+    def send_json(self, status: int, data: dict[str, Any], *, no_store: bool = False) -> None:
         body = json.dumps(data).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
+        if no_store:
+            self.send_header("Cache-Control", "no-store")
         self.send_cors_headers()
         self.end_headers()
         self.wfile.write(body)
@@ -2625,6 +2627,23 @@ class Handler(BaseHTTPRequestHandler):
 
         if parsed.path == "/api/text/job":
             self.send_json(200, text_job_snapshot())
+            return
+
+        if parsed.path == "/api/text/documents/source":
+            query = urllib.parse.parse_qs(parsed.query)
+            try:
+                source = read_document_source(
+                    DATA_DIR / "chat-documents", query.get("documentId", [""])[0],
+                    int(query.get("passageIndex", [""])[0]), int(query.get("quotedCharacters", [""])[0]),
+                    query.get("fingerprint", [""])[0],
+                )
+            except ValueError:
+                self.send_json(400, {"error": "Choose a valid document source."}, no_store=True)
+            else:
+                if source is None:
+                    self.send_json(404, {"error": "The local passage is unavailable."}, no_store=True)
+                else:
+                    self.send_json(200, source, no_store=True)
             return
 
         if parsed.path == "/api/text/job/events":

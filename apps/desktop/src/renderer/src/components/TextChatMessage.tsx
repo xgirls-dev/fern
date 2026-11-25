@@ -1,4 +1,4 @@
-import { memo, useId, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { memo, useCallback, useId, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import Check from "lucide-react/dist/esm/icons/check.mjs";
 import Copy from "lucide-react/dist/esm/icons/copy.mjs";
 import GitBranch from "lucide-react/dist/esm/icons/git-branch.mjs";
@@ -10,10 +10,11 @@ import { chatSelectionIntersects } from "../hooks/useTextScroll";
 import { useClipboardCopy } from "../hooks/useClipboardCopy";
 import { resolveAssetUrl } from "../lib/api";
 import type { ChatSearchMatch } from "../lib/chatSearch";
+import type { ChatDocumentSource } from "../lib/chatDocuments";
 import { notify } from "../lib/notifications";
 import { formatTextFailure } from "../lib/textFailure";
 import { replyVersions, type TextMessage } from "../lib/textThreads";
-import { ChatDocumentSources } from "./ChatDocuments";
+import { ChatDocumentSourcePreview, ChatDocumentSources } from "./ChatDocuments";
 import { TextMarkdown } from "./TextMarkdown";
 import { TextMessageMenu, type MessageAction } from "./TextMessageMenu";
 import { TooltipIconButton } from "./ui/Tooltip";
@@ -116,6 +117,11 @@ export const TextChatMessage = memo(function TextChatMessage({ message, selectio
   latest: boolean;
 }) {
   const [detailsFor, setDetailsFor] = useState<{ id: string; placement: "context" | "actions" }>();
+  const [documentPreview, setDocumentPreview] = useState<{ replyId: string; source: ChatDocumentSource; trigger: HTMLButtonElement }>();
+  const documentSources = message.metrics?.documentSources;
+  const openDocumentSource = useCallback((source: ChatDocumentSource, trigger: HTMLButtonElement) => {
+    setDocumentPreview({ replyId: message.id, source, trigger });
+  }, [message.id]);
   const [reasoningOpen, setReasoningOpen] = useState(!!initialReasoningOpen);
   const menuButton = useRef<HTMLButtonElement>(null);
   const editButton = useRef<HTMLButtonElement>(null);
@@ -238,7 +244,7 @@ export const TextChatMessage = memo(function TextChatMessage({ message, selectio
     {editing && findSection === "body" && <div className="text-find-original"><span>Current prompt</span><p data-find-target>{message.content}</p></div>}
     {editing ? editor : <div ref={bodyRef} onPointerDown={onPointerDown} className="text-message-content" data-find-target={findSection === "body" || undefined}>
       {assistant ? (streaming || content) && <TextMarkdown content={content} streaming={shown.streaming} receivingReply={streaming}
-        preserveSelection={holding} /> : content}
+        preserveSelection={holding} documentSources={documentSources} onOpenSource={openDocumentSource} /> : content}
       {!showingLiveAnswer && !reasoningInProgress && !checkingImageInCaption && indicator}
     </div>}
   </>;
@@ -255,7 +261,9 @@ export const TextChatMessage = memo(function TextChatMessage({ message, selectio
       </div>}
       {showContextDetails && detailPanel}
       {assistant ? body : <div className="text-user-bubble">{body}</div>}
-      {!!message.metrics?.documentSources?.length && <ChatDocumentSources sources={message.metrics.documentSources} />}
+      {!!documentSources?.length && <ChatDocumentSources sources={documentSources} onOpen={openDocumentSource} />}
+      {documentPreview?.replyId === message.id && <ChatDocumentSourcePreview source={documentPreview.source} trigger={documentPreview.trigger}
+        onClose={() => setDocumentPreview(undefined)} />}
       {!streaming && recoveryNote && <InlineNotice className="text-reply-recovery" tone={failed ? "error" : "neutral"}
         actions={(memoryRecovery || onContinue || showRetry) && <>
           {memoryRecovery && <Button variant="secondary" onClick={(event) => memoryRecovery.run(event.currentTarget)}>{memoryRecovery.label}</Button>}

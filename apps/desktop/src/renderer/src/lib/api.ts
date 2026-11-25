@@ -8,7 +8,7 @@ import type {
 import { repairMojibake, repairMojibakeDeep } from "./text";
 import type { GeneratedChatImage, GgufLoadOptions, TextJob, TextModel, TextModelRemoval, TextPromptMessage, TextRuntimeStatus, TextSamplingOverrides } from "./textThreads";
 import type { ChatImageOverrides } from "./chatImageSettings";
-import type { ChatDocument } from "./chatDocuments";
+import type { ChatDocument, ChatDocumentPreview, ChatDocumentReference } from "./chatDocuments";
 
 let apiBaseUrl = "";
 const apiBaseUrlListeners = new Set<() => void>();
@@ -301,6 +301,14 @@ export async function uploadChatDocument(file: File): Promise<{ document: ChatDo
     signal: AbortSignal.timeout(120_000),
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name: file.name, content }),
+  });
+}
+
+export function fetchChatDocumentSource(reference: ChatDocumentReference, cancel: AbortSignal): Promise<ChatDocumentPreview> {
+  const query = new URLSearchParams({ documentId: reference.documentId, passageIndex: String(reference.passageIndex),
+    quotedCharacters: String(reference.quotedCharacters), fingerprint: reference.fingerprint });
+  return requestJson(`/api/text/documents/source?${query}`, {
+    signal: AbortSignal.any([cancel, AbortSignal.timeout(8_000)]), cache: "no-store",
   });
 }
 

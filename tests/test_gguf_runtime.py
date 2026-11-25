@@ -88,7 +88,8 @@ class GGUFCompletionTests(unittest.TestCase):
                 {"role": "assistant", "content": "Recent reply."},
                 {"role": "user", "content": "Use the selected image again.", "imagePath": str(paths[2])},
             ]
-            document = {"name": "Poster notes.txt", "location": "Section 1", "text": "The print border is coral."}
+            document = {"name": "Poster notes.txt", "location": "Section 1", "text": "The print border is coral.",
+                        "documentId": "doc-" + "a" * 64, "passageIndex": 0}
             report = server.generate({"messages": history, "maxNewTokens": 16, "temperature": 0,
                                       "topP": 1, "seed": 0, "documentPassages": [document]}, Mock())
         wire = server._completion.call_args.args[0]["messages"]
@@ -96,8 +97,13 @@ class GGUFCompletionTests(unittest.TestCase):
         self.assertEqual(report["context"]["imageNames"], ["recent.png", "selected.png"])
         self.assertEqual(report["context"]["images"], 2)
         self.assertIn(document["text"], wire[-1]["content"][1]["text"])
-        self.assertEqual(report["documentSources"], [{"number": 1, "name": document["name"],
-                                                      "location": document["location"], "excerpt": document["text"]}])
+        source, = report["documentSources"]
+        self.assertEqual(source["excerpt"], document["text"])
+        self.assertEqual(source["name"], document["name"])
+        self.assertEqual(source["location"], document["location"])
+        self.assertEqual(source["reference"]["documentId"], document["documentId"])
+        self.assertEqual(source["reference"]["passageIndex"], 0)
+        self.assertEqual(source["reference"]["quotedCharacters"], len(document["text"]))
 
     def test_stream_result_retains_the_reported_finish_reason(self) -> None:
         server = GGUFServer.__new__(GGUFServer)
