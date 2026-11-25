@@ -115,6 +115,23 @@ class TextGenerationProcess:
         with self._lock:
             self._stop_unlocked()
 
+    def unload(self, model_id: str) -> None:
+        with self._lock:
+            model = self.resident_model()
+            if model is None or model["modelId"] != model_id:
+                return
+            process = self._process
+            assert process is not None and process.stdin is not None
+            try:
+                # Let the idle worker reap its GGUF engine before it exits.
+                process.stdin.write('{"op":"shutdown"}\n')
+                process.stdin.flush()
+                process.wait(timeout=6)
+            except (OSError, subprocess.TimeoutExpired):
+                pass  # The normal stop path handles a broken pipe or stalled worker.
+            finally:
+                self._stop_unlocked()
+
     def interrupt(self) -> None:
         # Terminating before acquiring _lock releases a request blocked on stdout.
         terminate_tree(self._process)

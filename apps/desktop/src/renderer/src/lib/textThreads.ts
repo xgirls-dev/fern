@@ -250,6 +250,7 @@ export interface TextRuntimeStatus {
   supportsJobPolling?: boolean;
   supportsJobEvents?: boolean;
   supportsPendingStop?: boolean;
+  supportsModelUnload?: boolean;
   devices: TextDevice[];
   job: TextJob;
 }

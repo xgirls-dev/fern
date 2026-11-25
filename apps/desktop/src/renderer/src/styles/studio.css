@@ -2762,6 +2762,9 @@ code {
 .models-installed-row > div:first-child { display: grid; gap: 5px; min-width: 0; flex: 1; }
 .models-installed-row strong { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .models-installed-row small { color: var(--muted); font-size: 12px; }
+.models-installed-actions, .text-model-setting-actions { display: flex; flex-wrap: wrap; gap: var(--ui-space-2); }
+.models-installed-actions { justify-content: flex-end; }
+.models-installed-actions .ui-button[aria-disabled="true"], .text-model-setting-actions .ui-button[aria-disabled="true"] { opacity: .45; cursor: default; }
 .composer-references { display: flex; flex-wrap: wrap; gap: 8px; padding: 4px 0 10px; }
 .composer-references .composer-reference { display: flex; align-items: center; gap: 8px; min-width: 0; max-width: 100%; flex: 1 1 210px; margin: 0; padding: 5px 4px; border: 0; border-radius: 8px; background: var(--secondary-bg); }
 .composer-reference > span { flex: 1; min-width: 0; }

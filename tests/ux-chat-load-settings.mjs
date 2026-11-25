@@ -7,7 +7,7 @@ const model = { id: "local-gemma", name: "Gemma", format: "gguf", installed: tru
 const resident = { modelId: model.id, backend: "openvino", device: "GPU", gguf: { contextSize: 8192, loadOptions: {} } };
 const { page, state, errors, close } = await fixture({
   firstRun: true,
-  textStatus: { models: [model], ggufAvailable: true, supportsJobPolling: true, residentModel: resident,
+  textStatus: { models: [model], ggufAvailable: true, supportsJobPolling: true, supportsModelUnload: true, residentModel: resident,
     job: { id: null, status: "idle" } },
   legacyTextWorkspace: { activeId: "text-thread-load-settings", threads: [
     { id: "text-thread-load-settings", title: "Model settings", modelId: model.id, messages: [] },
@@ -17,6 +17,8 @@ const button = (name) => page.getByRole("button", { name, exact: true });
 const inspector = page.getByRole("complementary", { name: "Chat settings panel" });
 const reloadNotice = inspector.getByText("Reloads on the next reply.", { exact: true });
 const context = inspector.getByRole("spinbutton", { name: /^Context length/ });
+const unload = inspector.getByRole("button", { name: "Unload model", exact: true });
+const composer = page.getByRole("textbox", { name: "Message", exact: true });
 let completed = false;
 let catalogReadsAfterCompletion = 0;
 
@@ -27,6 +29,7 @@ try {
     return route.fulfill({ json: state.textStatus });
   });
   await button("Chat settings").click();
+  await expect(unload).toBeEnabled();
   await expect(inspector.getByText("System prompt, maximum output, and sampling apply to the next reply.", { exact: true })).toBeVisible();
   await inspector.getByLabel("System prompt", { exact: true }).fill("Keep the answer concise.");
   await inspector.getByLabel("Temperature value", { exact: true }).fill("0.35");
@@ -41,10 +44,11 @@ try {
   await expect(inspector.getByRole("status")).toContainText("Loading options changed.");
   await context.fill("12288");
   await expect(inspector.getByRole("status")).toContainText("Context length and loading options changed.");
-  await page.getByRole("textbox", { name: "Message", exact: true }).fill("Describe the change.");
+  await composer.fill("Describe the change.");
   await button("Send message").click();
   await expect(page.getByRole("article", { name: "Response in progress" })).toBeVisible();
   await expect(context).toBeDisabled();
+  await expect(unload).toBeDisabled();
   const request = state.textRequests[0];
   assert.equal(request.contextSize, 12_288);
   assert.deepEqual(request.loadOptions, { flashAttention: "on" });
@@ -62,8 +66,34 @@ try {
   state.textStatus.residentModel = loaded;
   await button("Reset model loading").click();
   await expect(inspector.getByRole("status")).toContainText("Loading options changed.");
+  await composer.fill("Draft for later");
+  let finishUnload;
+  const releaseResponse = new Promise((resolve) => { finishUnload = resolve; });
+  await page.route("**/api/text/models/unload", async (route) => {
+    assert.deepEqual(route.request().postDataJSON(), { modelId: model.id });
+    await releaseResponse;
+    state.textStatus.residentModel = null;
+    return route.fulfill({ json: { residentModel: null } });
+  });
+  await unload.focus();
+  await unload.press("Enter");
+  const unloading = inspector.getByRole("button", { name: "Unloading…", exact: true });
+  await expect(unloading).toBeFocused();
+  await expect(unloading).toBeDisabled();
+  await expect(button("Send message")).toBeDisabled();
+  finishUnload();
+  await expect(unload).toHaveCount(0);
+  await expect(button("Manage models")).toBeFocused();
+  await expect(composer).toHaveValue("Draft for later");
+  await expect(page.getByText("The settings are applied.", { exact: true })).toBeVisible();
+  await expect(reloadNotice).toHaveCount(0);
+  await expect(inspector.getByText("The model loads on the next reply.", { exact: true })).toBeVisible();
+  await button("Send message").click();
+  assert.equal(state.textRequests.length, 2);
+  assert.equal(state.textRequests[1].modelId, model.id);
+  assert.equal(state.textRequests[1].messages.at(-1).content, "Draft for later");
   assert.deepEqual(errors, []);
-  console.log("Reply settings, planned reloads, reverting edits, and warm settings after completion agree.");
+  console.log("Reply settings, planned reloads, and explicit unload preserve the selected model, draft, and transcript.");
 } finally {
   await close();
 }

@@ -235,6 +235,12 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   const panelRef = useRef<HTMLElement>(null);
   const contextSetting = useRef<HTMLInputElement>(null);
   const modelSetting = useRef<HTMLButtonElement>(null);
+  const manageModels = useRef<HTMLButtonElement>(null);
+  const unloadModelControl = useRef<HTMLButtonElement | null>(null);
+  const bindUnloadModel = useCallback((button: HTMLButtonElement | null) => {
+    if (!button && unloadModelControl.current === document.activeElement) manageModels.current?.focus({ preventScroll: true });
+    unloadModelControl.current = button;
+  }, []);
   const recoverySetting = useRef<"context" | "model" | undefined>(undefined);
   const recoveryTrigger = useRef<HTMLButtonElement | null>(null);
   const [recoveryFocus, requestRecoveryFocus] = useState(0);
@@ -744,7 +750,10 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   const tokenLimits = chatTokenLimits(activeThread, selected);
   const canReduceContext = selected?.format === "gguf" && tokenLimits.contextSize > tokenLimits.contextMinimum;
   const loadOptions = ggufLoadOptions(activeThread.loadOptions, tokenLimits.contextSize);
-  const loadedSettings = panel === "settings" && !busy && !statusError && residentModel?.modelId === selected?.id ? residentModel?.gguf : undefined;
+  const loadedModel = !statusError && residentModel?.modelId === selected?.id ? residentModel : undefined;
+  const loadedSettings = panel === "settings" && !busy ? loadedModel?.gguf : undefined;
+  const unloading = studio.unloadingModel;
+  const loadsOnNextReply = status.supportsModelUnload && modelAvailable && !runtimeIssue && !statusError && !busy && !loadedModel;
   const contextNeedsReload = loadedSettings && loadedSettings.contextSize !== tokenLimits.contextSize;
   const optionsNeedReload = loadedSettings && (Object.keys({ ...loadedSettings.loadOptions, ...loadOptions }) as Array<keyof GgufLoadOptions>)
     .some((key) => loadedSettings.loadOptions[key] !== loadOptions[key]);
@@ -1131,16 +1140,23 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
         </div>
         {panel === "settings" && <div className="text-inspector-body">
           <p className="text-panel-description">System prompt, maximum output, and sampling apply to the next reply.</p>
-          {busy && <p className="text-panel-description" role="status">{activity || "Settings are locked while a response is generating."}</p>}
+          {busy && <p className="text-panel-description" role="status">{activity || studio.modelAction || "Settings are locked while a response is generating."}</p>}
           <div className="text-settings-grid">
             <label>Model<Select ref={modelSetting} aria-label="Settings model" value={selectedModel || null} placeholder="Choose a model" disabled={busy}
               options={settingsModelOptions}
               onChange={(id) => studio.selectModel(activeThread.id, id)} /></label>
-            <Button variant="ghost" className="text-compute-link" onClick={openModels}>Manage models</Button>
-            {selected?.format === "gguf" && <p role="status" className="text-setting-help text-model-load-note">
+            <div className="text-model-setting-actions">
+              <Button ref={manageModels} variant="ghost" onClick={openModels}>Manage models</Button>
+              {status.supportsModelUnload && loadedModel && <Button ref={bindUnloadModel} variant="ghost" disabled={busy && !unloading}
+                aria-disabled={unloading || undefined} onClick={() => { if (!busy) void studio.unloadModel(loadedModel.modelId, threadId); }}>
+                {unloading ? "Unloading…" : "Unload model"}
+              </Button>}
+            </div>
+            {(selected?.format === "gguf" || loadsOnNextReply) && <p role="status" className="text-setting-help text-model-load-note">
               {reloadReason
                 ? <><strong>Reloads on the next reply.</strong> {reloadReason}</>
-                : "Changing context length or advanced loading options reloads a loaded model on the next reply."}
+                : loadsOnNextReply ? "The model loads on the next reply."
+                  : "Changing context length or advanced loading options reloads a loaded model on the next reply."}
             </p>}
             {selected?.format === "gguf" && <TokenField key={`context-${activeThread.id}-${selected.id}`}
               inputRef={contextSetting}

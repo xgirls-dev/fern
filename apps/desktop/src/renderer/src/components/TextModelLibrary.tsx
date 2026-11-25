@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import MessageSquare from "lucide-react/dist/esm/icons/message-square.mjs";
 import { Button, ErrorMessage, InlineConfirmation, ModelCard, ModelCardActions, ModelCardHeading, ModelStatus } from "./ui/controls";
 import type { useTextChat } from "../hooks/useTextChat";
@@ -13,11 +13,17 @@ export function TextModelLibrary({ studio, recommendedId }: { studio: ReturnType
   const [removing, setRemoving] = useState<string | null>(null);
   const removalFocus = useReturnFocus();
   const heading = useRef<HTMLHeadingElement | null>(null);
+  const unloadControl = useRef<HTMLButtonElement | null>(null);
+  const bindUnloadControl = useCallback((button: HTMLButtonElement | null) => {
+    if (!button && unloadControl.current === document.activeElement) heading.current?.focus({ preventScroll: true });
+    unloadControl.current = button;
+  }, []);
   const requirementsPrefix = useId();
   const { status, busy, refreshModels } = studio;
   useEffect(() => { void refreshModels(); }, [refreshModels]);
   const runtime = { ...status, residentModel: studio.statusError ? undefined : status.residentModel,
     runningModelId: status.job.status === "running" ? status.job.modelId : null };
+  const unloading = studio.unloadingModel;
   const recommendations = status.recommendedModels ?? [];
   const ordered = recommendedId ? [...recommendations].sort((a, b) => Number(b.id === recommendedId) - Number(a.id === recommendedId)) : recommendations;
   const error = (studio.actionError?.threadId ? undefined : studio.actionError?.message) ?? studio.statusError ?? status.registryError;
@@ -110,9 +116,15 @@ export function TextModelLibrary({ studio, recommendedId }: { studio: ReturnType
             }
           }}>
           {managed ? "Delete this download from disk? Your chats and drafts stay." : "Unlink this model? Its files stay on disk."}
-        </InlineConfirmation> : <Button ref={removalFocus.register(model.id)} type="button" disabled={busy}
-          aria-label={managed ? `Remove download for ${model.name}` : `Unlink ${model.name}`}
-          onClick={() => setRemoving(model.id)}>{label}</Button>}
+        </InlineConfirmation> : <div className="models-installed-actions">
+          {status.supportsModelUnload && runtime.residentModel?.modelId === model.id &&
+            <Button ref={bindUnloadControl} variant="ghost" disabled={busy && !unloading} aria-disabled={unloading || undefined}
+              aria-label={unloading ? `Unloading ${model.name}` : `Unload ${model.name}`}
+              onClick={() => { if (!busy) void studio.unloadModel(model.id); }}>{unloading ? "Unloading…" : "Unload model"}</Button>}
+          <Button ref={removalFocus.register(model.id)} type="button" disabled={busy}
+            aria-label={managed ? `Remove download for ${model.name}` : `Unlink ${model.name}`}
+            onClick={() => setRemoving(model.id)}>{label}</Button>
+        </div>}
       </article>;
     })}</div> : null}
   </section>;
