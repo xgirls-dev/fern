@@ -98,8 +98,29 @@ try {
   await expect(composer).toHaveValue("A separate draft");
   const originalViewport = page.viewportSize();
   await page.setViewportSize({ ...originalViewport, width: 930 });
-  await button("Text thread: Long transcript").click();
+  const longThread = button("Text thread: Long transcript");
+  const switchSelectionReads = await longThread.evaluateHandle((element) => {
+    const getSelection = window.getSelection;
+    let switching = false;
+    let reads = 0;
+    element.addEventListener("click", () => {
+      switching = true;
+      setTimeout(() => { switching = false; }, 0);
+    }, { capture: true, once: true });
+    window.getSelection = function () {
+      if (switching) reads += 1;
+      return getSelection.call(window);
+    };
+    return () => {
+      window.getSelection = getSelection;
+      return reads;
+    };
+  });
+  await longThread.click();
   await expect(early).toBeAttached();
+  assert.equal(await switchSelectionReads.evaluate((stopWatching) => stopWatching()), 0,
+    "Opening a long chat should not query selection during the click");
+  await switchSelectionReads.dispose();
   await expect.poll(() => visiblePosition(early)).toBe(true);
   await expect.poll(async () => Math.abs(await topOfEarly() - before)).toBeLessThan(8);
   await page.setViewportSize(originalViewport);
@@ -187,9 +208,21 @@ try {
   await expect(newPrompt).toHaveCount(0);
   await expect(rows).toHaveCount(72);
   await expect(thresholdRow).toHaveAttribute("data-threshold-row", "true");
-  await button("Undo deletion").click();
-  await expect(newPrompt).toBeVisible();
+  await feed.press("Home");
+  const selectedPrompt = row("row-0").locator(".text-message-content");
+  await selectedPrompt.evaluate(async (element) => {
+    const selection = window.getSelection();
+    const changed = new Promise((resolve) => document.addEventListener("selectionchange", resolve, { once: true }));
+    selection.selectAllChildren(element);
+    await changed;
+  });
+  await button("Undo deletion").press("Enter");
+  await expect(newPrompt).toBeInViewport();
+  await expect(row("row-24")).toHaveCount(0);
   await expect(thresholdRow).toHaveAttribute("data-threshold-row", "true");
+  assert.equal(await page.evaluate(() => window.getSelection().toString()), "Prompt 0");
+  await page.evaluate(() => window.getSelection().removeAllRanges());
+  await expect(selectedPrompt).toHaveCount(0);
   assert.deepEqual(errors, []);
   console.log(`Long chat mounted ${settledMountCount} of ${messages.length} messages. Scroll, search, streaming, edits, deletion, and crossing the window threshold passed.`);
 } finally {
