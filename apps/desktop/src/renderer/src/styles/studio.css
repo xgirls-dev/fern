@@ -152,6 +152,28 @@ body {
 .text-document-sources li { padding: 10px 12px; border-radius: 8px; background: var(--secondary-bg); overflow-wrap: anywhere; }
 .text-document-sources li > span { margin-inline-start: 8px; }
 .text-document-sources p { margin: 5px 0 0; white-space: pre-wrap; line-height: 1.5; }
+.text-source-link { padding: 0; border: 0; background: none; color: var(--chat-action); font: inherit; font-weight: 600;
+  text-align: start; text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 2px;
+  cursor: pointer; overflow-wrap: anywhere; }
+.text-source-link--inline { display: inline; font-weight: inherit; }
+.text-source-link:hover { text-decoration-thickness: 2px; }
+.text-source-link:focus-visible, .text-source-preview:focus-visible { outline: var(--ui-focus-ring); outline-offset: 3px; }
+.ui-dialog.text-source-dialog { display: flex; flex-direction: column; width: min(660px, 100%);
+  max-height: min(680px, calc(100dvh - 2 * var(--ui-space-4))); overflow: hidden; }
+.text-source-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--ui-space-3); }
+.text-source-heading h2 { margin-bottom: var(--ui-space-1); overflow-wrap: anywhere; }
+.text-source-heading p { margin: 0 0 var(--ui-space-4); color: var(--muted); font-size: 13px; }
+.text-source-heading button { flex-shrink: 0; }
+.text-source-preview { position: relative; min-height: 0; overflow: auto; overscroll-behavior: contain;
+  padding: 0 var(--ui-space-4); border: 1px solid var(--border); border-radius: var(--ui-radius-control);
+  background: var(--background); }
+.text-source-preview section { padding-block: var(--ui-space-4); }
+.text-source-preview section + section { border-top: 1px solid var(--border); }
+.text-source-preview h3 { margin: 0 0 var(--ui-space-2); color: var(--muted); font-size: 12px; }
+.text-source-preview p { margin: 0; font-size: 14px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
+.text-source-preview mark { background: color-mix(in srgb, var(--warning) 23%, var(--background)); color: inherit; }
+.text-source-status { display: flex; align-items: center; justify-content: space-between; gap: var(--ui-space-2);
+  margin: var(--ui-space-3) 0 0; color: var(--muted); font-size: 13px; }
 .text-attachment-notice { display: flex; align-items: center; gap: 8px; min-width: 0; margin: 0 0 8px; padding: 4px 6px 4px 10px; border: 1px solid var(--border); border-radius: 8px; color: var(--muted); font-size: 13px; }
 .text-attachment-notice > .spinner { color: var(--chat-action); flex-shrink: 0; }
 .text-attachment-notice > span { min-width: 0; flex: 1; overflow-wrap: anywhere; }

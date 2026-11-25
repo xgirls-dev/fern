@@ -14,6 +14,36 @@ export interface ChatDocumentSource {
   name: string;
   location: string;
   excerpt: string;
+  reference?: ChatDocumentReference;
+}
+
+export interface ChatDocumentReference {
+  documentId: string;
+  passageIndex: number;
+  quotedCharacters: number;
+  fingerprint: string;
+}
+
+export interface ChatDocumentPassage {
+  location: string;
+  text: string;
+}
+
+export interface ChatDocumentPreview {
+  before: ChatDocumentPassage | null;
+  quoted: string;
+  remaining: string;
+  after: ChatDocumentPassage | null;
+}
+
+function normalizeDocumentReference(value: unknown): ChatDocumentReference | undefined {
+  if (!value || typeof value !== "object") return;
+  const { documentId, passageIndex, quotedCharacters, fingerprint } = value as Partial<ChatDocumentReference>;
+  if (typeof documentId !== "string" || !/^doc-[a-f0-9]{64}$/.test(documentId)
+    || typeof passageIndex !== "number" || !Number.isSafeInteger(passageIndex) || passageIndex < 0
+    || typeof quotedCharacters !== "number" || !Number.isInteger(quotedCharacters) || quotedCharacters < 1 || quotedCharacters > 1600
+    || typeof fingerprint !== "string" || !/^[a-f0-9]{64}$/.test(fingerprint)) return;
+  return { documentId, passageIndex, quotedCharacters, fingerprint };
 }
 
 export function isChatDocument(value: unknown): value is ChatDocument {
@@ -34,8 +64,9 @@ export function normalizeDocumentSources(value: unknown): ChatDocumentSource[] |
   if (!Array.isArray(value)) return undefined;
   return value.filter((item): item is ChatDocumentSource => item && Number.isInteger(item.number) && item.number > 0
     && typeof item.name === "string" && typeof item.location === "string" && typeof item.excerpt === "string")
-    .slice(0, 80).map(({ number, name, location, excerpt }) => ({
+    .slice(0, 80).map(({ number, name, location, excerpt, reference }) => ({
       number, name: name.slice(0, 255), location: location.slice(0, 80), excerpt: excerpt.slice(0, 600),
+      reference: normalizeDocumentReference(reference),
     }));
 }
 

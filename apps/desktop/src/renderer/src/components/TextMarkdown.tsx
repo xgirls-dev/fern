@@ -1,18 +1,24 @@
 import { createContext, Fragment, isValidElement, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentPropsWithoutRef } from "react";
 import { jsx, jsxs } from "react/jsx-runtime";
 import { toJsxRuntime } from "hast-util-to-jsx-runtime";
-import type { Element, RootContent } from "hast";
+import type { Element, ElementContent, RootContent, Text } from "hast";
 import Check from "lucide-react/dist/esm/icons/check.mjs";
 import Copy from "lucide-react/dist/esm/icons/copy.mjs";
 import MoveHorizontal from "lucide-react/dist/esm/icons/move-horizontal.mjs";
 import WrapText from "lucide-react/dist/esm/icons/wrap-text.mjs";
 import { useChatMarkdown } from "../hooks/useChatMarkdown";
 import { useClipboardCopy } from "../hooks/useClipboardCopy";
+import type { ChatDocumentSource } from "../lib/chatDocuments";
 import { highlightChatCode } from "../lib/textCodeHighlight";
+import type { OpenDocumentSource } from "./ChatDocuments";
 import { Button } from "./ui/controls";
 import { Tooltip } from "./ui/Tooltip";
 
 const StreamingCode = createContext(false);
+const DocumentCitations = createContext<{
+  sources: ReadonlyMap<number, ChatDocumentSource>;
+  onOpen: OpenDocumentSource;
+} | undefined>(undefined);
 
 function useCodeOverflow(source: string | undefined, wrap: boolean | null) {
   const ref = useRef<HTMLPreElement>(null);
@@ -142,22 +148,59 @@ function MarkdownTable({ children }: ComponentPropsWithoutRef<"table">) {
   </div>;
 }
 
+function CitationButton({ children, "data-document-source": number }: ComponentPropsWithoutRef<"button"> & {
+  "data-document-source"?: number;
+}) {
+  const citations = useContext(DocumentCitations);
+  const source = typeof number === "number" ? citations?.sources.get(number) : undefined;
+  if (!source || !citations) return <>{children}</>;
+  return <button type="button" className="text-source-link text-source-link--inline"
+    aria-label={`Open source [${source.number}], ${source.name}, ${source.location}`}
+    onClick={(event) => citations.onOpen(source, event.currentTarget)}>{children}</button>;
+}
+
 const components = {
   pre: CodeBlock,
   table: MarkdownTable,
+  button: CitationButton,
   // Model output cannot load remote images or invoke local URL schemes.
   img: ({ alt }: ComponentPropsWithoutRef<"img">) => <span>{alt}</span>,
   a: ({ href, children }: ComponentPropsWithoutRef<"a">) => /^https?:\/\//i.test(href ?? "")
     ? <a href={href} target="_blank" rel="noopener noreferrer">{children}</a> : <span>{children}</span>,
 };
-function markdownElement(node: RootContent) {
-  return node.type === "text" ? node.value : toJsxRuntime(node, {
+
+function citeText(node: Text, sources: ReadonlyMap<number, ChatDocumentSource>): ElementContent[] {
+  if (!node.value.includes("[")) return [node];
+  const children: ElementContent[] = [];
+  let start = 0;
+  for (const match of node.value.matchAll(/\[([1-9]\d?)\]/g)) {
+    const number = Number(match[1]);
+    if (!sources.has(number)) continue;
+    if (start < match.index) children.push({ type: "text", value: node.value.slice(start, match.index) });
+    children.push({ type: "element", tagName: "button", properties: { "data-document-source": number },
+      children: [{ type: "text", value: match[0] }] });
+    start = match.index + match[0].length;
+  }
+  if (!children.length) return [node];
+  if (start < node.value.length) children.push({ type: "text", value: node.value.slice(start) });
+  return children;
+}
+
+function citeElement(node: Element, sources: ReadonlyMap<number, ChatDocumentSource>): Element {
+  if (node.tagName === "a" || node.tagName === "code" || node.tagName === "pre") return node;
+  return { ...node, children: node.children.flatMap((child) => child.type === "text" ? citeText(child, sources)
+    : child.type === "element" ? [citeElement(child, sources)] : [child]) };
+}
+
+function markdownElement(node: RootContent, sources?: ReadonlyMap<number, ChatDocumentSource>) {
+  return node.type === "text" ? node.value : toJsxRuntime(sources && node.type === "element" ? citeElement(node, sources) : node, {
     components, Fragment, jsx, jsxs, ignoreInvalidStyle: true, passKeys: true,
   });
 }
 
 const MarkdownTableRow = memo(function MarkdownTableRow({ node }: { node: Element }) {
-  return markdownElement(node);
+  const citations = useContext(DocumentCitations);
+  return markdownElement(node, citations?.sources);
 });
 
 const MarkdownTableSection = memo(function MarkdownTableSection({ node }: { node: Element }) {
@@ -171,15 +214,18 @@ function isTable(node: RootContent): node is Element {
 }
 
 const MarkdownBlock = memo(function MarkdownBlock({ node }: { node: RootContent }) {
+  const citations = useContext(DocumentCitations);
   return isTable(node)
     ? <MarkdownTable>{node.children.map((section, index) => section.type === "element"
       ? <MarkdownTableSection key={index} node={section} /> : null)}</MarkdownTable>
-    : markdownElement(node);
+    : markdownElement(node, citations?.sources);
 }, (previous, next) => previous.node === next.node ||
   (!isTable(next.node) && !isTable(previous.node) && JSON.stringify(previous.node) === JSON.stringify(next.node)));
 
-export const TextMarkdown = memo(function TextMarkdown({ content, streaming = false, receivingReply = streaming, preserveSelection = false }: {
+export const TextMarkdown = memo(function TextMarkdown({ content, streaming = false, receivingReply = streaming, preserveSelection = false,
+  documentSources, onOpenSource }: {
   content: string; streaming?: boolean; receivingReply?: boolean; preserveSelection?: boolean;
+  documentSources?: readonly ChatDocumentSource[]; onOpenSource?: OpenDocumentSource;
 }) {
   const { blocks: parsed, pending } = useChatMarkdown(content, streaming, receivingReply);
   const rendered = useRef(parsed);
@@ -191,6 +237,9 @@ export const TextMarkdown = memo(function TextMarkdown({ content, streaming = fa
   // Incoming text can outpace the Markdown worker. Reuse the rendered list
   // until the worker publishes different blocks.
   const elements = useMemo(() => blocks?.map((block, index) => <MarkdownBlock key={index} node={block} />), [blocks]);
+  const citations = useMemo(() => documentSources?.length && onOpenSource && !receivingReply && !preserveSelection
+    ? { sources: new Map(documentSources.map((source) => [source.number, source])), onOpen: onOpenSource }
+    : undefined, [documentSources, onOpenSource, preserveSelection, receivingReply]);
   const hasBlocks = !!elements?.length;
   const formatting = !elements || (pending && (!hasBlocks || !receivingReply));
   const waitingWithPreview = formatting && hasBlocks;
@@ -204,7 +253,7 @@ export const TextMarkdown = memo(function TextMarkdown({ content, streaming = fa
     return () => window.clearTimeout(timer);
   }, [waitingWithPreview]);
   return <StreamingCode.Provider value={streaming}>
-    {elements}
+    <DocumentCitations.Provider value={citations}>{elements}</DocumentCitations.Provider>
     {formatting && <div data-chat-markdown-formatting="" data-chat-markdown-pending={!hasBlocks || undefined}
       hidden={waitingWithPreview && !formattingDelayElapsed}>
       <span className="text-thinking">Formatting response…</span>

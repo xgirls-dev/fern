@@ -12,7 +12,7 @@ from pypdf import PdfWriter
 from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from chat_documents import add_document_context, document_ids, retrieve_passages, store_document
+from chat_documents import add_document_context, document_ids, read_document_source, retrieve_passages, store_document
 
 
 def pdf_with_pages(*contents: str) -> bytes:
@@ -82,8 +82,33 @@ class ChatDocumentTests(unittest.TestCase):
         self.assertIn("Mara Bell", messages[-1]["content"])
         self.assertIn("as quoted data", messages[-1]["content"])
         self.assertEqual(sources[0]["location"], "Page 27")
+        reference = sources[0]["reference"]
+        self.assertEqual(reference["documentId"], document["id"])
+        preview = read_document_source(self.root, document["id"], reference["passageIndex"],
+                                       reference["quotedCharacters"], reference["fingerprint"])
+        self.assertIn("Mara Bell", preview["quoted"])
+        self.assertEqual(preview["before"]["location"], "Page 26")
+        self.assertIsNone(preview["after"])
         self.assertLessEqual(cost, 790)
         self.assertEqual(question[-1]["content"], "And who is the coordinator?")
+
+    def test_preview_keeps_exact_quoted_characters_and_rejects_a_different_source(self):
+        phrase = "Room Cedar opens at noon. The schedule lists a forum. "
+        document = self.attach("Schedule.txt", (phrase * 25 + "Follow-up discussion.").encode())
+        other = self.attach("Schedule.txt", b"A newer schedule for a different event.")
+        question = [{"role": "user", "content": "What is the schedule?"}]
+        passages = retrieve_passages(self.root, [document["id"]], question, 4096)
+        grounded, sources, _ = add_document_context(question, passages, 1300,
+            lambda turns: len(turns[-1]["content"]), chars_per_unit=1)
+        reference = sources[0]["reference"]
+        args = (reference["passageIndex"], reference["quotedCharacters"], reference["fingerprint"])
+        preview = read_document_source(self.root, reference["documentId"], *args)
+        self.assertIn(preview["quoted"] + "\n--- End of excerpts ---", grounded[-1]["content"])
+        self.assertTrue(preview["remaining"])
+        self.assertEqual(preview["quoted"] + preview["remaining"], passages[0]["text"])
+        self.assertIsNone(read_document_source(self.root, other["id"], *args))
+        (self.root / f"{document['id']}.json").unlink()
+        self.assertIsNone(read_document_source(self.root, document["id"], *args))
 
     def test_bad_file_and_missing_document_errors_are_actionable(self):
         for name, data, error in (
