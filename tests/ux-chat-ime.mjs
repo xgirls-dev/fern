@@ -73,14 +73,18 @@ try {
   await commands.press("Enter");
   await expect(composer).toHaveValue("日本語");
 
+  const send = button("Send message");
+  await send.evaluate((element) => { element.dataset.composerAction = "original"; });
   await composer.press("Enter");
   await expect.poll(() => state.textRequests.length).toBe(1);
   const stop = button("Stop generation");
+  await expect(stop).toHaveAttribute("data-composer-action", "original");
   await expect(stop).toHaveCSS("background-color", "rgb(32, 32, 32)");
   await expect(stop).toHaveCSS("color", "rgb(255, 255, 255)");
   await stop.hover();
   await expect(stop).toHaveCSS("background-color", "rgb(56, 56, 56)");
   await expect(stop).toHaveCSS("color", "rgb(255, 255, 255)");
+  await expect(page.getByRole("tooltip")).toHaveText("Stop generation · Esc");
   await button("Toggle theme").click();
   await expect(stop).toHaveCSS("background-color", "rgb(236, 236, 236)");
   await expect(stop).toHaveCSS("color", "rgb(33, 33, 33)");
@@ -92,7 +96,8 @@ try {
   await expect(stop).toBeVisible();
   await composer.press("Escape");
   await expect.poll(() => state.textStatus.job.status).toBe("stopped");
-  await expect(button("Send message")).toBeVisible();
+  await expect(send).toHaveAttribute("data-composer-action", "original");
+  await expect(page.getByRole("tooltip")).toHaveCount(0);
 
   await composer.fill("Tell me more.");
   await composer.press("Enter");

@@ -279,7 +279,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   }, []);
   const stopControl = useRef<HTMLButtonElement | null>(null);
   const bindStopControl = useCallback((button: HTMLButtonElement | null) => {
-    // React detaches the ref before removing the focused Stop button.
+    // The ref is detached when the control switches back to Send.
     if (!button && stopControl.current === document.activeElement) inputRef.current?.focus({ preventScroll: true });
     stopControl.current = button;
   }, []);
@@ -423,7 +423,8 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   const serviceUnavailable = !!backendFailure || backendRestarting;
   const stopJobId = loadingHere ? loadingJob.id : startingLoadHere ? studio.submittingModelLoad?.id : displayJobId;
   const failedStop = stopJobId && !serviceUnavailable && !stopping && studio.stopFailure?.id === stopJobId ? studio.stopFailure : null;
-  const inspectionMessageId = displayJobId ? activeThread.messages.find((message) => message.inspectionJobId === displayJobId)?.id : undefined;
+  const inspectionMessageId = useMemo(() => displayJobId ? messages.find((message) => message.inspectionJobId === displayJobId)?.id : undefined,
+    [displayJobId, messages]);
   const liveJob = displayJobId && status.job.id === displayJobId && status.job.threadId === activeThread.id ? status.job : null;
   const restoringReply = pendingHere && !liveJob && !studio.submitting;
   const canStop = (responseHere || loadingHere || (startingLoadHere && status.supportsPendingStop === true))
@@ -517,10 +518,14 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   } : null, [replyContent, replyImage, replyImages, replyModelName, replyReasoning, replyStartedAt, streamId]);
   const foundMessageId = activeMatch?.savedPromptId ? undefined : activeMatch?.messageId;
   const foundVersionId = foundMessageId ? activeMatch?.versionId : undefined;
-  const displayMessages = useMemo(() => activeThread.messages.map((message) => {
-    const previewId = foundMessageId === message.id ? foundVersionId : replyPreviews[`${activeThread.id}:${message.id}`];
-    return showReplyVersion(message, previewId);
-  }), [activeThread.id, activeThread.messages, foundMessageId, foundVersionId, replyPreviews]);
+  const displayMessages = useMemo(() => {
+    if (!foundVersionId && !Object.keys(replyPreviews).length) return messages;
+    return messages.map((message) => {
+      if (!message.alternatives?.length) return message;
+      const previewId = foundMessageId === message.id ? foundVersionId : replyPreviews[`${threadId}:${message.id}`];
+      return showReplyVersion(message, previewId);
+    });
+  }, [foundMessageId, foundVersionId, messages, replyPreviews, threadId]);
   const storedRows = useMemo<TranscriptRow[]>(() => {
     let previouslyTrimmed = false;
     let previouslySummarized = false;
@@ -764,7 +769,14 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
     (visible[0] ?? feed).focus({ preventScroll: true });
   };
 
-  const savedImages = useMemo(() => displayMessages.flatMap((message) => messageImages(message).map((image) => chatImageRecord(image, message.createdAt))), [displayMessages]);
+  const savedImages = useMemo(() => {
+    const images: ImageRecord[] = [];
+    for (const message of displayMessages) {
+      if (!message.generatedImage && !message.generatedImages?.length) continue;
+      for (const image of messageImages(message)) images.push(chatImageRecord(image, message.createdAt));
+    }
+    return images;
+  }, [displayMessages]);
   const imageCollection = useMemo(() => {
     if (!streamId || (!replyImage && !replyImages?.length)) return savedImages;
     const liveImages = replyImages?.length ? replyImages : replyImage ? [replyImage] : [];
