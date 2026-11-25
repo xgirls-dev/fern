@@ -6,7 +6,7 @@ import unittest
 import urllib.request
 import json
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from http.server import ThreadingHTTPServer
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
@@ -18,7 +18,10 @@ import gallery_store
 def stalled_inference(connection):
     count = 0
     while True:
-        request = connection.recv()
+        try:
+            request = connection.recv()
+        except EOFError:
+            return
         count += 1
         if request.get("stall"):
             connection.send(("log", "Inside an uninterruptible model operation"))
@@ -26,7 +29,46 @@ def stalled_inference(connection):
         connection.send(("result", (f"image-{count}.png", 1.0)))
 
 
+def inference_with_exit_marker(connection):
+    request = connection.recv()
+    connection.send(("result", ("image.png", 1.0)))
+    try:
+        connection.recv()
+    except EOFError:
+        Path(request["marker"]).touch()
+
+
 class GenerationLifecycleTests(unittest.TestCase):
+    def test_idle_worker_releases_its_runtime_before_close_returns(self):
+        with tempfile.TemporaryDirectory() as directory:
+            marker = Path(directory) / "released"
+            worker = GenerationWorker(target=inference_with_exit_marker)
+            self.addCleanup(worker.close)
+            worker.generate(cancel_event=threading.Event(), log=lambda _: None, marker=marker)
+            worker.close()
+            self.assertTrue(marker.exists())
+            self.assertIsNone(worker.process)
+            self.assertIsNone(worker.connection)
+
+    def test_shutdown_keeps_a_live_worker_handle_until_it_can_be_reaped(self):
+        worker = GenerationWorker()
+        process = worker.process = Mock()
+        connection = worker.connection = Mock()
+        process.is_alive.return_value = True
+        with self.assertRaisesRegex(RuntimeError, "still releasing GPU resources"):
+            worker.close()
+        connection.close.assert_called_once()
+        process.terminate.assert_called_once()
+        process.kill.assert_called_once()
+        process.close.assert_not_called()
+        self.assertIs(worker.process, process)
+        self.assertIsNone(worker.connection)
+
+        process.is_alive.return_value = False
+        worker.close()
+        process.close.assert_called_once()
+        self.assertIsNone(worker.process)
+
     def test_tts_stop_discards_partial_wav_and_allows_next_job(self):
         with tempfile.TemporaryDirectory() as directory:
             outputs = Path(directory)

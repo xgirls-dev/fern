@@ -89,23 +89,36 @@ class GenerationWorker:
         self.lock = Lock()
 
     def close(self):
+        if self.lock.acquire(blocking=False):
+            try:
+                self._close_unlocked(graceful=True)
+            finally:
+                self.lock.release()
+            return
         self.interrupt()
         with self.lock:
             self._close_unlocked()
 
-    def _close_unlocked(self):
-        if self.process is not None:
-            if self.process.is_alive():
-                self.process.terminate()
-            self.process.join(timeout=2)
-            if self.process.is_alive():
-                self.process.kill()
-                self.process.join(timeout=2)
-            self.process.close()
-            self.process = None
+    def _close_unlocked(self, *, graceful=False):
         if self.connection is not None:
             self.connection.close()
             self.connection = None
+        process = self.process
+        if process is None:
+            return
+        # Closing the pipe lets the idle loop exit and release its runtime.
+        if graceful:
+            process.join(timeout=0.75)
+        if process.is_alive():
+            process.terminate()
+            process.join(timeout=2)
+        if process.is_alive():
+            process.kill()
+            process.join(timeout=4)
+        if process.is_alive():
+            raise RuntimeError("The image worker is still releasing GPU resources. Try again in a moment.")
+        process.close()
+        self.process = None
 
     def interrupt(self):
         """Terminate an in-flight inference process so cancellation is immediate."""
@@ -122,13 +135,20 @@ class GenerationWorker:
         with self.lock:
             if cancel_event.is_set():
                 raise GenerationCancelled("Generation stopped by user.")
-            if self.process is None or not self.process.is_alive():
+            if self.connection is None or self.process is None or not self.process.is_alive():
                 self._close_unlocked()
                 context = multiprocessing.get_context("spawn")
-                self.connection, child = context.Pipe()
-                self.process = context.Process(target=self.target, args=(child,), daemon=True)
-                self.process.start()
-                child.close()
+                parent, child = context.Pipe()
+                process = context.Process(target=self.target, args=(child,), daemon=True)
+                try:
+                    process.start()
+                except BaseException:
+                    parent.close()
+                    raise
+                finally:
+                    child.close()
+                self.process = process
+                self.connection = parent
             try:
                 self.connection.send(request)
                 while True:
@@ -144,6 +164,9 @@ class GenerationWorker:
                             raise RuntimeError(value)
                     elif not self.process.is_alive():
                         raise RuntimeError("The generation worker exited. Try generating again.")
-            except BaseException:
-                self._close_unlocked()
+            except BaseException as error:
+                try:
+                    self._close_unlocked()
+                except (OSError, RuntimeError) as cleanup_error:
+                    error.add_note(str(cleanup_error))
                 raise
