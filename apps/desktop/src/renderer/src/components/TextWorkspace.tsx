@@ -962,7 +962,15 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
       </header>
 
       <div className={`text-layout${panel ? " text-layout--inspecting" : ""}`}>
-      <div className="text-main">
+      <div className="text-main" onKeyDown={(event) => {
+        if (event.key !== "Escape" || !canStopReply || stopping || event.defaultPrevented || event.repeat
+          || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || isComposingKey(event.nativeEvent)) return;
+        const target = event.target;
+        if (!(target instanceof Element) || !event.currentTarget.contains(target)) return;
+        if (target !== inputRef.current && target.closest("input, textarea, select, [contenteditable], [role=dialog], [role=menu], [role=listbox]")) return;
+        event.preventDefault();
+        void studio.stop(threadId);
+      }}>
       {findOpen && <TextFindBar key={`${activeThread.id}:${findRevision}`} input={findInput} initialQuery={findInitialQuery}
         messages={activeThread.messages} liveMessage={streamingMessage} onMatch={setFindMatch} onClose={closeFind} />}
       <div className="text-conversation" ref={feedRef} onScroll={onScroll} onFocusCapture={onHistoryFocus} onKeyDown={(event) => {
@@ -1104,10 +1112,6 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
             }}
             onKeyDown={(event) => {
               if (isComposingKey(event.nativeEvent)) return;
-              if (event.key === "Escape" && canStopReply) {
-                event.preventDefault();
-                void studio.stop(activeThread.id);
-              }
               if (event.key === "Enter" && !event.shiftKey) {
                 event.preventDefault();
                 if (!event.repeat) submit();

@@ -81,7 +81,7 @@ try {
   assert.deepEqual(stoppedIds, [state.textRequests[1].requestId]);
   assert(state.textRequests[2].messages.some(({ role, content }) => role === "user" && content.includes("ORCHID-42")));
   assert.equal(state.textRequests[2].threadId, state.textRequests[1].threadId);
-  assert(warm.stoppedReply.stopClickMs >= warm.stoppedReply.firstAnswerFrameMs);
+  assert(warm.stoppedReply.stopKeyMs >= warm.stoppedReply.firstAnswerFrameMs);
   assert(Number.isFinite(warm.stopToBackendEventMs) && warm.stopToBackendEventMs >= 0);
   assert(Number.isFinite(warm.stopToSendReadyFrameMs) && warm.stopToSendReadyFrameMs >= 0);
   assert(Number.isFinite(warm.stopToSettledFrameMs) && warm.stopToSettledFrameMs >= 0);
