@@ -3711,7 +3711,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Fern image generation API server")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--cors", action="store_true", help="Allow cross-origin requests (dev mode)")
+    parser.add_argument("--desktop", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.desktop and os.name == "nt":
+        from windows_service_job import contain_service_process_tree
+
+        contain_service_process_tree()
     run_server(args.port, allow_cors=args.cors)
 
 

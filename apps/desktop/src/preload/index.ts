@@ -1,8 +1,8 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { StudioApi } from "./types";
+import type { BackendFailure, BackendFailureStage, StudioApi } from "./types";
 
 let cachedApiBaseUrl: string | null = null;
-let cachedBackendError: string | null = null;
+let cachedBackendError: BackendFailure | null = null;
 const apiUrlWaiters = new Set<{ resolve: (url: string) => void; reject: (error: Error) => void }>();
 
 ipcRenderer.on("studio:backend-starting", () => {
@@ -17,8 +17,8 @@ ipcRenderer.on("studio:api-base-url", (_event, url: string) => {
   apiUrlWaiters.clear();
 });
 
-ipcRenderer.on("studio:backend-error", (_event, message: string) => {
-  cachedBackendError = message;
+ipcRenderer.on("studio:backend-error", (_event, message: string, stage: BackendFailureStage) => {
+  cachedBackendError = { message, stage };
   cachedApiBaseUrl = null;
   for (const waiter of apiUrlWaiters) waiter.reject(new Error(message));
   apiUrlWaiters.clear();
@@ -28,7 +28,7 @@ function waitForApiBaseUrl(timeoutMs = 90_000): Promise<string> {
   if (cachedApiBaseUrl) {
     return Promise.resolve(cachedApiBaseUrl);
   }
-  if (cachedBackendError) return Promise.reject(new Error(cachedBackendError));
+  if (cachedBackendError) return Promise.reject(new Error(cachedBackendError.message));
 
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -66,11 +66,11 @@ const studioApi: StudioApi = {
   },
 
   onBackendError: (listener) => {
-    const handler = (_event: Electron.IpcRendererEvent, message: string) =>
-      listener(message);
+    const handler = (_event: Electron.IpcRendererEvent, message: string, stage: BackendFailureStage) =>
+      listener(message, stage);
     ipcRenderer.on("studio:backend-error", handler);
     if (cachedBackendError) {
-      listener(cachedBackendError);
+      listener(cachedBackendError.message, cachedBackendError.stage);
     }
     return () => ipcRenderer.off("studio:backend-error", handler);
   },

@@ -47,6 +47,7 @@ import { getApiBaseUrl, resolveAssetUrl, subscribeToApiBaseUrl } from "../lib/ap
 import type { ChatSearchMatch } from "../lib/chatSearch";
 import { notify } from "../lib/notifications";
 import { canContinueTextReply, countTextPromptCharacters, findChatImage, latestTextPrompt, matchesTextMessage, replyVersions, resolveTextModel, savedVersionForDeletedReply, showReplyVersion, TEXT_MESSAGE_CHARACTER_LIMIT, textModelReadiness, textPromptExceedsLimit, type GeneratedChatImage, type TextMessage } from "../lib/textThreads";
+import type { BackendFailure } from "../../../preload/types";
 import { chatImageErrors, chatImageSettings, MAX_IMAGE_PROMPT_SUFFIX, type ChatImageSettings } from "../lib/chatImageSettings";
 import { isKleinLoraModel, maxReferenceImages } from "../lib/imageModels";
 import { chatTokenLimits, ggufLoadOptions, isTextModelInstalling, KV_CACHE_TYPES, type ChatPane, type GgufLoadOptions, type TextMode, type TextSamplingSettings, type TextThread } from "../lib/textThreads";
@@ -199,8 +200,9 @@ export interface TextWorkspaceProps {
   onOpenThreadSearch: () => void;
   onClosePane: () => void;
   sidebarCollapsed?: boolean;
-  backendStartupError?: string | null;
-  onRetryBackendStartup?: () => void;
+  backendFailure?: BackendFailure | null;
+  backendRestarting?: boolean;
+  onRestartBackend?: () => void;
   onSetupModels: (task: SetupTask, threadId: string) => void;
   focusRequest?: number;
   findRequest?: { threadId: string; query: string } | null;
@@ -214,7 +216,7 @@ export interface TextWorkspaceProps {
 }
 
 export function TextWorkspace({ studio, thread: activeThread, pane, focused, split, onChooseChat, onOpenThreadSearch, onClosePane,
-  sidebarCollapsed = false, backendStartupError, onRetryBackendStartup, onSetupModels, focusRequest = 0, findRequest, onFindRequestHandled, imageGpuAvailable,
+  sidebarCollapsed = false, backendFailure, backendRestarting, onRestartBackend, onSetupModels, focusRequest = 0, findRequest, onFindRequestHandled, imageGpuAvailable,
   onOpenImage, onNewChat, onCreateImage, onCreateSpeech, onOpenCompute }: TextWorkspaceProps) {
   const { status, statusError, actionError, busy } = studio;
   const { refreshModels } = studio;
@@ -369,7 +371,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   const replaceablePrompt = latestTextPrompt(activeThread.messages);
   const lastPrompt = useMemo(() => messages[messages.map((message) => message.role).lastIndexOf("user")], [messages]);
   const promptNeedsVision = !!(lastPrompt?.image || lastPrompt?.includedImage);
-  const canRetry = modelAvailable && !runtimeIssue && (selected.supportsVision || !promptNeedsVision);
+  const canRetry = studio.attachmentReady && modelAvailable && !runtimeIssue && (selected.supportsVision || !promptNeedsVision);
   const hasPromptLimit = !!selected && selected.format !== "gguf";
   const draftCharacters = useMemo(() => hasPromptLimit && activeThread.draft.length >= PROMPT_COUNT_THRESHOLD
     ? countTextPromptCharacters(activeThread.draft, TEXT_MESSAGE_CHARACTER_LIMIT + 1) : undefined,
@@ -377,9 +379,9 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   const draftTooLong = (draftCharacters ?? 0) > TEXT_MESSAGE_CHARACTER_LIMIT;
   const revisionTooLong = useMemo(() => hasPromptLimit && textPromptExceedsLimit(promptEdit?.content ?? ""),
     [hasPromptLimit, promptEdit?.content]);
-  const canSend = !busy && !attachingImage && modelAvailable && !runtimeIssue && !incompatibleImages && !draftTooLong && (!!activeThread.draft.trim() || hasDraftImage);
+  const canSend = studio.attachmentReady && !busy && !attachingImage && modelAvailable && !runtimeIssue && !incompatibleImages && !draftTooLong && (!!activeThread.draft.trim() || hasDraftImage);
   const canAttach = studio.attachmentReady && !attachingImage && !activeThread.draftContextImage;
-  const canAttachDocuments = !busy && documents.length < MAX_CHAT_DOCUMENTS;
+  const canAttachDocuments = studio.attachmentReady && !busy && documents.length < MAX_CHAT_DOCUMENTS;
   useEffect(() => { dragDepth.current = 0; setFileOver(false); }, [activeThread.id]);
   const imageModels = status.imageToolModels ?? [];
   const imageModelAvailable = imageModels.some((model) => activeThread?.imageModel === "auto" || activeThread?.imageModel === model.id);
@@ -409,10 +411,12 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   const canForkReplies = !busy && !deferredBusy;
   const canDeleteMessages = !responseHere && !deferredResponseHere;
   const displayJobId = activeThread.pendingJobId ?? (runningHere ? status.job.id : null);
-  const failedStop = responseHere && !stopping && studio.stopFailure?.id === displayJobId ? studio.stopFailure : null;
+  const serviceUnavailable = !!backendFailure || backendRestarting;
+  const failedStop = responseHere && !serviceUnavailable && !stopping && studio.stopFailure?.id === displayJobId ? studio.stopFailure : null;
   const inspectionMessageId = displayJobId ? activeThread.messages.find((message) => message.inspectionJobId === displayJobId)?.id : undefined;
   const liveJob = displayJobId && status.job.id === displayJobId && status.job.threadId === activeThread.id ? status.job : null;
   const restoringReply = pendingHere && !liveJob && !studio.submitting;
+  const canStopReply = responseHere && !serviceUnavailable && studio.statusLoaded && !restoringReply;
   const restorationLabel = studio.statusLoaded ? inspectionMessageId ? "Recovering image check…" : "Recovering response…"
     : "Checking for the previous response…";
   const replyContent = pendingReplyOutput?.content || liveJob?.partialText || "";
@@ -422,17 +426,19 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   useEffect(() => { setDeleteTarget(null); }, [activeThread.id, responseHere]);
   const runningThread = status.job.status === "running" ? studio.threads.find((thread) => thread.id === status.job.threadId) : undefined;
   const otherResponseThread = responseHere ? undefined : runningThread ?? studio.threads.find((thread) => thread.pendingJobId);
-  const reconnecting = !!statusError && (responseHere || !!otherResponseThread);
+  const reconnecting = !serviceUnavailable && !!statusError && (responseHere || !!otherResponseThread);
   const creatingImage = phase.startsWith("Generating image") || phase.startsWith("Generating an image");
   // Image batches publish previews before generation finishes. An existing
   // preview only implies review after the image generation phase ends.
-  const checkingImage = responseHere && !restoringReply && !reconnecting && !stopping && !creatingImage &&
+  const checkingImage = responseHere && !serviceUnavailable && !restoringReply && !reconnecting && !stopping && !creatingImage &&
     (!!inspectionMessageId || runningHere && (/^Checking (the (generated )?)?image\b/.test(phase) || !!liveJob?.inspection || !!replyImage));
   const inspectionCaption = reconnecting ? (stopping ? "Reconnecting to stop…" : "Reconnecting to check the image…")
     : stopping ? "Stopping image check…" : restoringReply ? restorationLabel : "Checking image…";
-  const modelNotice: ModelReadiness | null = backendStartupError
-    ? { label: "Fern couldn’t start its local service.", detail: backendStartupError, tone: "error",
-        action: onRetryBackendStartup ? { label: "Retry starting Fern", run: onRetryBackendStartup } : undefined }
+  const modelNotice: ModelReadiness | null = backendFailure
+    ? { label: backendFailure.stage === "running" ? backendFailure.message : "Fern couldn’t start its local service.",
+        detail: backendFailure.stage === "startup" ? backendFailure.message : undefined, tone: "error",
+        action: onRestartBackend ? { label: backendFailure.stage === "running" ? "Restart local service" : "Retry starting Fern", run: onRestartBackend } : undefined }
+    : backendRestarting ? { label: "Restarting local service…", tone: "pending" }
     : responseHere || otherResponseThread ? null
     : installing ? { label: `${repairing ? "Repairing" : "Installing"} ${installName ?? "a chat model"}`, detail: install.phase,
         tone: "pending", action: { label: repairing ? "View model repair" : "View model download", run: openModels } }
@@ -456,7 +462,8 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   const catalogNotice = reconnecting || modelNotice?.tone === "error" ? null : catalogError;
   const undoBlocked = responseHere;
   const replyPaused = runningHere && studio.replyPaused;
-  const statusLabel = reconnecting ? stopping ? "Reconnecting to stop…" : "Reconnecting to the text runtime…"
+  const statusLabel = serviceUnavailable && responseHere ? "Response interrupted."
+    : reconnecting ? stopping ? "Reconnecting to stop…" : "Reconnecting to the text runtime…"
     : stopping ? "Stopping…"
     : restoringReply ? restorationLabel
     : pendingHere ? liveJob && liveJob.status !== "idle" ? "Finishing response…" : "Starting response…"
@@ -792,7 +799,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
     return <ChatImage key={image.name} image={image} ordinal={index + 1} showFindCaption={showFindCaption}
       checked={firstImage && message?.metrics?.visionChecked} checkStatus={checkStatus}
       onRetryCheck={canRecover ? () => void studio.retryInspection(threadId, message.id) : undefined}
-      canRetryCheck={!busy && !!selected?.supportsVision && !runtimeIssue}
+      canRetryCheck={studio.attachmentReady && !busy && !!selected?.supportsVision && !runtimeIssue}
       contextLabel={draftContextName === image.name
         ? "Selected for next message"
         : message && latestContext?.imageNames?.includes(image.name) ? "Used in the latest response" : undefined}
@@ -803,7 +810,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
       } : undefined}
       onOpen={() => onOpenImage(collection[index], collection)} />;
   }, [attachingImage, busy, checkingImage, displayJobId, draftContextName, draftImage, imageCollection, inputRef, inspectionCaption, latestContext, onOpenImage, replyImage?.name,
-    runtimeIssue, selected?.supportsVision, studio.clearAttachment, studio.retryInspection, studio.updateThread, threadId]);
+    runtimeIssue, selected?.supportsVision, studio.attachmentReady, studio.clearAttachment, studio.retryInspection, studio.updateThread, threadId]);
 
   const renderRow = useCallback((row: TranscriptRow, index: number, live?: { progress: TextReplyProgress; previous: boolean }) => {
     const { message } = row;
@@ -818,7 +825,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
     const hasImage = !!(message.image || message.includedImage);
     const editUnavailable = busy ? "Finish the current response before sending this revision."
       : !modelAvailable ? "Choose an installed model to send this revision."
-      : runtimeIssue ? "The text runtime is unavailable."
+      : runtimeIssue || !studio.attachmentReady ? "The text runtime is unavailable."
       : hasImage && !selected?.supportsVision ? "Choose a vision model to send this image."
       : revisionTooLong ? PROMPT_LIMIT_MESSAGE : "";
     return <TextChatMessage
@@ -864,7 +871,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
             : { label: "Browse models", run: openModels }
         : undefined}
       onContinue={latest && !preview && !live && canContinueTextReply(message) ? continueReply : undefined}
-      canContinue={latest && !busy && modelAvailable && !runtimeIssue}
+      canContinue={studio.attachmentReady && latest && !busy && modelAvailable && !runtimeIssue}
       onSelectVersion={!user && !live && message.alternatives?.length ? selectVersion : undefined}
       busy={(latest && busy) || !!match}
     />;
@@ -872,7 +879,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
     deleteMessage, deleteTarget, editMessage, forkReply, hasAlternativeModel, hasAlternativeVisionModel, jumpToLatest, lastMessage, messages,
     modelAvailable, openModels, openRecoverySetting, promptEdit, promptNeedsVision, revisionTooLong, renderChatImage,
     replaceablePrompt?.id, requestDelete, requestedEdit, restoreReasoningId, retry, runtimeIssue, selectVersion, selected?.supportsVision,
-    studio.restorePromptVersion, studio.send, studio.updateThread, threadId]);
+    studio.attachmentReady, studio.restorePromptVersion, studio.send, studio.updateThread, threadId]);
   const renderStoredRow = useCallback((index: number) => renderRow(storedRows[index], index), [renderRow, storedRows]);
   const liveReply = useMemo(() => {
     if (!streamingMessage || !liveKey || !liveMessageId) return;
@@ -907,7 +914,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
     (phaseVisibility?.phase === inlinePhase ? phaseVisibility.visible : followingLatest);
   const showDraftCount = !draftTooLong && draftCharacters !== undefined && draftCharacters >= PROMPT_COUNT_THRESHOLD;
   const composerHint = showDraftCount ? `${draftCharacters.toLocaleString()} / ${TEXT_MESSAGE_CHARACTER_LIMIT.toLocaleString()}`
-    : responseHere ? stopping ? "" : "Esc to stop"
+    : responseHere ? canStopReply && !stopping ? "Esc to stop" : ""
     : busy || attachingImage || modelNotice || incompatibleImages || draftTooLong ? "" : "Enter to send · Shift + Enter for newline";
 
   return (
@@ -1097,7 +1104,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
             }}
             onKeyDown={(event) => {
               if (isComposingKey(event.nativeEvent)) return;
-              if (event.key === "Escape" && (runningHere || pendingHere)) {
+              if (event.key === "Escape" && canStopReply) {
                 event.preventDefault();
                 void studio.stop(activeThread.id);
               }
@@ -1111,7 +1118,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
             imageTooltip={activeThread.draftContextImage ? "Remove the selected conversation image to attach a new file"
               : attachingImage ? "Attaching image…" : "Attach chat image · Paste or drop an image"}
             mode={selected?.supportsReasoning ? activeThread.mode : undefined} model={selectedModel} models={modelOptions}
-            responding={responseHere} stopping={stopping} stopRef={bindStopControl}
+            responding={canStopReply} stopping={stopping} stopRef={bindStopControl}
             sendTooltip={responseHere ? "" : attachingImage ? "Attaching image…"
               : activity || unavailableReason || (draftTooLong ? PROMPT_LIMIT_MESSAGE : "Send message")}
             onAttachDocuments={stageDocuments} onAttachImage={stageAttachment} onChangeMode={changeMode}

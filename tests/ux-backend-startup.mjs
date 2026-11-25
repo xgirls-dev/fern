@@ -33,7 +33,7 @@ try {
   await retry.press("Enter");
   await expect(startupAlert).toHaveCount(0);
   await expect(composer).toBeFocused();
-  await expect(page.getByText("Checking local models…", { exact: true })).toBeVisible();
+  await expect(page.getByText("Restarting local service…", { exact: true })).toBeVisible();
   await expect(send).toBeDisabled();
   finishRetry();
   await expect(send).toBeEnabled();

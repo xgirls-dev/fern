@@ -1,4 +1,9 @@
 export type ThemeMode = "light" | "dark" | "system";
+export type BackendFailureStage = "startup" | "running";
+export interface BackendFailure {
+  message: string;
+  stage: BackendFailureStage;
+}
 
 export interface WorkspaceList {
   active: string;
@@ -23,7 +28,7 @@ export interface StudioApi {
   retryBackend?: () => Promise<void>;
   adjustZoom: (action: "in" | "out" | "reset") => Promise<number>;
   onApiBaseUrl: (listener: (url: string) => void) => () => void;
-  onBackendError: (listener: (message: string) => void) => () => void;
+  onBackendError: (listener: (message: string, stage?: BackendFailureStage) => void) => () => void;
   getTheme: () => Promise<"light" | "dark">;
   setTheme: (theme: ThemeMode) => Promise<"light" | "dark">;
   onThemeChanged: (listener: (theme: "light" | "dark") => void) => () => void;

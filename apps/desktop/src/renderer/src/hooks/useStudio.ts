@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { BackendFailure, BackendFailureStage } from "../../../preload/types";
 import {
   clearLocalData,
   deleteThreadAssets,
@@ -168,7 +169,7 @@ const BACKEND_CONNECT_INTERVAL_MS = 500;
 export function useStudio(computeDevice: "GPU" | "CPU" = "GPU") {
   const [ready, setReady] = useState(false);
   const [connecting, setConnecting] = useState(false);
-  const [backendStartupError, setBackendStartupError] = useState<string | null>(null);
+  const [backendFailure, setBackendFailure] = useState<BackendFailure | null>(null);
   const [workspace, setWorkspace] = useState(() =>
     loadThreadWorkspace(loadSettings()),
   );
@@ -642,18 +643,21 @@ export function useStudio(computeDevice: "GPU" | "CPU" = "GPU") {
     if (active) invalidateImages();
   }, []);
 
-  const connectBackend = useCallback(async () => {
+  const connectBackend = useCallback(async (signal?: AbortSignal) => {
     setConnecting(true);
     setError(null);
 
     const deadline = Date.now() + BACKEND_CONNECT_TIMEOUT_MS;
-    while (Date.now() < deadline) {
+    while (!signal?.aborted && Date.now() < deadline) {
       try {
-        if (await refresh()) {
+        const connected = await refresh();
+        if (signal?.aborted) return false;
+        if (connected) {
           setConnecting(false);
           return true;
         }
       } catch (err) {
+        if (signal?.aborted) return false;
         const message =
           err instanceof Error ? err.message : "Backend connection failed";
         if (
@@ -670,6 +674,7 @@ export function useStudio(computeDevice: "GPU" | "CPU" = "GPU") {
       );
     }
 
+    if (signal?.aborted) return false;
     setConnecting(false);
     setError(
       "Timed out waiting for the Fern AI backend. Quit other Fern instances and try again.",
@@ -679,43 +684,51 @@ export function useStudio(computeDevice: "GPU" | "CPU" = "GPU") {
 
   useEffect(() => {
     let cancelled = false;
+    let reportedFailure = false;
     let connectedUrl: string | null = null;
+    let connection: AbortController | undefined;
     const connected = (url: string) => {
       if (cancelled || connectedUrl === url) return;
+      connection?.abort();
+      connection = new AbortController();
       connectedUrl = url;
+      reportedFailure = false;
       setApiBaseUrl(url);
-      setBackendStartupError(null);
+      setBackendFailure(null);
       setReady(true);
-      void connectBackend();
+      void connectBackend(connection.signal);
     };
-    const failed = (message: string) => {
+    const failed = (message: string, stage: BackendFailureStage = "startup") => {
       if (cancelled) return;
+      connection?.abort();
+      reportedFailure = true;
       connectedUrl = null;
-      setBackendStartupError(message);
+      setBackendFailure({ message, stage });
       setReady(false);
       setConnecting(false);
     };
     void window.studio.getApiBaseUrl().then(connected, (err: unknown) => {
-      failed(err instanceof Error ? err.message : "Could not start Fern’s local service.");
+      if (!reportedFailure) failed(err instanceof Error ? err.message : "Could not start Fern’s local service.");
     });
     const unsubscribeUrl = window.studio.onApiBaseUrl(connected);
     const unsubscribeError = window.studio.onBackendError(failed);
 
     return () => {
       cancelled = true;
+      connection?.abort();
       unsubscribeUrl();
       unsubscribeError();
     };
   }, [connectBackend]);
 
-  const retryBackendStartup = useCallback(async () => {
+  const restartBackend = useCallback(async () => {
     if (!window.studio.retryBackend) return;
-    setBackendStartupError(null);
+    setBackendFailure(null);
     setConnecting(true);
     try {
       await window.studio.retryBackend();
     } catch (error) {
-      setBackendStartupError(error instanceof Error ? error.message : "Could not restart Fern’s local service.");
+      setBackendFailure({ message: error instanceof Error ? error.message : "Could not restart Fern’s local service.", stage: "startup" });
       setConnecting(false);
     }
   }, []);
@@ -1158,8 +1171,8 @@ export function useStudio(computeDevice: "GPU" | "CPU" = "GPU") {
     deleteThread,
     ready,
     connecting,
-    backendStartupError,
-    retryBackendStartup: window.studio.retryBackend ? retryBackendStartup : undefined,
+    backendFailure,
+    restartBackend: window.studio.retryBackend ? restartBackend : undefined,
     settings,
     updateSettings,
     status,
