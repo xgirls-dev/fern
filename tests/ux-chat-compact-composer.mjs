@@ -12,7 +12,9 @@ const documents = [
   "Agenda revision and decision log.pdf",
   "Equipment inventory and power supply logistics.pdf",
 ].map((name, index) => ({ id: "doc-" + String(index).repeat(64), bytes: 2048, name }));
-const model = { id: "local", name: "Gemma 4 E4B Instruct", format: "gguf", supportsReasoning: true, installed: true };
+const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg==", "base64");
+const imageName = "chat-image-" + "a".repeat(32) + ".png";
+const model = { id: "local", name: "Gemma 4 E4B Instruct", format: "gguf", supportsReasoning: true, supportsVision: true, installed: true };
 const activeId = "text-thread-workshop";
 const { page, state, errors, close } = await fixture({
   firstRun: true,
@@ -35,6 +37,8 @@ const draft = Array.from({ length: 15 }, (_, index) =>
   `${index + 1}. Confirm the room schedule and the supplies for this part of the workshop.`).join("\n");
 
 try {
+  await page.route("**/api/text/images", (route) => route.fulfill({ json: { image: imageName } }));
+  await page.route("**/references/" + imageName, (route) => route.fulfill({ contentType: "image/png", body: png }));
   await page.route("**/api/text/job", (route) => route.fulfill({ json: state.textStatus.job }));
   await button("Open split chat").click();
   await page.getByRole("dialog", { name: "Choose a chat", exact: true }).getByRole("button", { name: /^Program review/ }).click();
@@ -57,10 +61,19 @@ try {
   })).toBe(true);
   await expect(reply).toBeInViewport({ ratio: 1 });
   await expect(live.getByText(model.name, { exact: true })).toBeInViewport({ ratio: 1 });
+  await right.getByLabel("Chat image file", { exact: true }).setInputFiles({
+    name: "Workplan.png", buffer: png, mimeType: "image/png",
+  });
+  const image = right.getByRole("img", { name: "Image to send", exact: true });
+  await expect(image).toBeInViewport({ ratio: 1 });
+  await expect(reply).toBeInViewport({ ratio: 1 });
+  await expect(live.getByText(model.name, { exact: true })).toBeInViewport({ ratio: 1 });
+  await expect(stop).toBeInViewport({ ratio: 1 });
   await stop.click();
   await expect(right.getByText("Stopped · Partial response", { exact: true })).toBeVisible();
   await expect(right.getByText(partial, { exact: true })).toBeInViewport();
   await expect(field).toHaveValue(draft);
+  await expect(image).toBeVisible();
 
   const remove = files.getByRole("button", { name: /^Remove / });
   await remove.first().focus();
@@ -69,7 +82,7 @@ try {
   await expect(remove.last()).toBeInViewport({ ratio: 1 });
   await expect.poll(() => files.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
   assert.deepEqual(errors, []);
-  console.log("The live reply, Stop, multiline draft, and eight document controls fit the minimum split chat.");
+  console.log("The live reply, Stop, multiline draft, an image attachment, and eight document controls fit the minimum split chat.");
 } finally {
   await close();
 }
