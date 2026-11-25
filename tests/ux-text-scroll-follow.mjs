@@ -63,6 +63,21 @@ try {
   await atLatest();
   const bounds = await feed.boundingBox();
   await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+  await page.mouse.wheel(0, -12);
+  await expect(jump).toBeVisible();
+  const beforeReflow = await position();
+  assert(beforeReflow.gap > 2 && beforeReflow.gap <= 24);
+  const prompt = feed.locator(".text-message--user").first();
+  // Model a layout update in an earlier message while the reader is just above the live tail.
+  await prompt.evaluate((element) => { element.style.paddingBlockEnd = "200px"; });
+  await expect.poll(async () => (await position()).top - beforeReflow.top).toBeGreaterThan(190);
+  await expect(feed).not.toHaveAttribute("data-following", "true");
+  await expect.poll(async () => (await position()).gap).toBeCloseTo(beforeReflow.gap, 0);
+  await page.mouse.wheel(0, 80);
+  await atLatest();
+  await expect(jump).toHaveCount(0);
+  await prompt.evaluate((element) => { element.style.paddingBlockEnd = ""; });
+  await atLatest();
   await page.mouse.wheel(0, -26);
   await expect.poll(async () => (await position()).gap).toBeGreaterThan(20);
   await expect(jump).toBeVisible();

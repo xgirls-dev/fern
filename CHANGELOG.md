@@ -26,6 +26,7 @@ lands directly on `main` instead of through labeled pull requests.
 
 ### Fixed
 
+- Keep the reading position when an earlier message changes height or when returning to a chat in a compact split pane.
 - Recover a chat deletion or Undo when a reload interrupts saving the active transcript.
 - Resume typing at the same caret after attaching a document. The chat composer shows when it can accept a document drop even if a conversation image is already selected.
 - Keep Stop responsive while Fern reads a large chat document.

@@ -161,6 +161,7 @@ export function useTextScroll(threadId: string, persistPosition = true) {
   const transcriptRef = useRef<HTMLDivElement>(null);
   const following = useRef(true);
   const lastTop = useRef(0);
+  const lastGap = useRef(0);
   const layout = useRef({ width: 0, hidden: false });
   const [historyVisible, setHistoryVisible] = useState(true);
   const [followingLatest, setFollowingLatest] = useState(true);
@@ -177,6 +178,7 @@ export function useTextScroll(threadId: string, persistPosition = true) {
 
   const savePosition = useCallback((feed: HTMLElement, preferred?: Element) => {
     lastTop.current = feed.scrollTop;
+    lastGap.current = distanceFromTail(feed);
     if (persistPosition) rememberPosition(threadId, feed, following.current, preferred);
     setFollowingLatest(following.current);
   }, [persistPosition, threadId]);
@@ -199,7 +201,10 @@ export function useTextScroll(threadId: string, persistPosition = true) {
     const top = feed.scrollTop;
     const gap = distanceFromTail(feed);
     if (top < lastTop.current && gap > tailTolerance) following.current = false;
-    if (!following.current && top > lastTop.current && gap <= resumeTolerance) {
+    // Scroll anchoring can move scrollTop when an earlier row grows. Resume only
+    // after movement toward the tail, allowing for layout rounding near the end.
+    const approachedTail = gap < lastGap.current && (gap <= tailTolerance || gap < lastGap.current - tailTolerance);
+    if (!following.current && top > lastTop.current && gap <= resumeTolerance && approachedTail) {
       const focused = document.activeElement;
       const workingInChat = focused?.matches(conversationControl) && feed.contains(focused);
       if (!workingInChat && !chatSelectionIntersects(feed)) {
@@ -289,12 +294,14 @@ export function useTextScroll(threadId: string, persistPosition = true) {
       if (!restorePosition(feed, position)) {
         pendingRestore.current = position;
         lastTop.current = feed.scrollTop;
+        lastGap.current = distanceFromTail(feed);
         markdownObserver.observe(transcript, { childList: true, subtree: true });
         return;
       }
       pendingRestore.current = undefined;
       markdownObserver.disconnect();
       lastTop.current = feed.scrollTop;
+      lastGap.current = distanceFromTail(feed);
       // Reflow refines the pixel fallback while the saved line anchor stays valid.
       position.top = feed.scrollTop;
       setRestoredThread(threadId);
@@ -315,12 +322,17 @@ export function useTextScroll(threadId: string, persistPosition = true) {
       }
     } else setRestoredThread(undefined);
     lastTop.current = feed.scrollTop;
+    lastGap.current = distanceFromTail(feed);
     setFollowingLatest(following.current);
     const updateOverflow = () => setCanScroll(feed.scrollHeight - feed.clientHeight > tailTolerance);
     updateOverflow();
     const observer = new ResizeObserver(() => {
       if (!feed.clientHeight) {
-        if (!layout.current.hidden) setHistoryVisible(false);
+        if (!layout.current.hidden) {
+          setHistoryVisible(false);
+          // Keep the reading page available while the compact split pane is hidden.
+          if (!following.current) setRestoredThread(undefined);
+        }
         layout.current.hidden = true;
         return;
       }
@@ -339,6 +351,7 @@ export function useTextScroll(threadId: string, persistPosition = true) {
         if (wasHidden) setRestoredThread(threadId);
         // Reflow can clamp the viewport to the tail while the reader is paused.
         if (feed.scrollTop !== lastTop.current) savePosition(feed);
+        else lastGap.current = distanceFromTail(feed);
         return;
       }
       if (wasHidden) setRestoredThread(threadId);
@@ -349,6 +362,7 @@ export function useTextScroll(threadId: string, persistPosition = true) {
       }
       feed.scrollTop = feed.scrollHeight;
       lastTop.current = feed.scrollTop;
+      lastGap.current = distanceFromTail(feed);
     });
     observer.observe(feed);
     observer.observe(transcript);
