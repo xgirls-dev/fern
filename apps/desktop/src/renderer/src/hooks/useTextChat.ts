@@ -175,8 +175,14 @@ function settleTextJob(workspace: TextThreadWorkspace, job: TextJob, lastRunning
       status: assistant.status, error: assistant.error, errorCode: assistant.errorCode, failureDiagnostics,
     } : message)
     : thread.messages.some((message) => message.jobId === jobId) ? thread.messages : finishTextReply(thread, assistant);
+  const unavailable = job.unavailableDocumentIds ?? [];
+  const checkedDocuments = unavailable.length > 0 || (outcome === "complete" && !job.inspection);
+  const documents = checkedDocuments && thread.documents?.some((document) =>
+    !!document.unavailable !== unavailable.includes(document.id))
+    ? thread.documents.map((document) => ({ ...document, unavailable: unavailable.includes(document.id) || undefined }))
+    : thread.documents;
   return { ...workspace, threads: workspace.threads.map((item) => item === thread
-    ? { ...thread, pendingJobId: null, pendingPreview: undefined, pendingContext: undefined, messages, updatedAt: observedAt }
+    ? { ...thread, pendingJobId: null, pendingPreview: undefined, pendingContext: undefined, documents, messages, updatedAt: observedAt }
     : item) };
 }
 
@@ -931,11 +937,12 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     }
   }, [attachmentReady, getThread, setWorkspace, updateAttachment]);
 
-  const attachDocuments = useCallback(async (threadId: string, files: File[]) => {
+  const attachDocuments = useCallback(async (threadId: string, files: File[], replacementId?: string) => {
     const activeThread = getThread(threadId);
     if (!activeThread || !files.length || busy || documentUpload.current) return;
     setActionError(null);
-    if (files.length + (activeThread.documents?.length ?? 0) > MAX_CHAT_DOCUMENTS) {
+    if (replacementId && (files.length !== 1 || !activeThread.documents?.some((item) => item.id === replacementId && item.unavailable))) return;
+    if (!replacementId && files.length + (activeThread.documents?.length ?? 0) > MAX_CHAT_DOCUMENTS) {
       setActionError(`Attach up to ${MAX_CHAT_DOCUMENTS} documents per chat.`, threadId);
       return;
     }
@@ -947,8 +954,21 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
         const { document } = await uploadChatDocument(file);
         if (!isChatDocument(document)) throw new Error("Fern could not save this document.");
         setWorkspace((current) => ({ ...current, threads: current.threads.map((thread) => {
-          if (thread.id !== threadId || thread.documents?.some((item) => item.id === document.id)) return thread;
-          return { ...thread, documents: [...(thread.documents ?? []), document], updatedAt: Date.now() };
+          if (thread.id !== threadId) return thread;
+          const documents = thread.documents ?? [];
+          const targetId = replacementId ?? document.id;
+          const target = documents.find((item) => item.id === targetId);
+          if (!target) {
+            return replacementId ? thread : { ...thread, documents: [...documents, document], updatedAt: Date.now() };
+          }
+          if (!target.unavailable) return thread;
+          const alreadyAttached = documents.some((item) => item.id === document.id);
+          const updated = documents.flatMap((item) => {
+            if (item.id === document.id) return [document];
+            if (item.id !== targetId) return [item];
+            return alreadyAttached ? [] : [document];
+          });
+          return { ...thread, documents: updated, updatedAt: Date.now() };
         }) }));
       }
     } catch (error) {

@@ -214,6 +214,7 @@ export interface TextJob {
   error: string | null;
   errorCode?: string | null;
   failureDiagnostics?: TextFailureDiagnostics | null;
+  unavailableDocumentIds?: string[] | null;
   residentModel?: TextModelResidency | null;
 }
 export interface TextModelInstall {

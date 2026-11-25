@@ -6,6 +6,7 @@ export interface ChatDocument {
   id: string;
   name: string;
   bytes: number;
+  unavailable?: boolean;
 }
 
 export interface ChatDocumentSource {

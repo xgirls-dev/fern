@@ -144,6 +144,9 @@ body {
 .text-document-attachments li > span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .text-document-attachments svg, .text-document-attachments button { flex: 0 0 auto; }
 .text-document-attachments .ui-icon-button { --ui-icon-size: 26px; min-height: 26px; }
+.text-document-attachments li[data-unavailable] { max-width: min(100%, 400px); }
+.text-document-attachments li > small { flex: 0 0 auto; color: var(--warning); font-size: 11px; }
+.text-document-attachments .text-document-replace { min-height: 26px; padding: 0 5px; font-size: 12px; }
 .text-document-sources { margin-top: 12px; color: var(--muted); font-size: 12px; }
 .text-document-sources ul { display: grid; gap: 10px; margin: 10px 0 0; padding: 0; list-style: none; }
 .text-document-sources li { padding: 10px 12px; border-radius: 8px; background: var(--secondary-bg); overflow-wrap: anywhere; }

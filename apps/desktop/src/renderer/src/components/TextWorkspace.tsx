@@ -645,10 +645,10 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
     inputRef.current?.focus({ preventScroll: true });
     void studio.attachImages(threadId, files);
   }, [inputRef, studio.attachImages, threadId]);
-  const stageDocuments = useCallback((files: File[]) => {
+  const stageDocuments = useCallback((files: File[], replacementId?: string) => {
     if (!files.length) return;
     inputRef.current?.focus({ preventScroll: true });
-    void studio.attachDocuments(threadId, files);
+    void studio.attachDocuments(threadId, files, replacementId);
   }, [inputRef, studio.attachDocuments, threadId]);
   const changeMode = useCallback((mode: TextMode) => {
     studio.updateThread(threadId, { mode, ...(mode === "reasoning" && activeThread.maxNewTokens === 512 ? { maxNewTokens: 1024 } : {}) });
@@ -1116,7 +1116,11 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
             setFindThreadId(null);
             setFocusJump({ threadId, messageId: latestReplyId, block: "start" });
           }}>Go to latest reply</Button>}
-          {documents.length > 0 && <ChatDocumentAttachments documents={documents} disabled={busy} onRemove={(id) => studio.removeDocument(activeThread.id, id)} />}
+          {documents.length > 0 && <ChatDocumentAttachments key={`documents-${threadId}`} documents={documents} disabled={busy}
+            onReplace={(id, file) => stageDocuments([file], id)} onRemove={(id) => {
+              studio.removeDocument(threadId, id);
+              inputRef.current?.focus({ preventScroll: true });
+            }} />}
           <Textarea
             key={activeThread.id}
             ref={bindDraftField}
