@@ -1,4 +1,6 @@
 import { normalizeChatDocuments } from "./chatDocuments";
+import { commitChatDatabase, completedChatTransaction, HEADER, openChatDatabase, TRANSCRIPTS, WORKSPACE,
+  type ChatDatabaseWrite, type ThreadRecord, type Transcript, type WorkspaceHeader } from "./textThreadDatabase";
 import {
   createTextWorkspace,
   finishTextReply,
@@ -13,22 +15,16 @@ import {
   type TextThreadWorkspace,
 } from "./textThreads";
 
-const DATABASE = "fern-text-workspace";
-const WORKSPACE = "workspace";
-const TRANSCRIPTS = "transcripts";
-const HEADER = "header";
 const LEGACY = "fern-text-threads:v1";
 const DRAFT_CHECKPOINT = "fern-text-draft-checkpoint:v1";
 const TURN_CHECKPOINT = "fern-text-turn-checkpoint:v1";
 const TRANSCRIPT_EDIT_CHECKPOINT = "fern-text-transcript-edit-checkpoint:v1";
+const BACKGROUND_TRANSCRIPT_SIZE = 512;
 
-type ThreadRecord = Omit<TextThread, "messages">;
 type DraftRecord = Pick<TextThread, "id" | "draft" | "draftImage" | "draftContextImage" | "draftContextImageThreadId" | "documents" | "promptEdit" | "updatedAt">;
 type ReplyCheckpoint = { id: string; jobId: string } & (
   { preview: TextReplyPreview } | { message: TextMessage; selectedId?: string }
 );
-type WorkspaceHeader = Omit<TextThreadWorkspace, "threads"> & { order: string[]; membershipRevision?: string };
-type Transcript = { id: string; messages: TextThread["messages"] };
 type ExitCheckpoint = { activeId: string; drafts: DraftRecord[]; newThreads: ThreadRecord[]; replies?: ReplyCheckpoint[] };
 type TurnBase = Pick<TextThread, "updatedAt" | "pendingJobId"> & { count: number; lastId?: string };
 type TurnCheckpoint = { thread: TextThread; base?: TurnBase };
@@ -44,31 +40,11 @@ type TranscriptEdit = {
 };
 type TurnExitCheckpoint = { activeId: string; membershipRevision?: string; turns: TurnCheckpoint[] };
 
-function openDatabase(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DATABASE, 1);
-    request.onupgradeneeded = () => {
-      request.result.createObjectStore(WORKSPACE);
-      request.result.createObjectStore(TRANSCRIPTS, { keyPath: "id" });
-    };
-    request.onerror = () => reject(request.error);
-    request.onblocked = () => reject(new Error("Chat storage is open in another window."));
-    request.onsuccess = () => resolve(request.result);
-  });
-}
-
-function completed(transaction: IDBTransaction): Promise<void> {
-  return new Promise((resolve, reject) => {
-    transaction.oncomplete = () => resolve();
-    transaction.onabort = () => reject(transaction.error ?? new Error("Chat storage was interrupted."));
-  });
-}
-
-async function readDatabase(): Promise<{ workspace: TextThreadWorkspace; membershipRevision?: string } | undefined> {
-  const db = await openDatabase();
+async function readDatabase() {
+  const db = await openChatDatabase();
   try {
     const transaction = db.transaction([WORKSPACE, TRANSCRIPTS], "readonly");
-    const done = completed(transaction);
+    const done = completedChatTransaction(transaction);
     const workspaceHeader = transaction.objectStore(WORKSPACE).get(HEADER);
     const records = transaction.objectStore(WORKSPACE).getAll();
     const transcripts = transaction.objectStore(TRANSCRIPTS).getAll();
@@ -77,20 +53,33 @@ async function readDatabase(): Promise<{ workspace: TextThreadWorkspace; members
     if (!header) return;
     if (!Array.isArray(header.order)) throw new Error("Saved chats could not be opened.");
     const byId = new Map(records.result.filter((record): record is ThreadRecord => typeof record?.id === "string").map((record) => [record.id, record]));
-    const messages = new Map((transcripts.result as Transcript[]).map((record) => [record.id, record.messages]));
+    const history = new Map((transcripts.result as Transcript[]).map((record) => [record.id, record]));
     const workspace = restoreTextThreads({
       ...header,
       threads: header.order.flatMap((id) => {
         const record = byId.get(id);
-        return record ? [{ ...record, messages: messages.get(id) ?? [] }] : [];
+        return record ? [{ ...record, messages: history.get(id)?.messages ?? [] }] : [];
       }),
     });
     if (!workspace) throw new Error("Saved chats could not be opened.");
-    return { workspace, membershipRevision: typeof header.membershipRevision === "string" ? header.membershipRevision : undefined };
+    const revisions = new Map<string, string | undefined>();
+    for (const { id, messages } of workspace.threads) {
+      const record = history.get(id);
+      // A repaired transcript must be written in full before using its row indices.
+      if (Array.isArray(record?.messages) && record.messages.length === messages.length &&
+        messages.every(({ id, createdAt }, index) => {
+          const stored = record.messages[index];
+          return id === stored?.id && createdAt === stored.createdAt;
+        })) {
+        revisions.set(id, record.revision);
+      }
+    }
+    return { workspace, revisions, membershipRevision: typeof header.membershipRevision === "string" ? header.membershipRevision : undefined };
   } finally { db.close(); }
 }
 
-async function writeDatabase(workspace: TextThreadWorkspace, previous: TextThreadWorkspace | undefined, membershipRevision?: string) {
+async function writeDatabase(workspace: TextThreadWorkspace, previous: TextThreadWorkspace | undefined,
+  membershipRevision: string | undefined, revisions?: Map<string, string | undefined>, commit = commitChatDatabase) {
   const old = new Map(previous?.threads.map((thread) => [thread.id, thread]));
   const changed = workspace.threads.filter((thread) => old.get(thread.id) !== thread);
   const order = workspace.threads.map((thread) => thread.id);
@@ -102,32 +91,68 @@ async function writeDatabase(workspace: TextThreadWorkspace, previous: TextThrea
   if (!headerChanged && !changed.length) return membershipRevision;
   // A create/delete sequence can return to the same order. Its revision must still change.
   const nextRevision = orderChanged ? crypto.randomUUID() : membershipRevision;
-  const db = await openDatabase();
-  try {
-    const transaction = db.transaction([WORKSPACE, TRANSCRIPTS], "readwrite", { durability: "strict" });
-    const done = completed(transaction);
-    const metadata = transaction.objectStore(WORKSPACE);
-    const transcripts = transaction.objectStore(TRANSCRIPTS);
-    const ids = new Set(order);
-    try {
-      for (const id of old.keys()) {
-        if (ids.has(id)) continue;
-        metadata.delete(id);
-        transcripts.delete(id);
+  const ids = new Set(order);
+  const write: ChatDatabaseWrite = {
+    removed: [...old.keys()].filter((id) => !ids.has(id)), threads: [], transcripts: [],
+    header: headerChanged ? { ...header, order, membershipRevision: nextRevision } : undefined,
+  };
+  for (const { messages, ...thread } of changed) {
+    const { id } = thread;
+    write.threads.push(thread);
+    const existing = old.get(id)?.messages;
+    if (messages === existing) continue;
+    const revision = crypto.randomUUID();
+    if (existing && revisions?.has(id) && existing.length >= BACKGROUND_TRANSCRIPT_SIZE) {
+      const { start, beforeEnd, afterEnd } = transcriptReplacement(existing, messages);
+      if (start || beforeEnd < existing.length) {
+        write.transcripts.push({ id, revision, previousRevision: revisions.get(id), previousCount: existing.length,
+          start, remove: beforeEnd - start, added: messages.slice(start, afterEnd) });
+        continue;
       }
-      for (const { messages, ...thread } of changed) {
-        metadata.put(thread, thread.id);
-        if (messages !== old.get(thread.id)?.messages) transcripts.put({ id: thread.id, messages });
-      }
-      if (headerChanged) metadata.put({ ...header, order, membershipRevision: nextRevision } satisfies WorkspaceHeader, HEADER);
-    } catch (error) {
-      transaction.abort();
-      await done.catch(() => undefined);
-      throw error;
     }
-    await done;
-    return nextRevision;
-  } finally { db.close(); }
+    write.transcripts.push({ id, revision, messages });
+  }
+  await commit(write);
+  for (const id of write.removed) revisions?.delete(id);
+  for (const { id, revision } of write.transcripts) revisions?.set(id, revision);
+  return nextRevision;
+}
+
+function commitInWorker(worker: Worker, write: ChatDatabaseWrite): Promise<boolean> {
+  return new Promise((resolve, reject) => {
+    const clear = () => { worker.onmessage = worker.onerror = worker.onmessageerror = null; };
+    worker.onmessage = ({ data }: MessageEvent<{ error?: string }>) => {
+      clear();
+      if (data.error) reject(new Error(data.error));
+      else resolve(true);
+    };
+    worker.onerror = (event) => {
+      event.preventDefault();
+      clear();
+      resolve(false);
+    };
+    worker.onmessageerror = () => { clear(); resolve(false); };
+    try { worker.postMessage(write); }
+    catch (error) { clear(); reject(error); }
+  });
+}
+
+function createDatabaseWriter() {
+  let worker: Worker | undefined;
+  let unavailable = false;
+  return async (write: ChatDatabaseWrite) => {
+    if (!unavailable && write.transcripts.some((change) => "previousCount" in change)) {
+      try { worker ??= new Worker(new URL("./textThreadDatabase.worker.ts", import.meta.url), { type: "module" }); }
+      catch { unavailable = true; }
+      if (worker) {
+        if (await commitInWorker(worker, write)) return;
+        worker.terminate();
+        worker = undefined;
+        unavailable = true;
+      }
+    }
+    await commitChatDatabase(write);
+  };
 }
 
 function readLocal(key: string): string | null {
@@ -235,20 +260,25 @@ function messageVersionKey(message?: TextMessage): string | undefined {
     message.promptAlternatives?.map(({ id, response }) => [id, response?.id])]);
 }
 
-function transcriptEditCheckpoint(thread: TextThread, saved: TextThread): TranscriptEdit | undefined {
-  const { messages } = thread;
-  const previous = saved.messages;
-  // A conversation version switch needs its snapshots and active transcript to commit together.
-  if (messages === previous || thread.versions !== saved.versions || thread.pendingJobId || saved.pendingJobId) return;
+function transcriptReplacement(previous: TextMessage[], messages: TextMessage[]) {
   let start = 0;
   while (start < previous.length && start < messages.length && previous[start] === messages[start]) start++;
-  if (start === previous.length && start === messages.length) return;
   let beforeEnd = previous.length;
   let afterEnd = messages.length;
   while (beforeEnd > start && afterEnd > start && previous[beforeEnd - 1] === messages[afterEnd - 1]) {
     beforeEnd--;
     afterEnd--;
   }
+  return { start, beforeEnd, afterEnd };
+}
+
+function transcriptEditCheckpoint(thread: TextThread, saved: TextThread): TranscriptEdit | undefined {
+  const { messages } = thread;
+  const previous = saved.messages;
+  // A conversation version switch needs its snapshots and active transcript to commit together.
+  if (messages === previous || thread.versions !== saved.versions || thread.pendingJobId || saved.pendingJobId) return;
+  const { start, beforeEnd, afterEnd } = transcriptReplacement(previous, messages);
+  if (start === previous.length && start === messages.length) return;
   return { id: thread.id, base: transcriptBase(saved), updatedAt: thread.updatedAt, start,
     before: messageVersionKey(previous[start - 1]), after: messageVersionKey(previous[beforeEnd]),
     removed: previous.slice(start, beforeEnd).map((message) => messageVersionKey(message)!), added: messages.slice(start, afterEnd) };
@@ -336,15 +366,17 @@ export function createTextThreadStorage() {
   let saved: TextThreadWorkspace | undefined;
   let writing: TextThreadWorkspace | undefined;
   let membershipRevision: string | undefined;
+  let transcriptRevisions = new Map<string, string | undefined>();
   let loading: Promise<TextThreadWorkspace> | undefined;
   let writes = Promise.resolve();
+  const commit = createDatabaseWriter();
 
   const save = (workspace: TextThreadWorkspace) => {
     const next = writes.catch(() => undefined).then(async () => {
       if (saved === workspace) return;
       writing = workspace;
       try {
-        membershipRevision = await writeDatabase(workspace, saved, membershipRevision);
+        membershipRevision = await writeDatabase(workspace, saved, membershipRevision, transcriptRevisions, commit);
         saved = workspace;
       } finally {
         writing = undefined;
@@ -360,6 +392,7 @@ export function createTextThreadStorage() {
         const database = await readDatabase();
         saved = database?.workspace;
         membershipRevision = database?.membershipRevision;
+        transcriptRevisions = database?.revisions ?? new Map();
         const legacy = readLocal(LEGACY);
         const migrated = !saved ? restoreTextThreads(parseLocal(legacy)) : undefined;
         const checkpoint = readLocal(DRAFT_CHECKPOINT);
