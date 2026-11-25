@@ -57,7 +57,6 @@ try {
   state.textStatus.job = { ...state.textStatus.job, phase: "Waiting for the first token…", partialText: "The check has started." };
   await streaming.getByText("The check has started.", { exact: true }).waitFor();
   await phaseAnnouncement.waitFor();
-  assert.equal(await streaming.locator(".text-stream-cursor").count(), 0);
   assert.equal(await page.locator(".text-message--streaming").getAttribute("aria-live"), "off");
   state.textStatus.job = { ...state.textStatus.job, status: "failed", error: "Vision worker disconnected." };
   const retry = page.getByRole("button", { name: "Retry image check", exact: true });

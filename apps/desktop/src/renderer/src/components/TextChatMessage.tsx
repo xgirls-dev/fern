@@ -19,11 +19,10 @@ import { TextMessageMenu, type MessageAction } from "./TextMessageMenu";
 import { TooltipIconButton } from "./ui/Tooltip";
 import { Disclosure } from "./ui/Disclosure";
 import { InlineNotice } from "./ui/InlineNotice";
-import { ProgressLabel } from "./ui/ProgressLabel";
 import { VersionStepper } from "./ui/VersionStepper";
 import { Button, InlineConfirmation } from "./ui/controls";
 
-export type TextReplyProgress = { kind: "status" | "reasoning" | "answer" | "image-check"; label: string; waiting?: boolean };
+export type TextReplyProgress = { kind: "status" | "reasoning" | "answer" | "image-check"; label: string };
 
 function describeContextCount(count: number, subject: string, action: string) {
   return `${count.toLocaleString()} ${subject}${count === 1 ? " was" : "s were"} ${action}.`;
@@ -133,11 +132,10 @@ export const TextChatMessage = memo(function TextChatMessage({ message, selectio
   );
   const { content, reasoning } = shown;
   const hasAnswer = !!content.trim();
-  const showCursor = progress?.kind === "answer" && hasAnswer && shown.streaming;
-  const cursorState = progress?.kind === "answer" && progress.waiting ? "waiting" : "active";
+  const showingLiveAnswer = progress?.kind === "answer" && hasAnswer && shown.streaming;
   const reasoningInProgress = progress?.kind === "reasoning" && !!message.reasoning && !previewWhileStreaming;
   const checkingImageInCaption = progress?.kind === "image-check" && !!generatedImage;
-  const indicator = progress && <ProgressLabel className="text-thinking text-reply-stage">{progress.label}</ProgressLabel>;
+  const indicator = progress && <span className="text-thinking text-reply-stage">{progress.label}</span>;
   const stoppedNote = hasAnswer ? "Stopped · Partial response" : message.generatedImage ? "Stopped · Image saved"
     : message.reasoning ? "Stopped during reasoning" : "Stopped before any text was generated";
   const failed = message.status === "failed";
@@ -240,8 +238,8 @@ export const TextChatMessage = memo(function TextChatMessage({ message, selectio
     {editing && findSection === "body" && <div className="text-find-original"><span>Current prompt</span><p data-find-target>{message.content}</p></div>}
     {editing ? editor : <div ref={bodyRef} onPointerDown={onPointerDown} className="text-message-content" data-find-target={findSection === "body" || undefined}>
       {assistant ? (streaming || content) && <TextMarkdown content={content} streaming={shown.streaming} receivingReply={streaming}
-        cursor={showCursor ? cursorState : undefined} preserveSelection={holding} /> : content}
-      {!showCursor && !reasoningInProgress && !checkingImageInCaption && indicator}
+        preserveSelection={holding} /> : content}
+      {!showingLiveAnswer && !reasoningInProgress && !checkingImageInCaption && indicator}
     </div>}
   </>;
 

@@ -456,7 +456,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   const waitingForToken = phase.startsWith("Waiting for");
   const replyProgress = useMemo<TextReplyProgress>(() => checkingImage ? { kind: "image-check", label: "Checking the image…" }
     : statusLabel ? { kind: "status", label: statusLabel }
-    : hasReplyContent ? { kind: "answer", label: replyPaused ? "Waiting for more text…" : "Responding…", waiting: replyPaused }
+    : hasReplyContent ? { kind: "answer", label: replyPaused ? "Waiting for more text…" : "Responding…" }
     : hasReplyReasoning ? { kind: "reasoning", label: replyPaused ? "Still reasoning…" : "Reasoning…" }
     : { kind: "status", label: waitingForToken
       ? replyPaused ? "Still waiting for the first token…" : "Waiting for the first token…"

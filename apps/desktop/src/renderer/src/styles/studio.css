@@ -239,22 +239,10 @@ body {
 .text-response-details { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 8px; padding: 12px 14px; border-radius: 10px; background: var(--secondary-bg); color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 .text-response-details--context { margin-bottom: 10px; }
 .text-message-label { font-weight: 600; }
-.text-thinking { color: var(--muted); font-size: 13px; }
-.text-thinking { min-height: 24px; }
-.text-thinking, .text-artifact-progress { --ui-progress-color: var(--chat-action); }
+.text-thinking { display: inline-flex; align-items: center; min-height: 24px; color: var(--muted); font-size: 13px; }
+.text-artifact-progress { --ui-progress-color: var(--chat-action); }
 .text-reasoning summary .text-thinking { min-height: 0; vertical-align: middle; }
 .text-reply-recovery { margin-top: 8px; }
-/* Mark the tail directly so each streaming insert leaves earlier blocks out of cursor styling. */
-.text-stream-cursor, .text-message-content > p[data-stream-tail]::after { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-left: 5px; background: var(--chat-action); }
-.text-message-content > p[data-stream-tail]::after { content: ""; }
-.text-message-content > [data-stream-tail] { margin-bottom: 0; }
-.text-message-content > p + .text-stream-cursor { display: none; }
-.text-message-content > :not(p) + .text-stream-cursor { display: block; margin: 8px 0 0; }
-.text-stream-cursor[data-waiting], .text-message-content > p[data-stream-tail="waiting"]::after { opacity: .55; }
-@media (prefers-reduced-motion: no-preference) {
-  .text-stream-cursor:not([data-waiting]), .text-message-content > p[data-stream-tail="active"]::after { animation: text-cursor-pulse 1s ease-in-out infinite alternate; }
-  @keyframes text-cursor-pulse { to { opacity: .35; } }
-}
 .text-composer-area { position: relative; display: grid; width: min(100%, 816px); flex: 0 0 auto; gap: 9px; align-self: center; padding: 6px 28px 12px; }
 .text-deletion-notice { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 4px; padding: 2px 4px 2px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); }
 .text-deletion-notice > span { color: var(--muted); font-size: 12px; line-height: 1.4; }

@@ -69,7 +69,7 @@ export function observeChatReply(send, { measureStop = false } = {}) {
             const content = reply.querySelector(".text-message-content");
             if (firstAnswerFrame === null && content && [...content.childNodes].some((node) =>
               (node.nodeType === Node.TEXT_NODE || (node instanceof Element
-                && !node.matches(".text-thinking, .text-stream-cursor, [data-chat-markdown-formatting]")))
+                && !node.matches(".text-thinking, [data-chat-markdown-formatting]")))
               && node.textContent?.trim())) firstAnswerFrame = now;
             if (!reply.classList.contains("text-message--streaming") &&
                 !content?.querySelector("[data-chat-markdown-formatting]")) settled ??= now;

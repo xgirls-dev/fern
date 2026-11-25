@@ -18,6 +18,7 @@ lands directly on `main` instead of through labeled pull requests.
 - Find text in saved conversation versions from Search threads. Open the matching message in a preview that keeps the active conversation intact.
 - Show the full text of each received reply update immediately, so delayed animation callbacks cannot leave a reply stuck halfway through a chunk.
 - Show when chat is checking hardware before it begins loading a GGUF model.
+- Keep streaming replies free of animated dots. The composer shows when Fern is responding or waiting for more text.
 
 ### Fixed
 
