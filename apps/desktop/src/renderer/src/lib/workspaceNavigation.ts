@@ -37,14 +37,19 @@ export const shortcuts = {
 } as const;
 
 export const chatModelShortcut = { key: "l", label: "Choose a chat model", shift: true, alt: false } as const;
+export const chatUndoShortcut = { key: "z", label: "Undo message deletion", shift: false, alt: false } as const;
 
-export type Shortcut = (typeof shortcuts)[keyof typeof shortcuts] | typeof chatModelShortcut;
+export type Shortcut = (typeof shortcuts)[keyof typeof shortcuts] | typeof chatModelShortcut | typeof chatUndoShortcut;
 
 export function shortcutLabel(shortcut: Shortcut): string {
   return [
     window.studio.platform === "darwin" ? "Cmd" : "Ctrl",
     shortcut.shift && "Shift", shortcut.alt && "Alt", shortcut.key.toUpperCase(),
   ].filter(Boolean).join(" ");
+}
+
+export function shortcutAriaLabel(shortcut: Shortcut): string {
+  return shortcutLabel(shortcut).replace(/^Cmd/, "Meta").replace(/^Ctrl/, "Control").replaceAll(" ", "+");
 }
 
 export function matchesShortcut(event: KeyboardEvent, shortcut: Shortcut): boolean {

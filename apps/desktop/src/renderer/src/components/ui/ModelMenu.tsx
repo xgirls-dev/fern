@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import Check from "lucide-react/dist/esm/icons/check.mjs";
 import ChevronDown from "lucide-react/dist/esm/icons/chevron-down.mjs";
-import { matchesShortcut, shortcutLabel, type Shortcut } from "../../lib/workspaceNavigation";
+import { matchesShortcut, shortcutAriaLabel, shortcutLabel, type Shortcut } from "../../lib/workspaceNavigation";
 import { Button } from "./controls";
 import { Dropdown, DropdownGroup, DropdownItem, DropdownRadioGroup, DropdownRadioItem, DropdownSeparator } from "./Dropdown";
 
@@ -100,7 +100,7 @@ export function ModelMenu({ label, value, options, disabled, triggerLabel, class
     }}
     trigger={<Button ref={trigger} variant="ghost" className={`composer-model-trigger ${triggerClassName}`}
       aria-label={`${label}: ${name}`} disabled={disabled}
-      aria-keyshortcuts={shortcutHint?.replace(/^Cmd/, "Meta").replace(/^Ctrl/, "Control").replaceAll(" ", "+")}>
+      aria-keyshortcuts={keyboardShortcut && shortcutAriaLabel(keyboardShortcut)}>
       <span>{name}</span><ChevronDown size={13} aria-hidden="true" />
     </Button>}>
     <div className="ui-model-menu-options" ref={optionList} onFocusCapture={(event) => {

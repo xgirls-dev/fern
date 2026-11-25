@@ -9,7 +9,7 @@ import type { ModelStatus } from "../lib/types";
 import type { ComputePreference } from "../hooks/useComputePreference";
 import { resolveTextModel, textModelReadiness, type TextRuntimeStatus, type TextThread } from "../lib/textThreads";
 import { Button, ChoiceCard, PageHeader, Select, ToggleRow } from "./ui/controls";
-import { chatModelShortcut, shortcutLabel, shortcuts } from "../lib/workspaceNavigation";
+import { chatModelShortcut, chatUndoShortcut, shortcutLabel, shortcuts } from "../lib/workspaceNavigation";
 
 interface PreferencesViewProps {
   active: boolean;
@@ -258,12 +258,12 @@ export function PreferencesView({
           <div className="preferences-section-heading">
             <div>
               <h3 id="preferences-shortcuts">Keyboard shortcuts</h3>
-              <p>Move between workspaces and find recent threads.</p>
+              <p>Navigate Fern and work in chats from the keyboard.</p>
             </div>
             <Command size={17} aria-hidden="true" />
           </div>
           <div className="shortcut-list">
-            {[...Object.values(shortcuts), chatModelShortcut].map((shortcut) => <div key={shortcut.label}>
+            {[...Object.values(shortcuts), chatModelShortcut, chatUndoShortcut].map((shortcut) => <div key={shortcut.label}>
               <span>{shortcut.label}</span>
               <span className="kbd">{shortcutLabel(shortcut)}</span>
             </div>)}
