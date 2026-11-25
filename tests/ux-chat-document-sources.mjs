@@ -4,7 +4,7 @@ import { fixture } from "./ui-fixture.mjs";
 
 const threadId = "text-thread-source-preview";
 const draft = "Check travel details next.";
-const quoted = "The workshop begins at noon in Room Cedar.";
+const quoted = "The workshop begins at noon in Room Cedar. The printed label reads CafÃ©.";
 const first = {
   number: 1, name: "Schedule.pdf", location: "Page 4", excerpt: quoted,
   reference: { documentId: `doc-${"a".repeat(64)}`, passageIndex: 5, quotedCharacters: quoted.length,

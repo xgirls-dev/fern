@@ -304,12 +304,15 @@ export async function uploadChatDocument(file: File): Promise<{ document: ChatDo
   });
 }
 
-export function fetchChatDocumentSource(reference: ChatDocumentReference, cancel: AbortSignal): Promise<ChatDocumentPreview> {
+export async function fetchChatDocumentSource(reference: ChatDocumentReference, cancel: AbortSignal): Promise<ChatDocumentPreview> {
   const query = new URLSearchParams({ documentId: reference.documentId, passageIndex: String(reference.passageIndex),
     quotedCharacters: String(reference.quotedCharacters), fingerprint: reference.fingerprint });
-  return requestJson(`/api/text/documents/source?${query}`, {
+  // The preview must preserve the exact text that was sent to the model.
+  const response = await fetch(`${apiBaseUrl}/api/text/documents/source?${query}`, {
     signal: AbortSignal.any([cancel, AbortSignal.timeout(8_000)]), cache: "no-store",
   });
+  if (!response.ok) throw new Error("The local passage is unavailable.");
+  return response.json();
 }
 
 export function installTextModel(modelId: string, repair = false): Promise<TextRuntimeStatus> {
