@@ -31,7 +31,7 @@ export function SavedConversationPreview({ threadId, version, initialQuery, onCl
     key: message.id, estimatedHeight: estimateTextRowHeight(message),
   })), [messages]);
   const revealIndex = match ? messages.findIndex(({ id }) => id === match.messageId) : -1;
-  const { feedRef, transcriptRef, historyVisible, revealMessage, onScroll, onKeyDown, onFocus } = useTextScroll(viewId, false);
+  const { feedRef, transcriptRef, historyVisible, revealMessage, onScroll, onKeyDown, onFocus } = useTextScroll(viewId, { persistPosition: false });
 
   useLayoutEffect(() => {
     if (match && historyVisible && revealIndex >= 0) return revealMessage(match.messageId, match, "start");
