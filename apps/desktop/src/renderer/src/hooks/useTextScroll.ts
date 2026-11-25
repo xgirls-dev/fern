@@ -181,7 +181,10 @@ export function useTextScroll(threadId: string, { persistPosition = true, paneFo
   const savePosition = useCallback((feed: HTMLElement, preferred?: Element) => {
     lastTop.current = feed.scrollTop;
     lastGap.current = distanceFromTail(feed);
-    if (persistPosition) rememberPosition(threadId, feed, following.current, preferred);
+    if (persistPosition) {
+      rememberPosition(threadId, feed, following.current, preferred);
+      if (!following.current) setRestoredThread(threadId);
+    }
     setFollowingLatest(following.current);
   }, [persistPosition, threadId]);
 
@@ -334,7 +337,8 @@ export function useTextScroll(threadId: string, { persistPosition = true, paneFo
       if (!following.current && saved) restore(saved);
       else {
         feed.scrollTop = feed.scrollHeight;
-        setRestoredThread(threadId);
+        // Following the latest reply has no saved anchor to release after layout.
+        setRestoredThread(undefined);
       }
     } else setRestoredThread(undefined);
     lastTop.current = feed.scrollTop;
@@ -370,7 +374,6 @@ export function useTextScroll(threadId: string, { persistPosition = true, paneFo
         else lastGap.current = distanceFromTail(feed);
         return;
       }
-      if (wasHidden) setRestoredThread(threadId);
       // Honor upward movement that landed in the same frame as a new chunk.
       if (!reflowed && feed.scrollTop < lastTop.current && !atLatest(feed)) {
         onScroll();
