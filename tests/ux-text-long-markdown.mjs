@@ -276,9 +276,27 @@ try {
   await expect(reply.getByRole("link", { name: "https://example.com/fern" })).toHaveAttribute("href", "https://example.com/fern");
   await expect(reply).toContainText("keep © intact.");
   await expect(paragraphs.first()).toHaveAttribute("data-prose-prefix", "true");
+  assert.equal(await page.evaluate(() => window.retainedSeedBlocks.at(-1)), 34,
+    "The worker should reuse the plain paragraphs and their separators ahead of the last paragraph.");
   state.textStatus.job = { ...state.textStatus.job, status: "complete", finishedAt: Date.now() / 1000 };
   await expect(reply).not.toHaveClass(/text-message--streaming/);
   await expect(paragraphs.first()).toHaveAttribute("data-prose-prefix", "true");
+
+  await composer.fill("Format the last line as a title when the reply finishes.");
+  await send.click();
+  await expect(reply).toHaveClass(/text-message--streaming/);
+  const proseAndTitle = plain + "\n\nKeep this final title";
+  state.textStatus.job = { ...state.textStatus.job, partialText: proseAndTitle };
+  await expect(paragraphs).toHaveCount(19);
+  const retainedBeforeFinal = await page.evaluate(() => window.retainedSeedBlocks.length);
+  state.textStatus.job = {
+    ...state.textStatus.job, status: "complete", partialText: proseAndTitle + "\n---",
+    finishedAt: Date.now() / 1000,
+  };
+  await expect(reply.getByRole("heading", { name: "Keep this final title" })).toBeVisible();
+  await expect(paragraphs).toHaveCount(18);
+  assert.deepEqual(await page.evaluate((count) => window.retainedSeedBlocks.slice(count), retainedBeforeFinal), [36],
+    "A new final heading should reuse the streamed paragraphs and reparse the last line.");
 
   await expect.poll(async () => (await savedTextWorkspace(page)).threads
     .flatMap((thread) => thread.messages).some((message) => message.content.endsWith("literal markers."))).toBe(true);

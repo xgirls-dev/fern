@@ -56,9 +56,20 @@ type MarkdownInput = Omit<ChatMarkdownRequest, "id"> & { queue: MarkdownQueue };
 type ParsedMarkdown = {
   content: string;
   nodes: RootContent[];
+  plain?: true;
   streamingParse?: ReturnType<typeof parseStreamingChatMarkdown>;
 };
 const settledMarkdown = new Map<string, ParsedMarkdown>();
+
+function rendererPrefix(parsed: ParsedMarkdown | null) {
+  if (!parsed?.plain) return parsed?.streamingParse?.prefix;
+  if (parsed.nodes.length < 3) return undefined;
+  const prose = parsed.content.replace(/[ \n]+$/, "");
+  const offset = prose.lastIndexOf("\n\n") + 2;
+  // Leave the newest paragraph for the worker. Added text can change it into
+  // a heading or a table, even when the preceding paragraphs are complete.
+  return { source: parsed.content.slice(0, offset), blockCount: parsed.nodes.length - 1 };
+}
 
 function parseSmallReply(content: string, streaming: boolean, receivingReply: boolean, previous: ParsedMarkdown | null): ParsedMarkdown {
   if (streaming) {
@@ -120,7 +131,7 @@ export function useChatMarkdown(content: string, streaming: boolean, receivingRe
   const plainResult = useMemo<ParsedMarkdown | null>(() => {
     if (!workerCandidate || content.length > SYNC_PROSE_LIMIT) return null;
     const root = parsePlainChatMarkdown(content);
-    return root && { content, nodes: root.children };
+    return root && { content, nodes: root.children, plain: true };
   }, [content, workerCandidate]);
   const shouldOffload = workerCandidate && !plainResult;
   const smallResult = useMemo(() => shouldOffload ? null : plainResult ?? parseSmallReply(content, streaming, receivingReply, latestSmall.current),
@@ -169,13 +180,14 @@ export function useChatMarkdown(content: string, streaming: boolean, receivingRe
       const previous = latestWorkerResult.current;
       // The terminal event can arrive while the identical live snapshot is in flight.
       if (!input.streaming && previous?.content === input.content && previous.matchesFinal) return;
-      const seed = !previous && input.streaming ? latestSmall.current?.streamingParse : undefined;
-      const cancel = requestMarkdown(queue, { ...input, previousId: previous?.requestId, seedPrefix: seed?.prefix }, ({ id, blocks, retained, tableRows, stablePrefix, matchesFinal }) => {
+      const seed = !previous && queue === "live" ? latestSmall.current : null;
+      const seedPrefix = rendererPrefix(seed);
+      const cancel = requestMarkdown(queue, { ...input, previousId: previous?.requestId, seedPrefix }, ({ id, blocks, retained, tableRows, stablePrefix, matchesFinal }) => {
         inFlight.current = null;
         const count = retained?.blockCount ?? 0;
         const usesSeed = retained && retained.requestId === undefined;
         const sourceNodes = usesSeed ? seed?.nodes : previous?.nodes;
-        const matched = usesSeed ? seed?.prefix?.blockCount === count : previous?.requestId === retained?.requestId;
+        const matched = usesSeed ? seedPrefix?.blockCount === count : previous?.requestId === retained?.requestId;
         if (!blocks || (retained && (!matched || !sourceNodes || count > sourceNodes.length))) {
           setWorkerFailed(true);
           return;
