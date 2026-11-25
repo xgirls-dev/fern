@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import Check from "lucide-react/dist/esm/icons/check.mjs";
 import ChevronDown from "lucide-react/dist/esm/icons/chevron-down.mjs";
 import { matchesShortcut, shortcutLabel, type Shortcut } from "../../lib/workspaceNavigation";
@@ -39,6 +39,12 @@ export function ModelMenu({ label, value, options, disabled, triggerLabel, class
   const available = options.filter((option) => !option.disabled);
   const unavailable = options.filter((option) => option.disabled);
   const grouped = available.length > 0 && unavailable.length > 0;
+  const defaultOption = useCallback(() => {
+    const list = optionList.current;
+    return list?.querySelector<HTMLElement>(`[data-model-option="${CSS.escape(value)}"]:not([aria-disabled="true"])`)
+      ?? list?.querySelector<HTMLElement>('[data-model-option]:not([aria-disabled="true"])')
+      ?? manageAction.current;
+  }, [value]);
 
   useEffect(() => {
     if (!keyboardShortcut || !shortcutActive || disabled || open) return;
@@ -49,7 +55,7 @@ export function ModelMenu({ label, value, options, disabled, triggerLabel, class
       if (origin?.closest('[role="menu"], [role="listbox"], [aria-expanded="true"][aria-haspopup="menu"]')
         || !trigger.current?.getClientRects().length) return;
       event.preventDefault();
-      shortcutOrigin.current = origin instanceof HTMLElement && origin !== document.body ? origin : null;
+      shortcutOrigin.current = origin instanceof HTMLElement && origin !== document.body ? origin : trigger.current;
       trigger.current.click();
     };
     window.addEventListener("keydown", openFromKeyboard);
@@ -61,12 +67,9 @@ export function ModelMenu({ label, value, options, disabled, triggerLabel, class
     const previous = focusedOption.current;
     if (!open || disabled || !list || previous === undefined || document.activeElement !== document.body) return;
     // Availability can move a focused model to another group and replace its DOM node.
-    const item = list.querySelector<HTMLElement>(`[data-model-option="${CSS.escape(previous)}"]`)
-      ?? list.querySelector<HTMLElement>(`[data-model-option="${CSS.escape(value)}"]:not([aria-disabled="true"])`)
-      ?? list.querySelector<HTMLElement>('[data-model-option]:not([aria-disabled="true"])')
-      ?? manageAction.current;
+    const item = list.querySelector<HTMLElement>(`[data-model-option="${CSS.escape(previous)}"]`) ?? defaultOption();
     item?.focus();
-  }, [disabled, open, options, value]);
+  }, [defaultOption, disabled, open, options]);
 
   const renderOption = (option: ModelMenuOption) => <DropdownRadioItem key={option.value} value={option.value}
     data-model-option={option.value} label={option.label} aria-label={option.label}
@@ -89,6 +92,7 @@ export function ModelMenu({ label, value, options, disabled, triggerLabel, class
       else if (reason !== "escape-key" && reason !== "item-press") shortcutOrigin.current = null;
       setOpen(next);
     }}
+    onOpenChangeComplete={(next) => { if (next && shortcutOrigin.current) defaultOption()?.focus(); }}
     trigger={<Button ref={trigger} variant="ghost" className={`composer-model-trigger ${triggerClassName}`}
       aria-label={`${label}: ${name}`} disabled={disabled}
       aria-keyshortcuts={shortcutHint?.replace(/^Cmd/, "Meta").replace(/^Ctrl/, "Control").replaceAll(" ", "+")}>

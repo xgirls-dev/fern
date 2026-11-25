@@ -77,17 +77,20 @@ try {
   await expect(rightModel).toHaveAttribute("aria-expanded", "true");
   await expect(rightModel).toHaveAttribute("aria-keyshortcuts", "Control+Shift+L");
   await expect(button("Text model: Gemma", left)).toHaveAttribute("aria-expanded", "false");
-  await expect(modelMenu.getByRole("menuitemradio", { name: "Gemma", exact: true })).toBeFocused();
+  await expect(modelMenu.getByRole("menuitemradio", { name: "Qwen", exact: true })).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(rightDraft).toBeFocused();
   assert.deepEqual(await rightDraft.evaluate((field) => [field.selectionStart, field.selectionEnd, field.selectionDirection]), [5, 15, "backward"]);
 
   await rightDraft.press("Control+Shift+L");
+  await expect(modelMenu.getByRole("menuitemradio", { name: "Qwen", exact: true })).toBeFocused();
+  await page.keyboard.press("ArrowUp");
   await page.keyboard.press("Enter");
   await expect(button("Text model: Gemma", right)).toBeVisible();
   await expect(rightDraft).toBeFocused();
   await expect(rightDraft).toHaveValue("Keep this draft while choosing a model.");
   await rightDraft.press("Control+Shift+L");
+  await expect(modelMenu.getByRole("menuitemradio", { name: "Gemma", exact: true })).toBeFocused();
   await page.keyboard.press("ArrowDown");
   await page.keyboard.press("Enter");
   await expect(rightModel).toBeVisible();
