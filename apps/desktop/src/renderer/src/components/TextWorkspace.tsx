@@ -484,7 +484,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
     : creatingImage ? "Creating an image…"
     : imageReleaseLabel ? imageReleaseLabel
     : phase.startsWith("Finding document") ? phase
-    : phase.includes("Compacting") ? "Summarizing earlier messages…"
+    : phase.includes("Compacting") ? replyPaused ? "Still summarizing earlier messages…" : "Summarizing earlier messages…"
     : /download/i.test(phase) ? replyPaused ? "Still downloading the text runtime…" : "Downloading the text runtime…"
     : phase.startsWith("Checking hardware") ? replyPaused ? "Still checking hardware…" : "Checking hardware…"
     : /^(loading|starting the text worker)/i.test(phase) ? replyPaused ? "Still loading the model…" : "Loading model…" : null;

@@ -105,6 +105,29 @@ class GGUFCompletionTests(unittest.TestCase):
         self.assertEqual(source["reference"]["passageIndex"], 0)
         self.assertEqual(source["reference"]["quotedCharacters"], len(document["text"]))
 
+    def test_compaction_reuses_only_the_same_transcript_in_one_engine(self) -> None:
+        transcript = "user: Use the blue workshop poster."
+        edited = "user: Use the red workshop poster."
+        server = GGUFServer.__new__(GGUFServer)
+        server.context_size, server.compaction_summaries = 2048, {}
+
+        def complete(route, body, timeout=30):
+            if route == "/tokenize":
+                return {"tokens": []}
+            return {"choices": [{"message": {"content": body["messages"][-1]["content"]}}]}
+
+        server._post = Mock(side_effect=complete)
+        self.assertEqual(server._summarize(transcript), transcript)
+        self.assertEqual(server._summarize(transcript), transcript)
+        self.assertEqual(server._post.call_count, 2)
+
+        self.assertEqual(server._summarize(edited), edited)
+        for index in range(8):
+            server._summarize(f"Earlier transcript {index}")
+        self.assertEqual(len(server.compaction_summaries), 8)
+        self.assertEqual(server._summarize(transcript), transcript)
+        self.assertEqual(server._post.call_count, 22)
+
     def test_stream_result_retains_the_reported_finish_reason(self) -> None:
         server = GGUFServer.__new__(GGUFServer)
         server.context_size = 4096
