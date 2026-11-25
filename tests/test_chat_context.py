@@ -85,6 +85,33 @@ class ChatContextTests(unittest.TestCase):
                 self.assertIn("NIMBUS-417", prepared[0]["content"])
                 self.assertEqual(memory is not None, budget < 12000)
 
+    def test_reopened_image_is_protected_after_cached_history_is_shortened(self):
+        older = [
+            message("user", "Remember our pickup location. " + "planning notes " * 90),
+            message("assistant", "I will remember."),
+            message("user", "Make a red poster for the workshop. " + "poster notes " * 20),
+            message("assistant", "Here is the poster.", "poster.png"),
+        ]
+        latest = [
+            message("user", "Switch to the schedule. " + "schedule notes " * 14),
+            message("assistant", "Here is the schedule."),
+            message("user", "What should we do first?"),
+        ]
+
+        _, memory = fit_context(older + latest, measure, lambda _: "Workshop notes.", 850)
+        self.assertEqual(memory.dropped, 4)
+        restored = older + [message("user", "What color is the poster?")]
+
+        def summarize(transcript):
+            self.assertNotIn("Here is the poster.", transcript)
+            return "Pickup location notes."
+
+        prepared, new_memory = fit_context(restored, measure, summarize, 850, previous=memory)
+        self.assertEqual(new_memory.dropped, 2)
+        self.assertEqual(prepared[-2].get("imagePath"), "poster.png")
+        self.assertEqual(prepared[-1], restored[-1])
+        self.assertLessEqual(measure(prepared), 850)
+
     def test_reports_an_oversized_current_turn(self):
         history = [message("user", "Too big." * 140)]
         with self.assertRaisesRegex(ValueError, "larger context"):

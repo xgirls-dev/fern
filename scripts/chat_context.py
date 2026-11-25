@@ -102,8 +102,16 @@ def fit_context(
         text = "\n\n".join(filter(None, (system, f"Earlier conversation summary:\n{summary}" if summary else "")))
         return ([{"role": "system", "content": text}] if text else []) + turns[start:]
 
+    # Apply the same protection to a cached summary and newly compacted turns.
+    # Removing later turns can bring an earlier image back into the protected tail.
+    latest_boundary = len(turns) - protected_tail
+    tail = range(len(turns) - 1, max(-1, len(turns) - 3), -1)
+    latest_image = next((index for index in tail if turns[index].get("imagePath")), None)
+    if latest_image is not None:
+        latest_boundary = min(latest_boundary, latest_image)
+
     start, summary = 0, ""
-    if previous and previous.dropped <= len(turns) - protected_tail and (
+    if previous and previous.dropped <= latest_boundary and (
         previous.prefix_hash == _prefix_hash(turns[:previous.dropped])
     ):
         start, summary = previous.dropped, previous.summary
@@ -112,11 +120,6 @@ def fit_context(
     if measure(candidate) <= budget:
         return candidate, previous if start else None
 
-    # Keep the current turn, any tool exchange, and the latest preceding image.
-    latest_boundary = len(turns) - protected_tail
-    latest_image = next((index for index in range(len(turns) - 1, -1, -1) if turns[index].get("imagePath")), None)
-    if latest_image is not None and latest_image >= len(turns) - 2:
-        latest_boundary = min(latest_boundary, latest_image)
     boundaries = [index for index in range(start + 1, latest_boundary + 1) if turns[index]["role"] == "user"]
     low, high = 0, len(boundaries)
     while low < high:
