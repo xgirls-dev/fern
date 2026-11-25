@@ -13,6 +13,7 @@ const conversationControl = `a[href], button, summary, input, textarea, select, 
 const tailTolerance = 2;
 // A streaming update can add a line between scrolling down and handling the scroll event.
 const resumeTolerance = 24;
+const scrollInputWindow = 160;
 
 function distanceFromTail(feed: HTMLElement) {
   return feed.scrollHeight - feed.clientHeight - feed.scrollTop;
@@ -162,6 +163,7 @@ export function useTextScroll(threadId: string, persistPosition = true) {
   const following = useRef(true);
   const lastTop = useRef(0);
   const lastGap = useRef(0);
+  const downwardScrollUntil = useRef(0);
   const layout = useRef({ width: 0, hidden: false });
   const [historyVisible, setHistoryVisible] = useState(true);
   const [followingLatest, setFollowingLatest] = useState(true);
@@ -200,11 +202,13 @@ export function useTextScroll(threadId: string, persistPosition = true) {
     cancelRestore();
     const top = feed.scrollTop;
     const gap = distanceFromTail(feed);
+    const downwardInput = performance.now() < downwardScrollUntil.current;
+    downwardScrollUntil.current = 0;
     if (top < lastTop.current && gap > tailTolerance) following.current = false;
     // Scroll anchoring can move scrollTop when an earlier row grows. Resume only
     // after movement toward the tail, allowing for layout rounding near the end.
     const approachedTail = gap < lastGap.current && (gap <= tailTolerance || gap < lastGap.current - tailTolerance);
-    if (!following.current && top > lastTop.current && gap <= resumeTolerance && approachedTail) {
+    if (!following.current && top > lastTop.current && gap <= resumeTolerance && (approachedTail || downwardInput)) {
       const focused = document.activeElement;
       const workingInChat = focused?.matches(conversationControl) && feed.contains(focused);
       if (!workingInChat && !chatSelectionIntersects(feed)) {
@@ -276,7 +280,10 @@ export function useTextScroll(threadId: string, persistPosition = true) {
       case "Home": target = 0; break;
       case "End": event.preventDefault(); jumpToLatest(); return;
       case "PageUp": target = feed.scrollTop - page; break;
-      case "PageDown": target = feed.scrollTop + page; break;
+      case "PageDown":
+        target = feed.scrollTop + page;
+        downwardScrollUntil.current = performance.now() + scrollInputWindow;
+        break;
       default: return;
     }
     event.preventDefault();
@@ -290,6 +297,7 @@ export function useTextScroll(threadId: string, persistPosition = true) {
     if (!feed || !transcript) return;
     const saved = persistPosition ? getChatReadingPosition(threadId) : undefined;
     pendingRestore.current = undefined;
+    downwardScrollUntil.current = 0;
     const restore = (position: ScrollPosition) => {
       if (!restorePosition(feed, position)) {
         pendingRestore.current = position;
@@ -369,10 +377,16 @@ export function useTextScroll(threadId: string, persistPosition = true) {
     const onSelection = () => {
       if (following.current && chatSelectionIntersects(feed)) pauseFollowing(feed);
     };
+    const onWheel = (event: WheelEvent) => {
+      if (event.ctrlKey || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
+      downwardScrollUntil.current = event.deltaY > 0 ? performance.now() + scrollInputWindow : 0;
+    };
+    feed.addEventListener("wheel", onWheel, { passive: true });
     document.addEventListener("selectionchange", onSelection);
     return () => {
       observer.disconnect();
       markdownObserver.disconnect();
+      feed.removeEventListener("wheel", onWheel);
       document.removeEventListener("selectionchange", onSelection);
     };
   }, [onScroll, pauseFollowing, persistPosition, savePosition, threadId]);

@@ -100,8 +100,8 @@ try {
   await expect.poll(async () => (await position()).gap).toBeGreaterThan(300);
   await expect(jump).toBeVisible();
 
-  // Model a line landing just as a downward scroll reaches the previous tail.
-  await feed.evaluate((element) => { element.scrollTop = element.scrollHeight - element.clientHeight - 16; });
+  // Leave one line of tolerance when scrolling back to the live reply.
+  await page.mouse.wheel(0, (await position()).gap - 16);
   await atLatest();
   await page.mouse.wheel(0, -64);
   await expect(jump).toBeVisible();
