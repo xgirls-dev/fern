@@ -50,6 +50,10 @@ class VulkanDriverError(RuntimeError):
     code = "intel-vulkan-driver"
 
 
+class GGUFComputeError(RuntimeError):
+    pass
+
+
 class CompletionCancellation:
     def __init__(self) -> None:
         self._requested = threading.Event()
@@ -518,7 +522,10 @@ class GGUFServer:
                     break
                 event = json.loads(line)
                 if event.get("error"):
-                    raise RuntimeError(event["error"].get("message", "GGUF inference failed."))
+                    message = event["error"].get("message", "GGUF inference failed.")
+                    if message == "Compute error.":
+                        raise GGUFComputeError(message)
+                    raise RuntimeError(message)
                 if event.get("usage"):
                     usage = event["usage"]
                 # llama.cpp includes these slot counters on the final stream chunk.

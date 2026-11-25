@@ -28,6 +28,7 @@ lands directly on `main` instead of through labeled pull requests.
 - Stop a GGUF load promptly when the model server is still starting.
 - Use the GGUF engine to detect its own hardware and avoid a text worker startup stall on Windows.
 - Load saved chat images once Fern connects to its local service when it reopens.
+- Retry a GGUF chat on Vulkan when OpenVINO hits a GPU tensor-shape error before the reply begins.
 
 ## [0.1.48] - 2026-11-20
 

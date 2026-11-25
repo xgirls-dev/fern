@@ -39,7 +39,7 @@ def emit(payload: dict[str, Any]) -> None:
 
 def run_gguf(file: Path, device: str, projector: Path | None) -> int:
     from chat_context import DEFAULT_CONTEXT_SIZE
-    from gguf_runtime import CompletionCancellation, GGUFServer, ensure_runtime
+    from gguf_runtime import CompletionCancellation, GGUFComputeError, GGUFServer, ensure_runtime
 
     runtime_root = Path(os.environ["FERN_GGUF_RUNTIME_ROOT"])
     requests: SimpleQueue[tuple[dict[str, Any], CompletionCancellation] | None] = SimpleQueue()
@@ -109,46 +109,65 @@ def run_gguf(file: Path, device: str, projector: Path | None) -> int:
                     backend = "vulkan"
                 else:
                     backend = "openvino"
-                emit({"type": "runtime", "backend": backend, "device": target})
-                gpu_projector = vision and (backend == "metal" or bool(request.get("requireGpuVision")))
                 requested_projector = projector if vision else None
-                if gpu_projector and backend not in ("vulkan", "metal"):
-                    raise ValueError("This image conversation requires GPU vision. Select Available GPU in Preferences.")
-                load_timing = {}
-                if (
-                    not same_configuration or server.backend != backend
-                    or (vision and (loaded_projector != requested_projector or server.gpu_projector != gpu_projector))
-                ):
-                    if server is not None:
-                        emit({"type": "residency", "model": None})
-                        server.close()
-                        server = None
-                    def setup_progress(text: str) -> None:
-                        emit({"type": "phase", "text": text})
 
-                    emit({"type": "phase", "stage": "setting-up-runtime"})
-                    setup_started = time.perf_counter()
-                    executable = ensure_runtime(runtime_root, backend, setup_progress)
-                    load_timing["runtimeSetupMs"] = (time.perf_counter() - setup_started) * 1000
-                    load_started = time.perf_counter()
-                    server = GGUFServer(
-                        executable, file, requested_projector, target, backend, context_size,
-                        gpu_projector=gpu_projector, load_options=load_options, on_phase=startup_phase,
-                    )
-                    load_timing.update(server.startup_timing)
-                    loaded_projector = requested_projector
-                    emit({"type": "residency", "model": {
-                        "backend": backend, "device": target, "enginePid": server.process.pid,
-                        "gguf": {"contextSize": server.context_size, "loadOptions": server.load_options},
-                    }})
-                    load_timing["modelReadyMs"] = (time.perf_counter() - load_started) * 1000
-                emit({"type": "phase", "stage": "preparing-conversation", "text": "Preparing conversation…"})
+                def complete(engine: str, reuse: bool) -> dict[str, Any]:
+                    nonlocal server, loaded_projector, log_offset
+                    log_offset = None
+                    emit({"type": "runtime", "backend": engine, "device": target})
+                    gpu_projector = vision and (engine == "metal" or bool(request.get("requireGpuVision")))
+                    if gpu_projector and engine not in ("vulkan", "metal"):
+                        raise ValueError("This image conversation requires GPU vision. Select Available GPU in Preferences.")
+                    load_timing = {}
+                    if (
+                        not reuse or server.backend != engine
+                        or (vision and (loaded_projector != requested_projector or server.gpu_projector != gpu_projector))
+                    ):
+                        if server is not None:
+                            emit({"type": "residency", "model": None})
+                            server.close()
+                            server = None
+
+                        def setup_progress(text: str) -> None:
+                            emit({"type": "phase", "text": text})
+
+                        emit({"type": "phase", "stage": "setting-up-runtime"})
+                        setup_started = time.perf_counter()
+                        executable = ensure_runtime(runtime_root, engine, setup_progress)
+                        load_timing["runtimeSetupMs"] = (time.perf_counter() - setup_started) * 1000
+                        load_started = time.perf_counter()
+                        server = GGUFServer(
+                            executable, file, requested_projector, target, engine, context_size,
+                            gpu_projector=gpu_projector, load_options=load_options, on_phase=startup_phase,
+                        )
+                        load_timing.update(server.startup_timing)
+                        loaded_projector = requested_projector
+                        emit({"type": "residency", "model": {
+                            "backend": engine, "device": target, "enginePid": server.process.pid,
+                            "gguf": {"contextSize": server.context_size, "loadOptions": server.load_options},
+                        }})
+                        load_timing["modelReadyMs"] = (time.perf_counter() - load_started) * 1000
+                    emit({"type": "phase", "stage": "preparing-conversation", "text": "Preparing conversation…"})
+                    try:
+                        log_offset = server.log_path.stat().st_size
+                    except OSError:
+                        pass
+                    result = server.generate(request, emit, cancellation)
+                    result["runtimeTiming"].update(load_timing)
+                    return result
+
                 try:
-                    log_offset = server.log_path.stat().st_size
-                except OSError:
-                    pass
-                result = server.generate(request, emit, cancellation)
-                result["runtimeTiming"].update(load_timing)
+                    result = complete(backend, same_configuration)
+                except GGUFComputeError:
+                    if (backend != "openvino" or target != "GPU" or cancellation.streaming
+                            or "argument shapes are inconsistent" not in server.runtime_log_tail(after=log_offset or 0).lower()):
+                        raise
+                    cancellation.check()
+                    startup_phase("setting-up-runtime", "Switching GPU runtimes…")
+                    emit({"type": "residency", "model": None})
+                    server.close(force=True)
+                    server = None
+                    result = complete("vulkan", False)
                 emit(result)
             except InterruptedError:
                 # A disconnected prompt prefill can still hold the inference slot.
