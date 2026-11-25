@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { expect } from "@playwright/test";
-import { chooseMessageAction, fixture } from "./ui-fixture.mjs";
+import { chooseMessageAction, fixture, savedTextWorkspace } from "./ui-fixture.mjs";
 
 const models = [
   { id: "gemma", name: "Gemma", installed: true, format: "gguf", maxContextSize: 65536, supportsVision: true, supportsTools: true },
@@ -262,10 +262,44 @@ try {
   await button("Delete", left.getByRole("group", { name: "Confirm message deletion" })).click();
   await chooseMessageAction(right.getByRole("article", { name: "Your message" }), "Delete message");
   await button("Delete", right.getByRole("group", { name: "Confirm message deletion" })).click();
-  await expect(button("Undo deletion", left)).toHaveAccessibleDescription("Reply deleted.");
-  await expect(button("Undo deletion", right)).toHaveAccessibleDescription("Message and reply deleted.");
-  await button("Undo deletion", left).click();
-  await button("Undo deletion", right).click();
+  const leftUndo = button("Undo deletion", left);
+  const rightUndo = button("Undo deletion", right);
+  await expect(leftUndo).toHaveAccessibleDescription("Reply deleted.");
+  await expect(rightUndo).toHaveAccessibleDescription("Message and reply deleted.");
+  await expect(rightUndo).toHaveAttribute("aria-keyshortcuts", "Control+Z");
+  await expect(rightUndo).toBeFocused();
+  await rightUndo.dispatchEvent("keydown", { code: "KeyZ", key: "z", ctrlKey: true, isComposing: true });
+  await expect(rightUndo).toBeVisible();
+
+  const nativeUndo = process.platform === "darwin" ? "Meta+z" : "Control+z";
+  await rightDraft.pressSequentially("x");
+  await expect(rightDraft).toHaveValue("x");
+  await rightDraft.press(nativeUndo);
+  await expect(rightDraft).toHaveValue("");
+  await expect(rightUndo).toBeVisible();
+  await right.getByRole("log", { name: "Conversation" }).press("Control+z");
+  await expect(right.getByText("Right answer.", { exact: true })).toBeVisible();
+  await expect(rightUndo).toHaveCount(0);
+  await expect(leftUndo).toBeVisible();
+  await expect(left.getByText("Left answer.", { exact: true })).toHaveCount(0);
+
+  await button("Edit message", left).click();
+  const editor = left.getByRole("textbox", { name: "Edited prompt" });
+  const originalPrompt = await editor.inputValue();
+  await editor.press("End");
+  await editor.pressSequentially("x");
+  await expect(editor).toHaveValue(originalPrompt + "x");
+  await editor.press(nativeUndo);
+  await expect(editor).toHaveValue(originalPrompt);
+  await expect(leftUndo).toBeVisible();
+  await editor.press("Escape");
+  await leftUndo.press("Control+z");
+  await expect(left.getByText("Left answer.", { exact: true })).toBeVisible();
+  await expect.poll(async () => {
+    const workspace = await savedTextWorkspace(page);
+    return ["text-thread-writing", "text-thread-research"].map((id) =>
+      workspace.threads.find((thread) => thread.id === id)?.messages.at(-1)?.content);
+  }).toEqual(["Left answer.", "Right answer."]);
   await page.reload();
   await right.getByText("Right answer.", { exact: true }).waitFor();
   await left.getByText("Left answer.", { exact: true }).waitFor();

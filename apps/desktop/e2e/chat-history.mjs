@@ -88,7 +88,7 @@ export async function verifyChatHistory(page) {
   await query.press("Escape");
   await expect(button("Search threads")).toBeFocused();
 
-  await button("Undo deletion").press("Enter");
+  await feed.press(process.platform === "darwin" ? "Meta+z" : "Control+z");
   await expect.poll(async () => (await savedHistory())?.[target]?.id).toBe(history[target].id);
   await searchForReply();
   await revealReply();

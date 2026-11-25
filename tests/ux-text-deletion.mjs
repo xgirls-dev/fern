@@ -78,7 +78,7 @@ try {
   await expect(undo).toHaveCount(0);
   await remove("other-prompt", "Delete message", "Delete this message?");
   await expect(page.getByText("Message deleted.", { exact: true })).toBeVisible();
-  await page.keyboard.press("Enter");
+  await page.keyboard.press("Control+z");
   await expect(row("other-prompt")).toBeFocused();
   await expect(undo).toHaveCount(0);
 
@@ -176,6 +176,8 @@ try {
   assert.deepEqual(state.textRequests.at(-1).messages.map((message) => message.content), ["Describe the revised composition"]);
   await expect(page.getByText(/2 deletions to undo/)).toBeVisible();
   await expect(undo).toBeDisabled();
+  await feed.press("Control+z");
+  await expect(page.getByText(/2 deletions to undo/)).toBeVisible();
   state.textStatus.job = { ...state.textStatus.job, status: "complete", partialText: "The revised description", finishedAt: Date.now() / 1000 };
   await expect(undo).toBeEnabled();
   await undo.click();

@@ -1,4 +1,4 @@
-import { useCallback, useDeferredValue, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type Ref } from "react";
+import { useCallback, useDeferredValue, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent, type Ref } from "react";
 import Plus from "lucide-react/dist/esm/icons/plus.mjs";
 import ArrowDown from "lucide-react/dist/esm/icons/arrow-down.mjs";
 import RotateCcw from "lucide-react/dist/esm/icons/rotate-ccw.mjs";
@@ -13,6 +13,7 @@ import Search from "lucide-react/dist/esm/icons/search.mjs";
 import GitBranch from "lucide-react/dist/esm/icons/git-branch.mjs";
 import Pencil from "lucide-react/dist/esm/icons/pencil.mjs";
 import { isComposingKey } from "../lib/keyboard";
+import { chatUndoShortcut, matchesShortcut, shortcutAriaLabel, shortcutLabel } from "../lib/workspaceNavigation";
 import { MAX_CHAT_DOCUMENTS } from "../lib/chatDocuments";
 import { TextChatMessage, type TextReplyProgress } from "./TextChatMessage";
 import { TextComposerControls } from "./TextComposerControls";
@@ -699,6 +700,15 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
     }
     if (savedPrompt) notify("Reply restored to Prompt versions.");
   };
+  const undoFromKeyboard = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (!deletion || undoBlocked || deleteTarget || event.defaultPrevented || event.repeat ||
+        !matchesShortcut(event.nativeEvent, chatUndoShortcut)) return;
+    const target = event.target;
+    if (!(target instanceof Element) || !event.currentTarget.contains(target) ||
+        target.closest("input, textarea, select, [contenteditable], .text-prompt-editor")) return;
+    event.preventDefault();
+    undoDeletion();
+  };
   const dismissDeletion = () => {
     if (!deletion) return;
     studio.dismissMessageDeletion(activeThread.id);
@@ -934,7 +944,10 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
       <div className="text-main">
       {findOpen && <TextFindBar key={`${activeThread.id}:${findRevision}`} input={findInput} initialQuery={findInitialQuery}
         messages={activeThread.messages} liveMessage={streamingMessage} onMatch={setFindMatch} onClose={closeFind} />}
-      <div className="text-conversation" ref={feedRef} onScroll={onScroll} onFocusCapture={onHistoryFocus} onKeyDown={onHistoryKeyDown} data-following={followingLatest || undefined} tabIndex={0} role="log" aria-label="Conversation" aria-live="off">
+      <div className="text-conversation" ref={feedRef} onScroll={onScroll} onFocusCapture={onHistoryFocus} onKeyDown={(event) => {
+        undoFromKeyboard(event);
+        if (!event.defaultPrevented) onHistoryKeyDown(event);
+      }} data-following={followingLatest || undefined} tabIndex={0} role="log" aria-label="Conversation" aria-live="off">
         <div className="text-transcript" ref={transcriptRef}>
         {!activeThread.messages.length && !runningHere ? (
           <div className="text-empty-state">
@@ -980,11 +993,12 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
             {catalogNotice}
           </InlineNotice>}
         {!empty && modelNotice && <ChatModelReadiness notice={modelNotice} actionRef={bindModelAction} />}
-        {deletion && <div className="text-deletion-notice">
+        {deletion && <div className="text-deletion-notice" onKeyDown={undoFromKeyboard}>
           <span id={deletionStatusId} role="status">{deletion.replyVersion ? "Reply version deleted." : deletion.messages.length > 1 ? "Message and reply deleted." : deletion.messages[0].role === "assistant" ? "Reply deleted." : "Message deleted."}
             {deletionCount > 1 && ` ${deletionCount} deletions to undo.`}
             {undoBlocked && " Undo is available after the response."}</span>
-          <Button ref={undoButton} variant="ghost" aria-describedby={deletionStatusId} disabled={undoBlocked} onClick={undoDeletion}>Undo deletion</Button>
+          <Button ref={undoButton} variant="ghost" aria-describedby={deletionStatusId} aria-keyshortcuts={shortcutAriaLabel(chatUndoShortcut)}
+            title={`${shortcutLabel(chatUndoShortcut)} in the conversation`} disabled={undoBlocked} onClick={undoDeletion}>Undo deletion</Button>
           <TooltipIconButton aria-label={dismissDeletionLabel} tooltip={dismissDeletionLabel}
             onClick={dismissDeletion}><X size={14} aria-hidden="true" /></TooltipIconButton>
         </div>}

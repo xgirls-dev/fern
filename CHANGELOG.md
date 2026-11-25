@@ -10,6 +10,7 @@ lands directly on `main` instead of through labeled pull requests.
 
 - Save workspace backups from Local data. Restore a backup into a separate workspace and switch back to the original with its chats and media.
 - Open the model picker for the focused chat with Ctrl+Shift+L or Cmd+Shift+L on Mac. When opened from the composer, selecting a model or pressing Escape returns focus to the draft.
+- Undo a message deletion with Ctrl+Z or Cmd+Z on Mac while the conversation or its Undo control has focus.
 
 ### Improved
 
