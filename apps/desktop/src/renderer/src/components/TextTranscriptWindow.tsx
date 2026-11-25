@@ -95,13 +95,14 @@ const TranscriptPage = memo(function TranscriptPage({ index, first, last, estima
     style={mounted ? undefined : { height: rememberedHeight }}>{liveReply ? [...rows, liveReply] : rows}</div>;
 });
 
-export const TextTranscriptWindow = memo(function TextTranscriptWindow({ threadId, items, revealIndex, restoreIndex, renderItem, liveReply }: {
+export const TextTranscriptWindow = memo(function TextTranscriptWindow({ threadId, items, revealIndex, restoreIndex, renderItem, liveReply, keepFollowingTail }: {
   threadId: string;
   items: readonly TextTranscriptItem[];
   revealIndex: number;
   restoreIndex: number;
   renderItem: (index: number) => ReactElement;
   liveReply?: ReactElement;
+  keepFollowingTail: () => void;
 }) {
   const windowed = items.length > TEXT_TRANSCRIPT_WINDOW_THRESHOLD;
   const pageCount = Math.ceil(items.length / PAGE_SIZE);
@@ -115,6 +116,8 @@ export const TextTranscriptWindow = memo(function TextTranscriptWindow({ threadI
   const [canDeferPages, setCanDeferPages] = useState(windowed);
   const [focused, setFocused] = useState<number | null>(null);
   const [selection, setSelection] = useState<[number, number] | null>(null);
+  const [pinnedTailPages, setPinnedTailPages] = useState(1);
+  const sizedInitialViewport = useRef(false);
   const previousWindowed = useRef(windowed);
   const pages = useMemo(() => Array.from({ length: pageCount }, (_, index) => {
     const start = index * PAGE_SIZE;
@@ -192,15 +195,39 @@ export const TextTranscriptWindow = memo(function TextTranscriptWindow({ threadI
 
   const revealPage = Math.floor(revealIndex / PAGE_SIZE);
   const hasLiveReply = Boolean(liveReply);
+  const initialTailPages = hasLiveReply || items.length % PAGE_SIZE !== 0 ? 2 : 1;
+  const tailPages = Math.max(pinnedTailPages, initialTailPages);
+  useLayoutEffect(() => {
+    const container = root.current;
+    if (!windowed || sizedInitialViewport.current || !container) return;
+
+    // The tail moves when a placeholder is replaced with its real rows.
+    if (pinnedTailPages > 1) keepFollowingTail();
+    const viewportHeight = container.closest(".text-conversation")?.clientHeight;
+    if (!viewportHeight) {
+      // A compact split pane can open before it has a measurable viewport.
+      setPinnedTailPages(2);
+    } else if (pageCount > tailPages) {
+      const first = container.children[pageCount - tailPages].getBoundingClientRect();
+      const last = container.children[pageCount - 1].getBoundingClientRect();
+      if (last.bottom - first.top < viewportHeight) {
+        // Mount enough real messages to cover the first frame even in a tall window.
+        setPinnedTailPages(tailPages + 1);
+        return;
+      }
+    }
+    sizedInitialViewport.current = true;
+  }, [keepFollowingTail, pageCount, pinnedTailPages, tailPages, windowed]);
+
   // A token only changes the tail. Reuse page elements until their inputs change.
   const pageElements = useMemo(() => pages.map((page, index) => {
-    const mounted = !windowed || !canDeferPages || index >= pageCount - 2 || nearby.has(index) || nearTarget(index, revealPage) ||
+    const mounted = !windowed || !canDeferPages || index >= pageCount - tailPages || nearby.has(index) || nearTarget(index, revealPage) ||
       nearTarget(index, restorePage) || index === focused || !!selection && index >= selection[0] && index <= selection[1];
     const hasTail = hasLiveReply && index === pageCount - 1;
     return <TranscriptPage key={index} index={index} first={page.first} last={page.last}
       estimate={page.estimatedHeight} cache={cache.pages} windowed={windowed} renderItem={mounted ? renderItem : undefined}
       storedCount={page.count - (hasTail ? 1 : 0)} />;
-  }), [cache, canDeferPages, focused, hasLiveReply, nearby, pageCount, pages, renderItem, restorePage, revealPage, selection, windowed]);
+  }), [cache, canDeferPages, focused, hasLiveReply, nearby, pageCount, pages, renderItem, restorePage, revealPage, selection, tailPages, windowed]);
   if (!pageCount) return null;
 
   // Keep every page in the same keyed list when a new tail page is added.
