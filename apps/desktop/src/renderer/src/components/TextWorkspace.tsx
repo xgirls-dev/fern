@@ -491,14 +491,17 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   const hasReplyContent = !!replyContent.trim();
   const hasReplyReasoning = !!replyReasoning?.trim();
   const waitingForToken = phase.startsWith("Waiting for");
+  const prefillLabel = phase.startsWith("Processing prompt")
+    ? replyPaused ? phase.replace("Processing prompt", "Still processing prompt") : phase
+    : null;
   const replyProgress = useMemo<TextReplyProgress>(() => checkingImage ? { kind: "image-check", label: "Checking the image…" }
     : statusLabel ? { kind: "status", label: statusLabel }
     : hasReplyContent ? { kind: "answer", label: replyPaused ? "Waiting for more text…" : "Responding…" }
     : hasReplyReasoning ? { kind: "reasoning", label: replyPaused ? "Still reasoning…" : "Reasoning…" }
-    : { kind: "status", label: waitingForToken
+    : { kind: "status", label: prefillLabel ?? (waitingForToken
       ? replyPaused ? "Still waiting for the first token…" : "Waiting for the first token…"
-      : replyPaused ? "Still preparing the conversation…" : "Preparing conversation…" },
-  [checkingImage, hasReplyContent, hasReplyReasoning, replyPaused, statusLabel, waitingForToken]);
+      : replyPaused ? "Still preparing the conversation…" : "Preparing conversation…") },
+  [checkingImage, hasReplyContent, hasReplyReasoning, prefillLabel, replyPaused, statusLabel, waitingForToken]);
   const unavailableReason = modelNotice?.label ?? (!modelAvailable ? "Choose an installed model to send" : incompatibleImages ? "Choose a vision model or remove the attachment" : "");
   const activity = responseHere ? replyProgress.label
     : loadingJob && !serviceUnavailable ? statusError ? "Reconnecting to the model load…"
