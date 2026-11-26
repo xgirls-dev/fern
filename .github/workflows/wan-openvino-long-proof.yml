@@ -22,12 +22,12 @@ jobs:
         run: |
           python -m pip install 'torch==2.7.0+cpu' --index-url https://download.pytorch.org/whl/cpu
           python -m pip install 'openvino==2026.4.0' 'nncf==3.4.0' 'diffusers==0.35.0' 'transformers==4.49.0' 'huggingface_hub==0.36.0' Pillow imageio imageio-ffmpeg ftfy regex
-      - name: Generate a continuous latent sequence and decode overlapping windows
+      - name: Generate 161 frames with the OpenVINO model and upstream Wan decoder
         run: python -u wan-openvino-long-proof.py
       - if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: wan-openvino-windowed-proof
+          name: wan-openvino-continuous-proof
           path: proof/
           if-no-files-found: warn
           retention-days: 3

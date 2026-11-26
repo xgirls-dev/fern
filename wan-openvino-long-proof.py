@@ -1,16 +1,17 @@
+import gc
 import json
 import pathlib
 import sys
 import time
 
+from diffusers import AutoencoderKLWan
+from huggingface_hub import snapshot_download
 import imageio.v3 as iio
 import numpy as np
-import openvino as ov
 from PIL import Image, ImageDraw
 import torch
-from huggingface_hub import snapshot_download
 
-FRAMES = 65
+FRAMES = 161
 SIZE = 128
 
 def run():
@@ -18,12 +19,17 @@ def run():
     assets = pathlib.Path(snapshot_download(
         "xgirls/wan2.2-ti2v-5b-openvino-int4-awq",
         revision="2d93079f0881f5f83ff8954fd906e7a9f4fd07a3",
-        allow_patterns=["*.xml", "*.bin", "scheduler/*", "tokenizer/*", "ov_wan_i2v_helper.py"],
+        allow_patterns=["transformer.*", "text_encoder.*", "vae_encoder.*", "scheduler/*", "tokenizer/*", "ov_wan_i2v_helper.py"],
         max_workers=3,
     ))
     sys.path.insert(0, str(assets))
     from ov_wan_i2v_helper import OVWanImageToVideoPipeline
 
+    vae_assets = pathlib.Path(snapshot_download(
+        "Wan-AI/Wan2.2-TI2V-5B-Diffusers",
+        revision="b8fff7315c768468a5333511427288870b2e9635",
+        allow_patterns=["vae/config.json", "vae/diffusion_pytorch_model.safetensors"],
+    ))
     proof = pathlib.Path("proof")
     proof.mkdir(exist_ok=True)
     reference = Image.new("RGB", (SIZE, SIZE), "lightblue")
@@ -39,42 +45,29 @@ def run():
     expected = (FRAMES - 1) // 4 + 1
     if latents.shape[2] != expected:
         raise RuntimeError(f"Expected {expected} latent frames, received {latents.shape[2]}")
-    pipeline_seconds = time.monotonic() - started
-    print(f"Generated one sequence of {expected} latent frames in {pipeline_seconds:.1f}s", flush=True)
+    denoise_seconds = time.monotonic() - started
+    print(f"Generated one sequence of {expected} latent frames in {denoise_seconds:.1f}s", flush=True)
     means = torch.tensor(pipeline.latents_mean).view(1, pipeline.z_dim, 1, 1, 1)
     std = torch.tensor(pipeline.latents_std).view(1, pipeline.z_dim, 1, 1, 1)
-    latents = (latents / std + means).numpy().astype(np.float32, copy=False)
-    core = ov.Core()
-    model = core.read_model(assets / "vae_decoder.xml")
-    model.reshape({0: [1, latents.shape[1], 6, latents.shape[3], latents.shape[4]]})
-    decoder = core.compile_model(model, "CPU", {"INFERENCE_NUM_THREADS": 4})
-    pictures = []
-    seams = []
-    consumed = 0
-    while consumed < expected:
-        end = 6 if consumed == 0 else min(consumed + 4, expected)
-        window = np.ascontiguousarray(latents[:, :, end - 6:end])
-        decoded = decoder([window])[0]
-        if decoded.shape[2] != 21 or not np.isfinite(decoded).all():
-            raise RuntimeError(f"Unexpected decoder data: {decoded.shape}")
-        new_count = 21 if consumed == 0 else 4 * (end - consumed)
-        if consumed:
-            seams.append(4 * (consumed - 1) + 1)
-        pictures.append(decoded[:, :, -new_count:].copy())
-        consumed = end
-        print(f"Decoded through latent frame {consumed}/{expected}", flush=True)
-    final = np.concatenate(pictures, axis=2)
-    post = pipeline.video_processor.postprocess_video(torch.from_numpy(final), output_type="np")[0]
-    images = np.clip(post * 255.0, 0, 255).astype(np.uint8)
+    latents = latents / std + means
+    processor = pipeline.video_processor
+    del pipeline
+    gc.collect()
+
+    decode_started = time.monotonic()
+    decoder = AutoencoderKLWan.from_pretrained(
+        str(vae_assets / "vae"), torch_dtype=torch.float32, local_files_only=True,
+    ).eval()
+    with torch.inference_mode():
+        decoded = decoder.decode(latents, return_dict=False)[0]
+    images = np.clip(processor.postprocess_video(decoded, output_type="np")[0] * 255, 0, 255).astype(np.uint8)
     if len(images) != FRAMES:
-        raise RuntimeError(f"Expected {FRAMES} output frames, received {len(images)}")
-    iio.imwrite(proof / "wan-openvino-65.mp4", images, fps=16)
-    motion = np.abs(np.diff(images.astype(np.float32), axis=0)).mean(axis=(1, 2, 3))
+        raise RuntimeError(f"Expected {FRAMES} decoded frames, received {len(images)}")
+    iio.imwrite(proof / "wan-openvino-161.mp4", images, fps=16)
     distinct = len({frame.tobytes() for frame in images})
     details = {"frames": len(images), "uniqueFrames": distinct, "resolution": [SIZE, SIZE],
-               "latentFrames": expected, "framesPerSecond": 16, "seconds": time.monotonic() - started,
-               "meanAdjacentPixelDifference": float(motion.mean()),
-               "meanSeamPixelDifference": float(motion[np.asarray(seams) - 1].mean())}
+               "latentFrames": expected, "framesPerSecond": 16, "denoiseSeconds": denoise_seconds,
+               "decodeAndEncodeSeconds": time.monotonic() - decode_started}
     (proof / "result.json").write_text(json.dumps(details, indent=2))
     print(json.dumps(details), flush=True)
 
