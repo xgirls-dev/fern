@@ -475,17 +475,20 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   const localError = actionError && (actionError.threadId ? actionError.threadId === threadId : focused) ? actionError : null;
   const catalogNotice = reconnecting || modelNotice?.tone === "error" ? null : catalogError;
   const undoBlocked = responseHere;
+  const reportingModelSetup = /^(Checking model memory|Loading model weights|Preparing model context|Warming up model)…$/.test(phase);
   const statusLabel = serviceUnavailable && responseHere ? "Response interrupted."
     : reconnecting ? stopping ? "Reconnecting to stop…" : "Reconnecting to the text runtime…"
     : stopping ? "Stopping…"
     : restoringReply ? restorationLabel
     : pendingHere ? liveJob && liveJob.status !== "idle" ? "Finishing response…" : "Starting response…"
+    : phase === "Queued…" ? "Starting response…"
     : creatingImage ? "Creating an image…"
     : imageReleaseLabel ? imageReleaseLabel
     : phase.startsWith("Finding document") ? phase
     : phase.includes("Compacting") ? replyPaused ? "Still summarizing earlier messages…" : "Summarizing earlier messages…"
     : /download/i.test(phase) ? replyPaused ? "Still downloading the text runtime…" : "Downloading the text runtime…"
     : phase.startsWith("Checking hardware") ? replyPaused ? "Still checking hardware…" : "Checking hardware…"
+    : reportingModelSetup ? replyPaused ? `Still ${phase.charAt(0).toLowerCase()}${phase.slice(1)}` : phase
     : /^(loading|starting the text worker)/i.test(phase) ? replyPaused ? "Still loading the model…" : "Loading model…" : null;
   const hasReplyContent = !!replyContent.trim();
   const hasReplyReasoning = !!replyReasoning?.trim();
