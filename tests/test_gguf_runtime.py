@@ -559,11 +559,12 @@ class GGUFCompletionTests(unittest.TestCase):
             {"op": "generate", "contextSize": 2048, "messages": [{"role": "user", "content": question}]}
             for question in ("First", "Next")
         ]
+        cpu_backend = "cpu" if sys.platform == "darwin" else "openvino"
         for summary_streaming in (False, True):
             with self.subTest(summary_streaming=summary_streaming):
                 stream = io.StringIO("".join(json.dumps(request) + "\n" for request in [*requests, {"op": "shutdown"}]))
                 engines = [
-                    Mock(backend="cpu", context_size=2048, load_options={}, startup_timing={})
+                    Mock(backend=cpu_backend, context_size=2048, load_options={}, startup_timing={})
                     for _ in range(2)
                 ]
                 for pid, engine in enumerate(engines, start=42):
