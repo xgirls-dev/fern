@@ -190,8 +190,9 @@ def run_gguf(file: Path, device: str, projector: Path | None) -> int:
                         raise
                 emit(result)
             except InterruptedError:
-                # A disconnected prompt prefill can still hold the inference slot.
-                if server is not None and not cancellation.streaming:
+                # A disconnected prefill can still hold the inference slot. Once decoding
+                # begins, both a private summary and a reply can be interrupted over HTTP.
+                if server is not None and not (cancellation.streaming or cancellation.summary_streaming):
                     emit({"type": "residency", "model": None})
                     server.close(force=True)
                     server = None

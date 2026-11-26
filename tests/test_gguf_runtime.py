@@ -8,6 +8,7 @@ import sys
 import tarfile
 import tempfile
 import threading
+import time
 import unittest
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
@@ -111,22 +112,31 @@ class GGUFCompletionTests(unittest.TestCase):
         server = GGUFServer.__new__(GGUFServer)
         server.context_size, server.compaction_summaries = 2048, {}
 
-        def complete(route, body, timeout=30):
-            if route == "/tokenize":
-                return {"tokens": []}
-            return {"choices": [{"message": {"content": body["messages"][-1]["content"]}}]}
+        def complete(body, *_args, **_options):
+            chunk = {"choices": [{"delta": {"content": body["messages"][-1]["content"]}}]}
+            return io.BytesIO(b"data: " + json.dumps(chunk).encode() + b"\n\ndata: [DONE]\n\n")
 
-        server._post = Mock(side_effect=complete)
-        self.assertEqual(server._summarize(transcript), transcript)
-        self.assertEqual(server._summarize(transcript), transcript)
-        self.assertEqual(server._post.call_count, 2)
+        server._post = Mock(return_value={"tokens": []})
+        server._completion = Mock(side_effect=complete)
 
-        self.assertEqual(server._summarize(edited), edited)
+        def summarize(content):
+            cancellation = CompletionCancellation()
+            result = server._summarize(content, Mock(), cancellation)
+            self.assertFalse(cancellation.streaming)
+            self.assertFalse(cancellation.summary_streaming)
+            return result
+
+        self.assertEqual(summarize(transcript), transcript)
+        self.assertEqual(summarize(transcript), transcript)
+        server._post.assert_called_once()
+        server._completion.assert_called_once()
+
+        self.assertEqual(summarize(edited), edited)
         for index in range(8):
-            server._summarize(f"Earlier transcript {index}")
+            summarize(f"Earlier transcript {index}")
         self.assertEqual(len(server.compaction_summaries), 8)
-        self.assertEqual(server._summarize(transcript), transcript)
-        self.assertEqual(server._post.call_count, 22)
+        self.assertEqual(summarize(transcript), transcript)
+        self.assertEqual(server._completion.call_count, 11)
 
     def test_stream_result_retains_the_reported_finish_reason(self) -> None:
         server = GGUFServer.__new__(GGUFServer)
@@ -497,6 +507,95 @@ class GGUFCompletionTests(unittest.TestCase):
             finally:
                 upstream.shutdown()
                 serving.join()
+
+    def test_cancel_disconnects_a_private_summary_without_caching_partial_text(self) -> None:
+        chunk = b'data: {"choices":[{"delta":{"content":"Partial private summary"}}]}\n\n'
+        release = threading.Event()
+
+        class DelayedSummary(BaseHTTPRequestHandler):
+            def do_POST(self):
+                self.rfile.read(int(self.headers["Content-Length"]))
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.end_headers()
+                self.wfile.write(chunk)
+                self.wfile.flush()
+                release.wait(5)
+
+        with ThreadingHTTPServer(("127.0.0.1", 0), DelayedSummary) as upstream:
+            serving = threading.Thread(target=upstream.serve_forever, daemon=True)
+            serving.start()
+            engine = GGUFServer.__new__(GGUFServer)
+            engine.base, engine.key = f"http://127.0.0.1:{upstream.server_port}", "test"
+            engine.context_size, engine.compaction_summaries = 2048, {}
+            engine._post = Mock(return_value={"tokens": []})
+            cancellation = CompletionCancellation()
+            emit = Mock()
+            try:
+                with ThreadPoolExecutor(1) as pool:
+                    result = pool.submit(engine._summarize, "Old chat", emit, cancellation)
+                    try:
+                        deadline = time.monotonic() + 3
+                        while not cancellation.summary_streaming and time.monotonic() < deadline:
+                            time.sleep(0.01)
+                        self.assertTrue(cancellation.summary_streaming)
+                        cancellation.cancel()
+                        with self.assertRaises(InterruptedError):
+                            result.result(timeout=2)
+                    finally:
+                        release.set()
+            finally:
+                upstream.shutdown()
+                serving.join()
+
+        emit.assert_called_once_with({"type": "cancellable"})
+        self.assertFalse(cancellation.streaming)
+        self.assertEqual(engine.compaction_summaries, {})
+
+    def test_worker_keeps_engine_after_stopping_summary_decode_but_reloads_after_prefill(self) -> None:
+        from text_generation_worker import run_gguf
+
+        requests = [
+            {"op": "generate", "contextSize": 2048, "messages": [{"role": "user", "content": question}]}
+            for question in ("First", "Next")
+        ]
+        cpu_backend = "cpu" if sys.platform == "darwin" else "openvino"
+        for summary_streaming in (False, True):
+            with self.subTest(summary_streaming=summary_streaming):
+                stream = io.StringIO("".join(json.dumps(request) + "\n" for request in [*requests, {"op": "shutdown"}]))
+                engines = [
+                    Mock(backend=cpu_backend, context_size=2048, load_options={}, startup_timing={})
+                    for _ in range(2)
+                ]
+                for pid, engine in enumerate(engines, start=42):
+                    engine.process.pid = pid
+                    engine.process.poll.return_value = None
+
+                answer = {"type": "result", "text": "Next", "runtimeTiming": {}}
+
+                def generate(request, _emit, cancellation):
+                    if request["messages"][0]["content"] == "First":
+                        cancellation.summary_streaming = summary_streaming
+                        raise InterruptedError("Generation stopped.")
+                    return answer
+
+                engines[0].generate.side_effect = generate
+                engines[1].generate.return_value = answer
+
+                with (
+                    patch.dict(os.environ, {"FERN_GGUF_RUNTIME_ROOT": "scratch"}),
+                    patch("text_generation_worker.sys.stdin", stream),
+                    patch("text_generation_worker.emit") as emit,
+                    patch("gguf_runtime.ensure_runtime", return_value=Path("llama-server")),
+                    patch("gguf_runtime.GGUFServer", side_effect=engines) as load,
+                ):
+                    self.assertEqual(run_gguf(Path("model.gguf"), "CPU", None), 0)
+
+                self.assertEqual(load.call_count, 1 if summary_streaming else 2)
+                self.assertEqual(engines[0].generate.call_count, 2 if summary_streaming else 1)
+                self.assertIn({"type": "cancelled"}, [call.args[0] for call in emit.call_args_list])
+                if not summary_streaming:
+                    engines[0].close.assert_called_once_with(force=True)
 
     def test_force_close_kills_the_runtime_without_waiting_for_graceful_shutdown(self) -> None:
         server = GGUFServer.__new__(GGUFServer)
