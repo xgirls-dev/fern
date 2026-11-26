@@ -68,7 +68,7 @@ function replaceFindHighlight(previous: Range | undefined, next: Range | undefin
 
 function revealFindRange(feed: HTMLElement, range: Range, image?: HTMLImageElement | null) {
   const line = Array.from(range.getClientRects()).find((rect) => rect.width && rect.height);
-  if (!line) return;
+  if (!line || !feed.clientHeight) return false;
   const viewport = feed.getBoundingClientRect();
   const top = viewport.top + 8;
   const bottom = viewport.bottom - 12;
@@ -84,6 +84,7 @@ function revealFindRange(feed: HTMLElement, range: Range, image?: HTMLImageEleme
     const bounds = scroller.getBoundingClientRect();
     if (line.left < bounds.left || line.right > bounds.right) scroller.scrollLeft += line.left - bounds.left - 16;
   }
+  return true;
 }
 
 function characterBounds(text: Text, offset: number) {
@@ -253,21 +254,39 @@ export function useTextScroll(threadId: string, { persistPosition = true, paneFo
     if (!feed || !row) return;
     let target = find && row.querySelector("[data-find-target]");
     let range = find && target ? renderedMatch(target, find) : undefined;
-    const reveal = (match: Range) => revealFindRange(feed, match,
-      find?.imageIndex === undefined ? undefined : target?.closest("figure")?.querySelector("img"));
+    let pendingReveal = scroll;
+    let retryFrame: number | undefined;
+    const reveal = () => {
+      if (!pendingReveal || !range) return;
+      const image = find?.imageIndex === undefined ? undefined : target?.closest("figure")?.querySelector("img");
+      if (revealFindRange(feed, range, image)) {
+        pendingReveal = false;
+        savePosition(feed, row);
+      }
+    };
+    const revealWhenLaidOut = () => {
+      reveal();
+      if (!pendingReveal || !range || retryFrame !== undefined) return;
+      // The matched text can already exist before it has a measurable box.
+      retryFrame = requestAnimationFrame(() => {
+        retryFrame = undefined;
+        reveal();
+      });
+    };
     if (find) replaceFindHighlight(undefined, range);
     if (scroll) {
       cancelRestore();
       following.current = false;
-      if (range) reveal(range);
-      else (target ?? row).scrollIntoView({ block });
-      savePosition(feed, row);
+      revealWhenLaidOut();
+      if (pendingReveal) {
+        (target ?? row).scrollIntoView({ block });
+        savePosition(feed, row);
+      }
     }
     if (!find) return;
 
     // Streaming Markdown can replace the text nodes behind a highlight. Refresh the
     // range in place, revealing it once if the selected text has yet to paint.
-    let pendingReveal = scroll && !range;
     const observer = new MutationObserver((changes) => {
       const nextTarget = row.querySelector("[data-find-target]");
       if (target === nextTarget && !changes.some(({ target: changed }) => nextTarget?.contains(changed))) return;
@@ -275,14 +294,11 @@ export function useTextScroll(threadId: string, { persistPosition = true, paneFo
       const updated = target ? renderedMatch(target, find) : undefined;
       replaceFindHighlight(range, updated);
       range = updated;
-      if (updated && pendingReveal) {
-        pendingReveal = false;
-        reveal(updated);
-        savePosition(feed, row);
-      }
+      revealWhenLaidOut();
     });
     observer.observe(row, { subtree: true, childList: true, characterData: true });
     return () => {
+      if (retryFrame !== undefined) cancelAnimationFrame(retryFrame);
       observer.disconnect();
       replaceFindHighlight(range, undefined);
     };

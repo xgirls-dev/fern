@@ -51,9 +51,21 @@ try {
     body: '<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256"><rect width="256" height="256" fill="#496d59"/></svg>' }));
   await expect(row).toHaveCount(0);
   await button("Find in chat").click();
+  await page.evaluate(() => {
+    const getRects = Range.prototype.getClientRects;
+    Range.prototype.getClientRects = function () {
+      if (this.toString() === "quiet cedar" && this.startContainer.parentElement?.closest("p")?.textContent.startsWith("First sighting")) {
+        Range.prototype.getClientRects = getRects;
+        window.firstFindLayoutDeferred = true;
+        return [];
+      }
+      return getRects.call(this);
+    };
+  });
   await search.fill("quiet cedar");
   await expect(count).toHaveText("1 of 4");
   await activeHit("First sighting");
+  assert.equal(await page.evaluate(() => window.firstFindLayoutDeferred), true);
   await search.press("Enter");
   await expect(count).toHaveText("2 of 4");
   await activeHit("Second sighting");
