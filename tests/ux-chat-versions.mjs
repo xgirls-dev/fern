@@ -32,9 +32,15 @@ try {
   await expect(original).toHaveCount(0);
   await button("Edit message").first().click();
   await page.getByRole("textbox", { name: "Edited prompt" }).fill("Revised opening");
-  await button("Resend").click();
+  const resend = button("Resend here");
+  await expect(resend).toHaveAccessibleDescription("Resending here replaces this prompt and the messages after it. You can restore the original in Versions.");
+  await resend.press("Enter");
+  await expect(message).toBeFocused();
+  await expect(message).toHaveValue("Keep this draft");
+  await expect.poll(() => state.textRequests.length).toBe(3);
   assert.deepEqual(state.textRequests[2].messages, [{ role: "user", content: "Revised opening" }]);
   await complete("Revised response.");
+  await expect(message).toBeFocused();
   await button("Undo deletion").click();
   await expect(page.getByText("Reply restored in conversation history.")).toBeVisible();
   await expect(message).toBeFocused();

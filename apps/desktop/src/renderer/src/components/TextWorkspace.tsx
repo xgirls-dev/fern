@@ -714,6 +714,14 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
       jumpToLatest();
     } else if (chatId) focusBranchId.current = chatId;
   }, [activeThread.id, jumpToLatest, promptEdit, replaceablePrompt?.id, studio.revisePrompt]);
+  const resendRevision = useCallback(() => {
+    if (!promptEdit) return;
+    setPanel(null);
+    setFindThreadId(null);
+    focusAfterRevision.current = threadId;
+    jumpToLatest();
+    void studio.send(threadId, promptEdit.content, promptEdit.messageId);
+  }, [jumpToLatest, promptEdit, studio.send, threadId]);
   const requestDelete = useCallback((messageId: string | null, versionId?: string) => {
     setDeleteTarget(messageId ? { threadId: activeThread.id, messageId, versionId } : null);
   }, [activeThread.id]);
@@ -880,8 +888,11 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
         focusRequested={requestedEdit === message.id}
         onFocusHandled={clearEditFocus} hasImage={hasImage} sendUnavailable={editUnavailable} invalid={revisionTooLong}
         onChange={(content) => studio.updateThread(threadId, { promptEdit: { messageId: message.id, content } })}
-        onCancel={() => studio.updateThread(threadId, { promptEdit: undefined })} onApply={applyRevision}
-        onResend={!replaceLatest ? () => { jumpToLatest(); void studio.send(threadId, promptEdit.content, message.id); } : undefined} />}
+        onCancel={() => {
+          if (focusAfterRevision.current === threadId) focusAfterRevision.current = undefined;
+          studio.updateThread(threadId, { promptEdit: undefined });
+        }} onApply={applyRevision}
+        onResend={!replaceLatest ? resendRevision : undefined} />}
       promptVersions={user && (!editing || savedMatch) && !!message.promptAlternatives?.length && <TextPromptVersions alternatives={message.promptAlternatives}
         searchMatch={savedMatch} onCloseSearch={closeFind}
         busy={busy} onRestore={replaceLatest ? (id) => studio.restorePromptVersion(threadId, message.id, id) : undefined}
@@ -911,10 +922,10 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
       busy={(latest && busy) || !!match}
     />;
   }, [activeMatch, applyRevision, branchReply, busy, canDeleteMessages, canForkReplies, canReduceContext, canRetry, clearEditFocus, closeFind, continueReply,
-    deleteMessage, deleteTarget, editMessage, forkReply, hasAlternativeModel, hasAlternativeVisionModel, jumpToLatest, lastMessage, messages,
+    deleteMessage, deleteTarget, editMessage, forkReply, hasAlternativeModel, hasAlternativeVisionModel, lastMessage, messages,
     modelAvailable, openModels, openRecoverySetting, promptEdit, promptNeedsVision, revisionTooLong, renderChatImage,
-    replaceablePrompt?.id, requestDelete, requestedEdit, restoreReasoningId, retry, runtimeIssue, selectVersion, selected?.supportsVision,
-    studio.attachmentReady, studio.restorePromptVersion, studio.send, studio.updateThread, threadId]);
+    replaceablePrompt?.id, requestDelete, requestedEdit, resendRevision, restoreReasoningId, retry, runtimeIssue, selectVersion, selected?.supportsVision,
+    studio.attachmentReady, studio.restorePromptVersion, studio.updateThread, threadId]);
   const renderStoredRow = useCallback((index: number) => renderRow(storedRows[index], index), [renderRow, storedRows]);
   const liveReply = useMemo(() => {
     if (!streamingMessage || !liveKey || !liveMessageId) return;

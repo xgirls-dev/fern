@@ -12,6 +12,7 @@ lands directly on `main` instead of through labeled pull requests.
 
 ### Fixed
 
+- Return focus to the composer when resending an edited earlier prompt. The editor explains which messages are saved in Versions.
 - Keep the GGUF model loaded when Stop interrupts an in-progress chat summary after it starts generating text.
 
 ## [0.1.49] - 2026-11-25
