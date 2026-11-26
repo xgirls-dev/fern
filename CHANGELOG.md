@@ -14,6 +14,7 @@ lands directly on `main` instead of through labeled pull requests.
 
 ### Fixed
 
+- Bring the selected Find match into view when a long reply finishes formatting.
 - Find every generated image prompt in a chat reply, including saved versions, and jump to the matching image.
 - Return focus to the composer when resending an edited earlier prompt. The editor explains which messages are saved in Versions.
 - Keep the GGUF model loaded when Stop interrupts an in-progress chat summary after it starts generating text.
