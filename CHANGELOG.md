@@ -15,6 +15,7 @@ lands directly on `main` instead of through labeled pull requests.
 
 ### Fixed
 
+- Recover a finished video after restarting the local service if it exited while saving the clip.
 - Restart Fern’s local service from Video after an interruption. The first frame and motion prompt stay ready, and completed clips return from history.
 - Finish stopping a chat even when its live stream misses the final update.
 - Bring the selected Find match into view when a long reply finishes formatting.
