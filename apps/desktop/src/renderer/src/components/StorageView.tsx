@@ -2,7 +2,7 @@ import Database from "lucide-react/dist/esm/icons/database.mjs";
 import HardDrive from "lucide-react/dist/esm/icons/hard-drive.mjs";
 import ShieldCheck from "lucide-react/dist/esm/icons/shield-check.mjs";
 import Trash2 from "lucide-react/dist/esm/icons/trash-2.mjs";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { clearGenerationCache, fetchStorageStatus } from "../lib/api";
 import { notify } from "../lib/notifications";
 import { saveWorkspaceBackup, type WorkspaceBackupSnapshot } from "../lib/workspaceBackup";
@@ -36,17 +36,21 @@ function formatBytes(bytes: number): string {
   return `${numberFormatter.format(value)} ${units[index]}`;
 }
 
-function storedPreferenceBytes(): number {
+async function estimateWorkspaceBytes(): Promise<number | null> {
   try {
-    let bytes = 0;
+    const { usage } = await navigator.storage.estimate();
+    if (usage === undefined) return null;
+    const encoder = new TextEncoder();
+    // Chromium includes IndexedDB in its origin estimate and excludes localStorage.
+    let bytes = usage;
     for (let index = 0; index < localStorage.length; index += 1) {
       const key = localStorage.key(index);
       if (!key?.startsWith("fern-") && !key?.startsWith("iris-")) continue;
-      bytes += new TextEncoder().encode(key + (localStorage.getItem(key) ?? "")).byteLength;
+      bytes += encoder.encode(key + (localStorage.getItem(key) ?? "")).byteLength;
     }
     return bytes;
   } catch {
-    return 0;
+    return null;
   }
 }
 
@@ -59,6 +63,7 @@ export function StorageView({
   onOpenModels,
 }: StorageViewProps) {
   const [storage, setStorage] = useState<StorageStatus | null>(null);
+  const [workspaceBytes, setWorkspaceBytes] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [action, setAction] = useState<"backup" | "inspect" | "restore" | "switch" | "cache" | "reset" | null>(null);
   const [preview, setPreview] = useState<WorkspaceBackupPreview | null>(null);
@@ -69,16 +74,13 @@ export function StorageView({
   const resetTrigger = useRef<HTMLButtonElement>(null);
   const resetConfirmation = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
-  const preferenceBytes = useMemo(
-    () => (active ? storedPreferenceBytes() : 0),
-    [active, storage],
-  );
-
   const refreshStorage = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      setStorage(await fetchStorageStatus());
+      const [status, bytes] = await Promise.all([fetchStorageStatus(), estimateWorkspaceBytes()]);
+      setStorage(status);
+      setWorkspaceBytes(bytes);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not read local storage usage.");
     } finally {
@@ -271,14 +273,14 @@ export function StorageView({
                 {storage.video ? <div><span>Video clips</span><strong>{formatBytes(storage.video.bytes)}</strong><small>{storage.video.fileCount} WebM files</small></div> : null}
                 <div><span>Audio takes</span><strong>{formatBytes(storage.audio.bytes)}</strong><small>{storage.audio.fileCount} WAV files</small></div>
               </article>
-              <article className="storage-card">
+              <article className="storage-card" aria-labelledby="workspace-storage-label">
                 <span className="storage-icon">
                   <ShieldCheck size={16} aria-hidden="true" />
                 </span>
                 <div>
-                  <span>Prompts & Preferences</span>
-                  <strong>{formatBytes(preferenceBytes + storage.metadata.bytes)}</strong>
-                  <small>Settings and gallery metadata</small>
+                  <span id="workspace-storage-label">Workspace data</span>
+                  <strong>{workspaceBytes === null ? "Size unavailable" : formatBytes(workspaceBytes + storage.metadata.bytes)}</strong>
+                  <small>Chats, attachments, and preferences</small>
                 </div>
               </article>
               <article className="storage-card">
