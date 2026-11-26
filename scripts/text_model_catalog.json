@@ -15,6 +15,18 @@
       {"path":"vocab.json","size":2776833,"algorithm":"git-sha1","digest":"4783fe10ac3adce15ac8f358ef5462739852c569"}
     ]
   },
+  "qwen2.5-0.5b-instruct-gguf": {
+    "name": "Qwen2.5 0.5B Instruct",
+    "repo": "Qwen/Qwen2.5-0.5B-Instruct-GGUF",
+    "revision": "9217f5db79a29953eb74d5343926648285ec7e67",
+    "folder": "qwen2.5-0.5b-instruct-gguf",
+    "format": "gguf",
+    "recommendedDevices": ["CPU"],
+    "modelFile": "qwen2.5-0.5b-instruct-q4_k_m.gguf",
+    "files": [
+      {"path":"qwen2.5-0.5b-instruct-q4_k_m.gguf","size":491400032,"algorithm":"sha256","digest":"74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db"}
+    ]
+  },
   "gemma-4-e4b-gguf": {
     "name": "Gemma 4 E4B · GGUF",
     "repo": "ggml-org/gemma-4-E4B-it-GGUF",

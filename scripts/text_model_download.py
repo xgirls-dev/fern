@@ -75,21 +75,25 @@ def model_spec(model_id: str) -> dict:
         seen.add(file["path"])
     required = REQUIRED_MODEL_FILES
     if spec.get("format") == "gguf":
-        required = (spec.get("modelFile"), spec.get("projectorFile"))
+        model = spec.get("modelFile")
+        projector = spec.get("projectorFile")
+        required = (model,) if projector is None else (model, projector)
         if any(not isinstance(filename, str) or not filename.endswith(".gguf")
                or PurePosixPath(filename).name != filename for filename in required):
-            raise ValueError("The GGUF catalog must specify model and projector files.")
-        if required[0] == required[1]:
+            raise ValueError("The GGUF catalog must specify a valid model file and any companion projector file.")
+        if model == projector:
             raise ValueError("The model and projector must be separate GGUF files.")
     if not set(required).issubset(seen):
         raise ValueError("The text model manifest is missing required files.")
     return spec
 
 
-def model_download_details(spec: dict) -> dict[str, int]:
+def model_download_details(spec: dict) -> dict[str, int | list[str]]:
     files = spec["files"]
     size = sum(file["size"] for file in files)
-    details = {"bytes": size, "minimumFreeBytes": size + MINIMUM_FREE_BYTES}
+    details: dict[str, int | list[str]] = {"bytes": size, "minimumFreeBytes": size + MINIMUM_FREE_BYTES}
+    if devices := spec.get("recommendedDevices"):
+        details["recommendedDevices"] = devices
     projector = next((file for file in files if file["path"] == spec.get("projectorFile")), None)
     if projector:
         details["projectorBytes"] = projector["size"]
@@ -98,7 +102,8 @@ def model_download_details(spec: dict) -> dict[str, int]:
 
 def model_files(folder: Path, spec: dict) -> tuple[Path, Path | None]:
     if spec.get("format") == "gguf":
-        return folder / spec["modelFile"], folder / spec["projectorFile"]
+        projector = spec.get("projectorFile")
+        return folder / spec["modelFile"], folder / projector if projector else None
     return folder, None
 
 
@@ -330,7 +335,7 @@ def _install_model(model_id: str, model_root: str | Path, progress: Callable[[st
             if current.get("revision") == spec["revision"]:
                 model, projector = model_files(folder, spec)
                 inspect_model(model, projector_path=projector)
-                if projector and any((folder / item["path"]).stat().st_size != item["size"] for item in spec["files"]):
+                if gguf and any((folder / item["path"]).stat().st_size != item["size"] for item in files):
                     raise ValueError("An installed GGUF file has an unexpected length.")
                 progress(PREPARING_MODEL_FILES)
                 progress("Recommended text model is already installed.")
@@ -371,12 +376,12 @@ def _install_model(model_id: str, model_root: str | Path, progress: Callable[[st
     check_download_pause(pause)
     progress(PREPARING_MODEL_FILES)
     model, projector = model_files(stage, spec)
-    if projector:
+    if gguf:
         if spec["modelFile"] in reused:
             model = folder / spec["modelFile"]
-        if spec["projectorFile"] in reused:
-            projector = folder / spec["projectorFile"]
-    if not projector:
+        if projector is not None and projector.name in reused:
+            projector = folder / projector.name
+    else:
         convert_tokenizers(stage, progress)
     try:
         inspect_model(model, projector_path=projector, validate_ir=True)
@@ -388,7 +393,7 @@ def _install_model(model_id: str, model_root: str | Path, progress: Callable[[st
         "repo": spec["repo"],
         "revision": spec["revision"],
         "format": spec["format"],
-        "tokenizersConvertedByFern": projector is None,
+        "tokenizersConvertedByFern": not gguf,
         "verifiedChecksums": True,
     }
     (stage / INSTALL_MARKER).write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")

@@ -236,6 +236,7 @@ export function isTextModelInstalling(install: TextModelInstall | undefined):
 export interface RecommendedTextModel {
   id: string; name: string; repo: string; bytes: number; installed: boolean; format?: string;
   minimumFreeBytes?: number; projectorBytes?: number; supportsTools?: boolean;
+  recommendedDevices?: ("CPU" | "GPU")[];
   hasPartialDownload?: boolean; repairModelId?: string | null; registeredModelId?: string | null;
 }
 
@@ -437,6 +438,10 @@ export function textRuntimeIssue(
 export function recommendedTextModelIssue(status: TextRuntimeAvailability, model: RecommendedTextModel) {
   if (model.format === "gguf" && status.ggufAvailable === undefined) return "Checking GGUF runtime availability…";
   return textRuntimeIssue(status, model);
+}
+
+export function formatTextModelDownloadSize(bytes: number) {
+  return bytes < 1e9 ? `${Math.round(bytes / 1e6)} MB` : `${(bytes / 1e9).toFixed(2)} GB`;
 }
 
 export function textModelReadiness(
