@@ -36,6 +36,52 @@ class FakeResponse:
 
 
 class TextModelDownloadTests(unittest.TestCase):
+    def test_text_only_gguf_installs_and_repairs_without_tokenizer_conversion(self):
+        model_id = "qwen2.5-0.5b-instruct-gguf"
+        catalog = download.catalog()
+        spec = download.model_spec(model_id)
+        self.assertEqual(download.model_download_details(spec), {
+            "bytes": 491400032, "minimumFreeBytes": 491400032 + download.MINIMUM_FREE_BYTES,
+            "recommendedDevices": ["CPU"],
+        })
+        content = b"text-only model"
+        spec["files"] = [{**spec["files"][0], "size": len(content), "digest": hashlib.sha256(content).hexdigest()}]
+        catalog[model_id] = spec
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(download, "catalog", return_value=catalog),
+            patch.object(download.shutil, "disk_usage", return_value=SimpleNamespace(free=download.MINIMUM_FREE_BYTES + len(content))),
+            patch.object(download.urllib.request, "urlopen", side_effect=lambda *args, **kwargs: FakeResponse(content, 200)) as fetch,
+            patch.object(download, "inspect_model") as inspect_model,
+            patch.object(download, "convert_tokenizers") as convert,
+        ):
+            root = Path(directory).resolve()
+            folder = download.install_model(model_id, root, lambda _: None)
+            model, projector = download.model_files(folder, spec)
+            self.assertIsNone(projector)
+            self.assertEqual(model.read_bytes(), content)
+            self.assertTrue(download.installed_model(model_id, root))
+            metadata = json.loads((folder / download.INSTALL_MARKER).read_text(encoding="utf-8"))
+            self.assertFalse(metadata["tokenizersConvertedByFern"])
+            self.assertTrue(metadata["verifiedChecksums"])
+            fetch.assert_called_once()
+            self.assertIn(f"/resolve/{spec['revision']}/{model.name}", fetch.call_args.args[0].full_url)
+
+            fetch.reset_mock()
+            self.assertEqual(download.install_model(model_id, root, lambda _: None), folder)
+            fetch.assert_not_called()
+            self.assertEqual(download.install_model(model_id, root, lambda _: None, repair=True), folder)
+            inspect_model.assert_called_with(model, projector_path=None, validate_ir=True)
+            fetch.assert_not_called()
+
+            model.write_bytes(b"incomplete")
+            self.assertFalse(download.installed_model(model_id, root))
+            download.install_model(model_id, root, lambda _: None, repair=True)
+            fetch.assert_called_once()
+            self.assertEqual(model.read_bytes(), content)
+            self.assertTrue(download.installed_model(model_id, root))
+            convert.assert_not_called()
+
     def test_repair_reuses_verified_gguf_and_replaces_same_length_corruption(self):
         model_id = "gemma-4-e4b-gguf"
         spec = download.model_spec(model_id)
