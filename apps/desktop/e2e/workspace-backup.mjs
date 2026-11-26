@@ -38,7 +38,8 @@ const assets = {
 };
 const errors = [];
 const profile = path.join(scratch, "profile");
-const env = { ...process.env, FERN_ROOT: root, INTEL_IRIS_ROOT: root, FERN_E2E_HEADLESS: "1",
+const env = { ...process.env, FERN_ROOT: root, INTEL_IRIS_ROOT: root,
+  FERN_E2E_HEADLESS: process.env.FERN_E2E_VISIBLE === "1" ? "0" : "1",
   FERN_TEXT_MODEL_REGISTRY: path.join(scratch, "text-models.json"),
   FERN_CUSTOM_IMAGE_REGISTRY: path.join(scratch, "custom-image-models.json") };
 delete env.ELECTRON_RUN_AS_NODE;
