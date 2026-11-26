@@ -33,7 +33,7 @@ import { notify } from "../lib/notifications";
 import { reuseUnchangedStatus } from "../lib/statusSnapshot";
 import type { ReferenceAttachment } from "../lib/reference";
 import { imageDimensionLimits } from "../lib/imageDimensions";
-import { APPLE_IMAGE_MODEL, fixedImagePreset, isKleinLoraModel, maxReferenceImages, selectedKleinLoras } from "../lib/imageModels";
+import { APPLE_IMAGE_MODEL, fixedImagePreset, maxReferenceImages, selectedImageLoras, supportsImageLoras } from "../lib/imageModels";
 
 const SETTINGS_KEY = "fern-studio-settings:v3";
 const LEGACY_SETTINGS_KEYS = [
@@ -281,7 +281,7 @@ export function useStudio(computeDevice: "GPU" | "CPU" = "GPU") {
                 }
               : thread;
           const nextSettings = { ...thread.settings, ...patch };
-          if (patch.loras && isKleinLoraModel(nextSettings.model)) {
+          if (patch.loras && supportsImageLoras(nextSettings.model)) {
             nextSettings.loras = thread.settings.loras;
             nextSettings.lorasByModel = { ...thread.settings.lorasByModel, [nextSettings.model]: patch.loras };
           }
@@ -883,7 +883,7 @@ export function useStudio(computeDevice: "GPU" | "CPU" = "GPU") {
       invalid.guidance = `Use guidance from 0 to ${settings.model?.startsWith("custom-") ? 20 : 10}.`;
     if (!Number.isSafeInteger(settings.seed))
       invalid.seed = "Use a whole-number seed.";
-    const loras = selectedKleinLoras(settings);
+    const loras = selectedImageLoras(settings);
     if (loras.some((lora) => !Number.isFinite(lora.strength) || lora.strength < -4 || lora.strength > 4))
       invalid.loras = "Use LoRA strengths between -4 and 4.";
     if (

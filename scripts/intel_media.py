@@ -37,6 +37,7 @@ FLAGS = {
     "vae": "--vae", "tae": "--tae", "tokenizer": "--tokenizer",
 }
 VIDEO_ID = "wan22-turbo"
+Z_IMAGE_ID = "z-image-turbo"
 SANA_RUNTIME_RESERVE_BYTES = 4 * 1024**3
 
 
@@ -126,6 +127,8 @@ class IntelMedia:
         self.server_model = None
         self.server_origin = None
         self.server_adapter: dict[str, str | float] | None = None
+        self.server_lora_files = ()
+        self.server_lora_stage = None
         self.server_log = None
         self.server_timer = None
         self.lock = threading.RLock()
@@ -281,6 +284,10 @@ class IntelMedia:
             self.server_timer = None
         stop_process(self.server)
         self.server = self.server_model = self.server_origin = self.server_adapter = None
+        self.server_lora_files = ()
+        if self.server_lora_stage:
+            self.server_lora_stage.cleanup()
+            self.server_lora_stage = None
         if self.server_log:
             self.server_log.unlink(missing_ok=True)
             self.server_log = None
@@ -300,7 +307,7 @@ class IntelMedia:
         with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(request, timeout=timeout) as response:
             return json.load(response)
 
-    def start_server(self, model, event, log):
+    def start_server(self, model, event, log, lora_files):
         self.close_server()
         args = self.arguments(model, event, log)
         with socket.socket() as port:
@@ -310,6 +317,18 @@ class IntelMedia:
         executable = self.runtime / "sd-server.exe"
         cache = self.root / ".cache"
         cache.mkdir(parents=True, exist_ok=True)
+        if lora_files:
+            log("Preparing LoRAs for Intel Vulkan…")
+            self.server_lora_stage = tempfile.TemporaryDirectory(dir=cache, prefix="sd-loras-")
+            directory = Path(self.server_lora_stage.name)
+            for index, (source, _size, _modified) in enumerate(lora_files, start=1):
+                check_cancel(event)
+                target = directory / f"adapter-{index}.safetensors"
+                try:
+                    os.link(source, target)
+                except OSError:
+                    shutil.copyfile(source, target)
+            args.extend(("--lora-model-dir", str(directory), "--lora-apply-mode", "at_runtime"))
         fd, log_name = tempfile.mkstemp(prefix="sd-server-", suffix=".log", dir=cache)
         self.server_log = Path(log_name)
         with os.fdopen(fd, "wb") as output:
@@ -326,6 +345,11 @@ class IntelMedia:
                 event.wait(0.2)
                 continue
             verify_vulkan_residency(self.server_log.read_text(encoding="utf-8", errors="replace"))
+            if lora_files:
+                found = {item["path"] for item in self.request("/sdapi/v1/loras")}
+                expected = {f"adapter-{index}.safetensors" for index in range(1, len(lora_files) + 1)}
+                if not expected <= found:
+                    raise RuntimeError("The Vulkan runtime could not open every selected LoRA.")
             if adapter := INTEL_MEDIA_CATALOG[model]["preset"].get("lora"):
                 expected_name = Path(adapter["path"]).name
                 for item in self.request("/sdapi/v1/loras"):
@@ -335,6 +359,7 @@ class IntelMedia:
                 if self.server_adapter is None:
                     raise RuntimeError("The required LoRA adapter was not discovered by the Vulkan runtime.")
             self.server_model = model
+            self.server_lora_files = lora_files
             return
         detail = self.server_log.read_text(encoding="utf-8", errors="replace").strip().splitlines()
         raise RuntimeError(f"Intel Vulkan could not load the image model. {detail[-1] if detail else ''}".strip())
@@ -360,13 +385,23 @@ class IntelMedia:
             started = time.perf_counter() - float(result["generationTime"])
         else:
             self.sana.close()
+            active_loras = [item for item in request.get("loras", []) if item["enabled"] and item["strength"]] if model == Z_IMAGE_ID else []
+            local_adapters = []
+            local_files = []
+            for index, item in enumerate(active_loras, start=1):
+                path = Path(item["path"])
+                stat = path.stat()
+                local_files.append((path, stat.st_size, stat.st_mtime_ns))
+                local_adapters.append({"path": f"adapter-{index}.safetensors", "multiplier": item["strength"]})
+            lora_files = tuple(local_files)
             with self.lock:
                 if self.server_timer:
                     self.server_timer.cancel()
                     self.server_timer = None
                 try:
-                    if not self.server or self.server.poll() is not None or self.server_model != model:
-                        self.start_server(model, event, log)
+                    if (not self.server or self.server.poll() is not None or self.server_model != model
+                            or self.server_lora_files != lora_files):
+                        self.start_server(model, event, log, lora_files)
                     check_cancel(event)
                     log("Generating on Intel GPU…")
                     started = time.perf_counter()
@@ -377,19 +412,26 @@ class IntelMedia:
                         "scheduler": INTEL_MEDIA_CATALOG[model]["preset"]["scheduler"],
                     }
                     adapter = self.server_adapter
-                    if adapter:
-                        settings["lora"] = [adapter]
+                    adapters = [adapter] if adapter else local_adapters
+                    if adapters:
+                        settings["lora"] = adapters
                         log_offset = self.server_log.stat().st_size
                     # Stop terminates the local server and releases the socket read.
                     result = self.request("/sdapi/v1/txt2img", settings, timeout=None)
-                    if adapter:
-                        count = INTEL_MEDIA_CATALOG[model]["preset"]["lora"]["tensor_count"]
+                    if adapters:
                         with self.server_log.open("rb") as stream:
                             stream.seek(log_offset)
                             adapter_log = stream.read().decode("utf-8", errors="replace")
-                        if f"({count} / {count}) LoRA tensors have been applied" not in adapter_log:
-                            raise RuntimeError("The required LoRA adapter did not apply completely.")
-                        log(f"Applied {count}/{count} LoRA tensors on Intel Vulkan.")
+                        counts = re.findall(r"\((\d+) / (\d+)\) LoRA tensors have been applied", adapter_log)
+                        if adapter:
+                            count = str(INTEL_MEDIA_CATALOG[model]["preset"]["lora"]["tensor_count"])
+                            if (count, count) not in counts:
+                                raise RuntimeError("The required LoRA adapter did not apply completely.")
+                            log(f"Applied {count}/{count} LoRA tensors on Intel Vulkan.")
+                        elif len(counts) < len(adapters) or any(applied == "0" or applied != total for applied, total in counts):
+                            raise RuntimeError("A selected LoRA did not apply completely. Choose adapters trained for Z-Image Turbo.")
+                        else:
+                            log("Applied the selected LoRAs on Intel Vulkan.")
                     image = base64.b64decode(result["images"][0].split(",")[-1], validate=True)
                     output.write_bytes(image)
                     timer = threading.Timer(120, self.expire_server, args=(self.server,))

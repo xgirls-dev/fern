@@ -8,6 +8,8 @@ const models = [
   { id: '4b', label: 'Klein 4B', bytes: 4e9, downloaded: 0, installed: false, state: 'not-installed', uncensoredTextEncoder: { repoId: 'example/encoder', installed: false, enabled: false, state: 'not-installed', downloaded: 0, bytes: 2.1e9 } },
   { id: '4b-lora', label: 'Klein 4B · LoRA', bytes: 4e9, downloaded: 4e9, installed: true, state: 'installed' },
   { id: '9b-lora', label: 'Klein 9B · LoRA', bytes: 9e9, downloaded: 9e9, installed: true, state: 'installed' },
+  { id: 'z-image-turbo', label: 'Z-Image Turbo', bytes: 5e9, downloaded: 5e9, installed: true, state: 'installed',
+    defaultWidth: 512, defaultHeight: 512, defaultSteps: 8, defaultGuidance: 1 },
 ];
 try {
   await page.route('**/api/models', route => route.fulfill({ json: { models } }));
@@ -84,7 +86,7 @@ try {
   }), true, 'model errors use the error color');
   assert(await modelError.evaluate(element => element.scrollWidth <= element.clientWidth + 1), 'long errors wrap within their card');
   await page.setViewportSize({ width: 1440, height: 900 });
-  state.installedModels = models.filter(({ id }) => id.endsWith('-lora'));
+  state.installedModels = models.filter(({ id }) => id.endsWith('-lora') || id === 'z-image-turbo');
   await page.evaluate(() => { window.studio.pickLoraFiles = async () => ['C:\\styles\\claymation\\pytorch_lora_weights.safetensors', 'C:\\styles\\character.safetensors']; });
   await page.getByRole('button', { name: 'Stable title', exact: true }).click();
   await page.waitForResponse(response => response.url().includes('/api/flux2/status'));
@@ -141,6 +143,25 @@ try {
   assert.equal(state.payloads.at(-1)?.model, '9b-lora');
   assert.equal(state.payloads.at(-1)?.reference_images?.length, 2);
   assert.deepEqual(state.payloads.at(-1)?.loras, [{ path: 'C:\\styles\\9b-edit.safetensors', strength: 1, enabled: true }]);
+  const generate = page.getByRole('button', { name: 'Generate image', exact: true });
+  await expect(generate).toBeEnabled();
+  await page.locator('.composer-references').getByRole('button', { name: 'Remove reference 2', exact: true }).click();
+  await page.locator('.composer-references').getByRole('button', { name: 'Remove reference 1', exact: true }).click();
+  await selectModel('Z-Image Turbo');
+  await expect(page.getByRole('checkbox', { name: '9b-edit.safetensors' })).toHaveCount(0);
+  const zImageAdapter = 'C:\\styles\\clay-z-image.safetensors';
+  await page.evaluate((path) => { window.studio.pickLoraFiles = async () => [path]; }, zImageAdapter);
+  await page.getByRole('button', { name: 'Add LoRA files' }).click();
+  const zImageStrength = page.getByLabel('Strength for clay-z-image.safetensors', { exact: true });
+  await zImageStrength.fill('0.65');
+  await selectModel('Klein 9B · LoRA');
+  await expect(page.getByRole('checkbox', { name: '9b-edit.safetensors' })).toBeChecked();
+  await selectModel('Z-Image Turbo');
+  await expect(zImageStrength).toHaveValue('0.65');
+  await page.getByLabel('Image prompt', { exact: true }).fill('A clay fox in a forest.');
+  await generate.click();
+  await expect.poll(() => state.payloads.at(-1)?.model).toBe('z-image-turbo');
+  assert.deepEqual(state.payloads.at(-1)?.loras, [{ path: zImageAdapter, strength: 0.65, enabled: true }]);
   await page.getByRole('button', { name: 'Images', exact: true }).click();
   const header = page.locator('.library-view-header');
   const folderButton = await header.getByRole('button', { name: 'Open folder' }).elementHandle();

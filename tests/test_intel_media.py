@@ -11,7 +11,7 @@ from PIL import Image
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from intel_media import IntelMedia, VIDEO_ID, verify_vulkan_residency
+from intel_media import IntelMedia, VIDEO_ID, Z_IMAGE_ID, verify_vulkan_residency
 from model_catalog import INTEL_MEDIA_CATALOG
 from video_jobs import VideoJobs
 
@@ -64,6 +64,61 @@ class IntelMediaTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "did not apply completely"):
                     worker.generate_image(request, root / "incomplete.png", event, Mock())
                 self.assertFalse((root / "incomplete.png").exists())
+
+    def test_z_image_reuses_the_server_for_strength_changes_and_rejects_partial_loras(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            worker = IntelMedia(root)
+            worker.arguments = Mock(return_value=[])
+            first = root / "first.safetensors"
+            first.write_bytes(b"adapter weights")
+            disabled = root / "disabled.safetensors"
+            image = BytesIO()
+            Image.new("RGB", (512, 512)).save(image, format="PNG")
+            response = {"images": [base64.b64encode(image.getvalue()).decode("ascii")]}
+            spawned = []
+            submitted = []
+            counts = "(24 / 24)"
+
+            def spawn(arguments, *, stdout, **kwargs):
+                if "--lora-model-dir" in arguments:
+                    prepared = Path(arguments[arguments.index("--lora-model-dir") + 1])
+                    self.assertEqual((prepared / "adapter-1.safetensors").read_bytes(), first.read_bytes())
+                    self.assertEqual(len(list(prepared.iterdir())), 1)
+                stdout.write(b"total params memory size = 100MB (VRAM 100MB, RAM 0.00MB)\n")
+                stdout.flush()
+                process = Mock()
+                process.poll.return_value = None
+                spawned.append(process)
+                return process
+
+            def request(endpoint, settings=None, timeout=3):
+                if endpoint == "/sdcpp/v1/capabilities":
+                    return {}
+                if endpoint == "/sdapi/v1/loras":
+                    return [{"path": "adapter-1.safetensors"}]
+                self.assertEqual(endpoint, "/sdapi/v1/txt2img")
+                submitted.append(settings.get("lora"))
+                with worker.server_log.open("a", encoding="utf-8") as log:
+                    log.write(f"{counts} LoRA tensors have been applied\n")
+                return response
+
+            worker.request = request
+            local = {"path": str(first), "enabled": True, "strength": 0.5}
+            payload = {"model": Z_IMAGE_ID, "prompt": "A fox.", "seed": 42, "steps": 8, "guidance": 1,
+                       "width": 512, "height": 512, "loras": [local, {"path": str(disabled), "enabled": False, "strength": 1}]}
+            event = threading.Event()
+            with patch("intel_media.subprocess.Popen", side_effect=spawn), patch("intel_media.threading.Timer"):
+                worker.generate_image(payload, root / "first.png", event, Mock())
+                local["strength"] = 0.8
+                worker.generate_image(payload, root / "warm.png", event, Mock())
+                self.assertEqual(len(spawned), 1)
+                self.assertEqual(submitted, [[{"path": "adapter-1.safetensors", "multiplier": strength}] for strength in (0.5, 0.8)])
+                counts = "(23 / 24)"
+                with self.assertRaisesRegex(RuntimeError, "did not apply completely"):
+                    worker.generate_image(payload, root / "partial.png", event, Mock())
+                self.assertFalse((root / "partial.png").exists())
+                self.assertFalse(list((root / ".cache").glob("sd-loras-*")))
 
     def test_video_completion_is_persistent_and_removable(self):
         with tempfile.TemporaryDirectory() as directory:

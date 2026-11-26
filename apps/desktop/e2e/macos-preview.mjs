@@ -30,7 +30,10 @@ try {
   const text = await (await fetch(base + "/api/text/status")).json();
   assert.equal(text.ggufAvailable, true);
   assert.equal(text.defaultModelId, "gemma-4-e4b-gguf");
-  assert.deepEqual(text.recommendedModels.map((model) => model.id), ["gemma-4-e4b-gguf"]);
+  const recommended = new Map(text.recommendedModels.map((model) => [model.id, model]));
+  assert.equal(recommended.get(text.defaultModelId)?.format, "gguf");
+  assert.deepEqual(recommended.get("qwen2.5-0.5b-instruct-gguf")?.recommendedDevices, ["CPU"]);
+  assert(text.recommendedModels.every((model) => model.format === "gguf"));
   const { models } = await (await fetch(base + "/api/models")).json();
   assert.deepEqual(models.map((model) => model.id), ["klein-4b-mlx"]);
 
@@ -40,6 +43,7 @@ try {
   await expect(klein).toBeVisible();
   await page.getByRole("button", { name: "Text", exact: true }).click();
   await expect(page.getByText("Gemma 4 E4B · GGUF", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Qwen2.5 0.5B Instruct", exact: true })).toBeVisible();
   await (await app.browserWindow(page)).evaluate((window) => window.webContents.setBackgroundThrottling(false));
   await verifyChatHistory(page);
   await verifyChatComposer(page);
