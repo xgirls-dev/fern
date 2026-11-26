@@ -3,6 +3,7 @@ import Clapperboard from "lucide-react/dist/esm/icons/clapperboard.mjs";
 import Download from "lucide-react/dist/esm/icons/download.mjs";
 import ImagePlus from "lucide-react/dist/esm/icons/image-plus.mjs";
 import Square from "lucide-react/dist/esm/icons/square.mjs";
+import type { BackendFailure } from "../../../preload/types";
 import { resolveAssetUrl } from "../lib/api";
 import { notify } from "../lib/notifications";
 import { readReference } from "../lib/reference";
@@ -10,14 +11,17 @@ import type { useVideo } from "../hooks/useVideo";
 import { Button, ErrorMessage, InlineConfirmation, Input, PageHeader, Textarea } from "./ui/controls";
 import "./VideoWorkspace.css";
 
-export function VideoWorkspace({ video, device, busyElsewhere, openModels, openCompute }: {
+export function VideoWorkspace({ video, device, busyElsewhere, openModels, openCompute, backendFailure, backendConnecting, onRestartBackend }: {
   video: ReturnType<typeof useVideo>;
   device: "GPU" | "CPU";
   busyElsewhere: boolean;
   openModels: () => void;
   openCompute: () => void;
+  backendFailure: BackendFailure | null;
+  backendConnecting: boolean;
+  onRestartBackend?: () => Promise<void>;
 }) {
-  const { clips, model, job, running, pending, error, connectionError, reference } = video;
+  const { clips, model, job, running, available, recovering, pending, interrupted, error, connectionError, reference } = video;
   const [selected, setSelected] = useState<string | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
   const [loadingImage, setLoadingImage] = useState(false);
@@ -29,7 +33,8 @@ export function VideoWorkspace({ video, device, busyElsewhere, openModels, openC
   const allClips = job?.output && !clips?.some((clip) => clip.id === job.output?.id)
     ? [job.output, ...(clips ?? [])] : clips ?? [];
   const clip = allClips.find((item) => item.id === selected) ?? allClips[0];
-  const canGenerate = model?.runtimeReady && device !== "CPU" && !running && !busyElsewhere && !pending;
+  const canGenerate = available && model?.runtimeReady && device !== "CPU" && !running && !busyElsewhere && !pending;
+  const serviceStatus = backendConnecting ? "Connecting to the local service…" : recovering ? "Checking for your last clip…" : null;
   useEffect(() => heading.current?.focus(), []);
 
   async function attach(file: File | undefined) {
@@ -100,25 +105,35 @@ export function VideoWorkspace({ video, device, busyElsewhere, openModels, openC
                 type="number" inputMode="numeric" min={0} max={2147483647} step={1} required />
             </div>
           </fieldset>
-          {!model && !connectionError ? <p role="status" className="video-status">Checking local video model…</p> : null}
-          {model && !model.runtimeReady ? <div className="video-setup">
+          {backendFailure ? <div className="video-setup">
+            <ErrorMessage>{backendFailure.message}</ErrorMessage>
+            {onRestartBackend && <Button onClick={() => {
+              heading.current?.focus({ preventScroll: true });
+              void onRestartBackend();
+            }}>{backendFailure.stage === "running" ? "Restart local service" : "Retry starting Fern"}</Button>}
+          </div> : serviceStatus ? <p role="status" className="video-status">{connectionError || serviceStatus}</p>
+            : !model && !connectionError ? <p role="status" className="video-status">Checking local video model…</p> : null}
+          {available && model && !model.runtimeReady ? <div className="video-setup">
             <p>{model.runtimeNote}</p>
             {model.platformSupported ? <Button onClick={openModels}>Open video models</Button> : null}
           </div> : null}
-          {model?.runtimeReady && device === "CPU" ? <div className="video-setup">
+          {available && model?.runtimeReady && device === "CPU" ? <div className="video-setup">
             <p>Video generation requires Intel GPU. Select GPU in Preferences.</p>
             <Button onClick={openCompute}>Open compute settings</Button>
           </div> : null}
-          {busyElsewhere && !running ? <p className="video-status">Finish or stop the active job to generate a video.</p> : null}
-          {error || connectionError || job?.error ? <ErrorMessage>{error || connectionError || job?.error}</ErrorMessage> : null}
+          {available && busyElsewhere && !running ? <p className="video-status">Finish or stop the active job to generate a video.</p> : null}
+          {!backendFailure && !serviceStatus && (error || connectionError || job?.error)
+            ? <ErrorMessage>{error || connectionError || job?.error}</ErrorMessage> : null}
           <div className="video-actions">
-            {running ? <Button onClick={() => void video.update("stop")} disabled={pending || job?.status === "stopping"}>
+            {running ? <Button onClick={() => void video.update("stop")} disabled={!available || pending || job?.status === "stopping"}>
               <Square size={13} fill="currentColor" aria-hidden="true" /> Stop
             </Button> : <Button type="submit" variant="primary"
               disabled={!canGenerate || Boolean(connectionError) || !reference || !video.prompt.trim() || loadingImage}>
               Generate video
             </Button>}
-            <span className="video-status" role="status">{loadingImage ? "Reading first frame…" : running ? job?.phase : job?.status === "cancelled" ? "Generation stopped." : ""}</span>
+            <span className="video-status" role="status">{loadingImage ? "Reading first frame…" : available && (running ? job?.phase
+              : interrupted ? "Video generation was interrupted. Generate again to retry this clip."
+              : job?.status === "cancelled" ? "Generation stopped." : "")}</span>
           </div>
         </form>
 
@@ -130,22 +145,23 @@ export function VideoWorkspace({ video, device, busyElsewhere, openModels, openC
           {clip ? <>
             <div className="video-preview">
               <video key={clip.id} controls playsInline preload="metadata" src={resolveAssetUrl(clip.url)}
-                poster={resolveAssetUrl(clip.posterUrl)} aria-label="Generated video" onError={() => setPlaybackError(clip.id)} />
+                poster={resolveAssetUrl(clip.posterUrl)} aria-label="Generated video" onError={() => setPlaybackError(clip.id)}
+                onLoadedMetadata={() => setPlaybackError((previous) => previous === clip.id ? null : previous)} />
             </div>
-            {playbackError === clip.id ? <ErrorMessage>Video playback failed. You can still save the file.</ErrorMessage> : null}
+            {available && playbackError === clip.id ? <ErrorMessage>Video playback failed. You can still save the file.</ErrorMessage> : null}
             <p className="video-clip-prompt">{clip.prompt}</p>
             <div className="video-clip-details">
               <span>{clip.width} × {clip.height} · {clip.duration.toFixed(2)} s · Seed {clip.seed}</span>
-              <Button ref={deleteButton} variant="ghost" onClick={() => setRemoving(clip.id)}>Delete</Button>
+              <Button ref={deleteButton} variant="ghost" disabled={!available} onClick={() => setRemoving(clip.id)}>Delete</Button>
             </div>
-            {removing === clip.id ? <InlineConfirmation confirmLabel="Delete clip" disabled={pending}
+            {removing === clip.id ? <InlineConfirmation confirmLabel="Delete clip" disabled={!available || pending}
               onCancel={() => { setRemoving(null); deleteButton.current?.focus(); }}
               onConfirm={async () => { await video.update("remove", { id: clip.id }); setRemoving(null); heading.current?.focus(); }}>
               Permanently delete this video from Fern?
             </InlineConfirmation> : null}
           </> : <div className="video-preview video-preview-empty">
             <Clapperboard size={24} strokeWidth={1.5} aria-hidden="true" />
-            <span>{running ? "Rendering your first clip…" : "Generated clips appear here."}</span>
+            <span>{available && running ? "Rendering your first clip…" : "Generated clips appear here."}</span>
           </div>}
           {allClips.length > 0 ? <section className="video-history" aria-labelledby="video-history-heading">
             <h3 id="video-history-heading">Clips</h3>

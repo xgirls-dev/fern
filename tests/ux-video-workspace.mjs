@@ -27,6 +27,12 @@ let clips = [];
 let installed = false;
 let generated;
 let exported;
+let fullRecoveryReads = 0;
+let expectRecovery = false;
+let restartCount = 0;
+let lateStop;
+let holdStop = false;
+const outageMessage = "Fern’s local service stopped unexpectedly.";
 await page.route("**/references/video-frame.png", (route) => route.fulfill({ body: frame, contentType: "image/png" }));
 await page.route("**/fixture/export-video", async (route) => {
   exported = route.request().postData();
@@ -46,15 +52,33 @@ if (process.env.FERN_TEST_WEBM) {
 } else {
   await page.route("**/outputs/example.webm", (route) => route.fulfill({ status: 204 }));
 }
-await page.route("**/api/video/status*", (route) => route.fulfill({
-  json: { job, clips, model: { runtimeReady: installed, platformSupported: true, runtimeNote: "Install Wan 2.2 Turbo in Models before generating." } },
-}));
+await page.route("**/api/video/status*", (route) => {
+  const jobOnly = new URL(route.request().url()).searchParams.has("job");
+  if (expectRecovery && !jobOnly) {
+    fullRecoveryReads++;
+    expectRecovery = false;
+  }
+  return route.fulfill({
+    json: { job, clips: jobOnly ? null : clips,
+      model: { runtimeReady: installed, platformSupported: true, runtimeNote: "Install Wan 2.2 Turbo in Models before generating." } },
+  });
+});
+await page.route("**/fixture/backend-retry", (route) => {
+  restartCount++;
+  expectRecovery = true;
+  job = idle;
+  return route.fulfill({ json: { ok: true } });
+});
 await page.route("**/api/video/generate", (route) => {
   generated = route.request().postDataJSON();
   job = { ...idle, id: clip.id, status: "running", phase: "Generating frames on Intel GPU…" };
   return route.fulfill({ status: 202, json: { job } });
 });
-await page.route("**/api/video/stop", (route) => {
+await page.route("**/api/video/stop", async (route) => {
+  if (holdStop) {
+    lateStop = route;
+    return;
+  }
   job = { ...job, status: "cancelled", phase: null };
   return route.fulfill({ status: 202, json: { job } });
 });
@@ -87,10 +111,44 @@ try {
   assert(generated.referenceImage.startsWith("data:image/png;base64,"));
   await page.getByRole("button", { name: "Stop", exact: true }).click();
   await page.getByText("Generation stopped.").waitFor();
+  const restart = page.getByRole("button", { name: "Restart local service", exact: true });
+  const motion = page.getByRole("textbox", { name: "Motion prompt" });
+  const reportServiceExit = () => page.evaluate((message) => {
+    window.dispatchEvent(new CustomEvent("fern-fixture-backend-error", { detail: { message, stage: "running" } }));
+  }, outageMessage);
+
   await begin.click();
   await page.getByText("Generating frames on Intel GPU…").waitFor();
+  holdStop = true;
+  await page.getByRole("button", { name: "Stop", exact: true }).click();
+  await expect.poll(() => Boolean(lateStop)).toBe(true);
+  await reportServiceExit();
+  await expect(page.getByRole("alert").filter({ hasText: outageMessage })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Stop", exact: true })).toBeDisabled();
+  await expect(page.getByText("Generating frames on Intel GPU…")).toHaveCount(0);
+  await restart.focus();
+  await restart.press("Enter");
+  await expect(heading).toBeFocused();
+  await expect(begin).toBeEnabled();
+  await expect(motion).toHaveValue(clip.prompt);
+  await expect(page.getByRole("img", { name: "First frame cropped to the output dimensions" })).toBeVisible();
+  await expect(page.getByText("Video generation was interrupted. Generate again to retry this clip.")).toBeVisible();
+  assert.equal(fullRecoveryReads, 1);
+  await lateStop.fulfill({ json: { job: { ...idle, id: clip.id, status: "stopping", phase: "Stopping…" } } });
+  await expect(begin).toBeEnabled();
+  expectRecovery = false;
+  holdStop = false;
+
+  await begin.click();
+  await page.getByText("Generating frames on Intel GPU…").waitFor();
+  await reportServiceExit();
+  await expect(restart).toBeVisible();
   clips = [clip];
-  job = { ...job, status: "complete", phase: null, output: clip };
+  await restart.click();
+  await expect(begin).toBeEnabled();
+  await expect(page.getByText("Video generation was interrupted.", { exact: false })).toHaveCount(0);
+  assert.equal(restartCount, 2);
+  assert.equal(fullRecoveryReads, 2);
   await page.getByRole("button", { name: "Save WebM" }).waitFor();
   if (process.env.FERN_TEST_WEBM) {
     const actual = await page.locator("video").evaluate(async (element) => {
@@ -121,7 +179,7 @@ try {
   await page.getByRole("button", { name: "Delete clip" }).click();
   await page.getByText("Generated clips appear here.").waitFor();
   assert.deepEqual(errors, []);
-  console.log("Video setup, reference upload, generation, stop, saved history, export, narrow layout and deletion passed.");
+  console.log("Video setup, generation, Stop, service recovery, saved history, export, narrow layout and deletion passed.");
 } finally {
   await close();
 }
