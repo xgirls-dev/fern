@@ -1,21 +1,17 @@
-name: Wan OpenVINO longer export proof
+name: Wan OpenVINO tiled attention validation
 
 on:
   push:
-    branches: [codex/wan-openvino-full-resolution-proof]
+    branches: [codex/wan-openvino-tiled-attention]
 
 permissions:
   contents: read
 
 jobs:
   render-with-existing-export:
-    name: Render ${{ matrix.seconds }} seconds at 544 × 704
+    name: Render 10 seconds at 544 × 704 with tiled attention
     runs-on: ubuntu-latest
     timeout-minutes: 150
-    strategy:
-      fail-fast: false
-      matrix:
-        seconds: [4, 10]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -27,11 +23,11 @@ jobs:
         run: |
           python -m pip install 'torch==2.7.0+cpu' --index-url https://download.pytorch.org/whl/cpu
           python -m pip install 'openvino==2026.4.0' 'nncf==3.4.0' 'diffusers==0.35.0' 'transformers==4.49.0' 'huggingface_hub==0.36.0' Pillow imageio imageio-ffmpeg ftfy regex
-      - name: Generate the full-resolution clip with the OpenVINO model and upstream Wan decoder
-        run: /usr/bin/time -v python -u wan-openvino-long-proof.py ${{ matrix.seconds }}
+      - name: Generate the full-resolution clip with tiled global attention and the upstream decoder
+        run: /usr/bin/time -v python -u wan-openvino-long-proof.py 10
       - name: Verify the encoded clip
         env:
-          SECONDS_TO_RENDER: ${{ matrix.seconds }}
+          SECONDS_TO_RENDER: "10"
         run: |
           ffprobe -v error -select_streams v:0 -count_frames \
             -show_entries stream=width,height,avg_frame_rate,nb_read_frames \
@@ -49,7 +45,7 @@ jobs:
       - if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: wan-openvino-full-resolution-${{ matrix.seconds }}s
+          name: wan-openvino-full-resolution-10s-tiled-attention
           path: proof/
           if-no-files-found: warn
           retention-days: 3

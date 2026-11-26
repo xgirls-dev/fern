@@ -10,8 +10,10 @@ from diffusers import AutoencoderKLWan
 from huggingface_hub import snapshot_download
 import imageio.v3 as iio
 import numpy as np
+import openvino as ov
 from PIL import Image, ImageDraw
 import torch
+from wan_tiled_attention import make_transformer, verify_tiled_attention
 
 FPS = 16
 HEIGHT = 704
@@ -28,7 +30,21 @@ def run(duration_seconds: int):
         max_workers=3,
     ))
     sys.path.insert(0, str(assets))
-    from ov_wan_i2v_helper import OVWanImageToVideoPipeline
+    import ov_wan_i2v_helper as published
+
+    original_compile = published._compile_ir
+
+    def compile_model(path, device, ov_config=None):
+        if pathlib.Path(path).stem != "transformer":
+            return original_compile(path, device, ov_config)
+        core = ov.Core()
+        transformer = make_transformer(core, path, frame_count, HEIGHT, WIDTH)
+        print("Compiling the pinned transformer with tiled global self-attention.", flush=True)
+        runtime = core.compile_model(transformer, device, ov_config or {})
+        print("Transformer ready. Starting denoising.", flush=True)
+        return runtime
+
+    published._compile_ir = compile_model
 
     vae_assets = pathlib.Path(snapshot_download(
         "Wan-AI/Wan2.2-TI2V-5B-Diffusers",
@@ -41,7 +57,9 @@ def run(duration_seconds: int):
     ImageDraw.Draw(reference).ellipse((160, 270, 300, 410), fill="firebrick")
     reference.save(proof / "reference.png")
     started = time.monotonic()
-    pipeline = OVWanImageToVideoPipeline(assets, device_map="CPU", ov_config={"INFERENCE_NUM_THREADS": 4})
+    pipeline = published.OVWanImageToVideoPipeline(assets, device_map="CPU", ov_config={
+        "INFERENCE_NUM_THREADS": 4, "NUM_STREAMS": 1,
+    })
     latents = pipeline(
         image=reference, prompt="A red ball rolls across a pale blue floor. Static camera.",
         height=HEIGHT, width=WIDTH, num_frames=frame_count, num_inference_steps=4, guidance_scale=5.0,
@@ -82,6 +100,7 @@ def run(duration_seconds: int):
         "resolution": [WIDTH, HEIGHT],
         "latentFrames": expected,
         "framesPerSecond": FPS,
+        "attentionQueryTile": HEIGHT // 32 * (WIDTH // 32),
         "denoiseSeconds": denoise_seconds,
         "decodeAndEncodeSeconds": time.monotonic() - decode_started,
     }
@@ -91,4 +110,6 @@ def run(duration_seconds: int):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("seconds", type=int, choices=(4, 10))
-    run(parser.parse_args().seconds)
+    args = parser.parse_args()
+    verify_tiled_attention(ov.Core())
+    run(args.seconds)
