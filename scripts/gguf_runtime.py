@@ -5,10 +5,12 @@ import base64
 import ctypes
 import hashlib
 import http.client
+import io
 import json
 import os
 import platform
 import re
+import select
 import secrets
 import socket
 import subprocess
@@ -106,6 +108,33 @@ class CompletionCancellation:
         finally:
             with self._lock:
                 self._socket = None
+
+
+class _CompletionReader(io.RawIOBase):
+    def __init__(self, transport: socket.socket, cancellation: CompletionCancellation) -> None:
+        super().__init__()
+        self.transport = transport
+        self.cancellation = cancellation
+
+    def makefile(self, _mode: str) -> io.BufferedReader:
+        return io.BufferedReader(self)
+
+    def readable(self) -> bool:
+        return True
+
+    def readinto(self, buffer) -> int:
+        # A concurrent shutdown does not always wake a pending Winsock receive.
+        # Poll for readability before each read so Stop has a bounded wait.
+        deadline = time.monotonic() + 180
+        while True:
+            self.cancellation.check()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("The GGUF runtime did not send response data.")
+            readable, _, _ = select.select([self.transport], [], [], min(remaining, 0.1))
+            if readable:
+                self.cancellation.check()
+                return self.transport.recv_into(buffer)
 
 
 def apple_silicon() -> bool:
@@ -437,6 +466,8 @@ class GGUFServer:
             # HTTPConnection can close its socket when handing off a close-delimited
             # response. Keep a live socket handle for cancelling that response.
             with connection.sock.dup() as cancel_socket, cancellation.watch(cancel_socket):
+                connection.response_class = lambda _socket, **kwargs: http.client.HTTPResponse(
+                    _CompletionReader(cancel_socket, cancellation), **kwargs)
                 emit({"type": "cancellable"})
                 emit({"type": "phase", "stage": "waiting-for-first-token", "text": "Waiting for the first token…"})
                 connection.request("POST", "/v1/chat/completions", json.dumps(body).encode("utf-8"), {

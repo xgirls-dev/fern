@@ -28,7 +28,7 @@ def thumbnail_version(stat: os.stat_result) -> str:
 
 
 def thumbnail_matches(path: Path, file_stat: os.stat_result, version: str) -> bool:
-    if file_stat.st_ino:
+    if os.name != "nt":
         return thumbnail_version(file_stat) == version
     # On Windows, fstat can omit the inode. Use the path identity, along
     # with the size and modification time of the file that was actually opened.
