@@ -163,6 +163,7 @@ export interface TextVersion {
   id: string;
   label: string;
   messages: TextMessage[];
+  promptEdit?: TextPromptEdit;
 }
 
 export function snapshotTextVersion(messages: TextMessage[]): TextVersion {
@@ -891,6 +892,12 @@ export function restoreFinishedTextReply(message: TextMessage | undefined): Text
   return restoreMessage(message, false);
 }
 
+function restorePromptEdit(edit: TextPromptEdit | undefined, messages: TextMessage[]): TextPromptEdit | undefined {
+  return typeof edit?.content === "string" && messages.some((message) => message?.role === "user" && message.id === edit.messageId)
+    ? edit
+    : undefined;
+}
+
 export function restoreTextThreads(value: unknown): TextThreadWorkspace | undefined {
     const saved = value as Partial<TextThreadWorkspace> | null;
     const folders = normalizeChatFolders(saved?.folders);
@@ -906,10 +913,7 @@ export function restoreTextThreads(value: unknown): TextThreadWorkspace | undefi
       draftContextImage: isOutputImage(thread.draftContextImage) ? thread.draftContextImage : undefined,
       documents: normalizeChatDocuments(thread.documents),
       draftContextImageThreadId: isOutputImage(thread.draftContextImage) && isTextThreadId(thread.draftContextImageThreadId) ? thread.draftContextImageThreadId : undefined,
-      promptEdit: typeof thread.promptEdit?.content === "string" && thread.messages.some((message) =>
-        message?.role === "user" && message.id === thread.promptEdit?.messageId)
-        ? thread.promptEdit
-        : undefined,
+      promptEdit: restorePromptEdit(thread.promptEdit, thread.messages),
       sourceThreadId: isTextThreadId(thread.sourceThreadId) && thread.sourceThreadId !== thread.id ? thread.sourceThreadId : undefined,
       mode: thread.mode === "reasoning" ? "reasoning" : "instant",
       imageModel: typeof thread.imageModel === "string" ? thread.imageModel : "auto",
@@ -922,9 +926,10 @@ export function restoreTextThreads(value: unknown): TextThreadWorkspace | undefi
       ...modelDefaultsFromThread(thread),
       messages: thread.messages.filter(validMessage).map((message) => restoreMessage(message)),
       versions: Array.isArray(thread.versions) ? thread.versions.filter((version) => version && typeof version.id === "string"
-        && typeof version.label === "string" && Array.isArray(version.messages)).map((version) => ({
-          id: version.id, label: version.label, messages: version.messages.filter(validMessage).map((message) => restoreMessage(message)),
-        })).filter((version) => version.messages.length > 0) : undefined,
+        && typeof version.label === "string" && Array.isArray(version.messages)).map((version) => {
+          const messages = version.messages.filter(validMessage).map((message) => restoreMessage(message));
+          return { id: version.id, label: version.label, messages, promptEdit: restorePromptEdit(version.promptEdit, messages) };
+        }).filter((version) => version.messages.length > 0) : undefined,
     }));
     if (threads.length) {
       const activeId = threads.find((thread) => thread.id === saved?.activeId)?.id ?? threads[0].id;

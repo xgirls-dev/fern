@@ -1283,9 +1283,10 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     if (busy || submission.current || activeThread?.pendingJobId || !activeThread?.versions) return;
     const previous = activeThread.versions.find((version) => version.id === id);
     if (!previous) return;
-    const snapshot = snapshotTextVersion(activeThread.messages);
+    const snapshot = { ...snapshotTextVersion(activeThread.messages), promptEdit: activeThread.promptEdit };
     updateThread(activeThread.id, {
       messages: previous.messages,
+      promptEdit: previous.promptEdit,
       versions: [snapshot, ...activeThread.versions.filter((version) => version.id !== id)],
     }, { savedId: snapshot.id, restoredId: previous.id });
     setActionError(null);
