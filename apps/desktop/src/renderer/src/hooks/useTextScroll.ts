@@ -66,11 +66,17 @@ function replaceFindHighlight(previous: Range | undefined, next: Range | undefin
   } else if (ranges?.size === 0) CSS.highlights.delete(findHighlight);
 }
 
-function revealFindRange(feed: HTMLElement, range: Range) {
+function revealFindRange(feed: HTMLElement, range: Range, image?: HTMLImageElement | null) {
   const line = Array.from(range.getClientRects()).find((rect) => rect.width && rect.height);
   if (!line) return;
   const viewport = feed.getBoundingClientRect();
-  if (line.top < viewport.top + 8 || line.bottom > viewport.bottom - 12) {
+  const top = viewport.top + 8;
+  const bottom = viewport.bottom - 12;
+  if (image) {
+    const visibleImageTop = Math.max(image.getBoundingClientRect().top, line.bottom - (bottom - top));
+    if (visibleImageTop < top) feed.scrollTop += visibleImageTop - top;
+    else if (line.bottom > bottom) feed.scrollTop += line.bottom - bottom;
+  } else if (line.top < top || line.bottom > bottom) {
     feed.scrollTop += line.top - viewport.top - Math.min(40, viewport.height / 4);
   }
   const scroller = range.startContainer.parentElement?.closest(horizontalScroller);
@@ -240,18 +246,20 @@ export function useTextScroll(threadId: string, { persistPosition = true, paneFo
     savePosition(feed);
   }, [cancelRestore, savePosition]);
 
-  const revealMessage = useCallback((id: string, find?: Pick<ChatSearchMatch, "query" | "occurrence">,
+  const revealMessage = useCallback((id: string, find?: Pick<ChatSearchMatch, "query" | "occurrence" | "imageIndex">,
     block: ScrollLogicalPosition = "nearest", scroll = true) => {
     const feed = feedRef.current;
     const row = feed?.querySelector(`[data-chat-message="${CSS.escape(id)}"]`);
     if (!feed || !row) return;
     let target = find && row.querySelector("[data-find-target]");
     let range = find && target ? renderedMatch(target, find) : undefined;
+    const reveal = (match: Range) => revealFindRange(feed, match,
+      find?.imageIndex === undefined ? undefined : target?.closest("figure")?.querySelector("img"));
     if (find) replaceFindHighlight(undefined, range);
     if (scroll) {
       cancelRestore();
       following.current = false;
-      if (range) revealFindRange(feed, range);
+      if (range) reveal(range);
       else (target ?? row).scrollIntoView({ block });
       savePosition(feed, row);
     }
@@ -269,7 +277,7 @@ export function useTextScroll(threadId: string, { persistPosition = true, paneFo
       range = updated;
       if (updated && pendingReveal) {
         pendingReveal = false;
-        revealFindRange(feed, updated);
+        reveal(updated);
         savePosition(feed, row);
       }
     });

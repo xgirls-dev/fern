@@ -32,6 +32,10 @@ messages[20].promptAlternatives = [
       generatedImage: { name: "tile.png", prompt: "A pattern of tiny stars", modelLabel: "Local model", width: 256, height: 256 },
     } },
 ];
+const savedImageReply = messages[20].promptAlternatives[1].response;
+savedImageReply.generatedImages = [savedImageReply.generatedImage,
+  { ...savedImageReply.generatedImage, name: "moon-tile.png", width: 128, prompt: "A pattern of silver moons" }];
+delete savedImageReply.generatedImage;
 
 const snapshot = {
   id: "earlier-draft",
@@ -45,6 +49,9 @@ Object.assign(snapshot.messages[141], {
   content: "The **opal** arch survived firing.",
   generatedImage: { name: "tile.png", prompt: "The old tiled kiln", modelLabel: "Local model", width: 256, height: 256 },
 });
+snapshot.messages[141].generatedImages = [snapshot.messages[141].generatedImage,
+  { ...snapshot.messages[141].generatedImage, name: "copper-tile.png", prompt: "The copper furnace" }];
+snapshot.messages[139].generatedImage = { ...snapshot.messages[141].generatedImage, prompt: "An older enamel tile" };
 
 const { page, close, state, errors } = await fixture({
   builtRenderer: process.env.FERN_SAVED_SEARCH_BUILT === "1", firstRun: true,
@@ -65,6 +72,7 @@ const findbar = page.getByRole("search", { name: "Find in chat" });
 const parserUrl = /\/(?:assets\/chatSearch-[^/]+\.js|src\/lib\/chatSearch\.ts)(?:\?.*)?$/;
 const workerUrl = /\/(?:assets\/threadSearch\.worker-[^/]+\.js|src\/lib\/threadSearch\.worker\.ts)(?:\?.*)?$/;
 const workerGate = Promise.withResolvers();
+const imageGate = Promise.withResolvers();
 
 async function expectTarget(text) {
   await expect(row).toHaveAttribute("data-find-match", "true");
@@ -80,8 +88,12 @@ async function expectTarget(text) {
 }
 
 try {
-  await page.route("**/outputs/tile.png*", (route) => route.fulfill({ contentType: "image/svg+xml",
-    body: '<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256"><rect width="256" height="256" fill="#71978a"/></svg>' }));
+  await page.route(/\/outputs\/(tile|moon-tile|copper-tile)\.png/, async (route) => {
+    await imageGate.promise;
+    const width = route.request().url().includes("moon-tile.png") ? 128 : 256;
+    await route.fulfill({ contentType: "image/svg+xml",
+      body: `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="256"><rect width="${width}" height="256" fill="#71978a"/></svg>` });
+  });
   assert.equal(await page.evaluate((patterns) => performance.getEntriesByType("resource")
     .some(({ name }) => patterns.some((pattern) => new RegExp(pattern).test(name))), [parserUrl.source, workerUrl.source]),
     false, "Chat should open without loading search code");
@@ -95,10 +107,23 @@ try {
   await find.press("Enter");
   await expect(findbar.getByRole("status")).toContainText("2 of 2");
   await expectTarget("Use the golden cedar test tile.");
+  const images = panel.locator("img");
+  await expect(images).toHaveCount(2);
+  const imageSizes = () => images.evaluateAll((items) => items.map((image) => [image.clientWidth, image.clientHeight]));
+  const expectedSizes = [[160, 160], [80, 160]];
+  assert.deepEqual(await imageSizes(), expectedSizes, "Reserve preview space from the saved dimensions");
+  imageGate.resolve();
+  await expect.poll(() => images.evaluateAll((items) => items.every((image) => image.complete && image.naturalWidth > 0))).toBe(true);
+  assert.deepEqual(await imageSizes(), expectedSizes, "Keep the preview sizes when the images load");
+  await expectTarget("Use the golden cedar test tile.");
   await find.press("Shift+Enter");
   await expectTarget("Find the golden cedar glaze");
   await find.fill("tiny stars");
   await expectTarget("A pattern of tiny stars");
+  await find.fill("a pattern");
+  await expect(findbar.getByRole("status")).toContainText("1 of 2");
+  await find.press("Enter");
+  await expectTarget("A pattern of silver moons");
   await find.press("Escape");
   await expect(panel).toHaveCount(0);
   await expect.poll(() => page.evaluate(() => CSS.highlights.has("fern-chat-find"))).toBe(false);
@@ -200,9 +225,25 @@ try {
   await previewFind.fill("old tiled kiln");
   await expect.poll(() => page.evaluate(() => [...(CSS.highlights.get("fern-chat-find") ?? [])][0]?.toString()))
     .toBe("old tiled kiln");
+  await previewFind.fill("older enamel tile");
+  await expect.poll(() => page.evaluate(() => [...(CSS.highlights.get("fern-chat-find") ?? [])][0]?.toString()))
+    .toBe("older enamel tile");
   await preview.getByRole("button", { name: "Back to search", exact: true }).click();
   await expect(globalFind).toHaveValue("opal arch");
   await expect(globalFind).toBeFocused();
+
+  await globalFind.fill("copper furnace");
+  await expect(notebook).toContainText("The copper furnace");
+  await globalFind.press("Enter");
+  await expect(previewFind).toHaveValue("copper furnace");
+  await expect(savedFeed.locator("[data-find-target]")).toHaveText("The copper furnace");
+  await expect.poll(() => page.evaluate(() => [...(CSS.highlights.get("fern-chat-find") ?? [])][0]?.toString()))
+    .toBe("copper furnace");
+  await expect.poll(() => savedFeed.locator("[data-find-target]").evaluate((caption) => {
+    const image = caption.closest("figure").querySelector("img");
+    return image.getBoundingClientRect().top - caption.closest(".text-conversation").getBoundingClientRect().top;
+  })).toBeGreaterThanOrEqual(-1);
+  await preview.getByRole("button", { name: "Back to search", exact: true }).click();
   await globalFind.press("Escape");
   await expect(button("Search threads")).toBeFocused();
   await expect(composer).toHaveValue("Keep the notebook draft");
@@ -219,5 +260,6 @@ try {
   console.log("Saved prompts, reply variants, image descriptions, global search, virtualized navigation, and unchanged model context passed.");
 } finally {
   workerGate.resolve();
+  imageGate.resolve();
   await close();
 }

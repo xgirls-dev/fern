@@ -557,6 +557,10 @@ export function findChatImage(thread: Pick<TextThread, "messages">, name: string
   }
 }
 
+export function messageImages(message: TextMessage): GeneratedChatImage[] {
+  return message.generatedImages?.length ? message.generatedImages : message.generatedImage ? [message.generatedImage] : [];
+}
+
 export interface TextMessageDeletion {
   snapshotId?: string;
   messages: TextMessage[];

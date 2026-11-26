@@ -1,4 +1,4 @@
-import { useCallback, useDeferredValue, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent, type Ref } from "react";
+import { useCallback, useDeferredValue, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type Ref } from "react";
 import Plus from "lucide-react/dist/esm/icons/plus.mjs";
 import ArrowDown from "lucide-react/dist/esm/icons/arrow-down.mjs";
 import RotateCcw from "lucide-react/dist/esm/icons/rotate-ccw.mjs";
@@ -46,7 +46,7 @@ import { useTextDraftField } from "../hooks/useTextDraftField";
 import { getApiBaseUrl, resolveAssetUrl, subscribeToApiBaseUrl } from "../lib/api";
 import type { ChatSearchMatch } from "../lib/chatSearch";
 import { notify } from "../lib/notifications";
-import { canContinueTextReply, countTextPromptCharacters, findChatImage, latestTextPrompt, matchesTextMessage, replyVersions, resolveTextModel, savedVersionForDeletedReply, showReplyVersion, TEXT_MESSAGE_CHARACTER_LIMIT, textModelReadiness, textPromptExceedsLimit, type GeneratedChatImage, type TextMessage } from "../lib/textThreads";
+import { canContinueTextReply, countTextPromptCharacters, findChatImage, latestTextPrompt, matchesTextMessage, messageImages, replyVersions, resolveTextModel, savedVersionForDeletedReply, showReplyVersion, TEXT_MESSAGE_CHARACTER_LIMIT, textModelReadiness, textPromptExceedsLimit, type GeneratedChatImage, type TextMessage } from "../lib/textThreads";
 import type { BackendFailure } from "../../../preload/types";
 import { chatImageErrors, chatImageSettings, MAX_IMAGE_PROMPT_SUFFIX, type ChatImageSettings } from "../lib/chatImageSettings";
 import { isKleinLoraModel, maxReferenceImages } from "../lib/imageModels";
@@ -140,10 +140,6 @@ function chatImageRecord(image: GeneratedChatImage, mtime: number): ImageRecord 
   return { ...image, url: `/outputs/${encodeURIComponent(image.name)}`, mtime };
 }
 
-function messageImages(message: TextMessage): GeneratedChatImage[] {
-  return message.generatedImages?.length ? message.generatedImages : message.generatedImage ? [message.generatedImage] : [];
-}
-
 function ChatImage({ image, ordinal, checked, checkStatus, onOpen, onRetryCheck, canRetryCheck, contextLabel, onInclude, showFindCaption }: {
   image: GeneratedChatImage;
   ordinal: number;
@@ -162,13 +158,16 @@ function ChatImage({ image, ordinal, checked, checkStatus, onOpen, onRetryCheck,
   const source = origin ? resolveAssetUrl(`/outputs/${encodeURIComponent(image.name)}`, String(revision)) : null;
   const failed = source !== null && source === failedSource;
   const subject = image.prompt.trim().slice(0, 140) || image.name;
+  const imageSize = image.width > 0 && image.height > 0 ? {
+    "--chat-image-width": `${image.width}px`, "--chat-image-ratio": image.width / image.height,
+  } as CSSProperties : undefined;
   return <figure className="text-generated-artifact">
     {!source ? <div className="text-generated-unavailable" role="status">Opening saved image…</div> : failed ? <div className="text-generated-unavailable">
       <ImageOff size={18} aria-hidden="true" />
       <span role="status">Image unavailable. The file may have been moved or deleted.</span>
       <Button variant="secondary" onClick={() => setRevision((value) => value + 1)}>Retry preview</Button>
     </div> : <button type="button" className="text-generated-image" aria-label={`Review image ${ordinal}: ${subject}`} onClick={onOpen}>
-      <img src={source} alt={`Generated image ${ordinal}. Prompt: ${subject}`} width={image.width} height={image.height} onError={() => setFailedSource(source)} />
+      <img src={source} alt={`Generated image ${ordinal}. Prompt: ${subject}`} width={image.width} height={image.height} style={imageSize} onError={() => setFailedSource(source)} />
     </button>}
     {!failed && <figcaption>
       {(checked || checkStatus || onRetryCheck || contextLabel) && <span className="text-artifact-status">
@@ -861,6 +860,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
     const preview = !!contextMessage && row.messageId === contextMessage.id && contextMessage.id !== message.id;
     const match = activeMatch?.messageId === row.messageId ? activeMatch : undefined;
     const savedMatch = match?.savedPromptId ? match : undefined;
+    const images = messageImages(message);
     const latest = contextMessage === lastMessage;
     const user = message.role === "user";
     const editing = user && promptEdit?.messageId === message.id;
@@ -882,7 +882,8 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
       progress={live?.progress}
       previewWhileStreaming={live?.previous}
       contextChanged={row.contextChanged && !preview}
-      generatedImage={message.generatedImage || message.generatedImages?.length ? messageImages(message).map((image, index) => renderChatImage(image, live && !live.previous ? undefined : message, { preview, showFindCaption: index === 0 && !savedMatch && match?.section === "image" })) : undefined}
+      generatedImage={images.length ? images.map((image, index) => renderChatImage(image, live && !live.previous ? undefined : message,
+        { preview, showFindCaption: !savedMatch && match?.imageIndex === index })) : undefined}
       includedImageLabel={findChatImage({ messages }, message.includedImage ?? message.metrics?.context?.reusedImageName)?.prompt}
       editor={editing && <TextPromptEditor draftKey={`revision:${threadId}:${message.id}`} content={promptEdit.content} original={message.content} replaceLatest={replaceLatest}
         focusRequested={requestedEdit === message.id}
@@ -896,7 +897,8 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
       promptVersions={user && (!editing || savedMatch) && !!message.promptAlternatives?.length && <TextPromptVersions alternatives={message.promptAlternatives}
         searchMatch={savedMatch} onCloseSearch={closeFind}
         busy={busy} onRestore={replaceLatest ? (id) => studio.restorePromptVersion(threadId, message.id, id) : undefined}
-        renderImage={(reply) => reply.generatedImage && renderChatImage(reply.generatedImage, reply, { preview: true, reviewOnly: !!savedMatch })} />}
+        renderImages={(reply, matchedIndex) => messageImages(reply).map((image, index) => renderChatImage(image, reply,
+          { preview: true, reviewOnly: !!savedMatch, showFindCaption: matchedIndex === index }))} />}
       onEdit={!live && user ? editMessage : undefined}
       editingAnother={user && !!promptEdit && !editing}
       onFork={!live && !user ? forkReply : undefined}
