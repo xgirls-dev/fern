@@ -94,6 +94,47 @@ class IntelMediaTests(unittest.TestCase):
             restored.remove(record["id"])
             self.assertEqual(restored.history(), [])
 
+    def test_video_publication_recovers_after_any_interrupted_move(self):
+        replace = Path.replace
+        for destination in ("outputs", "references", "videos"):
+            with self.subTest(destination=destination), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                runtime = Mock()
+
+                def render(request, stage, event, progress):
+                    source = stage / "render.webm"
+                    source.write_bytes(b"rendered")
+                    return source, 25.41
+
+                def interrupt(source, target):
+                    if target.parent.name == destination:
+                        raise OSError("Publication interrupted")
+                    return replace(source, target)
+
+                runtime.generate_video.side_effect = render
+                paths = (root / "cache", root / "data", root / "outputs")
+                jobs = VideoJobs(runtime, *paths)
+                request = {"prompt": "A fox turns.", "seed": 42, "frames": 65, "reference": Image.new("RGB", (8, 8))}
+                with patch.object(Path, "replace", interrupt):
+                    job = jobs.start(request, lambda: None)
+                    with jobs.lock:
+                        worker = jobs.worker
+                    if worker:
+                        worker.join(timeout=5)
+                self.assertEqual(jobs.snapshot()["status"], "failed")
+                self.assertEqual(jobs.history(), [])
+
+                restored = VideoJobs(runtime, *paths)
+                record, = restored.history()
+                self.assertEqual(record["id"], job["id"])
+                self.assertEqual(record["prompt"], request["prompt"])
+                self.assertEqual((record["frames"], record["duration"]), (65, 65 / 16))
+                self.assertEqual((root / "outputs" / record["name"]).read_bytes(), b"rendered")
+                with Image.open(root / "data" / record["posterUrl"].lstrip("/")) as poster:
+                    self.assertEqual(poster.size, (8, 8))
+                self.assertFalse((root / "cache" / f"video-{job['id']}").exists())
+                self.assertEqual(VideoJobs(runtime, *paths).history(), [record])
+
     def test_video_cancellation_does_not_publish_staging_files(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -160,3 +201,20 @@ class IntelMediaTests(unittest.TestCase):
                 "Loading Wan 2.2 on Intel GPU…", "Generating frames on Intel GPU…",
                 "Generating frames on Intel GPU… Step 1 of 4 complete", "Decoding the clip…", "Writing WebM…",
             ])
+
+    def test_video_recovery_ignores_uncommitted_and_invalid_staging(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cache = root / "cache"
+            for name, metadata in (
+                ("video-1234567890123-abcdef00", "video.json"),
+                ("video-1234567890123-abcdef01", "publish.json"),
+            ):
+                stage = cache / name
+                stage.mkdir(parents=True)
+                (stage / "video.webm").write_bytes(b"private")
+                (stage / metadata).write_text("{}", encoding="utf-8")
+            jobs = VideoJobs(Mock(), cache, root / "data", root / "outputs")
+            self.assertEqual(jobs.history(), [])
+            self.assertEqual(len(list(cache.glob("video-*/video.webm"))), 2)
+            self.assertFalse((root / "outputs").exists())

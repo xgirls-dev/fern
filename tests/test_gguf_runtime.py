@@ -17,7 +17,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from gguf_runtime import CompletionCancellation, GGUFServer, VulkanDriverError, ensure_runtime, runtime_supported
+from gguf_runtime import CompletionCancellation, GGUFServer, VulkanDriverError, _StartupLog, ensure_runtime, runtime_supported
 from text_runtime_errors import OUT_OF_MEMORY, TextRuntimeMemoryError, text_runtime_error_code
 
 
@@ -70,6 +70,34 @@ class GGUFCompletionTests(unittest.TestCase):
             server._wait_ready()
         self.assertEqual(waits, [0.05, 0.4])
         self.assertEqual(server.http.open.call_count, 3)
+
+    def test_startup_log_keeps_the_latest_completed_phase_and_measures_seen_boundaries(self) -> None:
+        on_phase = Mock()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "startup.log"
+            startup = _StartupLog(path, on_phase)
+            startup.read()
+            self.assertEqual(startup.timings(), {})
+            path.write_bytes(b"0.01.010.000 I cmn  common_fit_a: fitting params to device memory ...\n"
+                             b"0.02.000.000 I cmn  common_fit_params: fitting params to free memory took 0.99 seconds\n"
+                             b"0.02.200.000 I load_tensors: loading model tensors,")
+            startup.read()
+            startup.read()
+            on_phase.assert_called_once_with("loading-model", "Checking model memory…")
+            self.assertEqual(startup.timings(), {"memoryFitMs": 990})
+            with path.open("ab") as output:
+                output.write(b" this can take a while...\n"
+                             b"0.03.200.000 I llama_context: constructing llama_context\n")
+            startup.read()
+            on_phase.assert_called_with("loading-model", "Preparing model context…")
+            self.assertEqual(startup.timings(), {"memoryFitMs": 990, "weightLoadMs": 1000})
+            with path.open("ab") as output:
+                output.write(b"0.03.500.000 I cmn  common_init_: warming up the model with an empty run\n"
+                             b"0.05.700.000 I srv  server_run_i: model loaded\n")
+            startup.read(notify=False)
+            self.assertEqual(on_phase.call_count, 2)
+            self.assertEqual(startup.timings(), {"memoryFitMs": 990, "weightLoadMs": 1000,
+                                               "contextSetupMs": 300, "postContextSetupMs": 2200})
 
     def test_image_context_names_match_the_encoded_model_request(self) -> None:
         server = GGUFServer.__new__(GGUFServer)
@@ -237,6 +265,7 @@ class GGUFCompletionTests(unittest.TestCase):
             on_phase.assert_called_once_with("loading-model", "Loading model…")
             self.assertEqual(command[command.index("--device") + 1], "MTL0")
             self.assertIn("--mmproj-offload", command)
+            self.assertIn("--log-timestamps", command)
             options["stdout"].write(b"offloaded 38/38 layers to GPU\nmtmd_backends: using MTL0 backend\n")
             return process
 

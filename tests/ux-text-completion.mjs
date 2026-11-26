@@ -42,6 +42,13 @@ try {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.clock.install();
   await page.evaluate(() => {
+    const fetch = window.fetch.bind(window);
+    window.fetch = (input, options) => {
+      if (typeof input !== "string" || !input.endsWith("/api/text/job")) return fetch(input, options);
+      window.fetch = fetch;
+      // The fixture releases this one poll after the fake-clock streaming assertions.
+      return fetch(input, { ...options, signal: undefined });
+    };
     window.receivedTextAppends = 0;
     const NativeEventSource = window.EventSource;
     window.EventSource = class extends NativeEventSource {

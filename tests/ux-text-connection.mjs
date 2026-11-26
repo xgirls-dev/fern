@@ -70,9 +70,18 @@ try {
   admitRequest();
   holdAdmission = false;
   await expect(stream).toContainText("Loading model…");
+  await stream.evaluate((row) => { row.dataset.connectedReply = "true"; });
+  state.textStatus.job = { ...state.textStatus.job, phase: "Queued…" };
+  await expect(composerStatus).toHaveText("Starting response…");
+  for (const phase of ["Checking model memory…", "Loading model weights…", "Preparing model context…", "Warming up model…"]) {
+    state.textStatus.job = { ...state.textStatus.job, phase };
+    await expect(stream).toHaveAttribute("data-connected-reply", "true");
+    await expect(stream).toContainText(phase);
+    await expect(composerStatus).toHaveText(phase);
+    await expect(button("Stop generation")).toBeEnabled();
+  }
   state.textStatus.job = { ...state.textStatus.job, phase: "Waiting for the first token…" };
   await expect(stream).toContainText("Waiting for the first token…");
-  await stream.evaluate((row) => { row.dataset.connectedReply = "true"; });
   state.textStatus.job = { ...state.textStatus.job, partialReasoning: "Start with a concise observation." };
   const reasoning = stream.locator("summary");
   await expect(reasoning).toHaveText("Reasoning…");

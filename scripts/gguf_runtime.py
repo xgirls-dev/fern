@@ -264,6 +264,56 @@ def ensure_runtime(root: Path, backend: str, progress: Callable[[str], None]) ->
     return executable
 
 
+class _StartupLog:
+    """Read timings and phases from the pinned llama-server's startup log."""
+
+    _timestamp = re.compile(rb"^(\d+)\.(\d{2})\.(\d{3})\.(\d{3}) [A-Z] ")
+    _markers = (
+        ("fit", b"common_fit_a: fitting params to device memory ...", "Checking model memory…"),
+        ("fitted", b"common_fit_params: fitting params to free memory took ", None),
+        ("weights", b"load_tensors: loading model tensors,", "Loading model weights…"),
+        ("context", b"llama_context: constructing llama_context", "Preparing model context…"),
+        ("warmup", b"common_init_: warming up the model with an empty run", "Warming up model…"),
+        ("ready", b"server_run_i: model loaded", None),
+    )
+
+    def __init__(self, path: Path, on_phase: Callable[[str, str], None] | None) -> None:
+        self.path = path
+        self.on_phase = on_phase
+        self.offset = 0
+        self.marks: dict[str, float] = {}
+
+    def read(self, *, notify: bool = True) -> None:
+        latest = None
+        try:
+            with self.path.open("rb") as log:
+                log.seek(self.offset)
+                for line in log:
+                    if not line.endswith(b"\n"):
+                        break
+                    self.offset += len(line)
+                    for key, marker, label in self._markers:
+                        if key not in self.marks and marker in line and (time_match := self._timestamp.match(line)):
+                            minutes, seconds, millis, micros = map(int, time_match.groups())
+                            self.marks[key] = (minutes * 60 + seconds) * 1000 + millis + micros / 1000
+                            latest = label or latest
+                            break
+        except OSError:
+            return
+        if notify and latest and self.on_phase:
+            self.on_phase("loading-model", latest)
+
+    def timings(self) -> dict[str, float]:
+        spans = (
+            ("memoryFitMs", "fit", "fitted"),
+            ("weightLoadMs", "weights", "context"),
+            ("contextSetupMs", "context", "warmup"),
+            ("postContextSetupMs", "warmup", "ready"),
+        )
+        return {metric: self.marks[end] - self.marks[start] for metric, start, end in spans
+                if start in self.marks and end in self.marks and self.marks[start] <= self.marks[end]}
+
+
 class GGUFServer:
     def __init__(
         self, executable: Path, model: Path, projector: Path | None, device: str, backend: str,
@@ -307,6 +357,8 @@ class GGUFServer:
                 "--host", "127.0.0.1", "--port", str(port), "--api-key", self.key, "--no-webui",
                 "--ctx-size", str(context_size), "--parallel", "1", "--reasoning-format", "deepseek",
                 "--jinja", "--no-context-shift",
+                # Startup phases and GPU placement are emitted at trace verbosity.
+                "--log-timestamps", "-lv", "4",
             ]
             for option, flag in (
                 ("flashAttention", "--flash-attn"), ("promptBatch", "--batch-size"), ("microBatch", "--ubatch-size"),
@@ -317,9 +369,6 @@ class GGUFServer:
             if projector:
                 command += ["--mmproj", str(projector), "--image-max-tokens", str(MAX_IMAGE_TOKENS)]
                 command.append("--mmproj-offload" if gpu_projector else "--no-mmproj-offload")
-            if gpu_projector or backend == "metal":
-                # llama.cpp emits GPU layer placement at trace verbosity.
-                command.extend(("-lv", "4"))
             if on_phase is not None:
                 on_phase("loading-model", "Loading model…")
             server_started = time.perf_counter()
@@ -328,8 +377,11 @@ class GGUFServer:
                     command, cwd=executable.parent, env=env, stdin=subprocess.DEVNULL,
                     stdout=log, stderr=subprocess.STDOUT, creationflags=flags,
                 )
-            self._wait_ready()
+            startup = _StartupLog(self.log_path, on_phase)
+            self._wait_ready(startup)
             self.startup_timing["serverReadyMs"] = (time.perf_counter() - server_started) * 1000
+            startup.read(notify=False)
+            self.startup_timing.update(startup.timings())
             if gpu_projector or backend == "metal":
                 verification_started = time.perf_counter()
                 placement = self.log_path.read_text(encoding="utf-8", errors="replace")
@@ -389,7 +441,7 @@ class GGUFServer:
         result.check_returncode()
         return match[1]
 
-    def _wait_ready(self) -> None:
+    def _wait_ready(self, startup: _StartupLog | None = None) -> None:
         assert self.process is not None
         started_at = time.monotonic()
         deadline = started_at + 180
@@ -408,6 +460,8 @@ class GGUFServer:
                         return
             except OSError:
                 pass
+            if startup is not None:
+                startup.read()
             now = time.monotonic()
             if now < deadline:
                 # Small models often load before the next long polling interval.

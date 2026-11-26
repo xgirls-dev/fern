@@ -12,12 +12,14 @@ lands directly on `main` instead of through labeled pull requests.
 
 ### Improved
 
+- Show when Chat checks model memory, loads weights, prepares the context, and warms up a GGUF model.
 - Show measured prompt processing time and reused tokens in GGUF response details.
 - Reuse the processed prompt across follow-ups in long GGUF chats when the retained history still fits.
 - Show progress as a local GGUF model processes the chat prompt before its first reply token.
 
 ### Fixed
 
+- Recover a finished video after restarting the local service if it exited while saving the clip.
 - Restart Fern’s local service from Video after an interruption. The first frame and motion prompt stay ready, and completed clips return from history.
 - Finish stopping a chat even when its live stream misses the final update.
 - Bring the selected Find match into view when a long reply finishes formatting.
