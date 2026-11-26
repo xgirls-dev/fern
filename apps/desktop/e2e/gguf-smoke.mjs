@@ -150,6 +150,13 @@ try {
     const timing = await observeChatReply(send);
     await send.click();
     const message = page.locator(".text-message--assistant").last();
+    if (index === 0 && mac) {
+      const loadingPhase = message.locator(".text-reply-stage").filter({
+        hasText: /checking model memory|loading model weights|preparing model context|warming up model/i,
+      });
+      await expect(loadingPhase).toBeVisible({ timeout: 180_000 });
+      await writeFile(path.join(artifacts, "gemma-4-e4b-loading-phase.png"), await captureWindow());
+    }
     await expect(message.getByRole("button", { name: "More message actions", exact: true })).toBeVisible({ timeout: 360_000 });
     const response = await status();
     assert.equal(response.job.status, "complete", JSON.stringify(response.job));
@@ -171,6 +178,11 @@ try {
     console.log(JSON.stringify(report.at(-1)));
     if (index === 0) {
       assert(Number.isFinite(runtimeTiming?.modelReadyMs), "The first reply should report its cold GGUF model load.");
+      if (mac) {
+        for (const stage of ["memoryFitMs", "weightLoadMs", "contextSetupMs", "postContextSetupMs"]) {
+          assert(Number.isFinite(runtimeTiming[stage]) && runtimeTiming[stage] >= 0, `The Metal runtime should time ${stage}.`);
+        }
+      }
       const coldDetails = await verifyPromptDetails(message, runtimeTiming);
       await chooseMessageAction(message, "Hide response details");
       const warmStop = await measureWarmStop(page, async () => (await status()).job, installed.id);
