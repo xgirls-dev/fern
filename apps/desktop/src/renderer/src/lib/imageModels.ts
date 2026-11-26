@@ -1,4 +1,4 @@
-import type { KleinLoraModel, StudioSettings } from "./types";
+import type { KleinLoraModel, LoraImageModel, StudioSettings } from "./types";
 
 export const APPLE_IMAGE_MODEL = "klein-4b-mlx";
 
@@ -10,8 +10,12 @@ export function kleinLoraLabel(model: KleinLoraModel): string {
   return `Klein ${model === "9b-lora" ? "9B" : "4B"} · LoRA`;
 }
 
-export function selectedKleinLoras(settings: StudioSettings) {
-  if (!isKleinLoraModel(settings.model)) return [];
+export function supportsImageLoras(model?: string): model is LoraImageModel {
+  return isKleinLoraModel(model) || model === "z-image-turbo";
+}
+
+export function selectedImageLoras(settings: StudioSettings) {
+  if (!supportsImageLoras(settings.model)) return [];
   const legacy = settings.model === "4b-lora" ? settings.loras : undefined;
   return settings.lorasByModel?.[settings.model] ?? legacy ?? [];
 }

@@ -80,7 +80,7 @@ TEXT_GENERATION_WORKER = TextGenerationProcess()
 from model_manager import ModelManager, remove_tree
 from model_catalog import APPLE_IMAGE_ID, APPLE_IMAGE_SPEC, INTEL_MEDIA_CATALOG, model_spec
 import apple_image
-from intel_media import IntelMedia, PLATFORM_NOTE as INTEL_MEDIA_PLATFORM_NOTE, SANA_RUNTIME_RESERVE_BYTES, VIDEO_ID, supported as intel_media_supported
+from intel_media import IntelMedia, PLATFORM_NOTE as INTEL_MEDIA_PLATFORM_NOTE, SANA_RUNTIME_RESERVE_BYTES, VIDEO_ID, Z_IMAGE_ID, supported as intel_media_supported
 from video_jobs import VideoJobs
 from PIL import ImageOps
 import gallery_store
@@ -1943,8 +1943,8 @@ def validate_flux_payload(payload: dict[str, Any]) -> dict[str, Any]:
     loras = payload.get("loras", [])
     if not isinstance(loras, list) or len(loras) > 4:
         raise ValueError("Choose up to four LoRAs.")
-    if loras and model not in flux2.LORA_MODEL_KEYS:
-        raise ValueError("Choose Klein 4B LoRA or Klein 9B LoRA to use adapters.")
+    if loras and model not in (*flux2.LORA_MODEL_KEYS, Z_IMAGE_ID):
+        raise ValueError("Choose Klein 4B LoRA, Klein 9B LoRA, or Z-Image Turbo to use adapters.")
     checked_loras = []
     lora_paths = set()
     for lora in loras:

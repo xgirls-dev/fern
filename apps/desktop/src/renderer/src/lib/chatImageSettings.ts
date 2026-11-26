@@ -1,5 +1,5 @@
 import { imageDimensionLimits, type ImageDimensionHints } from "./imageDimensions";
-import { fixedImagePreset, isKleinLoraModel, maxImageBatch, maxReferenceImages } from "./imageModels";
+import { fixedImagePreset, maxImageBatch, maxReferenceImages, supportsImageLoras } from "./imageModels";
 import { isChatImage } from "./textThreads";
 import type { LoraSelection, ModelStatus, StudioSettings } from "./types";
 
@@ -35,7 +35,7 @@ export function chatImageSettings(option: ChatImageModel, saved?: Partial<ChatIm
         .slice(0, referenceLimit),
     } : {}),
     ...(referenceLimit && saved?.useMessageImage === true ? { useMessageImage: true } : {}),
-    ...(isKleinLoraModel(model) && Array.isArray(saved?.loras) ? {
+    ...(supportsImageLoras(model) && Array.isArray(saved?.loras) ? {
       loras: saved.loras.filter((item) => item && typeof item.path === "string" && typeof item.strength === "number"
         && typeof item.enabled === "boolean").slice(0, 4),
     } : {}),

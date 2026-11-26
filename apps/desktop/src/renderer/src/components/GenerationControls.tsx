@@ -10,7 +10,7 @@ import type { ModelStatus, StudioSettings } from "../lib/types";
 import { notify } from "../lib/notifications";
 import { readReference, validateReference } from "../lib/reference";
 import { ImageBatchField, ImageCanvasFields, ImageSamplingFields } from "./ImageGenerationFields";
-import { fixedImagePreset, isKleinLoraModel, maxReferenceImages, selectedKleinLoras } from "../lib/imageModels";
+import { fixedImagePreset, isKleinLoraModel, maxReferenceImages, selectedImageLoras, supportsImageLoras } from "../lib/imageModels";
 import { ImageLoraFields } from "./ImageLoraFields";
 
 import { ImageStyleFields } from "./ImageStyleFields";
@@ -165,8 +165,7 @@ export function GenerationControls({
   onUseOutputAsReference,
   canUseOutput,
 }: GenerationControlsProps) {
-  const isLoraModel = isKleinLoraModel(settings.model);
-  const loras = selectedKleinLoras(settings);
+  const loras = selectedImageLoras(settings);
   const isQwenTurbo = settings.model === "qwen21-turbo";
   const isFlux3Klein = settings.model === "flux3-klein";
   const isCustomImage = settings.model?.startsWith("custom-") ?? false;
@@ -338,7 +337,7 @@ export function GenerationControls({
     <section className="controls-panel" aria-label="Generation controls">
       <div className="inspector-controls">
         <div className="control-sections">
-          {isLoraModel ? (
+          {supportsImageLoras(settings.model) ? (
             <ControlSection title="LoRAs" summary={loras.length ? `${loras.filter((item) => item.enabled).length} of ${loras.length} active` : "Optional · up to 4"} defaultOpen>
               <ImageLoraFields loras={loras} error={errors.loras} onChange={(next) => onSettingsChange({ loras: next })} />
             </ControlSection>
@@ -348,7 +347,7 @@ export function GenerationControls({
             summary={`${settings.width} × ${settings.height} | ${hasFixedSampling ? "1 image" : `${settings.batchSize} image${settings.batchSize === 1 ? "" : "s"}`}`}
             defaultOpen
           >
-            {isLoraModel ? <p className="model-note field-note">Klein LoRA uses the Intel GPU and guidance 1.0. Attach up to four reference images.</p> : null}
+            {isKleinLoraModel(settings.model) ? <p className="model-note field-note">Klein LoRA uses the Intel GPU and guidance 1.0. Attach up to four reference images.</p> : null}
             {hasFixedSampling ? (
               <p className="model-note field-note">
                 {fixedPreset ? (window.studio.platform === "darwin" ? "Text to image at 512 × 512 on Apple GPU." : fixedSizes ? "Text to image on Intel GPU. Choose a validated canvas size." : "Text to image on Intel GPU. Larger canvases take longer and use more memory.") : isFlux3Klein
