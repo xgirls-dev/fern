@@ -8,6 +8,7 @@ import { notify } from "../lib/notifications";
 import { readReference } from "../lib/reference";
 import type { useVideo } from "../hooks/useVideo";
 import { Button, ErrorMessage, InlineConfirmation, Input, PageHeader, Textarea } from "./ui/controls";
+import { Select } from "./ui/Select";
 import "./VideoWorkspace.css";
 
 export function VideoWorkspace({ video, device, busyElsewhere, openModels, openCompute }: {
@@ -17,7 +18,8 @@ export function VideoWorkspace({ video, device, busyElsewhere, openModels, openC
   openModels: () => void;
   openCompute: () => void;
 }) {
-  const { clips, model, job, running, pending, error, connectionError, reference } = video;
+  const { clips, model, job, running, pending, error, connectionError, reference, frames } = video;
+  const format = model?.videoFormat;
   const [selected, setSelected] = useState<string | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
   const [loadingImage, setLoadingImage] = useState(false);
@@ -94,11 +96,21 @@ export function VideoWorkspace({ video, device, busyElsewhere, openModels, openC
                 maxLength={2000} rows={4} placeholder="Describe how the subject and camera move…" />
             </div>
             <div className="video-format-row">
-              <span>544 × 704 · 1.31 s · 16 fps</span>
-              <label htmlFor="video-seed">Seed</label>
-              <Input id="video-seed" value={video.seed} onChange={(event) => video.setSeed(event.target.value)}
-                type="number" inputMode="numeric" min={0} max={2147483647} step={1} required />
+              {format && frames !== undefined ? <div className="video-field">
+                <label htmlFor="video-duration">Duration</label>
+                <Select id="video-duration" value={frames} onChange={video.setFrames} disabled={running || pending || loadingImage}
+                  options={format.frameOptions.map((count) => ({ value: count,
+                    label: `${(count / format.fps).toFixed(count === format.defaultFrames ? 2 : 0)} s`,
+                  }))} />
+              </div> : null}
+              <div className="video-field">
+                <label htmlFor="video-seed">Seed</label>
+                <Input id="video-seed" value={video.seed} onChange={(event) => video.setSeed(event.target.value)}
+                  type="number" inputMode="numeric" min={0} max={2147483647} step={1} required />
+              </div>
             </div>
+            <span className="video-status">{format ? `${format.width} × ${format.height} · ${format.fps} fps` : "544 × 704 · 1.31 s · 16 fps"}
+              {format && frames !== format.defaultFrames ? " · Longer clips take more time and GPU memory." : ""}</span>
           </fieldset>
           {!model && !connectionError ? <p role="status" className="video-status">Checking local video model…</p> : null}
           {model && !model.runtimeReady ? <div className="video-setup">

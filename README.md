@@ -89,7 +89,7 @@ Open **Images** to browse renders, inspect settings, save a copy, or remix a res
 
 On Windows with a compatible Intel GPU, install **Wan 2.2 Turbo** in **Models → Video**. Open **Video**, choose a PNG, JPEG, or WebP first frame, and describe the motion. You can also send a generated image to Video with **Animate image**.
 
-The current preset makes a **544 × 704** portrait clip with **21 frames at 16 fps**, about **1.3 seconds**. Preview the clip, revisit it in the clip history, or export it as WebM.
+The default makes a **544 × 704** portrait clip with **21 frames at 16 fps**, about **1.3 seconds**. Choose **Duration** for clips from 4 to 10 seconds. Longer clips generate more frames at the same frame rate and need more time and GPU memory. Preview the clip, revisit it in the clip history, or export it as WebM.
 
 ### Speech
 
