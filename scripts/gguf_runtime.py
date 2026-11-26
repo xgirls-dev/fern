@@ -158,6 +158,15 @@ def _completion_events(response: http.client.HTTPResponse, cancellation: Complet
     raise RuntimeError("The GGUF runtime disconnected during the response.")
 
 
+def _prefill_percent(progress: dict) -> int | None:
+    total, cached, processed = (progress.get(key) for key in ("total", "cache", "processed"))
+    if any(type(value) is not int for value in (total, cached, processed)) or not 0 <= cached <= processed < total:
+        return None
+    # Show the uncached part the engine has to compute. Group updates so the
+    # composer and screen reader share a stable status while batches finish.
+    return 5 * (20 * (processed - cached) // (total - cached))
+
+
 def apple_silicon() -> bool:
     return sys.platform == "darwin" and platform.machine().lower() in ("arm64", "aarch64")
 
@@ -592,7 +601,7 @@ class GGUFServer:
         body = {
             **options, "messages": messages, "max_tokens": max_tokens,
             "temperature": request["temperature"], "top_p": request["topP"], "seed": request["seed"],
-            "stream": True, "stream_options": {"include_usage": True},
+            "stream": True, "stream_options": {"include_usage": True}, "return_progress": True,
         }
         sampling = request.get("sampling") or {}
         for option, parameter in (("topK", "top_k"), ("minP", "min_p"), ("repeatPenalty", "repeat_penalty"), ("stopSequences", "stop")):
@@ -604,9 +613,16 @@ class GGUFServer:
         engine_timing = {}
         first_chunk = None
         finish_reason = None
+        prefill_percent = -1
         started = time.perf_counter()
         with self._completion(body, emit, cancellation) as response:
             for event in _completion_events(response, cancellation):
+                if first_chunk is None and isinstance(progress := event.get("prompt_progress"), dict):
+                    percent = _prefill_percent(progress)
+                    if percent is not None and percent > prefill_percent:
+                        prefill_percent = percent
+                        text_label = f"Processing prompt · {percent}%" if percent else "Processing prompt…"
+                        emit({"type": "phase", "text": text_label})
                 if event.get("usage"):
                     usage = event["usage"]
                 # llama.cpp includes these slot counters on the final stream chunk.

@@ -176,8 +176,15 @@ class GGUFCompletionTests(unittest.TestCase):
         request = {"messages": [{"role": "user", "content": "Explain."}], "maxNewTokens": 32,
                    "temperature": 0, "topP": 1, "seed": 0}
         chunks = [
-            {"choices": [{"delta": {"role": "assistant"}}]},
+            {"choices": [{"delta": {"role": "assistant"}}],
+             "prompt_progress": {"total": 1800, "cache": 700, "processed": 700}},
+            {"prompt_progress": {"total": 1800, "cache": 700, "processed": 1260}},
+            {"prompt_progress": {"total": 1800, "cache": 700, "processed": 1275}},
+            {"prompt_progress": {"total": 1800, "cache": 700, "processed": 1100}},
+            {"prompt_progress": {"total": 1800, "cache": 700, "processed": "1300"}},
+            {"prompt_progress": {"total": 1800, "cache": 700, "processed": 1800}},
             {"choices": [{"delta": {"content": "A reply"}}]},
+            {"prompt_progress": {"total": 1800, "cache": 700, "processed": 1300}},
             {"choices": [{"delta": {}, "finish_reason": "stop"}]},
             {"choices": [], "usage": {"prompt_tokens": 16, "completion_tokens": 3},
              "timings": {"prompt_ms": 95.5, "predicted_ms": 200, "prompt_n": 6, "cache_n": 10}},
@@ -193,8 +200,15 @@ class GGUFCompletionTests(unittest.TestCase):
                 chunks[-1]["timings"] = raw
                 encoded = b"".join(b"data: " + json.dumps(chunk).encode() + b"\n\n" for chunk in chunks)
                 server._completion = Mock(return_value=io.BytesIO(encoded + b"data: [DONE]\n\n"))
+                emit = Mock()
                 with patch("gguf_runtime.time.perf_counter", side_effect=[10, 10.25, 10.75, 11]):
-                    result = server.generate(request, Mock())
+                    result = server.generate(request, emit)
+                self.assertTrue(server._completion.call_args.args[0]["return_progress"])
+                self.assertEqual([call.args[0] for call in emit.call_args_list], [
+                    {"type": "phase", "text": "Processing prompt…"},
+                    {"type": "phase", "text": "Processing prompt · 50%"},
+                    {"type": "token", "text": "A reply"},
+                ])
                 self.assertEqual(result["runtimeTiming"], {
                     "contextPreparationMs": 250, "firstOutputChunkMs": 500, **expected,
                 })
