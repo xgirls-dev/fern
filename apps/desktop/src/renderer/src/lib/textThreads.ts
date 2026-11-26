@@ -709,6 +709,7 @@ export interface TextPromptMessage {
 }
 
 export const TEXT_MESSAGE_CHARACTER_LIMIT = 20_000;
+const GGUF_HISTORY_WINDOW_STEP = 8;
 
 function normalizeRequestContext(context: TextRequestContext | undefined): TextRequestContext | undefined {
   if (!context) return;
@@ -790,13 +791,16 @@ export function textPromptHistory(history: TextMessage[], model: TextModel): { m
     }
   }
   const gguf = model.format === "gguf";
+  // Let the GGUF window grow from 149 to 156 complete turns so appending one
+  // exchange usually keeps the exact prompt prefix available to the engine.
+  const turnLimit = gguf ? 149 + (turns.length % GGUF_HISTORY_WINDOW_STEP) : 49;
   const recent = [prompt.message];
   let characters = prompt.message.content.length;
   let shortenedMessages = 0;
   let omittedAttachments = 0;
   // Shorten only the turns that can still fit in the outgoing context window.
   for (const turn of turns.reverse()) {
-    if (recent.length + 2 > (gguf ? 300 : 100)) break;
+    if (recent.length >= turnLimit * 2 + 1) break;
     const user = shortenHistoryMessage(turn.user);
     const reply = shortenHistoryMessage(turn.reply);
     const size = user.content.length + reply.content.length + (reply.generatedImage ? 2_000 : 0);

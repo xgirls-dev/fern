@@ -8,6 +8,7 @@ lands directly on `main` instead of through labeled pull requests.
 
 ### Improved
 
+- Reuse the processed prompt across follow-ups in long GGUF chats when the retained history still fits.
 - Show progress as a local GGUF model processes the chat prompt before its first reply token.
 
 ### Fixed
