@@ -92,6 +92,7 @@ export interface TextMessage {
     finishReason?: "length" | "stop";
     visionChecked?: boolean;
     documentSources?: ChatDocumentSource[];
+    runtimeTiming?: { prefillMs?: number; evaluatedPromptTokens?: number; cachedPromptTokens?: number };
     context?: {
       size: number; compactedMessages: number; images: number; imageNames?: string[];
       omittedImages?: number; unavailableImages?: number; reusedImageName?: string;
@@ -350,6 +351,12 @@ export function textResponseMetrics(metrics: TextMessage["metrics"] | null): Tex
     .every((value) => typeof value === "number" && Number.isFinite(value) && value >= 0)) return;
   const { inputTokens, outputTokens, generationSeconds, tokensPerSecond, modelName, device, backend,
     mode, seed, temperature, topP, maxNewTokens, visionChecked, context, finishReason } = metrics;
+  const timing = metrics.runtimeTiming;
+  const prefillMs = hasNumber(timing?.prefillMs, 0, Number.MAX_SAFE_INTEGER) ? timing.prefillMs : undefined;
+  const evaluatedPromptTokens = hasNumber(timing?.evaluatedPromptTokens, 0, Number.MAX_SAFE_INTEGER, true) ? timing.evaluatedPromptTokens : undefined;
+  const cachedPromptTokens = hasNumber(timing?.cachedPromptTokens, 0, Number.MAX_SAFE_INTEGER, true) ? timing.cachedPromptTokens : undefined;
+  const runtimeTiming = prefillMs !== undefined || evaluatedPromptTokens !== undefined || cachedPromptTokens !== undefined
+    ? { prefillMs, evaluatedPromptTokens, cachedPromptTokens } : undefined;
   const contextCount = (value: number | undefined) => typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined;
   const imageNames = Array.isArray(context?.imageNames) ? context.imageNames.filter(isOutputImage) : undefined;
   const requestContext = context && {
@@ -360,7 +367,7 @@ export function textResponseMetrics(metrics: TextMessage["metrics"] | null): Tex
   };
   return { inputTokens, outputTokens, generationSeconds, tokensPerSecond, modelName, device, backend,
     mode, seed, temperature, topP, maxNewTokens, visionChecked, context: requestContext, sampling: metrics.sampling, loadOptions: metrics.loadOptions,
-    documentSources: normalizeDocumentSources(metrics.documentSources),
+    documentSources: normalizeDocumentSources(metrics.documentSources), runtimeTiming,
     finishReason: finishReason === "length" || finishReason === "stop" ? finishReason : undefined };
 }
 

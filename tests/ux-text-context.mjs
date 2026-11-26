@@ -34,7 +34,8 @@ const feed = page.getByRole("log", { name: "Conversation" });
 const composer = page.getByRole("textbox", { name: "Message", exact: true });
 const details = feed.getByRole("region", { name: "Response details" });
 const saved = async () => (await savedTextWorkspace(page))?.threads.find((thread) => thread.id === id);
-const metrics = { inputTokens: 1773, outputTokens: 16, generationSeconds: 1, tokensPerSecond: 16, maxNewTokens: 2048,
+const metrics = { inputTokens: 1773, outputTokens: 16, generationSeconds: 3, tokensPerSecond: 16, maxNewTokens: 2048,
+  runtimeTiming: { prefillMs: 1890, evaluatedPromptTokens: 24, cachedPromptTokens: 1749, decodeMs: 1000 },
   context: { size: 4096, compactedMessages: 12, images: 0 } };
 
 try {
@@ -96,12 +97,19 @@ try {
   await expect(details).toContainText("1 earlier image attachment was left out of the request.");
   await expect(details).toContainText("12 earlier messages were summarized by the model.");
   await expect(details).toContainText("4,096 token context");
+  await expect(details).toContainText("Prompt processing 1.9 s · 24 tokens processed · 1,749 tokens reused");
   assert(await details.evaluate((panel) => !!(panel.compareDocumentPosition(panel.closest("article").querySelector(".text-message-content")) & Node.DOCUMENT_POSITION_FOLLOWING)),
     "The details opened from the context notice should appear before the reply text");
   await expect.poll(async () => (await saved())?.messages.at(-1)?.requestContext?.shortenedMessages).toBe(2);
   assert.equal((await saved()).messages.find((message) => message.id === "long-user").content, longPrompt);
   assert.equal((await saved()).messages.find((message) => message.id === "long-reply").content, longReply);
   assert.equal((await saved()).messages.find((message) => message.id === "row-1").content, excludedReply);
+
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(reply).toContainText("The notebook is up to date.");
+  await reply.getByRole("button", { name: "Context details", exact: true }).click();
+  await expect(details).toContainText("Prompt processing 1.9 s · 24 tokens processed · 1,749 tokens reused");
+  await reply.getByRole("button", { name: "Context details", exact: true }).click();
 
   await button("Chat settings").click();
   const settings = page.getByRole("complementary", { name: "Chat settings panel" });
@@ -117,11 +125,16 @@ try {
   assert.equal(second.messages.length, 299, "Advance the window after it reaches its limit");
   assert.equal(second.messages[0].content, "Notebook message 22.");
   state.textStatus.job = { ...state.textStatus.job, status: "complete", partialText: "Remember the last entry.",
-    result: { ...metrics, context: { ...metrics.context, size: 16384, compactedMessages: 0 } }, finishedAt: Date.now() / 1000 };
+    result: { ...metrics, context: { ...metrics.context, size: 16384, compactedMessages: 0 },
+      runtimeTiming: { prefillMs: -1, cachedPromptTokens: 0, evaluatedPromptTokens: 1.5 } }, finishedAt: Date.now() / 1000 };
   await expect(reply).toContainText("Remember the last entry.");
   await expect(reply.getByRole("button", { name: "Context details", exact: true })).toHaveCount(0);
   await chooseMessageAction(reply, "Response details");
-  await expect(reply.getByRole("region", { name: "Response details" })).toContainText("22 earlier messages were left out of the request.");
+  const laterDetails = reply.getByRole("region", { name: "Response details" });
+  await expect(laterDetails).toContainText("22 earlier messages were left out of the request.");
+  await expect(laterDetails).toContainText("0 tokens reused");
+  await expect(laterDetails).not.toContainText("Prompt processing");
+  await expect(laterDetails).not.toContainText("tokens processed");
   await composer.fill("Which notes should stay on the agenda?");
   await button("Send message").click();
   await expect.poll(() => state.textRequests.length).toBe(3);

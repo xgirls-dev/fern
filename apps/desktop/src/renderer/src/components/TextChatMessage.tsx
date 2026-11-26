@@ -212,10 +212,17 @@ export const TextChatMessage = memo(function TextChatMessage({ message, selectio
   if (onDelete && onDeleteRequested) actions.push({ label: assistant ? "Delete reply" : "Delete message", icon: Trash2,
     run: () => onDeleteRequested(targetId), destructive: true, disabled: !canDelete });
 
+  const timing = showDetails ? message.metrics?.runtimeTiming : undefined;
+  const promptDetails = timing && [
+    timing.prefillMs === undefined ? undefined : `Prompt processing ${timing.prefillMs < 1000 ? `${Math.round(timing.prefillMs)} ms` : `${(timing.prefillMs / 1000).toFixed(1)} s`}`,
+    timing.evaluatedPromptTokens === undefined ? undefined : `${timing.evaluatedPromptTokens.toLocaleString()} ${timing.evaluatedPromptTokens === 1 ? "token" : "tokens"} processed`,
+    timing.cachedPromptTokens === undefined ? undefined : `${timing.cachedPromptTokens.toLocaleString()} ${timing.cachedPromptTokens === 1 ? "token" : "tokens"} reused`,
+  ].filter(Boolean).join(" · ");
   const detailPanel = showDetails ? <div className={`text-response-details${showContextDetails ? " text-response-details--context" : ""}`} id={detailsId} role="region" aria-label="Response details">
     <span className="text-message-label">{modelName ?? "Local model"}</span>
     {message.metrics && <span>
       {[message.metrics.backend, message.metrics.device, `${message.metrics.inputTokens} in / ${message.metrics.outputTokens} out`, `${message.metrics.tokensPerSecond.toFixed(1)} tokens/s`, `${message.metrics.generationSeconds.toFixed(1)} s`].filter(Boolean).join(" · ")}
+      {promptDetails && <><br />{promptDetails}</>}
       <br />Temperature {message.metrics.temperature ?? "unknown"} · Top P {message.metrics.topP ?? "unknown"} · Seed {message.metrics.seed ?? "unknown"} · Max tokens {message.metrics.maxNewTokens ?? "unknown"}
       {runtimeContext && <><br />{runtimeContext.size.toLocaleString()} token context · {runtimeContext.images} {runtimeContext.images === 1 ? "image" : "images"}</>}
     </span>}
