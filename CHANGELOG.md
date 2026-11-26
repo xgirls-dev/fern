@@ -6,11 +6,15 @@ lands directly on `main` instead of through labeled pull requests.
 
 ## [Unreleased]
 
+## [0.1.49] - 2026-11-25
+
 ### Added
 
 - Save workspace backups from Local data. Restore a backup into a separate workspace and switch back to the original with its chats and media.
 - Open the model picker for the focused chat with Ctrl+Shift+L or Cmd+Shift+L on Mac. When opened from the composer, selecting a model or pressing Escape returns focus to the draft.
 - Undo a message deletion with Ctrl+Z or Cmd+Z on Mac while the conversation or its Undo control has focus.
+- Load or unload a chat model in Chat settings. Cancel a load while keeping the draft, or restart the local service from Chat after it exits.
+- Open a document source at the passage sent to the model. Replace or remove a missing attachment and retry the original prompt.
 
 ### Improved
 
@@ -21,11 +25,15 @@ lands directly on `main` instead of through labeled pull requests.
 - Show the full text of each received reply update immediately, so delayed animation callbacks cannot leave a reply stuck halfway through a chunk.
 - Show when chat is checking hardware before it begins loading a GGUF model.
 - Keep streaming replies free of animated dots. The composer shows when Fern is responding or waiting for more text.
+- Use a monochrome Stop button in the composer. Escape also stops a reply while you are reading it in the conversation.
+- Keep more of the conversation visible in short windows when the draft contains an image and documents.
+- Reuse a completed GGUF context summary when a follow-up or fork sends the same earlier turns to the loaded model. Chat shows when summarization takes longer.
 - Reuse the loaded Vulkan chat model when switching from an image conversation to plain text.
 - Start Gemma 4 GGUF chat on Vulkan on Windows systems with the tested Intel Arc B390 adapter.
 
 ### Fixed
 
+- Reopen Fern's window after a renderer crash while keeping the local service running. Windows users can launch with `--fern-software-rendering` if the window goes black during GPU inference.
 - Restore the reading position in the first frame when showing a hidden chat pane.
 - Keep the reading position when an earlier message changes height or when returning to a chat in a compact split pane.
 - Recover a chat deletion or Undo when a reload interrupts saving the active transcript.
@@ -35,6 +43,9 @@ lands directly on `main` instead of through labeled pull requests.
 - Use the GGUF engine to detect its own hardware and avoid a text worker startup stall on Windows.
 - Load saved chat images once Fern connects to its local service when it reopens.
 - Retry a GGUF chat on Vulkan when OpenVINO hits a GPU tensor-shape error before the reply begins.
+- Restore the active image context when you remove newer turns that had replaced it.
+
+Full changelog on [GitHub](https://github.com/xgirls-dev/fern/compare/v0.1.48...v0.1.49).
 
 ## [0.1.48] - 2026-11-20
 

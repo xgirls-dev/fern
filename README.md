@@ -83,6 +83,8 @@ Generate from a prompt, add reference images on supported models, and use seeds 
 - **MOSS Image · HaDeS**, **Z-Image Turbo**, and **SANA-Sprint 0.6B** offer more text-to-image options on Windows Intel GPUs. **Tame Pony SDXL** and **Qwen Image 2.1 Turbo** use OpenVINO. **FLUX.3 Klein · INT4** is an experimental text-to-image integration.
 - **Custom OpenVINO image models** can be linked from a local export folder or downloaded from a compatible Hugging Face repository through **Models → Image → Add custom model**. Select the model family that matches the export.
 
+If Fern's window goes black during an image job on Windows, quit Fern and add `--fern-software-rendering` after the closing quote in the **Target** field of a Fern shortcut. Open Fern using that shortcut. This switches the interface to software rendering. The local service still uses the device selected for inference.
+
 Open **Images** to browse renders, inspect settings, save a copy, or remix a result. Image, chat, and speech threads keep their own drafts, settings, and history. Use **Search threads** to pick up previous work and **Ctrl+K** to open the command palette.
 
 ### Video from a still
