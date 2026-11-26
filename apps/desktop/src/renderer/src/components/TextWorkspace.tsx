@@ -49,7 +49,7 @@ import { notify } from "../lib/notifications";
 import { canContinueTextReply, countTextPromptCharacters, findChatImage, latestTextPrompt, matchesTextMessage, replyVersions, resolveTextModel, savedVersionForDeletedReply, showReplyVersion, TEXT_MESSAGE_CHARACTER_LIMIT, textModelReadiness, textPromptExceedsLimit, type GeneratedChatImage, type TextMessage } from "../lib/textThreads";
 import type { BackendFailure } from "../../../preload/types";
 import { chatImageErrors, chatImageSettings, MAX_IMAGE_PROMPT_SUFFIX, type ChatImageSettings } from "../lib/chatImageSettings";
-import { isKleinLoraModel, maxReferenceImages } from "../lib/imageModels";
+import { maxReferenceImages, supportsImageLoras } from "../lib/imageModels";
 import { chatTokenLimits, ggufLoadOptions, isTextModelInstalling, KV_CACHE_TYPES, type ChatPane, type GgufLoadOptions, type TextMode, type TextSamplingSettings, type TextThread } from "../lib/textThreads";
 import type { SetupTask } from "../lib/modelSetup";
 import type { ImageRecord } from "../lib/types";
@@ -1339,7 +1339,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
                       onChange={(promptSuffix) => updateImageSettings({ promptSuffix })} />
                   </div>
                 </Disclosure>
-                {isKleinLoraModel(imageModel.id) && <ImageLoraFields key={`loras-${imageModel.id}`} loras={imageSettings.loras ?? []}
+                {supportsImageLoras(imageModel.id) && <ImageLoraFields key={`loras-${imageModel.id}`} loras={imageSettings.loras ?? []}
                   error={imageErrors?.loras} disabled={busy} onChange={(loras) => updateImageSettings({ loras })} />}
                 {maxReferenceImages(imageModel.id) > 0 && <ChatImageReferenceFields key={`refs-${imageModel.id}`} settings={imageSettings}
                   limit={maxReferenceImages(imageModel.id)} disabled={busy} onChange={updateImageSettings} />}

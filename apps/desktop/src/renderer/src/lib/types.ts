@@ -120,6 +120,7 @@ export interface GenerationPayload {
 }
 
 export type KleinLoraModel = "4b-lora" | "9b-lora";
+export type LoraImageModel = KleinLoraModel | "z-image-turbo";
 
 export interface LoraSelection {
   path: string;
@@ -130,7 +131,7 @@ export interface LoraSelection {
 
 export interface StudioSettings {
   loras?: LoraSelection[];
-  lorasByModel?: Partial<Record<KleinLoraModel, LoraSelection[]>>;
+  lorasByModel?: Partial<Record<LoraImageModel, LoraSelection[]>>;
   model?: string;
   prompt: string;
   device: DeviceId;
