@@ -110,7 +110,7 @@ Choose **New thread → Create speech** on Windows. Use a **Qwen3-TTS** preset v
 
 **Available GPU** is the default in Preferences. Choose **CPU** explicitly for models that support it. NVIDIA on Windows requires a build with the matching OpenVINO NVIDIA plugin and a model that supports that path.
 
-On Windows and Omarchy, GGUF text uses OpenVINO on the GPU and GGUF vision uses Vulkan on supported Intel GPUs. Selecting CPU on Omarchy uses llama.cpp’s native CPU engine for text and vision. On Apple Silicon, Auto uses Metal for GGUF chat and vision. Fern downloads pinned engines as needed. Your operating system supplies the graphics drivers.
+On Windows and Omarchy, GGUF text uses OpenVINO or Vulkan on the GPU, and GGUF vision uses Vulkan on supported Intel GPUs. On Apple Silicon, Auto uses Metal for GGUF chat and vision. Selecting CPU uses llama.cpp’s native CPU engine for GGUF text and vision. Fern downloads pinned engines as needed. Your operating system supplies the graphics drivers.
 
 ## Benchmarks
 

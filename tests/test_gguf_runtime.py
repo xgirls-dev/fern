@@ -338,6 +338,7 @@ class GGUFCompletionTests(unittest.TestCase):
         for platform, device, backends in (
             ("darwin", "CPU", ["cpu", "cpu"]),
             ("linux", "CPU", ["cpu", "cpu"]),
+            ("win32", "CPU", ["cpu", "cpu"]),
             ("win32", "AUTO", ["openvino", "vulkan"]),
         ):
             with self.subTest(platform=platform, device=device):
@@ -392,7 +393,7 @@ class GGUFCompletionTests(unittest.TestCase):
             ("win32", "GPU", "gemma4", True, True, ["vulkan", "openvino"]),
             ("win32", "GPU", "gemma4", False, False, ["openvino"]),
             ("win32", "GPU", "qwen3", True, False, ["openvino"]),
-            ("win32", "CPU", "gemma4", True, False, ["openvino"]),
+            ("win32", "CPU", "gemma4", True, False, ["cpu"]),
             ("linux", "GPU", "gemma4", True, False, ["openvino"]),
         )
         for platform, device, architecture, adapter, driver_failure, expected in cases:
@@ -420,7 +421,7 @@ class GGUFCompletionTests(unittest.TestCase):
                 self.assertEqual(engine.generate.call_count, 2)
                 self.assertEqual(sum(call.args[0]["type"] == "result" for call in emit.call_args_list), 2)
 
-    def test_worker_recovers_one_openvino_gpu_shape_error_before_streaming(self) -> None:
+    def test_worker_falls_back_for_openvino_gpu_shape_errors_only_before_streaming(self) -> None:
         from gguf_runtime import GGUFComputeError
         from text_generation_worker import run_gguf
 
@@ -430,7 +431,7 @@ class GGUFCompletionTests(unittest.TestCase):
             ("GPU", False, "Argument shapes are inconsistent.", ["openvino", "vulkan"], 2),
             ("GPU", True, "Argument shapes are inconsistent.", ["openvino"], 0),
             ("GPU", False, "An unrelated compute error.", ["openvino"], 0),
-            ("CPU", False, "Argument shapes are inconsistent.", ["openvino"], 0),
+            ("CPU", False, "Argument shapes are inconsistent.", ["cpu"], 0),
         )
 
         for device, streaming, detail, expected, recovered in cases:
@@ -439,9 +440,9 @@ class GGUFCompletionTests(unittest.TestCase):
                 stream = io.StringIO("".join(json.dumps(request) + "\n" for request in requests))
                 engines = [
                     Mock(backend=backend, context_size=4096, load_options={}, startup_timing={})
-                    for backend in ("openvino", "vulkan")
+                    for backend in (expected[0], "vulkan")
                 ]
-                openvino, vulkan = engines
+                initial, vulkan = engines
                 for pid, engine in enumerate(engines, 51):
                     engine.process.poll.return_value = None
                     engine.process.pid = pid
@@ -451,8 +452,8 @@ class GGUFCompletionTests(unittest.TestCase):
                     cancellation.streaming = streaming
                     raise GGUFComputeError("Compute error.")
 
-                openvino.generate.side_effect = reject
-                openvino.runtime_log_tail.return_value = detail
+                initial.generate.side_effect = reject
+                initial.runtime_log_tail.return_value = detail
                 vulkan.generate.side_effect = lambda *_args: {"type": "result", "runtimeTiming": {}}
                 with (
                     patch.dict(os.environ, {"FERN_GGUF_RUNTIME_ROOT": "scratch"}),
@@ -469,9 +470,9 @@ class GGUFCompletionTests(unittest.TestCase):
                 self.assertEqual(event_types.count("result"), recovered)
                 self.assertEqual(event_types.count("error"), int(not recovered))
                 if recovered:
-                    openvino.close.assert_called_once_with(force=True)
+                    initial.close.assert_called_once_with(force=True)
                     self.assertEqual([call.args[0] for call in vulkan.generate.call_args_list], [first, follow_up])
-                    openvino.runtime_log_tail.assert_called_once_with(after=22)
+                    initial.runtime_log_tail.assert_called_once_with(after=22)
 
     def test_worker_reuses_engine_for_reply_settings_and_reloads_for_load_settings(self) -> None:
         from text_generation_worker import run_gguf

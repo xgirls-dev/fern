@@ -102,15 +102,17 @@ def run_gguf(file: Path, device: str, projector: Path | None) -> int:
                     and server.context_size == context_size and server.load_options == load_options
                 )
                 preferred_vulkan = False
-                if sys.platform == "darwin" or (sys.platform == "linux" and target == "CPU"):
-                    backend = "cpu" if target == "CPU" else "metal"
+                if target == "CPU":
+                    backend = "cpu"
+                elif sys.platform == "darwin":
+                    backend = "metal"
                 elif vision:
                     # The pinned OpenVINO build cannot prefill Gemma 4 vision.
-                    backend = "cpu" if target == "CPU" else "vulkan"
+                    backend = "vulkan"
                 elif same_configuration and server.backend == "vulkan":
                     # The vision runtime also handles plain text. Keep its model loaded.
                     backend = "vulkan"
-                elif sys.platform == "win32" and target == "GPU" and request.get("ggufArchitecture") == "gemma4":
+                elif sys.platform == "win32" and request.get("ggufArchitecture") == "gemma4":
                     if arc_b390 is None:
                         arc_b390 = windows_arc_b390()
                     preferred_vulkan = arc_b390
