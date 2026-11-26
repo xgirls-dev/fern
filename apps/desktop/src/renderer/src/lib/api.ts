@@ -385,7 +385,7 @@ export function startTextGeneration(payload: {
   return submitTextJob("/api/text/generate", payload);
 }
 
-export function stopTextGeneration(requestId: string, threadId?: string): Promise<{ cancelledBeforeStart?: boolean }> {
+export function stopTextGeneration(requestId: string, threadId?: string): Promise<{ textJob?: TextJob; cancelledBeforeStart?: boolean }> {
   return requestJson("/api/text/stop", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
