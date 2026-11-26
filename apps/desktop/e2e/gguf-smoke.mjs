@@ -1,11 +1,12 @@
 import { chooseSelectOption } from "../../../tests/select-option.mjs";
+import { chooseMessageAction, savedTextWorkspace } from "../../../tests/ui-fixture.mjs";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { _electron as electron, expect } from "@playwright/test";
-import { measureUnloadAndReload, measureWarmStop, observeChatReply, readReplyTiming } from "./chat-reply-timing.mjs";
+import { measureUnloadAndReload, measureWarmStop, observeChatReply, readReplyTiming, verifyPromptDetails } from "./chat-reply-timing.mjs";
 
 const desktop = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const scratch = await mkdtemp(path.join(os.tmpdir(), "fern-gguf-"));
@@ -72,6 +73,14 @@ try {
   const api = await page.evaluate(() => window.studio.getApiBaseUrl());
   const window = await app.browserWindow(page);
   await window.evaluate((browserWindow) => browserWindow.webContents.setBackgroundThrottling(false));
+  const captureWindow = async () => sourceApp
+    ? page.screenshot()
+    : Buffer.from(await window.evaluate(async (browserWindow) => {
+      const image = await browserWindow.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true });
+      return image.toPNG().toString("base64");
+    }), "base64");
+  const artifacts = process.env.FERN_E2E_ARTIFACTS ?? path.resolve(desktop, "..", "..", "artifacts", "release-test");
+  await mkdir(artifacts, { recursive: true });
   const status = async () => {
     const response = await fetch(`${api}/api/text/status`);
     assert(response.ok, `Text status returned HTTP ${response.status}`);
@@ -162,11 +171,28 @@ try {
     console.log(JSON.stringify(report.at(-1)));
     if (index === 0) {
       assert(Number.isFinite(runtimeTiming?.modelReadyMs), "The first reply should report its cold GGUF model load.");
+      const coldDetails = await verifyPromptDetails(message, runtimeTiming);
+      await chooseMessageAction(message, "Hide response details");
       const warmStop = await measureWarmStop(page, async () => (await status()).job, installed.id);
       assert.equal(warmStop.followUp.backend, expectedBackend);
       assert.equal(warmStop.followUp.device, "GPU");
       report.push({ modality: "text", mode: "instant", journey: "warm-stop-and-follow-up", ...warmStop });
       console.log(JSON.stringify(report.at(-1)));
+      const warmJob = (await status()).job;
+      await expect.poll(async () => {
+        const workspace = await savedTextWorkspace(page);
+        return workspace?.threads.find(({ id }) => id === warmJob.threadId)?.messages.at(-1)?.jobId;
+      }).toBe(warmJob.id);
+      await page.reload({ waitUntil: "domcontentloaded" });
+      const reopened = page.locator(`[data-chat-message=${JSON.stringify(`response-${warmJob.id}`)}]`);
+      await expect(reopened.locator(".text-message-content")).toContainText(/\bORCHID-42\b/i);
+      const reopenedDetails = await verifyPromptDetails(reopened, warmStop.followUp.runtime);
+      await reopened.getByRole("region", { name: "Response details" }).scrollIntoViewIfNeeded();
+      await writeFile(path.join(artifacts, "gemma-4-e4b-response-details.png"), await captureWindow());
+      await writeFile(path.join(artifacts, "gemma-4-e4b-response-details.json"), JSON.stringify({
+        backend: expectedBackend, device, coldDetails, reopenedDetails, cold: runtimeTiming, warm: warmStop.followUp.runtime,
+      }, null, 2) + "\n");
+      await chooseMessageAction(reopened, "Hide response details");
       const eviction = await measureUnloadAndReload(page, status, installed.id, { prompt: firstPrompt, answer: /\bparis\b/i });
       assert.equal(eviction.reload.backend, expectedBackend);
       assert.equal(eviction.reload.device, "GPU");
@@ -175,12 +201,7 @@ try {
     }
   }
   await expect(page.locator(".text-message--streaming")).toHaveCount(0);
-  const screenshot = sourceApp
-    ? await page.screenshot()
-    : Buffer.from(await window.evaluate(async (browserWindow) => {
-      const image = await browserWindow.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true });
-      return image.toPNG().toString("base64");
-    }), "base64");
+  const screenshot = await captureWindow();
 
   const removed = await fetch(`${api}/api/text/models/remove`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ modelId: installed.id }),
@@ -198,8 +219,6 @@ try {
   const reimported = (await status()).models.find((model) => model.id === installed.id);
   assert(reimported?.supportsVision && reimported?.supportsReasoning, "Import must restore the model and its projector");
   console.log("Local GGUF and projector import passed.");
-  const artifacts = process.env.FERN_E2E_ARTIFACTS ?? path.resolve(desktop, "..", "..", "artifacts", "release-test");
-  await mkdir(artifacts, { recursive: true });
   await writeFile(path.join(artifacts, "gemma-4-e4b-gguf.json"), JSON.stringify(report, null, 2) + "\n");
   await writeFile(path.join(artifacts, "gemma-4-e4b-vision-reasoning.png"), screenshot);
   succeeded = true;

@@ -130,6 +130,21 @@ export async function readReplyTiming(handle) {
   }
 }
 
+export async function verifyPromptDetails(reply, timing) {
+  assert(Number.isFinite(timing?.prefillMs) && timing.prefillMs >= 0, "The GGUF runtime should report prompt processing time.");
+  assert(Number.isSafeInteger(timing.evaluatedPromptTokens) && timing.evaluatedPromptTokens >= 0, "The GGUF runtime should report processed tokens.");
+  assert(Number.isSafeInteger(timing.cachedPromptTokens) && timing.cachedPromptTokens >= 0, "The GGUF runtime should report reused tokens.");
+  const expected = await reply.evaluate((_, { prefillMs, evaluatedPromptTokens, cachedPromptTokens }) => {
+    const elapsed = prefillMs < 1000 ? `${Math.round(prefillMs)} ms` : `${(prefillMs / 1000).toFixed(1)} s`;
+    const tokens = (count) => `${count.toLocaleString()} ${count === 1 ? "token" : "tokens"}`;
+    return `Prompt processing ${elapsed} · ${tokens(evaluatedPromptTokens)} processed · ${tokens(cachedPromptTokens)} reused`;
+  }, timing);
+  await reply.getByRole("button", { name: "More message actions", exact: true }).click();
+  await reply.page().getByRole("menuitem", { name: "Response details", exact: true }).click();
+  await expect(reply.getByRole("region", { name: "Response details" })).toContainText(expected);
+  return expected;
+}
+
 export async function measureWarmStop(page, readJob, modelId) {
   const composer = page.getByRole("textbox", { name: "Message", exact: true });
   const send = page.getByRole("button", { name: "Send message", exact: true });
