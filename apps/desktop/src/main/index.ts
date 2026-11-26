@@ -219,7 +219,21 @@ function createWindow(apiBaseUrl?: string): BrowserWindow {
     }
   });
 
-  void loadApp();
+  let lastRendererRecovery = -Infinity;
+  const openRenderer = () => {
+    void loadApp().catch((error) => {
+      if (!window.isDestroyed()) console.error("Could not open Fern's window:", error);
+    });
+  };
+  window.webContents.on("render-process-gone", (_event, details) => {
+    if (isShuttingDown || window.isDestroyed() || details.reason === "clean-exit") return;
+    console.error(`Fern's window process exited (${details.reason}, code ${details.exitCode}).`);
+    const now = performance.now();
+    if (now - lastRendererRecovery < 30_000) return;
+    lastRendererRecovery = now;
+    openRenderer();
+  });
+  openRenderer();
 
   window.webContents.setWindowOpenHandler(({ url }) => {
     void shell.openExternal(url);
@@ -629,6 +643,11 @@ async function bootstrap(): Promise<void> {
   if (!app.requestSingleInstanceLock()) {
     app.quit();
     return;
+  }
+
+  // This affects Electron's interface. Inference picks its device in the local service.
+  if (app.commandLine.hasSwitch("fern-software-rendering")) {
+    app.disableHardwareAcceleration();
   }
 
   app.on("second-instance", () => {

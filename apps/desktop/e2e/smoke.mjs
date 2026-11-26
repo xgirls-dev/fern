@@ -58,7 +58,7 @@ try {
   electronApp = await electron.launch({
     ...(packagedExecutable ? { executablePath: packagedExecutable } : {}),
     chromiumSandbox: process.env.FERN_E2E_CHROMIUM_SANDBOX === "1",
-    args: [...(packagedExecutable ? [] : [path.join(desktopRoot, "out", "main", "index.js")]), `--user-data-dir=${profilePath}`, "--disable-gpu", "--disable-gpu-compositing", "--use-gl=swiftshader", "--use-angle=swiftshader", "--disable-features=Vulkan"],
+    args: [...(packagedExecutable ? [] : [path.join(desktopRoot, "out", "main", "index.js")]), `--user-data-dir=${profilePath}`, "--fern-software-rendering", "--disable-gpu-compositing", "--use-gl=swiftshader", "--use-angle=swiftshader", "--disable-features=Vulkan"],
     cwd: repoRoot,
     env,
     timeout: packagedExecutable ? 180_000 : 90_000,
@@ -135,8 +135,23 @@ try {
   await verifyChatComposer(page);
   assert.deepEqual(pageErrors, [], `Renderer errors: ${pageErrors.join(" | ")}`);
   assert.deepEqual(consoleErrors, [], `Console errors: ${consoleErrors.join(" | ")}`);
+  assert.equal(await electronApp.evaluate(({ app }) => app.isHardwareAccelerationEnabled()), false);
+  const rendererPid = await browserWindow.evaluate((window) => window.webContents.getOSProcessId());
+  await browserWindow.evaluate((window) => window.webContents.forcefullyCrashRenderer());
+  // Read through the main process because Playwright's original page crashed.
+  await expect.poll(() => browserWindow.evaluate(async (window, previousPid) => {
+    const contents = window.webContents;
+    const pid = contents.getOSProcessId();
+    if (!pid || pid === previousPid || contents.isLoading()) return null;
+    try {
+      return await contents.executeJavaScript(`document.querySelector('textarea[aria-label="Message"]')
+        ? window.studio.getApiBaseUrl() : null`);
+    } catch {
+      return null;
+    }
+  }, rendererPid), { timeout: 15_000, message: "Restore Chat against the same running local service" }).toBe(apiBaseUrl);
 
-  console.log(`Electron smoke passed: ${visible ? "visible" : "hidden"} main window, real preload/API bridge, ${coverage}.`);
+  console.log(`Electron smoke passed: ${visible ? "visible" : "hidden"} main window, real preload/API bridge, ${coverage}, and renderer crash recovery.`);
   console.log(`Isolated profile: ${profilePath}`);
   succeeded = true;
 } finally {
