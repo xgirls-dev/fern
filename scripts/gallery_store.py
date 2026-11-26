@@ -27,6 +27,16 @@ def thumbnail_version(stat: os.stat_result) -> str:
     return f"1-{stat.st_mtime_ns:x}-{stat.st_ctime_ns:x}-{stat.st_size:x}-{stat.st_ino:x}"
 
 
+def thumbnail_matches(path: Path, file_stat: os.stat_result, version: str) -> bool:
+    if file_stat.st_ino:
+        return thumbnail_version(file_stat) == version
+    # On Windows, fstat can omit the inode. Use the path identity, along
+    # with the size and modification time of the file that was actually opened.
+    path_stat = path.stat()
+    return (thumbnail_version(path_stat) == version
+            and (file_stat.st_mtime_ns, file_stat.st_size) == (path_stat.st_mtime_ns, path_stat.st_size))
+
+
 def image_thumbnail(path: Path, version: str, cache_dir: Path) -> bytes:
     key = hashlib.sha256(os.fsencode(path) + version.encode("ascii")).hexdigest()
     target = cache_dir / f"{key}.webp"
@@ -42,7 +52,7 @@ def image_thumbnail(path: Path, version: str, cache_dir: Path) -> bytes:
         except OSError:
             pass
         with path.open("rb") as original, Image.open(original, formats=("PNG",)) as source:
-            if thumbnail_version(os.fstat(original.fileno())) != version:
+            if not thumbnail_matches(path, os.fstat(original.fileno()), version):
                 raise FileNotFoundError("The output changed while opening its thumbnail.")
             if source.width * source.height > 32 * 1024**2:
                 raise ValueError("The source exceeds the thumbnail decoder's pixel limit.")
@@ -51,7 +61,7 @@ def image_thumbnail(path: Path, version: str, cache_dir: Path) -> bytes:
             with io.BytesIO() as encoded:
                 source.save(encoded, "WEBP", quality=82, method=0, icc_profile=source.info.get("icc_profile", b""))
                 data = encoded.getvalue()
-            if thumbnail_version(os.fstat(original.fileno())) != version:
+            if not thumbnail_matches(path, os.fstat(original.fileno()), version):
                 raise FileNotFoundError("The output changed while generating its thumbnail.")
 
         temp_path = None

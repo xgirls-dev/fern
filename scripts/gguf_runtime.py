@@ -434,8 +434,9 @@ class GGUFServer:
         try:
             connection.connect()
             assert connection.sock is not None
-            # Shutdown wakes a blocked response read and tells llama.cpp to cancel this request.
-            with cancellation.watch(connection.sock):
+            # HTTPConnection can close its socket when handing off a close-delimited
+            # response. Keep a live socket handle for cancelling that response.
+            with connection.sock.dup() as cancel_socket, cancellation.watch(cancel_socket):
                 emit({"type": "cancellable"})
                 emit({"type": "phase", "stage": "waiting-for-first-token", "text": "Waiting for the first token…"})
                 connection.request("POST", "/v1/chat/completions", json.dumps(body).encode("utf-8"), {
