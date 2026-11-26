@@ -238,7 +238,7 @@ try {
   }
   await assert.rejects(readFile(path.join(stage, "models", "not-in-the-backup.gguf")), { code: "ENOENT" });
   const originalDraft = "This draft was edited after saving the backup";
-  await page.getByRole("button", { name: "Text thread: Portable workshop", exact: true }).click();
+  await search(page, savedReply, { found: true, open: true });
   await page.getByRole("textbox", { name: "Message", exact: true }).fill(originalDraft);
   await expect.poll(async () => (await savedTextWorkspace(page))?.threads[0]?.draft).toBe(originalDraft);
   await deleteSavedReply(page);
