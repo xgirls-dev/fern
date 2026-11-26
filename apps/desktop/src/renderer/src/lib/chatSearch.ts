@@ -57,7 +57,7 @@ function renderedMarkdown(text: string | undefined, streaming: boolean, recordPa
 function searchFields(message: TextMessage, streaming = false): SearchField[] {
   const cached = streaming ? undefined : indexed.get(message);
   if (cached) return cached;
-  const markdown = streaming ? "streaming" : "settled";
+  const markdown = streaming || message.status === "stopped" ? "streaming" : "settled";
   const fields: SearchField[] = [
     ["body", message.content, message.role === "assistant" ? markdown : undefined],
     ...messageImages(message).map((image, index): SearchField => ["image", image.prompt, undefined, index]),

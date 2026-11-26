@@ -21,6 +21,7 @@ lands directly on `main` instead of through labeled pull requests.
 
 ### Fixed
 
+- Keep partial Markdown readable after stopping a chat reply, including when reopening the conversation.
 - Fix garbled GGUF replies on Windows and Omarchy when CPU is selected by using llama.cpp’s native CPU engine.
 - Include saved chats and references in the workspace size shown in Local data.
 - Recover a finished video after restarting the local service if it exited while saving the clip.

@@ -245,12 +245,13 @@ export const TextChatMessage = memo(function TextChatMessage({ message, selectio
     {reasoning && <Disclosure className="text-reasoning" label={reasoningInProgress ? indicator : "Reasoning"}
       open={reasoningOpen} lockOpen={revealReasoning} onOpenChange={setReasoningOpen}>
       {reasoningExpanded && <div ref={reasoningRef} onPointerDown={onPointerDown} data-find-target={revealReasoning || undefined}>
-        <TextMarkdown content={reasoning} streaming={shown.streaming} preserveSelection={holding} />
+        <TextMarkdown content={reasoning} streaming={shown.streaming} stopped={message.status === "stopped"} preserveSelection={holding} />
       </div>}
     </Disclosure>}
     {editing && findSection === "body" && <div className="text-find-original"><span>Current prompt</span><p data-find-target>{message.content}</p></div>}
     {editing ? editor : <div ref={bodyRef} onPointerDown={onPointerDown} className="text-message-content" data-find-target={findSection === "body" || undefined}>
       {assistant ? (streaming || content) && <TextMarkdown content={content} streaming={shown.streaming} receivingReply={streaming}
+        stopped={message.status === "stopped"}
         preserveSelection={holding} documentSources={documentSources} onOpenSource={openDocumentSource} /> : content}
       {!showingLiveAnswer && !reasoningInProgress && !checkingImageInCaption && indicator}
     </div>}
