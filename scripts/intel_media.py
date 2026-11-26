@@ -419,24 +419,32 @@ class IntelMedia:
         started = time.perf_counter()
         phases = ("Loading Wan 2.2 on Intel GPU…", "Generating frames on Intel GPU…", "Decoding the clip…", "Writing WebM…")
         phase = 0
+        step = 0
+        steps = spec["defaultSteps"]
+        sampling_progress = re.compile(rf"\|\s+(\d+)/{steps}\s+-")
 
         def progress(path):
-            nonlocal phase
+            nonlocal phase, step
             content = path.read_text(encoding="utf-8", errors="replace")
             next_phase = 0
             if "generate_video completed" in content:
                 next_phase = 3
-            elif "vae decode graph" in content:
+            elif "decode_video_outputs latent" in content or "vae decode graph" in content:
                 next_phase = 2
             elif "total params memory size" in content:
                 next_phase = 1
             if next_phase > phase:
                 phase = next_phase
                 log(phases[phase])
+            if phase == 1 and (sample := content.rpartition("] sample ")[2]) != content:
+                completed = max((int(value) for value in sampling_progress.findall(sample)), default=0)
+                if step < completed <= steps:
+                    step = completed
+                    log(f"Generating frames on Intel GPU… Step {step} of {steps} complete")
 
         details = run_process([
             str(self.runtime / "sd-cli.exe"), "-M", "vid_gen", *args, "--init-img", str(reference),
-            "--seed", str(request["seed"]), "--steps", str(spec["defaultSteps"]), "--cfg-scale", "1",
+            "--seed", str(request["seed"]), "--steps", str(steps), "--cfg-scale", "1",
             "--sampling-method", "euler", "--scheduler", spec["preset"]["scheduler"],
             "-W", str(width), "-H", str(height), "--video-frames", str(frames),
             "--fps", str(spec["fps"]), "-p", request["prompt"], "-o", str(output),

@@ -141,11 +141,22 @@ class IntelMediaTests(unittest.TestCase):
                 self.assertEqual(command[command.index("--video-frames") + 1], "161")
                 self.assertEqual(command[command.index("--fps") + 1], "16")
                 self.assertIsNone(timeout)
+                content = "total params memory size = 6393.71MB (VRAM 6393.71MB, RAM 0.00MB)\n"
+                for entry in ("  |==> | 1/4 - unrelated\n", "[V] sample 34x44x41\n  |==> | 1/4 - 17s/it\n",
+                              "[V] decode_video_outputs latent 34x44x41x48\n", "generate_video completed\n"):
+                    content += entry
+                    log.write_text(content, encoding="utf-8")
+                    update(log)
                 (stage / "video.webm").write_bytes(b"\x1a\x45\xdf\xa3")
-                return "total params memory size = 6393.71MB (VRAM 6393.71MB, RAM 0.00MB)\ndecoded 544x704x161x3"
+                return content + "decoded 544x704x161x3"
 
             request = {"prompt": "A fox turns.", "seed": 42, "frames": 161,
                        "reference": Image.new("RGB", (8, 8))}
+            log = Mock()
             with patch("intel_media.run_process", side_effect=render):
-                output, _elapsed = runtime.generate_video(request, stage, threading.Event(), Mock())
+                output, _elapsed = runtime.generate_video(request, stage, threading.Event(), log)
             self.assertEqual(output, stage / "video.webm")
+            self.assertEqual([call.args[0] for call in log.call_args_list], [
+                "Loading Wan 2.2 on Intel GPU…", "Generating frames on Intel GPU…",
+                "Generating frames on Intel GPU… Step 1 of 4 complete", "Decoding the clip…", "Writing WebM…",
+            ])
