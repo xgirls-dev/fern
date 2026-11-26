@@ -156,6 +156,7 @@
       }
     ],
     "frames": 21,
+    "frameOptions": [21, 65, 81, 97, 113, 129, 145, 161],
     "fps": 16
   },
   "sana-sprint": {
