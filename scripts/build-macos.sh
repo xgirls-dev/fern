@@ -58,4 +58,38 @@ target.mkdir()
 source.rename(target / "python-home")
 PY
 
+if [[ "${FERN_MAC_PRECOMPILE_GGUF:-false}" == true ]]; then
+  llama_revision=52975342ff6b85127ff31930d39e36725fd08809
+  llama_source="$stage/llama-cpp"
+  git init -q "$llama_source"
+  git -C "$llama_source" fetch --depth=1 https://github.com/ggml-org/llama.cpp.git "$llama_revision"
+  git -C "$llama_source" checkout --quiet --detach FETCH_HEAD
+  test "$(git -C "$llama_source" rev-parse HEAD)" = "$llama_revision"
+  if ! xcrun -sdk macosx metal --version; then
+    xcodebuild -downloadComponent MetalToolchain
+  fi
+  cmake -S "$llama_source" -B "$stage/llama-build" -DCMAKE_BUILD_TYPE=Release \
+    -DBUILD_SHARED_LIBS=ON -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON -DCMAKE_INSTALL_RPATH=@loader_path \
+    -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0 -DGGML_NATIVE=OFF -DGGML_METAL=ON -DGGML_METAL_EMBED_LIBRARY=OFF \
+    -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_APP=OFF -DLLAMA_OPENSSL=OFF \
+    -DLLAMA_BUILD_NUMBER=12498 -DLLAMA_BUILD_UI=OFF -DLLAMA_USE_PREBUILT_UI=OFF
+  cmake --build "$stage/llama-build" --target llama-server ggml-metal-lib --parallel 3
+  package="$runtime/llama-b12498-macos-arm64-precompiled"
+  mkdir "$package"
+  cp -L "$stage/llama-build/bin/llama-server" "$stage"/llama-build/bin/*.dylib "$stage"/llama-build/bin/*.metallib "$package/"
+  cp "$llama_source/LICENSE" "$package/LICENSE-llama.cpp.txt"
+  python3 - "$package" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+runtime = Path(sys.argv[1])
+files = {file.name: file.stat().st_size for file in runtime.iterdir() if file.is_file()}
+required = {"llama-server", "default.metallib", "libggml-metal.dylib", "libllama-server-impl.dylib", "libmtmd.dylib"}
+if not required <= files.keys() or any(size == 0 for size in files.values()):
+    raise RuntimeError("The precompiled Metal runtime is incomplete.")
+(runtime / "runtime.json").write_text(json.dumps(files, sort_keys=True), encoding="utf-8")
+PY
+fi
+
 npm run package:macos --workspace @fern/desktop

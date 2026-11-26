@@ -8,6 +8,7 @@ lands directly on `main` instead of through labeled pull requests.
 
 ### Improved
 
+- Add an Apple Silicon preview build option that precompiles Metal shaders before packaging.
 - Show when Chat prepares the Apple GPU before loading a GGUF model.
 - Show when Chat checks model memory, loads weights, prepares the context, and warms up a GGUF model.
 - Show measured prompt processing time and reused tokens in GGUF response details.
