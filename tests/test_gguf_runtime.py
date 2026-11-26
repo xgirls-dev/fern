@@ -337,6 +337,7 @@ class GGUFCompletionTests(unittest.TestCase):
         ]
         for platform, device, backends in (
             ("darwin", "CPU", ["cpu", "cpu"]),
+            ("linux", "CPU", ["cpu", "cpu"]),
             ("win32", "AUTO", ["openvino", "vulkan"]),
         ):
             with self.subTest(platform=platform, device=device):
@@ -603,12 +604,11 @@ class GGUFCompletionTests(unittest.TestCase):
             {"op": "generate", "contextSize": 2048, "messages": [{"role": "user", "content": question}]}
             for question in ("First", "Next")
         ]
-        cpu_backend = "cpu" if sys.platform == "darwin" else "openvino"
         for summary_streaming in (False, True):
             with self.subTest(summary_streaming=summary_streaming):
                 stream = io.StringIO("".join(json.dumps(request) + "\n" for request in [*requests, {"op": "shutdown"}]))
                 engines = [
-                    Mock(backend=cpu_backend, context_size=2048, load_options={}, startup_timing={})
+                    Mock(backend="cpu", context_size=2048, load_options={}, startup_timing={})
                     for _ in range(2)
                 ]
                 for pid, engine in enumerate(engines, start=42):
@@ -628,6 +628,7 @@ class GGUFCompletionTests(unittest.TestCase):
 
                 with (
                     patch.dict(os.environ, {"FERN_GGUF_RUNTIME_ROOT": "scratch"}),
+                    patch("text_generation_worker.sys.platform", "linux"),
                     patch("text_generation_worker.sys.stdin", stream),
                     patch("text_generation_worker.emit") as emit,
                     patch("gguf_runtime.ensure_runtime", return_value=Path("llama-server")),
