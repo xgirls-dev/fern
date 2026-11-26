@@ -102,7 +102,7 @@ def run_gguf(file: Path, device: str, projector: Path | None) -> int:
                     and server.context_size == context_size and server.load_options == load_options
                 )
                 preferred_vulkan = False
-                if sys.platform == "darwin":
+                if sys.platform == "darwin" or (sys.platform == "linux" and target == "CPU"):
                     backend = "cpu" if target == "CPU" else "metal"
                 elif vision:
                     # The pinned OpenVINO build cannot prefill Gemma 4 vision.
