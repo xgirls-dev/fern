@@ -49,7 +49,7 @@ when GPU smoke is enabled and uses the downloaded weights again for backend chec
 
 Run `npm run build`, then `node apps/desktop/e2e/workspace-backup.mjs`. The test uses disposable profiles and verifies backup, restore, and search in the original and recovered workspaces.
 
-Set `FERN_E2E_EXECUTABLE` to run against the packaged app. To check an upgrade, set `FERN_E2E_PREVIOUS_EXECUTABLE` to a prior package with Save Backup, or set `FERN_E2E_PREVIOUS_SOURCE_ENTRY` to that checkout’s built `apps/desktop/out/main/index.js`. The test opens the same profile on the new build before restoring the archive.
+Set `FERN_E2E_EXECUTABLE` to run against the packaged app. To check an upgrade, set `FERN_E2E_PREVIOUS_EXECUTABLE` to the prior package or set `FERN_E2E_PREVIOUS_SOURCE_ENTRY` to that checkout’s built `apps/desktop/out/main/index.js`. For legacy builds such as v0.1.48, the test saves a draft in the old app and opens the same profile in the new build to verify chat migration before making and restoring a backup. For builds with Save Backup, it saves the archive in the old app and restores it in the new one.
 
 ## Release notes
 

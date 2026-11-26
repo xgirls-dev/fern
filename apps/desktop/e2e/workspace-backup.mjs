@@ -18,6 +18,7 @@ const previousExecutable = process.env.FERN_E2E_PREVIOUS_EXECUTABLE;
 const previousSourceEntry = process.env.FERN_E2E_PREVIOUS_SOURCE_ENTRY;
 assert(!(previousExecutable && previousSourceEntry), "Choose one prior Fern build.");
 const testUpgrade = Boolean(previousExecutable || previousSourceEntry);
+const legacyChatKey = "fern-text-threads:v1";
 const savedReply = "selected color is sage";
 const archivedReply = "earlier image was charcoal";
 const chatId = "text-thread-portable";
@@ -139,8 +140,7 @@ try {
   await mkdir(path.join(root, "models"), { recursive: true });
   await writeFile(path.join(root, "models", "not-in-the-backup.gguf"), "model fixture");
   let page = await openProfile(testUpgrade);
-  await expect.poll(() => savedTextWorkspace(page).then(Boolean, () => false)).toBe(true);
-  await savedTextWorkspace(page, { activeId: chatId, threads: [{
+  const chat = { activeId: chatId, threads: [{
     id: chatId, title: "Portable workshop", modelId: "local", draft: "Unsent chat draft",
     updatedAt: Date.now(), contextSize: 4096, systemPrompt: "Keep the answer brief",
     messages: [{ id: "prompt", role: "user", content: "Compare the colors.", image: attachment, createdAt: 10 },
@@ -149,7 +149,20 @@ try {
       { id: "old-prompt", role: "user", content: "Describe the image.", createdAt: 1 },
       { id: "old-reply", role: "assistant", content: "The earlier image was **charcoal**.", createdAt: 2 },
     ] }],
-  }] });
+  }] };
+  let usesLegacyStorage = false;
+  await expect.poll(async () => {
+    usesLegacyStorage = testUpgrade && await page.evaluate((key) => localStorage.getItem(key) !== null, legacyChatKey);
+    return usesLegacyStorage || await savedTextWorkspace(page).then(Boolean, () => false);
+  }).toBe(true);
+  if (usesLegacyStorage) {
+    // Seed the saved transcript before the old renderer reads and flushes its storage.
+    await page.addInitScript(({ key, workspace }) => {
+      localStorage.setItem(key, JSON.stringify(workspace));
+    }, { key: legacyChatKey, workspace: { ...chat, threads: [{ ...chat.threads[0], draft: "" }] } });
+  } else {
+    await savedTextWorkspace(page, chat);
+  }
   await page.evaluate(async ({ imageId, audioId, reference }) => {
     localStorage.setItem("fern-last-workspace:v1", "text");
     localStorage.setItem("fern-sidebar-collapsed", "false");
@@ -176,6 +189,23 @@ try {
   }, { imageId, audioId, reference });
 
   await page.reload();
+  if (usesLegacyStorage) {
+    await page.evaluate(() => window.studio.getApiBaseUrl());
+    const composer = page.getByRole("textbox", { name: "Message", exact: true });
+    await expect(page.getByText("The selected color is sage.", { exact: true })).toBeVisible();
+    await composer.fill(chat.threads[0].draft);
+    await expect.poll(() => page.evaluate((key) => JSON.parse(localStorage.getItem(key)).threads[0].draft, legacyChatKey))
+      .toBe(chat.threads[0].draft);
+    await app.close();
+    page = await openProfile();
+    await expect.poll(() => savedTextWorkspace(page).then((workspace) => workspace?.activeId, () => undefined)).toBe(chatId);
+    const migrated = (await savedTextWorkspace(page)).threads[0];
+    assert.equal(migrated.messages[0].image, attachment);
+    assert.equal(migrated.systemPrompt, "Keep the answer brief");
+    assert.equal(await page.evaluate((key) => localStorage.getItem(key), legacyChatKey), null);
+    await search(page, archivedReply, { found: true, open: true, savedVersion: true });
+    console.log("The prior Fern build saved a draft, and the new build migrated its chat history and saved version.");
+  }
   await expect(page.getByRole("textbox", { name: "Message", exact: true })).toHaveValue("Unsent chat draft");
   await search(page, savedReply, { found: true, open: true });
   await page.getByRole("button", { name: "Local data", exact: true }).click();
