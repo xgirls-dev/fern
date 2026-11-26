@@ -1,4 +1,6 @@
+import argparse
 import gc
+import hashlib
 import json
 import pathlib
 import sys
@@ -11,10 +13,13 @@ import numpy as np
 from PIL import Image, ImageDraw
 import torch
 
-FRAMES = 161
-SIZE = 128
+FPS = 16
+HEIGHT = 704
+WIDTH = 544
 
-def run():
+
+def run(duration_seconds: int):
+    frame_count = duration_seconds * FPS + 1
     torch.set_num_threads(4)
     assets = pathlib.Path(snapshot_download(
         "xgirls/wan2.2-ti2v-5b-openvino-int4-awq",
@@ -32,17 +37,17 @@ def run():
     ))
     proof = pathlib.Path("proof")
     proof.mkdir(exist_ok=True)
-    reference = Image.new("RGB", (SIZE, SIZE), "lightblue")
-    ImageDraw.Draw(reference).ellipse((40, 40, 76, 76), fill="firebrick")
+    reference = Image.new("RGB", (WIDTH, HEIGHT), "lightblue")
+    ImageDraw.Draw(reference).ellipse((160, 270, 300, 410), fill="firebrick")
     reference.save(proof / "reference.png")
     started = time.monotonic()
     pipeline = OVWanImageToVideoPipeline(assets, device_map="CPU", ov_config={"INFERENCE_NUM_THREADS": 4})
     latents = pipeline(
         image=reference, prompt="A red ball rolls across a pale blue floor. Static camera.",
-        height=SIZE, width=SIZE, num_frames=FRAMES, num_inference_steps=4, guidance_scale=5.0,
+        height=HEIGHT, width=WIDTH, num_frames=frame_count, num_inference_steps=4, guidance_scale=5.0,
         generator=torch.Generator(device="cpu").manual_seed(42), output_type="latent",
     ).frames
-    expected = (FRAMES - 1) // 4 + 1
+    expected = (frame_count - 1) // 4 + 1
     if latents.shape[2] != expected:
         raise RuntimeError(f"Expected {expected} latent frames, received {latents.shape[2]}")
     denoise_seconds = time.monotonic() - started
@@ -58,18 +63,32 @@ def run():
     decoder = AutoencoderKLWan.from_pretrained(
         str(vae_assets / "vae"), torch_dtype=torch.float32, local_files_only=True,
     ).eval()
+    decoder.enable_tiling()
     with torch.inference_mode():
         decoded = decoder.decode(latents, return_dict=False)[0]
     images = np.clip(processor.postprocess_video(decoded, output_type="np")[0] * 255, 0, 255).astype(np.uint8)
-    if len(images) != FRAMES:
-        raise RuntimeError(f"Expected {FRAMES} decoded frames, received {len(images)}")
-    iio.imwrite(proof / "wan-openvino-161.mp4", images, fps=16)
-    distinct = len({frame.tobytes() for frame in images})
-    details = {"frames": len(images), "uniqueFrames": distinct, "resolution": [SIZE, SIZE],
-               "latentFrames": expected, "framesPerSecond": 16, "denoiseSeconds": denoise_seconds,
-               "decodeAndEncodeSeconds": time.monotonic() - decode_started}
+    expected_shape = (frame_count, HEIGHT, WIDTH, 3)
+    if images.shape != expected_shape:
+        raise RuntimeError(f"Expected decoded video shape {expected_shape}, received {images.shape}")
+    distinct = len({hashlib.sha256(frame.tobytes()).digest() for frame in images})
+    if distinct != frame_count:
+        raise RuntimeError(f"Expected {frame_count} distinct frames, received {distinct}")
+    iio.imwrite(proof / "wan-openvino.mp4", images, fps=FPS)
+    for label, index in (("first", 0), ("middle", frame_count // 2), ("last", -1)):
+        Image.fromarray(images[index]).save(proof / f"{label}.png")
+    details = {
+        "frames": len(images),
+        "uniqueFrames": distinct,
+        "resolution": [WIDTH, HEIGHT],
+        "latentFrames": expected,
+        "framesPerSecond": FPS,
+        "denoiseSeconds": denoise_seconds,
+        "decodeAndEncodeSeconds": time.monotonic() - decode_started,
+    }
     (proof / "result.json").write_text(json.dumps(details, indent=2))
     print(json.dumps(details), flush=True)
 
 if __name__ == "__main__":
-    run()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("seconds", type=int, choices=(4, 10))
+    run(parser.parse_args().seconds)
