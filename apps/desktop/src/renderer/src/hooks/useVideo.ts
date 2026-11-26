@@ -6,6 +6,7 @@ export function useVideo(ready: boolean, visible: boolean) {
   const [snapshot, setSnapshot] = useState<VideoSnapshot>();
   const [prompt, setPrompt] = useState("");
   const [seed, setSeed] = useState("42");
+  const [selectedFrames, setFrames] = useState<number>();
   const [reference, setReference] = useState<ReferenceAttachment>();
   const [error, setError] = useState("");
   const [connectionError, setConnectionError] = useState("");
@@ -17,6 +18,9 @@ export function useVideo(ready: boolean, visible: boolean) {
   const needsHistory = useRef(false);
   const job = snapshot?.job;
   const jobId = job?.id;
+  const format = snapshot?.model.videoFormat;
+  const frames = selectedFrames !== undefined && format?.frameOptions.includes(selectedFrames)
+    ? selectedFrames : format?.defaultFrames;
   const running = job?.status === "running" || job?.status === "stopping";
   const available = ready && statusConfirmed;
 
@@ -85,7 +89,7 @@ export function useVideo(ready: boolean, visible: boolean) {
       setError("Use a whole-number seed from 0 to 2,147,483,647.");
       return;
     }
-    void update("generate", { prompt, seed: value, referenceImage: reference.dataUrl, device: "AUTO" });
+    void update("generate", { prompt, seed: value, referenceImage: reference.dataUrl, device: "AUTO", frames });
   };
 
   const reset = useCallback(() => {
@@ -98,12 +102,13 @@ export function useVideo(ready: boolean, visible: boolean) {
     setReference(undefined);
     setPrompt("");
     setSeed("42");
+    setFrames(undefined);
     setError("");
   }, []);
 
   return {
     clips: snapshot?.clips, model: snapshot?.model, job, running, available, recovering: ready && !available && !!snapshot,
     pending, interrupted, error,
-    connectionError, setError, prompt, setPrompt, seed, setSeed, reference, setReference, generate, update, reset,
+    connectionError, setError, prompt, setPrompt, seed, setSeed, frames, setFrames, reference, setReference, generate, update, reset,
   };
 }

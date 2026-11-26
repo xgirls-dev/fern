@@ -53,6 +53,13 @@ class VideoJobs:
         return records
 
     def start(self, request, release_models):
+        from intel_media import VIDEO_ID
+
+        spec = INTEL_MEDIA_CATALOG[VIDEO_ID]
+        frames = request.get("frames", spec["frames"])
+        if type(frames) is not int or frames not in spec["frameOptions"]:
+            raise ValueError("Choose one of the available video durations.")
+        request = {**request, "frames": frames}
         with self.lock:
             if self.job["status"] in ("running", "stopping"):
                 raise ValueError("A video job is already running.")
@@ -161,7 +168,7 @@ class VideoJobs:
                 "posterUrl": "/references/" + poster_name,
                 "prompt": request["prompt"], "seed": request["seed"],
                 "width": spec["defaultWidth"], "height": spec["defaultHeight"],
-                "fps": spec["fps"], "frames": spec["frames"], "duration": spec["frames"] / spec["fps"],
+                "fps": spec["fps"], "frames": request["frames"], "duration": request["frames"] / spec["fps"],
                 "model": VIDEO_ID, "modelLabel": spec["label"], "modelRevision": spec["revision"],
                 "device": "INTEL_GPU", "generationTime": round(elapsed, 2), "createdAt": time.time(),
             }

@@ -6,6 +6,10 @@ lands directly on `main` instead of through labeled pull requests.
 
 ## [Unreleased]
 
+### Added
+
+- Choose clips from 4 to 10 seconds with Wan 2.2 Turbo on Intel Vulkan. Longer renders show sampling and decoding progress and can be stopped.
+
 ### Improved
 
 - Add an Apple Silicon preview build option that precompiles Metal shaders before packaging.

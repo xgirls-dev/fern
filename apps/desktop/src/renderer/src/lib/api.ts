@@ -437,7 +437,12 @@ export interface VideoJob {
 
 export interface VideoSnapshot {
   job: VideoJob;
-  model: { runtimeReady: boolean; runtimeNote: string; platformSupported: boolean };
+  model: {
+    runtimeReady: boolean;
+    runtimeNote: string;
+    platformSupported: boolean;
+    videoFormat?: { width: number; height: number; fps: number; defaultFrames: number; frameOptions: number[] };
+  };
   clips: VideoClip[];
 }
 
