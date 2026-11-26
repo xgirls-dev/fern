@@ -6,6 +6,10 @@ lands directly on `main` instead of through labeled pull requests.
 
 ## [Unreleased]
 
+### Improved
+
+- Show progress as a local GGUF model processes the chat prompt before its first reply token.
+
 ### Fixed
 
 - Keep the GGUF model loaded when Stop interrupts an in-progress chat summary after it starts generating text.
