@@ -78,25 +78,26 @@ class GGUFCompletionTests(unittest.TestCase):
             startup = _StartupLog(path, on_phase)
             startup.read()
             self.assertEqual(startup.timings(), {})
-            path.write_bytes(b"0.01.010.000 I cmn  common_fit_a: fitting params to device memory ...\n"
+            path.write_bytes(b"0.00.890.000 I srv  llama_server: initializing ...\n"
+                             b"0.01.010.000 I cmn  common_fit_a: fitting params to device memory ...\n"
                              b"0.02.000.000 I cmn  common_fit_params: fitting params to free memory took 0.99 seconds\n"
                              b"0.02.200.000 I load_tensors: loading model tensors,")
             startup.read()
             startup.read()
             on_phase.assert_called_once_with("loading-model", "Checking model memory…")
-            self.assertEqual(startup.timings(), {"memoryFitMs": 990})
+            self.assertEqual(startup.timings(), {"engineInitializationMs": 890, "memoryFitMs": 990})
             with path.open("ab") as output:
                 output.write(b" this can take a while...\n"
                              b"0.03.200.000 I llama_context: constructing llama_context\n")
             startup.read()
             on_phase.assert_called_with("loading-model", "Preparing model context…")
-            self.assertEqual(startup.timings(), {"memoryFitMs": 990, "weightLoadMs": 1000})
+            self.assertEqual(startup.timings(), {"engineInitializationMs": 890, "memoryFitMs": 990, "weightLoadMs": 1000})
             with path.open("ab") as output:
                 output.write(b"0.03.500.000 I cmn  common_init_: warming up the model with an empty run\n"
                              b"0.05.700.000 I srv  server_run_i: model loaded\n")
             startup.read(notify=False)
             self.assertEqual(on_phase.call_count, 2)
-            self.assertEqual(startup.timings(), {"memoryFitMs": 990, "weightLoadMs": 1000,
+            self.assertEqual(startup.timings(), {"engineInitializationMs": 890, "memoryFitMs": 990, "weightLoadMs": 1000,
                                                "contextSetupMs": 300, "postContextSetupMs": 2200})
 
     def test_image_context_names_match_the_encoded_model_request(self) -> None:
@@ -262,7 +263,7 @@ class GGUFCompletionTests(unittest.TestCase):
         on_phase = Mock()
 
         def launch(command, **options):
-            on_phase.assert_called_once_with("loading-model", "Loading model…")
+            on_phase.assert_called_once_with("selecting-device", "Preparing Apple GPU…")
             self.assertEqual(command[command.index("--device") + 1], "MTL0")
             self.assertIn("--mmproj-offload", command)
             self.assertIn("--log-timestamps", command)

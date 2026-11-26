@@ -152,7 +152,7 @@ try {
     const message = page.locator(".text-message--assistant").last();
     if (index === 0 && mac) {
       const loadingPhase = message.locator(".text-reply-stage").filter({
-        hasText: /checking model memory|loading model weights|preparing model context|warming up model/i,
+        hasText: /preparing apple gpu|checking model memory|loading model weights|preparing model context|warming up model/i,
       });
       await expect(loadingPhase).toBeVisible({ timeout: 180_000 });
       await writeFile(path.join(artifacts, "gemma-4-e4b-loading-phase.png"), await captureWindow());
@@ -179,7 +179,7 @@ try {
     if (index === 0) {
       assert(Number.isFinite(runtimeTiming?.modelReadyMs), "The first reply should report its cold GGUF model load.");
       if (mac) {
-        for (const stage of ["memoryFitMs", "weightLoadMs", "contextSetupMs", "postContextSetupMs"]) {
+        for (const stage of ["engineInitializationMs", "memoryFitMs", "weightLoadMs", "contextSetupMs", "postContextSetupMs"]) {
           assert(Number.isFinite(runtimeTiming[stage]) && runtimeTiming[stage] >= 0, `The Metal runtime should time ${stage}.`);
         }
       }

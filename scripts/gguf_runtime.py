@@ -269,6 +269,7 @@ class _StartupLog:
 
     _timestamp = re.compile(rb"^(\d+)\.(\d{2})\.(\d{3})\.(\d{3}) [A-Z] ")
     _markers = (
+        ("initializing", b"llama_server: initializing ...", None),
         ("fit", b"common_fit_a: fitting params to device memory ...", "Checking model memory…"),
         ("fitted", b"common_fit_params: fitting params to free memory took ", None),
         ("weights", b"load_tensors: loading model tensors,", "Loading model weights…"),
@@ -310,8 +311,12 @@ class _StartupLog:
             ("contextSetupMs", "context", "warmup"),
             ("postContextSetupMs", "warmup", "ready"),
         )
-        return {metric: self.marks[end] - self.marks[start] for metric, start, end in spans
-                if start in self.marks and end in self.marks and self.marks[start] <= self.marks[end]}
+        timings = {metric: self.marks[end] - self.marks[start] for metric, start, end in spans
+                   if start in self.marks and end in self.marks and self.marks[start] <= self.marks[end]}
+        if "initializing" in self.marks:
+            # The first server marker follows argument parsing and backend setup.
+            timings["engineInitializationMs"] = self.marks["initializing"]
+        return timings
 
 
 class GGUFServer:
@@ -370,7 +375,10 @@ class GGUFServer:
                 command += ["--mmproj", str(projector), "--image-max-tokens", str(MAX_IMAGE_TOKENS)]
                 command.append("--mmproj-offload" if gpu_projector else "--no-mmproj-offload")
             if on_phase is not None:
-                on_phase("loading-model", "Loading model…")
+                if backend == "metal":
+                    on_phase("selecting-device", "Preparing Apple GPU…")
+                else:
+                    on_phase("loading-model", "Loading model…")
             server_started = time.perf_counter()
             with self.log_path.open("wb") as log:
                 self.process = subprocess.Popen(
