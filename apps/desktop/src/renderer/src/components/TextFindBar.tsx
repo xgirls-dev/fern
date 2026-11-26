@@ -30,14 +30,15 @@ export function TextFindBar({ input, messages, liveMessage, initialQuery, onMatc
   const live = deferredLive?.id === liveMessage?.id ? deferredLive : null;
   const liveEntry = useMemo(() => searching && search && live ? [search.liveChatSearchEntry(live)] : [], [live, search, searching]);
   const matches = useMemo(() => search ? [...savedMatches, ...search.matchingChatOccurrences(liveEntry, needle)] : [], [liveEntry, needle, savedMatches, search]);
-  const selectedIndex = selected ? matches.findIndex((match) => match.versionId === selected.versionId &&
-    match.savedPromptId === selected.savedPromptId && match.section === selected.section && match.occurrence === selected.occurrence) : -1;
+  const selectedIndex = selected ? matches.findIndex((match) => match.messageId === selected.messageId && match.versionId === selected.versionId &&
+    match.savedPromptId === selected.savedPromptId && match.section === selected.section && match.imageIndex === selected.imageIndex && match.occurrence === selected.occurrence) : -1;
   const index = Math.max(0, selectedIndex);
   const active = matches[index];
   const messageId = active?.messageId;
   const versionId = active?.versionId;
   const savedPromptId = active?.savedPromptId;
   const section = active?.section;
+  const imageIndex = active?.imageIndex;
   const occurrence = active?.occurrence;
   const searchStatus = !needle ? "" : loading ? "Searching…" : failed ? "Chat search couldn’t open"
     : matches.length ? `${index + 1} of ${matches.length}${savedPromptId ? " · Saved version" : ""}` : "No matches";
@@ -46,8 +47,8 @@ export function TextFindBar({ input, messages, liveMessage, initialQuery, onMatc
   useEffect(() => { if (active && selectedIndex < 0) setSelected(active); }, [active, selectedIndex]);
   useEffect(() => {
     onMatch(messageId && versionId && section && occurrence !== undefined
-      ? { messageId, versionId, savedPromptId, section, occurrence, query: needle } : null);
-  }, [messageId, versionId, savedPromptId, section, occurrence, needle, onMatch]);
+      ? { messageId, versionId, savedPromptId, section, imageIndex, occurrence, query: needle } : null);
+  }, [messageId, versionId, savedPromptId, section, imageIndex, occurrence, needle, onMatch]);
   useEffect(() => () => onMatch(null), [onMatch]);
 
   const step = (direction: number) => {

@@ -4,16 +4,17 @@ import remarkGfm from "remark-gfm";
 import remarkRehype from "remark-rehype";
 import { hasStreamingMarkdown, previewMarkdown, remarkStreamingPreview } from "./streamingMarkdown";
 import { chatSearchExcerpt, chatSearchPattern, isChatSearchBlock } from "./chatSearchRange";
-import { replyVersions, type TextMessage } from "./textThreads";
+import { messageImages, replyVersions, type TextMessage } from "./textThreads";
 
 type MatchSection = "body" | "image" | "reasoning";
-type SearchField = [section: MatchSection, source: string | undefined, markdown?: "settled" | "streaming"];
+type SearchField = [section: MatchSection, source: string | undefined, markdown?: "settled" | "streaming", imageIndex?: number];
 
 export interface ChatSearchMatch {
   messageId: string;
   versionId: string;
   savedPromptId?: string;
   section: MatchSection;
+  imageIndex?: number;
   occurrence: number;
   query: string;
 }
@@ -59,7 +60,7 @@ function searchFields(message: TextMessage, streaming = false): SearchField[] {
   const markdown = streaming ? "streaming" : "settled";
   const fields: SearchField[] = [
     ["body", message.content, message.role === "assistant" ? markdown : undefined],
-    ["image", message.generatedImage?.prompt],
+    ...messageImages(message).map((image, index): SearchField => ["image", image.prompt, undefined, index]),
     ["reasoning", message.reasoning, markdown],
   ];
   if (!streaming) indexed.set(message, fields);
@@ -107,11 +108,11 @@ export function matchingChatOccurrences(entries: ChatSearchEntry[], query: strin
   const matches: ChatSearchMatch[] = [];
   for (const { messageId, versionId, savedPromptId, fields } of entries) {
     for (const field of fields) {
-      const [section] = field;
+      const [section, , , imageIndex] = field;
       const text = renderedField(field);
       if (!text) continue;
       let occurrence = 0;
-      for (const _ of text.normalize().matchAll(pattern)) matches.push({ messageId, versionId, savedPromptId, section, occurrence: occurrence++, query });
+      for (const _ of text.normalize().matchAll(pattern)) matches.push({ messageId, versionId, savedPromptId, section, imageIndex, occurrence: occurrence++, query });
     }
   }
   return matches;

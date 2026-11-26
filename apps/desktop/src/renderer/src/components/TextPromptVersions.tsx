@@ -1,17 +1,17 @@
 import { useId, useRef, useState, type ReactNode } from "react";
 import History from "lucide-react/dist/esm/icons/history.mjs";
 import type { ChatSearchMatch } from "../lib/chatSearch";
-import { showReplyVersion, type TextMessage, type TextPromptVersion } from "../lib/textThreads";
+import { messageImages, showReplyVersion, type TextMessage, type TextPromptVersion } from "../lib/textThreads";
 import { TextMarkdown } from "./TextMarkdown";
 import { Button, Select } from "./ui/controls";
 
-export function TextPromptVersions({ alternatives, onRestore, searchMatch, onCloseSearch, busy, renderImage }: {
+export function TextPromptVersions({ alternatives, onRestore, searchMatch, onCloseSearch, busy, renderImages }: {
   alternatives: TextPromptVersion[];
   onRestore?: (id: string) => void;
   searchMatch?: ChatSearchMatch;
   onCloseSearch: () => void;
   busy: boolean;
-  renderImage: (response: TextMessage) => ReactNode;
+  renderImages: (response: TextMessage, matchedIndex?: number) => ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const [selection, setSelection] = useState<string>();
@@ -22,6 +22,7 @@ export function TextPromptVersions({ alternatives, onRestore, searchMatch, onClo
   const match = result ? searchMatch : undefined;
   const selected = result ?? versions.find((version) => version.id === selection) ?? versions[0];
   const response = selected?.response && showReplyVersion(selected.response, match?.versionId);
+  const hasImages = !!response && messageImages(response).length > 0;
   const visible = open || !!match;
   const promptMatched = match?.versionId === selected?.id;
   const close = () => {
@@ -49,17 +50,14 @@ export function TextPromptVersions({ alternatives, onRestore, searchMatch, onClo
       </div>
       <div className="text-message-content text-prompt-version-reply">
         <span className="text-prompt-version-label">Reply</span>
-        {response?.generatedImage && <div>
-          {renderImage(response)}
-          {match?.section === "image" && <p className="text-prompt-version-content" data-find-target>{response.generatedImage.prompt}</p>}
-        </div>}
+        {response && hasImages && <div>{renderImages(response, match?.imageIndex)}</div>}
         {match?.section === "reasoning" && response?.reasoning && <div>
           <span className="text-prompt-version-label">Reasoning</span>
           <div data-find-target><TextMarkdown content={response.reasoning} /></div>
         </div>}
         {response?.content ? <div data-find-target={match?.section === "body" && !promptMatched || undefined}>
           <TextMarkdown content={response.content} />
-        </div> : !response?.generatedImage &&
+        </div> : !hasImages &&
           <p>{response?.error ?? "No reply was saved for this version."}</p>}
       </div>
       {onRestore && !match && <Button variant="secondary" disabled={busy} onClick={() => { onRestore(selected.id); close(); }}>Restore this version</Button>}
