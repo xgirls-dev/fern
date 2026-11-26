@@ -84,6 +84,7 @@ class CompletionCancellation:
         self._lock = threading.Lock()
         self._socket: socket.socket | None = None
         self.streaming = False
+        self.summary_streaming = False
 
     def cancel(self) -> None:
         self._requested.set()
@@ -111,10 +112,11 @@ class CompletionCancellation:
 
 
 class _CompletionReader(io.RawIOBase):
-    def __init__(self, transport: socket.socket, cancellation: CompletionCancellation) -> None:
+    def __init__(self, transport: socket.socket, cancellation: CompletionCancellation, timeout: float) -> None:
         super().__init__()
         self.transport = transport
         self.cancellation = cancellation
+        self.timeout = timeout
 
     def makefile(self, _mode: str) -> io.BufferedReader:
         return io.BufferedReader(self)
@@ -125,7 +127,7 @@ class _CompletionReader(io.RawIOBase):
     def readinto(self, buffer) -> int:
         # A concurrent shutdown does not always wake a pending Winsock receive.
         # Poll for readability before each read so Stop has a bounded wait.
-        deadline = time.monotonic() + 180
+        deadline = time.monotonic() + self.timeout
         while True:
             self.cancellation.check()
             remaining = deadline - time.monotonic()
@@ -135,6 +137,25 @@ class _CompletionReader(io.RawIOBase):
             if readable:
                 self.cancellation.check()
                 return self.transport.recv_into(buffer)
+
+
+def _completion_events(response: http.client.HTTPResponse, cancellation: CompletionCancellation) -> Iterator[dict]:
+    for raw in response:
+        cancellation.check()
+        if not raw.startswith(b"data:"):
+            continue
+        line = raw[5:].strip()
+        if line == b"[DONE]":
+            return
+        event = json.loads(line)
+        if error := event.get("error"):
+            message = error.get("message", "GGUF inference failed.")
+            if message == "Compute error.":
+                raise GGUFComputeError(message)
+            raise RuntimeError(message)
+        yield event
+    cancellation.check()
+    raise RuntimeError("The GGUF runtime disconnected during the response.")
 
 
 def apple_silicon() -> bool:
@@ -424,7 +445,9 @@ class GGUFServer:
         tokens = self._post("/tokenize", {"content": template, "add_special": True})["tokens"]
         return len(tokens) + 384 * sum(bool(turn.get("imagePath")) for turn in messages)
 
-    def _summarize(self, transcript: str) -> str:
+    def _summarize(self, transcript: str, emit: Callable[[dict], None],
+                   cancellation: CompletionCancellation) -> str:
+        cancellation.check()
         # Forks and retried versions can ask this engine to summarize identical text.
         key = hashlib.sha256(transcript.encode("utf-8", "surrogatepass")).digest()
         if cached := self.compaction_summaries.pop(key, None):
@@ -436,7 +459,7 @@ class GGUFServer:
             before = self._post("/detokenize", {"tokens": tokens[:half]})["content"]
             after = self._post("/detokenize", {"tokens": tokens[-half:]})["content"]
             transcript = before + "\n…\n" + after
-        result = self._post("/v1/chat/completions", {
+        body = {
             "messages": [
                 {"role": "system", "content": (
                     "Summarize this earlier conversation in concise factual notes. Preserve user preferences, "
@@ -445,10 +468,20 @@ class GGUFServer:
                 )},
                 {"role": "user", "content": transcript},
             ],
-            "temperature": 0, "max_tokens": 224,
+            "temperature": 0, "max_tokens": 224, "stream": True,
             "chat_template_kwargs": {"enable_thinking": False},
-        }, timeout=120)
-        summary = result["choices"][0]["message"].get("content", "").strip()
+        }
+        text = []
+        with self._completion(body, emit, cancellation, announce_wait=False, timeout=120) as response:
+            for event in _completion_events(response, cancellation):
+                for choice in event.get("choices", []):
+                    delta = choice.get("delta", {})
+                    if delta.get("content") or delta.get("reasoning_content"):
+                        cancellation.summary_streaming = True
+                    if token := delta.get("content"):
+                        text.append(token)
+        cancellation.summary_streaming = False
+        summary = "".join(text).strip()
         if not summary:
             raise RuntimeError("The local model could not compact the earlier conversation. Choose a larger context.")
         if len(self.compaction_summaries) == _COMPACTION_CACHE_LIMIT:
@@ -458,8 +491,9 @@ class GGUFServer:
 
     @contextmanager
     def _completion(self, body: dict, emit: Callable[[dict], None],
-                    cancellation: CompletionCancellation) -> Iterator[http.client.HTTPResponse]:
-        connection = http.client.HTTPConnection(urllib.parse.urlsplit(self.base).netloc, timeout=180)
+                    cancellation: CompletionCancellation, *, announce_wait: bool = True,
+                    timeout: float = 180) -> Iterator[http.client.HTTPResponse]:
+        connection = http.client.HTTPConnection(urllib.parse.urlsplit(self.base).netloc, timeout=timeout)
         try:
             connection.connect()
             assert connection.sock is not None
@@ -467,9 +501,10 @@ class GGUFServer:
             # response. Keep a live socket handle for cancelling that response.
             with connection.sock.dup() as cancel_socket, cancellation.watch(cancel_socket):
                 connection.response_class = lambda _socket, **kwargs: http.client.HTTPResponse(
-                    _CompletionReader(cancel_socket, cancellation), **kwargs)
+                    _CompletionReader(cancel_socket, cancellation, timeout), **kwargs)
                 emit({"type": "cancellable"})
-                emit({"type": "phase", "stage": "waiting-for-first-token", "text": "Waiting for the first token…"})
+                if announce_wait:
+                    emit({"type": "phase", "stage": "waiting-for-first-token", "text": "Waiting for the first token…"})
                 connection.request("POST", "/v1/chat/completions", json.dumps(body).encode("utf-8"), {
                     "Authorization": f"Bearer {self.key}", "Content-Type": "application/json", "Connection": "close",
                 })
@@ -489,6 +524,7 @@ class GGUFServer:
                  cancellation: CompletionCancellation | None = None) -> dict[str, Any]:
         cancellation = cancellation or CompletionCancellation()
         cancellation.check()
+        cancellation.summary_streaming = False
         preparing = time.perf_counter()
         reasoning = request.get("mode") == "reasoning"
         options: dict[str, Any] = {"chat_template_kwargs": {"enable_thinking": reasoning}}
@@ -506,7 +542,7 @@ class GGUFServer:
 
         def compact(transcript: str) -> str:
             emit({"type": "phase", "stage": "preparing-conversation", "text": "Compacting earlier turns…"})
-            return self._summarize(transcript)
+            return self._summarize(transcript, emit, cancellation)
 
         def prompt_tokens(turns: list[dict[str, Any]]) -> int:
             return self._prompt_tokens(turns, options)
@@ -567,24 +603,10 @@ class GGUFServer:
         usage = {}
         engine_timing = {}
         first_chunk = None
-        finished = False
         finish_reason = None
         started = time.perf_counter()
         with self._completion(body, emit, cancellation) as response:
-            for raw in response:
-                cancellation.check()
-                if not raw.startswith(b"data:"):
-                    continue
-                line = raw[5:].strip()
-                if line == b"[DONE]":
-                    finished = True
-                    break
-                event = json.loads(line)
-                if event.get("error"):
-                    message = event["error"].get("message", "GGUF inference failed.")
-                    if message == "Compute error.":
-                        raise GGUFComputeError(message)
-                    raise RuntimeError(message)
+            for event in _completion_events(response, cancellation):
                 if event.get("usage"):
                     usage = event["usage"]
                 # llama.cpp includes these slot counters on the final stream chunk.
@@ -613,8 +635,6 @@ class GGUFServer:
                         for key, value in change.get("function", {}).items():
                             if key in call["function"]:
                                 call["function"][key] += value
-        if not finished:
-            raise RuntimeError("The GGUF runtime disconnected during the response.")
         if calls and finish_reason != "tool_calls":
             raise RuntimeError("The chat model did not finish its tool call. Increase Maximum output in Chat settings and retry.")
         elapsed = max(time.perf_counter() - started, 0.001)
