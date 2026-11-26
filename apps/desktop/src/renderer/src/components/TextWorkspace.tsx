@@ -1,4 +1,4 @@
-import { useCallback, useDeferredValue, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent, type Ref } from "react";
+import { useCallback, useDeferredValue, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type Ref } from "react";
 import Plus from "lucide-react/dist/esm/icons/plus.mjs";
 import ArrowDown from "lucide-react/dist/esm/icons/arrow-down.mjs";
 import RotateCcw from "lucide-react/dist/esm/icons/rotate-ccw.mjs";
@@ -158,13 +158,16 @@ function ChatImage({ image, ordinal, checked, checkStatus, onOpen, onRetryCheck,
   const source = origin ? resolveAssetUrl(`/outputs/${encodeURIComponent(image.name)}`, String(revision)) : null;
   const failed = source !== null && source === failedSource;
   const subject = image.prompt.trim().slice(0, 140) || image.name;
+  const imageSize = image.width > 0 && image.height > 0 ? {
+    "--chat-image-width": `${image.width}px`, "--chat-image-ratio": image.width / image.height,
+  } as CSSProperties : undefined;
   return <figure className="text-generated-artifact">
     {!source ? <div className="text-generated-unavailable" role="status">Opening saved image…</div> : failed ? <div className="text-generated-unavailable">
       <ImageOff size={18} aria-hidden="true" />
       <span role="status">Image unavailable. The file may have been moved or deleted.</span>
       <Button variant="secondary" onClick={() => setRevision((value) => value + 1)}>Retry preview</Button>
     </div> : <button type="button" className="text-generated-image" aria-label={`Review image ${ordinal}: ${subject}`} onClick={onOpen}>
-      <img src={source} alt={`Generated image ${ordinal}. Prompt: ${subject}`} width={image.width} height={image.height} onError={() => setFailedSource(source)} />
+      <img src={source} alt={`Generated image ${ordinal}. Prompt: ${subject}`} width={image.width} height={image.height} style={imageSize} onError={() => setFailedSource(source)} />
     </button>}
     {!failed && <figcaption>
       {(checked || checkStatus || onRetryCheck || contextLabel) && <span className="text-artifact-status">
