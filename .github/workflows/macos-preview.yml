@@ -7,12 +7,17 @@ on:
         description: Run real Metal and MLX inference with downloaded models
         type: boolean
         default: false
+      precompiled_metal:
+        description: Include the precompiled Metal runtime in this preview and test it
+        type: boolean
+        default: false
   push:
     branches: [main]
   pull_request:
     paths:
       - .github/workflows/macos-preview.yml
       - scripts/gguf_runtime.py
+      - scripts/build-macos.sh
       - apps/desktop/e2e/gguf-smoke.mjs
       - apps/desktop/e2e/macos-gpu-smoke.py
 
@@ -43,6 +48,7 @@ jobs:
         env:
           # The repository's preview uses the ad-hoc identity and no signing credentials.
           CSC_FOR_PULL_REQUEST: ${{ github.event_name == 'pull_request' && 'true' || 'false' }}
+          FERN_MAC_PRECOMPILE_GGUF: ${{ inputs.precompiled_metal || (github.event_name == 'pull_request' && contains(github.event.pull_request.title, '[test-macos-metal-bundle]')) }}
       - name: Check signature and Finder app startup
         run: |
           app_path=apps/desktop/release-macos/mac-arm64/Fern.app
@@ -58,7 +64,7 @@ jobs:
 
   gpu-smoke:
     if: >-
-      inputs.gpu_smoke || contains(github.event.head_commit.message, '[test-macos-gpu]') ||
+      inputs.gpu_smoke || inputs.precompiled_metal || contains(github.event.head_commit.message, '[test-macos-gpu]') ||
       github.event_name == 'pull_request'
     needs: build
     runs-on: macos-15
@@ -77,6 +83,8 @@ jobs:
           name: fern-macos-arm64-preview
           path: ${{ runner.temp }}/fern-preview
       - name: Run first chat, Stop, and follow-up in the packaged app
+        env:
+          FERN_E2E_EXPECT_BUNDLED_METAL: ${{ inputs.precompiled_metal || (github.event_name == 'pull_request' && contains(github.event.pull_request.title, '[test-macos-metal-bundle]')) }}
         run: |
           preview="$RUNNER_TEMP/fern-preview"
           ditto -x -k "$preview"/Fern-*-macOS-arm64-preview.zip "$preview"

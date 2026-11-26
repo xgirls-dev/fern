@@ -1,7 +1,8 @@
 import { chooseSelectOption } from "../../../tests/select-option.mjs";
 import { chooseMessageAction, savedTextWorkspace } from "../../../tests/ui-fixture.mjs";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { mkdir, mkdtemp, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -182,6 +183,17 @@ try {
         for (const stage of ["engineInitializationMs", "memoryFitMs", "weightLoadMs", "contextSetupMs", "postContextSetupMs"]) {
           assert(Number.isFinite(runtimeTiming[stage]) && runtimeTiming[stage] >= 0, `The Metal runtime should time ${stage}.`);
         }
+      }
+      if (process.env.FERN_E2E_EXPECT_BUNDLED_METAL === "true") {
+        assert(mac && !sourceApp, "Bundled runtime verification requires a Mac package.");
+        const runtime = path.resolve(path.dirname(executable), "../Resources/runtime");
+        const packages = (await readdir(runtime)).filter((name) => /^llama-b\d+-macos-arm64-precompiled$/.test(name));
+        assert.equal(packages.length, 1, "The signed app should contain one precompiled Metal runtime.");
+        const server = await realpath(path.join(runtime, packages[0], "llama-server"));
+        const commands = execFileSync("/bin/ps", ["-axo", "command="], { encoding: "utf8" });
+        assert(commands.split("\n").some((command) => command.trimStart().startsWith(`${server} `)),
+          "Gemma should run the precompiled server directly from the app bundle.");
+        console.log("The packaged app launched its bundled precompiled Metal runtime.");
       }
       const coldDetails = await verifyPromptDetails(message, runtimeTiming);
       await chooseMessageAction(message, "Hide response details");

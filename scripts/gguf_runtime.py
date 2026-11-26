@@ -177,7 +177,7 @@ def runtime_supported() -> bool:
     )
 
 
-def _runtime_ready(install: Path, backend: str) -> bool:
+def _runtime_ready(install: Path, backend: str, *, packaged_metal: bool = False) -> bool:
     windows = sys.platform == "win32"
     server = "llama-server.exe" if windows else "llama-server"
     if not (install / server).is_file() or (not windows and not os.access(install / server, os.X_OK)):
@@ -185,6 +185,8 @@ def _runtime_ready(install: Path, backend: str) -> bool:
     if windows and backend != "vulkan":
         return True
     required = {server}
+    if packaged_metal:
+        required.add("default.metallib")
     if sys.platform == "darwin":
         required.update(("libggml-metal.dylib", "libllama-server-impl.dylib", "libmtmd.dylib"))
     elif backend == "vulkan":
@@ -192,10 +194,14 @@ def _runtime_ready(install: Path, backend: str) -> bool:
     elif backend == "openvino":
         required.add("libggml-openvino.so")
     try:
-        files = json.loads((install / _RUNTIME_MANIFEST).read_text(encoding="utf-8"))
+        manifest = "runtime.json" if packaged_metal else _RUNTIME_MANIFEST
+        files = json.loads((install / manifest).read_text(encoding="utf-8"))
         return isinstance(files, dict) and required <= files.keys() and all(
             name == Path(name).name and type(size) is int and size > 0
-            and (install / name).is_file() and (install / name).stat().st_size == size
+            and (install / name).is_file()
+            and (actual_size := (install / name).stat().st_size) > 0
+            # Electron signs packaged Mach-O files after staging the manifest.
+            and (packaged_metal or actual_size == size)
             for name, size in files.items()
         )
     except (OSError, ValueError):
@@ -209,6 +215,10 @@ def ensure_runtime(root: Path, backend: str, progress: Callable[[str], None]) ->
     if sys.platform == "darwin":
         if backend not in ("metal", "cpu"):
             raise ValueError("Choose Metal or CPU for GGUF inference on macOS.")
+        if backend == "metal":
+            packaged = Path(__file__).resolve().parents[1] / "runtime" / f"llama-{_BUILD}-macos-arm64-precompiled"
+            if _runtime_ready(packaged, backend, packaged_metal=True):
+                return packaged / "llama-server"
         size, checksum = _MAC_ARM64_ASSET
         install = root / f"llama-{_BUILD}-macos-arm64"
         filename = f"llama-{_BUILD}-bin-macos-arm64.tar.gz"

@@ -756,6 +756,36 @@ class VulkanRuntimeTests(unittest.TestCase):
                 machine.return_value = "x86_64"
                 self.assertFalse(runtime_supported())
 
+    @unittest.skipIf(os.name == "nt", "requires Unix executable permissions")
+    def test_mac_prefers_complete_packaged_metal_without_replacing_the_downloaded_runtime(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            resources = root / "Fern.app/Contents/Resources"
+            packaged = resources / "runtime/llama-b12498-macos-arm64-precompiled"
+            cache = root / "cache"
+            upstream = cache / "llama-b12498-macos-arm64"
+            needed = ("llama-server", "libggml-metal.dylib", "libllama-server-impl.dylib", "libmtmd.dylib")
+            for folder, names in ((upstream, needed), (packaged, (*needed, "default.metallib", "libllama.1.dylib"))):
+                folder.mkdir(parents=True)
+                for name in names:
+                    (folder / name).write_bytes(b"fixture")
+                (folder / "llama-server").chmod(0o755)
+                manifest = "runtime.json" if folder == packaged else ".fern-runtime.json"
+                (folder / manifest).write_text(json.dumps(dict.fromkeys(names, len(b"fixture"))), encoding="utf-8")
+            # Signing may change the sizes of packaged Mach-O files.
+            (packaged / "libllama.1.dylib").write_bytes(b"signed fixture")
+            with (
+                patch("gguf_runtime.__file__", str(resources / "scripts/gguf_runtime.py")),
+                patch("gguf_runtime.sys.platform", "darwin"),
+                patch("gguf_runtime.platform.machine", return_value="arm64"),
+                patch("gguf_runtime.download_file") as fetch,
+            ):
+                self.assertEqual(ensure_runtime(cache, "metal", Mock()), packaged.resolve() / "llama-server")
+                self.assertEqual(ensure_runtime(cache, "cpu", Mock()), upstream / "llama-server")
+                (packaged / "libllama.1.dylib").unlink()
+                self.assertEqual(ensure_runtime(cache, "metal", Mock()), upstream / "llama-server")
+                fetch.assert_not_called()
+
     def test_metal_rejects_a_missing_gpu_without_falling_back_to_cpu(self) -> None:
         process = Mock()
         process.poll.return_value = 1
