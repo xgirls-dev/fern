@@ -6,6 +6,10 @@ lands directly on `main` instead of through labeled pull requests.
 
 ## [Unreleased]
 
+### Fixed
+
+- Keep the GGUF model loaded when Stop interrupts an in-progress chat summary after it starts generating text.
+
 ## [0.1.49] - 2026-11-25
 
 ### Added
