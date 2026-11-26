@@ -106,7 +106,10 @@ class TextGenerationProcess:
                 return None
             try:
                 engine = psutil.Process(engine_pid)
-                if engine.ppid() != worker.pid or engine.status() == psutil.STATUS_ZOMBIE:
+                parent_pid = engine.ppid()
+                # A Windows virtualenv can launch the real Python worker through a redirector.
+                is_child = parent_pid == worker.pid or (os.name == "nt" and psutil.Process(parent_pid).ppid() == worker.pid)
+                if not is_child or engine.status() == psutil.STATUS_ZOMBIE:
                     return None
             except psutil.Error:
                 return None
