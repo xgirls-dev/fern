@@ -3,7 +3,7 @@ import MessageSquare from "lucide-react/dist/esm/icons/message-square.mjs";
 import { Button, ErrorMessage, InlineConfirmation, ModelCard, ModelCardActions, ModelCardHeading, ModelStatus } from "./ui/controls";
 import type { useTextChat } from "../hooks/useTextChat";
 import { useReturnFocus } from "../hooks/useReturnFocus";
-import { isTextModelInstalling, recommendedTextModelIssue, textModelReadiness } from "../lib/textThreads";
+import { formatTextModelDownloadSize, isTextModelInstalling, recommendedTextModelIssue, textModelReadiness } from "../lib/textThreads";
 
 function gigabytes(bytes: number) {
   return `${(bytes / 1e9).toFixed(2)} GB`;
@@ -60,14 +60,15 @@ export function TextModelLibrary({ studio, recommendedId }: { studio: ReturnType
         return <ModelCard key={model.id}>
           <ModelCardHeading icon={<MessageSquare size={17} />}><div className="model-card-heading"><h4 id={modelNameId}>{model.name}</h4>
             {model.id === recommendedId && <span className="model-card-badge">{needsRepair ? "Current chat" : "Recommended"}</span>}</div></ModelCardHeading>
-          <p>{!showRequirements && `${gigabytes(model.bytes)} · `}{gguf ? "GGUF" : "OpenVINO"} · {capabilities}</p>
+          <p>{!showRequirements && `${formatTextModelDownloadSize(model.bytes)} · `}{gguf ? "GGUF" : "OpenVINO"} · {capabilities}</p>
           {showRequirements && <dl className="model-download-requirements" id={requirementsId}>
-            <dt>{canResume || needsRepair ? "Full download" : "Download"}</dt><dd>{gigabytes(model.bytes)}</dd>
-            <dt>Device</dt><dd>{device}</dd>
+            <dt>{canResume || needsRepair ? "Full download" : "Download"}</dt><dd>{formatTextModelDownloadSize(model.bytes)}</dd>
+            {model.recommendedDevices?.length
+              ? <><dt>Verified on</dt><dd>{model.recommendedDevices.join(", ")}</dd></>
+              : <><dt>Device</dt><dd>{device}</dd></>}
             {model.minimumFreeBytes !== undefined && <><dt>Free space</dt>
               <dd>{gigabytes(Math.ceil(model.minimumFreeBytes / 1e7) * 1e7)} for a fresh install</dd></>}
-            {model.projectorBytes !== undefined && <><dt>Includes</dt><dd>Vision projector · {model.projectorBytes < 1e9
-              ? `${Math.round(model.projectorBytes / 1e6)} MB` : gigabytes(model.projectorBytes)}</dd></>}
+            {model.projectorBytes !== undefined && <><dt>Includes</dt><dd>Vision projector · {formatTextModelDownloadSize(model.projectorBytes)}</dd></>}
             {!gguf && <><dt>Files</dt><dd>Fern prepares the tokenizer and detokenizer</dd></>}
           </dl>}
           {needsRepair && !installing && !paused && <p>Fern checks the download and replaces files that are missing or damaged.</p>}

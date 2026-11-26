@@ -11,6 +11,9 @@ from pathlib import Path
 from model_catalog import INTEL_MEDIA_CATALOG
 
 
+VIDEO_JOB_ID = re.compile(r"[0-9]{13}-[a-f0-9]{8}")
+
+
 class VideoJobs:
     def __init__(self, runtime, cache: Path, data: Path, outputs: Path):
         self.runtime = runtime
@@ -22,6 +25,7 @@ class VideoJobs:
         self.job = {"id": None, "status": "idle", "phase": None, "output": None, "error": None}
         self.cancel = None
         self.worker = None
+        self._recover_publications()
 
     def snapshot(self):
         with self.lock:
@@ -38,7 +42,7 @@ class VideoJobs:
         records = []
         for path in sorted(self.metadata.glob("*.json"), reverse=True):
             identifier = path.stem
-            if not re.fullmatch(r"[0-9]{13}-[a-f0-9]{8}", identifier):
+            if not VIDEO_JOB_ID.fullmatch(identifier):
                 continue
             if not (self.outputs / f"wan-{identifier}.webm").is_file():
                 continue
@@ -49,6 +53,13 @@ class VideoJobs:
         return records
 
     def start(self, request, release_models):
+        from intel_media import VIDEO_ID
+
+        spec = INTEL_MEDIA_CATALOG[VIDEO_ID]
+        frames = request.get("frames", spec["frames"])
+        if type(frames) is not int or frames not in spec["frameOptions"]:
+            raise ValueError("Choose one of the available video durations.")
+        request = {**request, "frames": frames}
         with self.lock:
             if self.job["status"] in ("running", "stopping"):
                 raise ValueError("A video job is already running.")
@@ -79,16 +90,57 @@ class VideoJobs:
             worker.join(timeout=5)
 
     def remove(self, identifier):
-        if not isinstance(identifier, str) or not re.fullmatch(r"[0-9]{13}-[a-f0-9]{8}", identifier):
+        if not isinstance(identifier, str) or not VIDEO_JOB_ID.fullmatch(identifier):
             raise ValueError("Choose a saved Fern video.")
         with self.lock:
             if self.job["id"] == identifier and self.job["status"] in ("running", "stopping"):
                 raise ValueError("Stop this video generation before deleting it.")
+            stage = self.cache / f"video-{identifier}"
+            pending = stage / "publish.json"
+            if not stage.is_symlink() and pending.is_file():
+                pending.unlink(missing_ok=True)
+                shutil.rmtree(stage, ignore_errors=True)
             (self.outputs / f"wan-{identifier}.webm").unlink(missing_ok=True)
             (self.metadata / f"{identifier}.json").unlink(missing_ok=True)
             (self.posters / f"wan-{identifier}.jpg").unlink(missing_ok=True)
             if self.job["id"] == identifier:
                 self.job.update(id=None, status="idle", phase=None, output=None, error=None)
+
+    def _recover_publications(self):
+        for stage in self.cache.glob("video-*"):
+            identifier = stage.name.removeprefix("video-")
+            if not VIDEO_JOB_ID.fullmatch(identifier) or stage.is_symlink():
+                continue
+            pending = stage / "publish.json"
+            if pending.is_symlink() or not pending.is_file():
+                continue
+            try:
+                record = json.loads(pending.read_text(encoding="utf-8"))
+                if not isinstance(record, dict) or (
+                    record.get("id"), record.get("name"), record.get("url"), record.get("posterUrl")
+                ) != (
+                    identifier, f"wan-{identifier}.webm", f"/outputs/wan-{identifier}.webm",
+                    f"/references/wan-{identifier}.jpg",
+                ):
+                    continue
+                self._publish(stage, identifier)
+            except (OSError, ValueError):
+                # Preserve anything already rendered so a later restart can retry.
+                continue
+            shutil.rmtree(stage, ignore_errors=True)
+
+    def _publish(self, stage, identifier):
+        for source, destination in (
+            (stage / "video.webm", self.outputs / f"wan-{identifier}.webm"),
+            (stage / "poster.jpg", self.posters / f"wan-{identifier}.jpg"),
+        ):
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            if source.is_file() and not source.is_symlink():
+                source.replace(destination)
+            elif not destination.is_file() or destination.is_symlink():
+                raise FileNotFoundError(f"Missing staged video file: {source.name}")
+        self.metadata.mkdir(parents=True, exist_ok=True)
+        (stage / "publish.json").replace(self.metadata / f"{identifier}.json")
 
     def run(self, identifier, request, event, release_models):
         from intel_media import VIDEO_ID, check_cancel
@@ -96,9 +148,8 @@ class VideoJobs:
         stage = self.cache / f"video-{identifier}"
         filename = f"wan-{identifier}.webm"
         poster_name = f"wan-{identifier}.jpg"
-        clip = self.outputs / filename
-        poster = self.posters / poster_name
-        metadata = self.metadata / f"{identifier}.json"
+        made_stage = False
+        publishing = False
 
         def log(message):
             with self.lock:
@@ -109,6 +160,7 @@ class VideoJobs:
             release_models()
             check_cancel(event)
             stage.mkdir(parents=True, exist_ok=False)
+            made_stage = True
             source, elapsed = self.runtime.generate_video(request, stage, event, log)
             spec = INTEL_MEDIA_CATALOG[VIDEO_ID]
             record = {
@@ -116,35 +168,33 @@ class VideoJobs:
                 "posterUrl": "/references/" + poster_name,
                 "prompt": request["prompt"], "seed": request["seed"],
                 "width": spec["defaultWidth"], "height": spec["defaultHeight"],
-                "fps": spec["fps"], "frames": spec["frames"], "duration": spec["frames"] / spec["fps"],
+                "fps": spec["fps"], "frames": request["frames"], "duration": request["frames"] / spec["fps"],
                 "model": VIDEO_ID, "modelLabel": spec["label"], "modelRevision": spec["revision"],
                 "device": "INTEL_GPU", "generationTime": round(elapsed, 2), "createdAt": time.time(),
             }
+            staged_clip = stage / "video.webm"
+            if source != staged_clip:
+                source.replace(staged_clip)
             request["reference"].save(stage / "poster.jpg", format="JPEG", quality=85)
             (stage / "video.json").write_text(json.dumps(record), encoding="utf-8")
             with self.lock:
                 check_cancel(event)
-                self.metadata.mkdir(parents=True, exist_ok=True)
-                self.posters.mkdir(parents=True, exist_ok=True)
-                self.outputs.mkdir(parents=True, exist_ok=True)
-                source.replace(clip)
-                (stage / "poster.jpg").replace(poster)
-                (stage / "video.json").replace(metadata)
+                # Commit intent only after the job can no longer be cancelled.
+                (stage / "video.json").replace(stage / "publish.json")
+                publishing = True
+                self._publish(stage, identifier)
+                publishing = False
                 self.job.update(status="complete", phase=None, error=None, output=record)
         except Exception as error:
-            for path in (clip, poster, metadata):
-                try:
-                    path.unlink(missing_ok=True)
-                except OSError:
-                    pass
             with self.lock:
-                cancelled = event.is_set()
+                cancelled = event.is_set() and not publishing
                 self.job.update(
                     status="cancelled" if cancelled else "failed", phase=None, output=None,
                     error=None if cancelled else str(error),
                 )
         finally:
-            shutil.rmtree(stage, ignore_errors=True)
+            if made_stage and not publishing:
+                shutil.rmtree(stage, ignore_errors=True)
             with self.lock:
                 if self.cancel is event:
                     self.cancel = None

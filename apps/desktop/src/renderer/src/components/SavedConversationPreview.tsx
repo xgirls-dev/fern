@@ -1,19 +1,18 @@
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { resolveAssetUrl } from "../lib/api";
 import type { ChatSearchMatch } from "../lib/chatSearch";
-import { findChatImage, showReplyVersion, type TextMessage, type TextVersion } from "../lib/textThreads";
+import { findChatImage, messageImages, showReplyVersion, type TextMessage, type TextVersion } from "../lib/textThreads";
 import { useTextScroll } from "../hooks/useTextScroll";
 import { TextChatMessage } from "./TextChatMessage";
 import { TextFindBar } from "./TextFindBar";
 import { TextPromptVersions } from "./TextPromptVersions";
 import { TextTranscriptWindow, estimateTextRowHeight } from "./TextTranscriptWindow";
 
-function savedImages(message: TextMessage, matchCaption = false) {
-  const images = message.generatedImages?.length ? message.generatedImages : message.generatedImage ? [message.generatedImage] : [];
-  return images.map((image, index) => <figure key={image.name} className="saved-conversation-image">
+function savedImages(message: TextMessage, matchedIndex?: number) {
+  return messageImages(message).map((image, index) => <figure key={image.name} className="saved-conversation-image">
     <img src={resolveAssetUrl(`/outputs/${encodeURIComponent(image.name)}`)} alt="Generated image"
       width={image.width} height={image.height} loading="lazy" />
-    <figcaption data-find-target={matchCaption && index === 0 || undefined}>{image.prompt}</figcaption>
+    <figcaption data-find-target={matchedIndex === index || undefined}>{image.prompt}</figcaption>
   </figure>);
 }
 
@@ -44,10 +43,10 @@ export function SavedConversationPreview({ threadId, version, initialQuery, onCl
     const message = showReplyVersion(stored, savedPrompt ? undefined : found?.versionId);
     return <TextChatMessage key={stored.id} message={message} contextVersionId={stored.id}
       latest={index === messages.length - 1} canDelete={false} canFork={false} findMatch={found}
-      generatedImage={savedImages(message, !savedPrompt && found?.section === "image")}
+      generatedImage={savedImages(message, savedPrompt ? undefined : found?.imageIndex)}
       includedImageLabel={findChatImage({ messages }, message.includedImage)?.prompt}
       promptVersions={!!message.promptAlternatives?.length && <TextPromptVersions alternatives={message.promptAlternatives}
-        searchMatch={savedPrompt} onCloseSearch={onClose} busy={false} renderImage={savedImages} />} />;
+        searchMatch={savedPrompt} onCloseSearch={onClose} busy={false} renderImages={savedImages} />} />;
   }, [match, messages, onClose]);
 
   return <>

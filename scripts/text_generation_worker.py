@@ -102,15 +102,17 @@ def run_gguf(file: Path, device: str, projector: Path | None) -> int:
                     and server.context_size == context_size and server.load_options == load_options
                 )
                 preferred_vulkan = False
-                if sys.platform == "darwin":
-                    backend = "cpu" if target == "CPU" else "metal"
+                if target == "CPU":
+                    backend = "cpu"
+                elif sys.platform == "darwin":
+                    backend = "metal"
                 elif vision:
                     # The pinned OpenVINO build cannot prefill Gemma 4 vision.
-                    backend = "cpu" if target == "CPU" else "vulkan"
+                    backend = "vulkan"
                 elif same_configuration and server.backend == "vulkan":
                     # The vision runtime also handles plain text. Keep its model loaded.
                     backend = "vulkan"
-                elif sys.platform == "win32" and target == "GPU" and request.get("ggufArchitecture") == "gemma4":
+                elif sys.platform == "win32" and request.get("ggufArchitecture") == "gemma4":
                     if arc_b390 is None:
                         arc_b390 = windows_arc_b390()
                     preferred_vulkan = arc_b390
@@ -190,8 +192,9 @@ def run_gguf(file: Path, device: str, projector: Path | None) -> int:
                         raise
                 emit(result)
             except InterruptedError:
-                # A disconnected prompt prefill can still hold the inference slot.
-                if server is not None and not cancellation.streaming:
+                # A disconnected prefill can still hold the inference slot. Once decoding
+                # begins, both a private summary and a reply can be interrupted over HTTP.
+                if server is not None and not (cancellation.streaming or cancellation.summary_streaming):
                     emit({"type": "residency", "model": None})
                     server.close(force=True)
                     server = None

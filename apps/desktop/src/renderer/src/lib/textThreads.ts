@@ -92,6 +92,7 @@ export interface TextMessage {
     finishReason?: "length" | "stop";
     visionChecked?: boolean;
     documentSources?: ChatDocumentSource[];
+    runtimeTiming?: { prefillMs?: number; evaluatedPromptTokens?: number; cachedPromptTokens?: number };
     context?: {
       size: number; compactedMessages: number; images: number; imageNames?: string[];
       omittedImages?: number; unavailableImages?: number; reusedImageName?: string;
@@ -163,6 +164,7 @@ export interface TextVersion {
   id: string;
   label: string;
   messages: TextMessage[];
+  promptEdit?: TextPromptEdit;
 }
 
 export function snapshotTextVersion(messages: TextMessage[]): TextVersion {
@@ -234,6 +236,7 @@ export function isTextModelInstalling(install: TextModelInstall | undefined):
 export interface RecommendedTextModel {
   id: string; name: string; repo: string; bytes: number; installed: boolean; format?: string;
   minimumFreeBytes?: number; projectorBytes?: number; supportsTools?: boolean;
+  recommendedDevices?: ("CPU" | "GPU")[];
   hasPartialDownload?: boolean; repairModelId?: string | null; registeredModelId?: string | null;
 }
 
@@ -349,6 +352,12 @@ export function textResponseMetrics(metrics: TextMessage["metrics"] | null): Tex
     .every((value) => typeof value === "number" && Number.isFinite(value) && value >= 0)) return;
   const { inputTokens, outputTokens, generationSeconds, tokensPerSecond, modelName, device, backend,
     mode, seed, temperature, topP, maxNewTokens, visionChecked, context, finishReason } = metrics;
+  const timing = metrics.runtimeTiming;
+  const prefillMs = hasNumber(timing?.prefillMs, 0, Number.MAX_SAFE_INTEGER) ? timing.prefillMs : undefined;
+  const evaluatedPromptTokens = hasNumber(timing?.evaluatedPromptTokens, 0, Number.MAX_SAFE_INTEGER, true) ? timing.evaluatedPromptTokens : undefined;
+  const cachedPromptTokens = hasNumber(timing?.cachedPromptTokens, 0, Number.MAX_SAFE_INTEGER, true) ? timing.cachedPromptTokens : undefined;
+  const runtimeTiming = prefillMs !== undefined || evaluatedPromptTokens !== undefined || cachedPromptTokens !== undefined
+    ? { prefillMs, evaluatedPromptTokens, cachedPromptTokens } : undefined;
   const contextCount = (value: number | undefined) => typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined;
   const imageNames = Array.isArray(context?.imageNames) ? context.imageNames.filter(isOutputImage) : undefined;
   const requestContext = context && {
@@ -359,7 +368,7 @@ export function textResponseMetrics(metrics: TextMessage["metrics"] | null): Tex
   };
   return { inputTokens, outputTokens, generationSeconds, tokensPerSecond, modelName, device, backend,
     mode, seed, temperature, topP, maxNewTokens, visionChecked, context: requestContext, sampling: metrics.sampling, loadOptions: metrics.loadOptions,
-    documentSources: normalizeDocumentSources(metrics.documentSources),
+    documentSources: normalizeDocumentSources(metrics.documentSources), runtimeTiming,
     finishReason: finishReason === "length" || finishReason === "stop" ? finishReason : undefined };
 }
 
@@ -429,6 +438,10 @@ export function textRuntimeIssue(
 export function recommendedTextModelIssue(status: TextRuntimeAvailability, model: RecommendedTextModel) {
   if (model.format === "gguf" && status.ggufAvailable === undefined) return "Checking GGUF runtime availability…";
   return textRuntimeIssue(status, model);
+}
+
+export function formatTextModelDownloadSize(bytes: number) {
+  return bytes < 1e9 ? `${Math.round(bytes / 1e6)} MB` : `${(bytes / 1e9).toFixed(2)} GB`;
 }
 
 export function textModelReadiness(
@@ -554,6 +567,10 @@ export function findChatImage(thread: Pick<TextThread, "messages">, name: string
       if (previous) return previous;
     }
   }
+}
+
+export function messageImages(message: TextMessage): GeneratedChatImage[] {
+  return message.generatedImages?.length ? message.generatedImages : message.generatedImage ? [message.generatedImage] : [];
 }
 
 export interface TextMessageDeletion {
@@ -704,6 +721,7 @@ export interface TextPromptMessage {
 }
 
 export const TEXT_MESSAGE_CHARACTER_LIMIT = 20_000;
+const GGUF_HISTORY_WINDOW_STEP = 8;
 
 function normalizeRequestContext(context: TextRequestContext | undefined): TextRequestContext | undefined {
   if (!context) return;
@@ -785,13 +803,16 @@ export function textPromptHistory(history: TextMessage[], model: TextModel): { m
     }
   }
   const gguf = model.format === "gguf";
+  // Let the GGUF window grow from 149 to 156 complete turns so appending one
+  // exchange usually keeps the exact prompt prefix available to the engine.
+  const turnLimit = gguf ? 149 + (turns.length % GGUF_HISTORY_WINDOW_STEP) : 49;
   const recent = [prompt.message];
   let characters = prompt.message.content.length;
   let shortenedMessages = 0;
   let omittedAttachments = 0;
   // Shorten only the turns that can still fit in the outgoing context window.
   for (const turn of turns.reverse()) {
-    if (recent.length + 2 > (gguf ? 300 : 100)) break;
+    if (recent.length >= turnLimit * 2 + 1) break;
     const user = shortenHistoryMessage(turn.user);
     const reply = shortenHistoryMessage(turn.reply);
     const size = user.content.length + reply.content.length + (reply.generatedImage ? 2_000 : 0);
@@ -891,6 +912,12 @@ export function restoreFinishedTextReply(message: TextMessage | undefined): Text
   return restoreMessage(message, false);
 }
 
+function restorePromptEdit(edit: TextPromptEdit | undefined, messages: TextMessage[]): TextPromptEdit | undefined {
+  return typeof edit?.content === "string" && messages.some((message) => message?.role === "user" && message.id === edit.messageId)
+    ? edit
+    : undefined;
+}
+
 export function restoreTextThreads(value: unknown): TextThreadWorkspace | undefined {
     const saved = value as Partial<TextThreadWorkspace> | null;
     const folders = normalizeChatFolders(saved?.folders);
@@ -906,10 +933,7 @@ export function restoreTextThreads(value: unknown): TextThreadWorkspace | undefi
       draftContextImage: isOutputImage(thread.draftContextImage) ? thread.draftContextImage : undefined,
       documents: normalizeChatDocuments(thread.documents),
       draftContextImageThreadId: isOutputImage(thread.draftContextImage) && isTextThreadId(thread.draftContextImageThreadId) ? thread.draftContextImageThreadId : undefined,
-      promptEdit: typeof thread.promptEdit?.content === "string" && thread.messages.some((message) =>
-        message?.role === "user" && message.id === thread.promptEdit?.messageId)
-        ? thread.promptEdit
-        : undefined,
+      promptEdit: restorePromptEdit(thread.promptEdit, thread.messages),
       sourceThreadId: isTextThreadId(thread.sourceThreadId) && thread.sourceThreadId !== thread.id ? thread.sourceThreadId : undefined,
       mode: thread.mode === "reasoning" ? "reasoning" : "instant",
       imageModel: typeof thread.imageModel === "string" ? thread.imageModel : "auto",
@@ -922,9 +946,10 @@ export function restoreTextThreads(value: unknown): TextThreadWorkspace | undefi
       ...modelDefaultsFromThread(thread),
       messages: thread.messages.filter(validMessage).map((message) => restoreMessage(message)),
       versions: Array.isArray(thread.versions) ? thread.versions.filter((version) => version && typeof version.id === "string"
-        && typeof version.label === "string" && Array.isArray(version.messages)).map((version) => ({
-          id: version.id, label: version.label, messages: version.messages.filter(validMessage).map((message) => restoreMessage(message)),
-        })).filter((version) => version.messages.length > 0) : undefined,
+        && typeof version.label === "string" && Array.isArray(version.messages)).map((version) => {
+          const messages = version.messages.filter(validMessage).map((message) => restoreMessage(message));
+          return { id: version.id, label: version.label, messages, promptEdit: restorePromptEdit(version.promptEdit, messages) };
+        }).filter((version) => version.messages.length > 0) : undefined,
     }));
     if (threads.length) {
       const activeId = threads.find((thread) => thread.id === saved?.activeId)?.id ?? threads[0].id;

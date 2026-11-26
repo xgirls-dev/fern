@@ -20,6 +20,8 @@ messages[31].content = [
 ].join("\n\n");
 messages[31].reasoning = `${paragraphs("Observation")}\n\nReasoning also mentions quiet cedar.`;
 messages[31].generatedImage = { name: "forest.png", prompt: "An evergreen illustration", width: 256, height: 256, modelLabel: "Local model" };
+messages[31].generatedImages = [messages[31].generatedImage,
+  { ...messages[31].generatedImage, name: "river.png", prompt: "A river illustration at dusk" }];
 
 const { page, close, errors } = await fixture({
   firstRun: true, builtRenderer: process.env.FERN_FIND_BUILT === "1", viewport: { width: 1050, height: 680 },
@@ -45,13 +47,25 @@ async function activeHit(start) {
 }
 
 try {
-  await page.route("**/outputs/forest.png*", (route) => route.fulfill({ contentType: "image/svg+xml",
+  await page.route(/\/outputs\/(forest|river)\.png/, (route) => route.fulfill({ contentType: "image/svg+xml",
     body: '<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256"><rect width="256" height="256" fill="#496d59"/></svg>' }));
   await expect(row).toHaveCount(0);
   await button("Find in chat").click();
+  await page.evaluate(() => {
+    const getRects = Range.prototype.getClientRects;
+    Range.prototype.getClientRects = function () {
+      if (this.toString() === "quiet cedar" && this.startContainer.parentElement?.closest("p")?.textContent.startsWith("First sighting")) {
+        Range.prototype.getClientRects = getRects;
+        window.firstFindLayoutDeferred = true;
+        return [];
+      }
+      return getRects.call(this);
+    };
+  });
   await search.fill("quiet cedar");
   await expect(count).toHaveText("1 of 4");
   await activeHit("First sighting");
+  assert.equal(await page.evaluate(() => window.firstFindLayoutDeferred), true);
   await search.press("Enter");
   await expect(count).toHaveText("2 of 4");
   await activeHit("Second sighting");
@@ -87,11 +101,30 @@ try {
   await search.fill("evergreen illustration");
   await expect(count).toHaveText("1 of 1");
   await activeHit("An evergreen illustration");
+  await search.fill("illustration");
+  await expect(count).toHaveText("1 of 2");
+  await activeHit("An evergreen illustration");
+  await search.press("Enter");
+  await expect(count).toHaveText("2 of 2");
+  await activeHit("A river illustration at dusk");
+  await expect.poll(() => row.locator("[data-find-target]").evaluate((caption) => {
+    const image = caption.closest("figure").querySelector("img");
+    return image.getBoundingClientRect().top - caption.closest(".text-conversation").getBoundingClientRect().top;
+  })).toBeGreaterThanOrEqual(-1);
+  await search.press("Shift+Enter");
+  await activeHit("An evergreen illustration");
   await search.press("Escape");
   await expect(row.getByText("An evergreen illustration", { exact: true })).toHaveCount(0);
 
   await button("Search threads").click();
   const threads = page.getByRole("searchbox", { name: "Find a thread" });
+  await threads.fill("river illustration at dusk");
+  await expect(page.getByRole("dialog")).toContainText("A river illustration at dusk");
+  await threads.press("Enter");
+  await activeHit("A river illustration at dusk");
+  await search.press("Escape");
+
+  await button("Search threads").click();
   await threads.fill("invisible-needle");
   await expect(page.getByText("No matching threads")).toBeVisible();
   await threads.fill("quiet cedar beside the path");

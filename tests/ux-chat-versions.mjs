@@ -1,7 +1,7 @@
 import { chooseSelectOption } from "./select-option.mjs";
 import assert from "node:assert/strict";
 import { expect } from "@playwright/test";
-import { chooseMessageAction, fixture } from "./ui-fixture.mjs";
+import { chooseMessageAction, fixture, savedTextWorkspace } from "./ui-fixture.mjs";
 
 const model = { id: "gemma", name: "Gemma", installed: true, format: "gguf" };
 const { page, state, errors, close } = await fixture({
@@ -32,9 +32,15 @@ try {
   await expect(original).toHaveCount(0);
   await button("Edit message").first().click();
   await page.getByRole("textbox", { name: "Edited prompt" }).fill("Revised opening");
-  await button("Resend").click();
+  const resend = button("Resend here");
+  await expect(resend).toHaveAccessibleDescription("Resending here replaces this prompt and the messages after it. You can restore the original in Versions.");
+  await resend.press("Enter");
+  await expect(message).toBeFocused();
+  await expect(message).toHaveValue("Keep this draft");
+  await expect.poll(() => state.textRequests.length).toBe(3);
   assert.deepEqual(state.textRequests[2].messages, [{ role: "user", content: "Revised opening" }]);
   await complete("Revised response.");
+  await expect(message).toBeFocused();
   await button("Undo deletion").click();
   await expect(page.getByText("Reply restored in conversation history.")).toBeVisible();
   await expect(message).toBeFocused();
@@ -44,6 +50,27 @@ try {
   await chooseSelectOption(page.getByLabel("Conversation versions", { exact: true }), "Original follow-up");
   await page.getByText("Original answer.", { exact: true }).waitFor();
   assert.equal(state.textRequests.length, 3);
+  await button("Edit message").last().click();
+  const inline = page.getByRole("textbox", { name: "Edited prompt", exact: true });
+  await inline.fill("An unsent edit of the original follow-up.");
+  await chooseSelectOption(page.getByLabel("Conversation versions", { exact: true }), "Revised opening");
+  await expect(inline).toHaveCount(0);
+  await expect(button("Edit message").first()).toBeEnabled();
+  await expect(message).toHaveValue("Keep this draft");
+  await expect.poll(async () => {
+    const workspace = await savedTextWorkspace(page);
+    return workspace?.threads.find((thread) => thread.id === workspace.activeId)?.versions
+      ?.find((version) => version.label === "Original follow-up")?.promptEdit?.content;
+  }).toBe("An unsent edit of the original follow-up.");
+  await button("Edit message").first().click();
+  await inline.fill("A separate edit of the revised opening.");
+  await page.reload();
+  await page.getByText("Revised response.", { exact: true }).waitFor();
+  await expect(inline).toHaveValue("A separate edit of the revised opening.");
+  await chooseSelectOption(page.getByLabel("Conversation versions", { exact: true }), "Original follow-up");
+  await expect(inline).toHaveValue("An unsent edit of the original follow-up.");
+  await inline.press("Escape");
+  await expect(inline).toHaveCount(0);
   await page.locator("article.text-message").filter({ hasText: "First response." })
     .getByRole("button", { name: "Fork chat here", exact: true }).click();
   await page.getByRole("button", { name: "Text thread: First prompt (fork)", exact: true }).waitFor();
@@ -58,6 +85,7 @@ try {
   assert.equal(await message.inputValue(), "Keep this draft");
   await chooseSelectOption(page.getByLabel("Conversation versions", { exact: true }), "Revised opening");
   await page.getByText("Revised response.", { exact: true }).waitFor();
+  await expect(inline).toHaveValue("A separate edit of the revised opening.");
   assert.deepEqual(errors, []);
   console.log("Conversation versions, forks, and duplicates persist independently across reloads.");
 } finally {

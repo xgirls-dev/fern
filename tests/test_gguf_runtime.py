@@ -8,6 +8,7 @@ import sys
 import tarfile
 import tempfile
 import threading
+import time
 import unittest
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
@@ -16,7 +17,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from gguf_runtime import CompletionCancellation, GGUFServer, VulkanDriverError, ensure_runtime, runtime_supported
+from gguf_runtime import CompletionCancellation, GGUFServer, VulkanDriverError, _StartupLog, ensure_runtime, runtime_supported
 from text_runtime_errors import OUT_OF_MEMORY, TextRuntimeMemoryError, text_runtime_error_code
 
 
@@ -70,6 +71,35 @@ class GGUFCompletionTests(unittest.TestCase):
         self.assertEqual(waits, [0.05, 0.4])
         self.assertEqual(server.http.open.call_count, 3)
 
+    def test_startup_log_keeps_the_latest_completed_phase_and_measures_seen_boundaries(self) -> None:
+        on_phase = Mock()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "startup.log"
+            startup = _StartupLog(path, on_phase)
+            startup.read()
+            self.assertEqual(startup.timings(), {})
+            path.write_bytes(b"0.00.890.000 I srv  llama_server: initializing ...\n"
+                             b"0.01.010.000 I cmn  common_fit_a: fitting params to device memory ...\n"
+                             b"0.02.000.000 I cmn  common_fit_params: fitting params to free memory took 0.99 seconds\n"
+                             b"0.02.200.000 I load_tensors: loading model tensors,")
+            startup.read()
+            startup.read()
+            on_phase.assert_called_once_with("loading-model", "Checking model memory…")
+            self.assertEqual(startup.timings(), {"engineInitializationMs": 890, "memoryFitMs": 990})
+            with path.open("ab") as output:
+                output.write(b" this can take a while...\n"
+                             b"0.03.200.000 I llama_context: constructing llama_context\n")
+            startup.read()
+            on_phase.assert_called_with("loading-model", "Preparing model context…")
+            self.assertEqual(startup.timings(), {"engineInitializationMs": 890, "memoryFitMs": 990, "weightLoadMs": 1000})
+            with path.open("ab") as output:
+                output.write(b"0.03.500.000 I cmn  common_init_: warming up the model with an empty run\n"
+                             b"0.05.700.000 I srv  server_run_i: model loaded\n")
+            startup.read(notify=False)
+            self.assertEqual(on_phase.call_count, 2)
+            self.assertEqual(startup.timings(), {"engineInitializationMs": 890, "memoryFitMs": 990, "weightLoadMs": 1000,
+                                               "contextSetupMs": 300, "postContextSetupMs": 2200})
+
     def test_image_context_names_match_the_encoded_model_request(self) -> None:
         server = GGUFServer.__new__(GGUFServer)
         server.context_size, server.device, server.backend = 4096, "GPU", "vulkan"
@@ -111,22 +141,31 @@ class GGUFCompletionTests(unittest.TestCase):
         server = GGUFServer.__new__(GGUFServer)
         server.context_size, server.compaction_summaries = 2048, {}
 
-        def complete(route, body, timeout=30):
-            if route == "/tokenize":
-                return {"tokens": []}
-            return {"choices": [{"message": {"content": body["messages"][-1]["content"]}}]}
+        def complete(body, *_args, **_options):
+            chunk = {"choices": [{"delta": {"content": body["messages"][-1]["content"]}}]}
+            return io.BytesIO(b"data: " + json.dumps(chunk).encode() + b"\n\ndata: [DONE]\n\n")
 
-        server._post = Mock(side_effect=complete)
-        self.assertEqual(server._summarize(transcript), transcript)
-        self.assertEqual(server._summarize(transcript), transcript)
-        self.assertEqual(server._post.call_count, 2)
+        server._post = Mock(return_value={"tokens": []})
+        server._completion = Mock(side_effect=complete)
 
-        self.assertEqual(server._summarize(edited), edited)
+        def summarize(content):
+            cancellation = CompletionCancellation()
+            result = server._summarize(content, Mock(), cancellation)
+            self.assertFalse(cancellation.streaming)
+            self.assertFalse(cancellation.summary_streaming)
+            return result
+
+        self.assertEqual(summarize(transcript), transcript)
+        self.assertEqual(summarize(transcript), transcript)
+        server._post.assert_called_once()
+        server._completion.assert_called_once()
+
+        self.assertEqual(summarize(edited), edited)
         for index in range(8):
-            server._summarize(f"Earlier transcript {index}")
+            summarize(f"Earlier transcript {index}")
         self.assertEqual(len(server.compaction_summaries), 8)
-        self.assertEqual(server._summarize(transcript), transcript)
-        self.assertEqual(server._post.call_count, 22)
+        self.assertEqual(summarize(transcript), transcript)
+        self.assertEqual(server._completion.call_count, 11)
 
     def test_stream_result_retains_the_reported_finish_reason(self) -> None:
         server = GGUFServer.__new__(GGUFServer)
@@ -166,8 +205,15 @@ class GGUFCompletionTests(unittest.TestCase):
         request = {"messages": [{"role": "user", "content": "Explain."}], "maxNewTokens": 32,
                    "temperature": 0, "topP": 1, "seed": 0}
         chunks = [
-            {"choices": [{"delta": {"role": "assistant"}}]},
+            {"choices": [{"delta": {"role": "assistant"}}],
+             "prompt_progress": {"total": 1800, "cache": 700, "processed": 700}},
+            {"prompt_progress": {"total": 1800, "cache": 700, "processed": 1260}},
+            {"prompt_progress": {"total": 1800, "cache": 700, "processed": 1275}},
+            {"prompt_progress": {"total": 1800, "cache": 700, "processed": 1100}},
+            {"prompt_progress": {"total": 1800, "cache": 700, "processed": "1300"}},
+            {"prompt_progress": {"total": 1800, "cache": 700, "processed": 1800}},
             {"choices": [{"delta": {"content": "A reply"}}]},
+            {"prompt_progress": {"total": 1800, "cache": 700, "processed": 1300}},
             {"choices": [{"delta": {}, "finish_reason": "stop"}]},
             {"choices": [], "usage": {"prompt_tokens": 16, "completion_tokens": 3},
              "timings": {"prompt_ms": 95.5, "predicted_ms": 200, "prompt_n": 6, "cache_n": 10}},
@@ -183,8 +229,15 @@ class GGUFCompletionTests(unittest.TestCase):
                 chunks[-1]["timings"] = raw
                 encoded = b"".join(b"data: " + json.dumps(chunk).encode() + b"\n\n" for chunk in chunks)
                 server._completion = Mock(return_value=io.BytesIO(encoded + b"data: [DONE]\n\n"))
+                emit = Mock()
                 with patch("gguf_runtime.time.perf_counter", side_effect=[10, 10.25, 10.75, 11]):
-                    result = server.generate(request, Mock())
+                    result = server.generate(request, emit)
+                self.assertTrue(server._completion.call_args.args[0]["return_progress"])
+                self.assertEqual([call.args[0] for call in emit.call_args_list], [
+                    {"type": "phase", "text": "Processing prompt…"},
+                    {"type": "phase", "text": "Processing prompt · 50%"},
+                    {"type": "token", "text": "A reply"},
+                ])
                 self.assertEqual(result["runtimeTiming"], {
                     "contextPreparationMs": 250, "firstOutputChunkMs": 500, **expected,
                 })
@@ -210,9 +263,10 @@ class GGUFCompletionTests(unittest.TestCase):
         on_phase = Mock()
 
         def launch(command, **options):
-            on_phase.assert_called_once_with("loading-model", "Loading model…")
+            on_phase.assert_called_once_with("selecting-device", "Preparing Apple GPU…")
             self.assertEqual(command[command.index("--device") + 1], "MTL0")
             self.assertIn("--mmproj-offload", command)
+            self.assertIn("--log-timestamps", command)
             options["stdout"].write(b"offloaded 38/38 layers to GPU\nmtmd_backends: using MTL0 backend\n")
             return process
 
@@ -283,6 +337,8 @@ class GGUFCompletionTests(unittest.TestCase):
         ]
         for platform, device, backends in (
             ("darwin", "CPU", ["cpu", "cpu"]),
+            ("linux", "CPU", ["cpu", "cpu"]),
+            ("win32", "CPU", ["cpu", "cpu"]),
             ("win32", "AUTO", ["openvino", "vulkan"]),
         ):
             with self.subTest(platform=platform, device=device):
@@ -337,7 +393,7 @@ class GGUFCompletionTests(unittest.TestCase):
             ("win32", "GPU", "gemma4", True, True, ["vulkan", "openvino"]),
             ("win32", "GPU", "gemma4", False, False, ["openvino"]),
             ("win32", "GPU", "qwen3", True, False, ["openvino"]),
-            ("win32", "CPU", "gemma4", True, False, ["openvino"]),
+            ("win32", "CPU", "gemma4", True, False, ["cpu"]),
             ("linux", "GPU", "gemma4", True, False, ["openvino"]),
         )
         for platform, device, architecture, adapter, driver_failure, expected in cases:
@@ -365,7 +421,7 @@ class GGUFCompletionTests(unittest.TestCase):
                 self.assertEqual(engine.generate.call_count, 2)
                 self.assertEqual(sum(call.args[0]["type"] == "result" for call in emit.call_args_list), 2)
 
-    def test_worker_recovers_one_openvino_gpu_shape_error_before_streaming(self) -> None:
+    def test_worker_falls_back_for_openvino_gpu_shape_errors_only_before_streaming(self) -> None:
         from gguf_runtime import GGUFComputeError
         from text_generation_worker import run_gguf
 
@@ -375,7 +431,7 @@ class GGUFCompletionTests(unittest.TestCase):
             ("GPU", False, "Argument shapes are inconsistent.", ["openvino", "vulkan"], 2),
             ("GPU", True, "Argument shapes are inconsistent.", ["openvino"], 0),
             ("GPU", False, "An unrelated compute error.", ["openvino"], 0),
-            ("CPU", False, "Argument shapes are inconsistent.", ["openvino"], 0),
+            ("CPU", False, "Argument shapes are inconsistent.", ["cpu"], 0),
         )
 
         for device, streaming, detail, expected, recovered in cases:
@@ -384,9 +440,9 @@ class GGUFCompletionTests(unittest.TestCase):
                 stream = io.StringIO("".join(json.dumps(request) + "\n" for request in requests))
                 engines = [
                     Mock(backend=backend, context_size=4096, load_options={}, startup_timing={})
-                    for backend in ("openvino", "vulkan")
+                    for backend in (expected[0], "vulkan")
                 ]
-                openvino, vulkan = engines
+                initial, vulkan = engines
                 for pid, engine in enumerate(engines, 51):
                     engine.process.poll.return_value = None
                     engine.process.pid = pid
@@ -396,8 +452,8 @@ class GGUFCompletionTests(unittest.TestCase):
                     cancellation.streaming = streaming
                     raise GGUFComputeError("Compute error.")
 
-                openvino.generate.side_effect = reject
-                openvino.runtime_log_tail.return_value = detail
+                initial.generate.side_effect = reject
+                initial.runtime_log_tail.return_value = detail
                 vulkan.generate.side_effect = lambda *_args: {"type": "result", "runtimeTiming": {}}
                 with (
                     patch.dict(os.environ, {"FERN_GGUF_RUNTIME_ROOT": "scratch"}),
@@ -414,9 +470,9 @@ class GGUFCompletionTests(unittest.TestCase):
                 self.assertEqual(event_types.count("result"), recovered)
                 self.assertEqual(event_types.count("error"), int(not recovered))
                 if recovered:
-                    openvino.close.assert_called_once_with(force=True)
+                    initial.close.assert_called_once_with(force=True)
                     self.assertEqual([call.args[0] for call in vulkan.generate.call_args_list], [first, follow_up])
-                    openvino.runtime_log_tail.assert_called_once_with(after=22)
+                    initial.runtime_log_tail.assert_called_once_with(after=22)
 
     def test_worker_reuses_engine_for_reply_settings_and_reloads_for_load_settings(self) -> None:
         from text_generation_worker import run_gguf
@@ -497,6 +553,95 @@ class GGUFCompletionTests(unittest.TestCase):
             finally:
                 upstream.shutdown()
                 serving.join()
+
+    def test_cancel_disconnects_a_private_summary_without_caching_partial_text(self) -> None:
+        chunk = b'data: {"choices":[{"delta":{"content":"Partial private summary"}}]}\n\n'
+        release = threading.Event()
+
+        class DelayedSummary(BaseHTTPRequestHandler):
+            def do_POST(self):
+                self.rfile.read(int(self.headers["Content-Length"]))
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.end_headers()
+                self.wfile.write(chunk)
+                self.wfile.flush()
+                release.wait(5)
+
+        with ThreadingHTTPServer(("127.0.0.1", 0), DelayedSummary) as upstream:
+            serving = threading.Thread(target=upstream.serve_forever, daemon=True)
+            serving.start()
+            engine = GGUFServer.__new__(GGUFServer)
+            engine.base, engine.key = f"http://127.0.0.1:{upstream.server_port}", "test"
+            engine.context_size, engine.compaction_summaries = 2048, {}
+            engine._post = Mock(return_value={"tokens": []})
+            cancellation = CompletionCancellation()
+            emit = Mock()
+            try:
+                with ThreadPoolExecutor(1) as pool:
+                    result = pool.submit(engine._summarize, "Old chat", emit, cancellation)
+                    try:
+                        deadline = time.monotonic() + 3
+                        while not cancellation.summary_streaming and time.monotonic() < deadline:
+                            time.sleep(0.01)
+                        self.assertTrue(cancellation.summary_streaming)
+                        cancellation.cancel()
+                        with self.assertRaises(InterruptedError):
+                            result.result(timeout=2)
+                    finally:
+                        release.set()
+            finally:
+                upstream.shutdown()
+                serving.join()
+
+        emit.assert_called_once_with({"type": "cancellable"})
+        self.assertFalse(cancellation.streaming)
+        self.assertEqual(engine.compaction_summaries, {})
+
+    def test_worker_keeps_engine_after_stopping_summary_decode_but_reloads_after_prefill(self) -> None:
+        from text_generation_worker import run_gguf
+
+        requests = [
+            {"op": "generate", "contextSize": 2048, "messages": [{"role": "user", "content": question}]}
+            for question in ("First", "Next")
+        ]
+        for summary_streaming in (False, True):
+            with self.subTest(summary_streaming=summary_streaming):
+                stream = io.StringIO("".join(json.dumps(request) + "\n" for request in [*requests, {"op": "shutdown"}]))
+                engines = [
+                    Mock(backend="cpu", context_size=2048, load_options={}, startup_timing={})
+                    for _ in range(2)
+                ]
+                for pid, engine in enumerate(engines, start=42):
+                    engine.process.pid = pid
+                    engine.process.poll.return_value = None
+
+                answer = {"type": "result", "text": "Next", "runtimeTiming": {}}
+
+                def generate(request, _emit, cancellation):
+                    if request["messages"][0]["content"] == "First":
+                        cancellation.summary_streaming = summary_streaming
+                        raise InterruptedError("Generation stopped.")
+                    return answer
+
+                engines[0].generate.side_effect = generate
+                engines[1].generate.return_value = answer
+
+                with (
+                    patch.dict(os.environ, {"FERN_GGUF_RUNTIME_ROOT": "scratch"}),
+                    patch("text_generation_worker.sys.platform", "linux"),
+                    patch("text_generation_worker.sys.stdin", stream),
+                    patch("text_generation_worker.emit") as emit,
+                    patch("gguf_runtime.ensure_runtime", return_value=Path("llama-server")),
+                    patch("gguf_runtime.GGUFServer", side_effect=engines) as load,
+                ):
+                    self.assertEqual(run_gguf(Path("model.gguf"), "CPU", None), 0)
+
+                self.assertEqual(load.call_count, 1 if summary_streaming else 2)
+                self.assertEqual(engines[0].generate.call_count, 2 if summary_streaming else 1)
+                self.assertIn({"type": "cancelled"}, [call.args[0] for call in emit.call_args_list])
+                if not summary_streaming:
+                    engines[0].close.assert_called_once_with(force=True)
 
     def test_force_close_kills_the_runtime_without_waiting_for_graceful_shutdown(self) -> None:
         server = GGUFServer.__new__(GGUFServer)
@@ -612,6 +757,36 @@ class VulkanRuntimeTests(unittest.TestCase):
                 self.assertEqual(fetch.call_count, 2)
                 machine.return_value = "x86_64"
                 self.assertFalse(runtime_supported())
+
+    @unittest.skipIf(os.name == "nt", "requires Unix executable permissions")
+    def test_mac_prefers_complete_packaged_metal_without_replacing_the_downloaded_runtime(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            resources = root / "Fern.app/Contents/Resources"
+            packaged = resources / "runtime/llama-b12498-macos-arm64-precompiled"
+            cache = root / "cache"
+            upstream = cache / "llama-b12498-macos-arm64"
+            needed = ("llama-server", "libggml-metal.dylib", "libllama-server-impl.dylib", "libmtmd.dylib")
+            for folder, names in ((upstream, needed), (packaged, (*needed, "default.metallib", "libllama.1.dylib"))):
+                folder.mkdir(parents=True)
+                for name in names:
+                    (folder / name).write_bytes(b"fixture")
+                (folder / "llama-server").chmod(0o755)
+                manifest = "runtime.json" if folder == packaged else ".fern-runtime.json"
+                (folder / manifest).write_text(json.dumps(dict.fromkeys(names, len(b"fixture"))), encoding="utf-8")
+            # Signing may change the sizes of packaged Mach-O files.
+            (packaged / "libllama.1.dylib").write_bytes(b"signed fixture")
+            with (
+                patch("gguf_runtime.__file__", str(resources / "scripts/gguf_runtime.py")),
+                patch("gguf_runtime.sys.platform", "darwin"),
+                patch("gguf_runtime.platform.machine", return_value="arm64"),
+                patch("gguf_runtime.download_file") as fetch,
+            ):
+                self.assertEqual(ensure_runtime(cache, "metal", Mock()), packaged.resolve() / "llama-server")
+                self.assertEqual(ensure_runtime(cache, "cpu", Mock()), upstream / "llama-server")
+                (packaged / "libllama.1.dylib").unlink()
+                self.assertEqual(ensure_runtime(cache, "metal", Mock()), upstream / "llama-server")
+                fetch.assert_not_called()
 
     def test_metal_rejects_a_missing_gpu_without_falling_back_to_cpu(self) -> None:
         process = Mock()

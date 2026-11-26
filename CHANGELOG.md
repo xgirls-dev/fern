@@ -6,6 +6,32 @@ lands directly on `main` instead of through labeled pull requests.
 
 ## [Unreleased]
 
+### Added
+
+- Choose clips from 4 to 10 seconds with Wan 2.2 Turbo on Intel Vulkan. Longer renders show sampling and decoding progress and can be stopped.
+
+### Improved
+
+- Add an Apple Silicon preview build option that precompiles Metal shaders before packaging.
+- Show when Chat prepares the Apple GPU before loading a GGUF model.
+- Show when Chat checks model memory, loads weights, prepares the context, and warms up a GGUF model.
+- Show measured prompt processing time and reused tokens in GGUF response details.
+- Reuse the processed prompt across follow-ups in long GGUF chats when the retained history still fits.
+- Show progress as a local GGUF model processes the chat prompt before its first reply token.
+
+### Fixed
+
+- Fix garbled GGUF replies on Windows and Omarchy when CPU is selected by using llama.cpp’s native CPU engine.
+- Include saved chats and references in the workspace size shown in Local data.
+- Recover a finished video after restarting the local service if it exited while saving the clip.
+- Restart Fern’s local service from Video after an interruption. The first frame and motion prompt stay ready, and completed clips return from history.
+- Finish stopping a chat even when its live stream misses the final update.
+- Bring the selected Find match into view when a long reply finishes formatting.
+- Find every generated image prompt in a chat reply, including saved versions, and jump to the matching image.
+- Return focus to the composer when resending an edited earlier prompt. The editor explains which messages are saved in Versions.
+- Keep the GGUF model loaded when Stop interrupts an in-progress chat summary after it starts generating text.
+- Preserve an unsent inline prompt edit with its conversation version when switching versions.
+
 ## [0.1.49] - 2026-11-25
 
 ### Added

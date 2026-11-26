@@ -42,6 +42,13 @@ try {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.clock.install();
   await page.evaluate(() => {
+    const fetch = window.fetch.bind(window);
+    window.fetch = (input, options) => {
+      if (typeof input !== "string" || !input.endsWith("/api/text/job")) return fetch(input, options);
+      window.fetch = fetch;
+      // The fixture releases this one poll after the fake-clock streaming assertions.
+      return fetch(input, { ...options, signal: undefined });
+    };
     window.receivedTextAppends = 0;
     const NativeEventSource = window.EventSource;
     window.EventSource = class extends NativeEventSource {
@@ -180,8 +187,43 @@ try {
   await expect(reply).toHaveCount(0);
   await expect.poll(async () => (await savedTextWorkspace(page)).threads.find((thread) => thread.id === reloadedRequest.threadId)
     ?.messages.filter((message) => message.jobId === reloadedRequest.requestId).length).toBe(1);
+
+  for (const terminalReceipt of [true, false]) {
+    const partial = terminalReceipt ? "Keep the words received before the Stop reply."
+      : "Keep the words received while waiting for Stop.";
+    const streamCount = streamRequests;
+    await send("Stop while the event stream misses the final update.");
+    await expect.poll(() => streamRequests).toBe(streamCount + 1);
+    const { id, threadId } = state.textStatus.job;
+    sendFrame({ job: state.textStatus.job });
+    sendFrame({ append: { phase: "Generating…", text: partial, reasoning: "" } });
+    await expect(reply).toContainText(partial);
+    const stopped = { ...state.textStatus.job, status: "stopped", finishedAt: Date.now() / 1000 };
+    await page.route("**/api/text/stop", (route) => route.fulfill({
+      json: { textJob: terminalReceipt ? stopped : { ...state.textStatus.job, phase: "Stopping generation…" } },
+    }), { times: 1 });
+    const stopResponse = page.waitForResponse((response) => response.url().endsWith("/api/text/stop"));
+    await composer.fill("Keep my next draft.");
+    await button("Stop generation").click();
+    await (await stopResponse).finished();
+
+    if (!terminalReceipt) {
+      await expect(button("Stop generation")).toBeDisabled();
+      const pollsWhileStopping = polls;
+      await expect.poll(() => polls).toBeGreaterThan(pollsWhileStopping);
+      state.textStatus.job = stopped;
+    }
+    // The event stream never sends the terminal update in either case.
+    await expect(reply).toHaveCount(0, { timeout: 4000 });
+    await expect(conversation.getByText(partial)).toBeVisible();
+    await expect(button("Send message")).toBeEnabled();
+    await expect(composer).toHaveValue("Keep my next draft.");
+    await expect.poll(async () => (await savedTextWorkspace(page)).threads.find((thread) => thread.id === threadId)
+      ?.messages.filter((message) => message.jobId === id).length).toBe(1);
+    streamResponse.end();
+  }
   assert.deepEqual(errors, []);
-  console.log("Chat batches text, resumes live streaming after disconnect, and recovers completed replies through polling and reload.");
+  console.log("Chat batches text, resumes streaming, and recovers terminal replies through Stop, polling, and reload.");
 } finally {
   releasePoll?.();
   streamResponse?.end();

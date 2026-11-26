@@ -660,6 +660,7 @@ export function App() {
           ) : activeSection === "video" ? (
             <Suspense fallback={<div className="dashboard-loading" role="status">Opening video workspace…</div>}>
               <VideoWorkspace video={video} device={compute.device} busyElsewhere={studio.running || studio.submitting || audioBusy || text.busy}
+                backendFailure={studio.backendFailure} backendConnecting={!studio.ready && studio.connecting} onRestartBackend={studio.restartBackend}
                 openModels={openVideoModels} openCompute={openComputePreferences} />
             </Suspense>
           ) : activeSection === "tts" ? (

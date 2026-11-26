@@ -76,6 +76,16 @@ try {
   await expect(status).toHaveText("Still waiting for the first token…");
   await expect(stream).toContainText("Still waiting for the first token…");
 
+  update({ phase: "Processing prompt…" });
+  await expect(status).toHaveText("Processing prompt…");
+  await expect(stream.locator(".text-reply-stage")).toHaveText("Processing prompt…");
+  update({ phase: "Processing prompt · 60%" });
+  await expect(status).toHaveText("Processing prompt · 60%");
+  await expect(stream.locator(".text-reply-stage")).toHaveText("Processing prompt · 60%");
+  await page.clock.fastForward(25_100);
+  await expect(status).toHaveText("Still processing prompt · 60%");
+  await expect(button("Stop generation")).toBeEnabled();
+
   update({ partialReasoning: "Use a short example." });
   const summary = stream.locator("summary");
   await expect(summary).toHaveText("Reasoning…");

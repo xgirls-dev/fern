@@ -513,10 +513,11 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
   useEffect(() => {
     if (!ready) return;
     const timer = window.setInterval(() => {
-      if (!useJobPoll || !receivingJobEvents.current) void refresh();
+      // A live stream can miss the terminal update after Stop.
+      if (!useJobPoll || !receivingJobEvents.current || stoppingId) void refresh();
     }, useJobPoll ? 150 : busy ? 500 : 4000);
     return () => window.clearInterval(timer);
-  }, [ready, busy, refresh, useJobPoll]);
+  }, [ready, busy, refresh, stoppingId, useJobPoll]);
 
   useEffect(() => {
     if (!ready || !watchedThreadId || !watchedJobId) return;
@@ -558,7 +559,14 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     if (stopDispatched.current === requestId) return;
     stopDispatched.current = requestId;
     void stopTextGeneration(requestId, awaiting?.threadId).then((receipt) => {
-      if (!receipt?.cancelledBeforeStart || !awaiting || stopDispatched.current !== requestId) return;
+      if (stopDispatched.current !== requestId) return;
+      const job = receipt?.textJob;
+      if (job?.id === requestId && isTerminalTextJob(job)) {
+        setStatus((current) => current.job.status === "running" && current.job.id === requestId && current.job.threadId === job.threadId
+          ? applyTextJobStatus(current, job) : current);
+        return;
+      }
+      if (!receipt?.cancelledBeforeStart || !awaiting) return;
       const pending = submission.current;
       if (pending?.id === requestId) finishSubmission(pending);
       if (awaiting.modelLoad) {
@@ -567,10 +575,10 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
         return;
       }
       const observedAt = Date.now();
-      const job: TextJob = { ...idleStatus.job, id: requestId, threadId: awaiting.threadId, modelId: awaiting.modelId,
+      const stoppedJob: TextJob = { ...idleStatus.job, id: requestId, threadId: awaiting.threadId, modelId: awaiting.modelId,
         status: "stopped", finishedAt: observedAt / 1000 };
       setChatState((current) => {
-        const workspace = settleTextJob(current.workspace, job, current.lastRunningJob, current.status.models, observedAt);
+        const workspace = settleTextJob(current.workspace, stoppedJob, current.lastRunningJob, current.status.models, observedAt);
         return workspace === current.workspace ? current : { ...current, workspace };
       });
     }).catch((error: unknown) => {
@@ -579,7 +587,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
       setStoppingId((current) => current === requestId ? null : current);
       setStopFailure({ id: requestId, message: error instanceof Error ? error.message : "Could not stop text generation." });
     });
-  }, [finishSubmission]);
+  }, [finishSubmission, setStatus]);
 
   useEffect(() => {
     if (!ready || !statusLoaded || !stoppingId) return;
@@ -1283,9 +1291,10 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     if (busy || submission.current || activeThread?.pendingJobId || !activeThread?.versions) return;
     const previous = activeThread.versions.find((version) => version.id === id);
     if (!previous) return;
-    const snapshot = snapshotTextVersion(activeThread.messages);
+    const snapshot = { ...snapshotTextVersion(activeThread.messages), promptEdit: activeThread.promptEdit };
     updateThread(activeThread.id, {
       messages: previous.messages,
+      promptEdit: previous.promptEdit,
       versions: [snapshot, ...activeThread.versions.filter((version) => version.id !== id)],
     }, { savedId: snapshot.id, restoredId: previous.id });
     setActionError(null);

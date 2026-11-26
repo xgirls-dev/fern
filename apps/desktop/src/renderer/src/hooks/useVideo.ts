@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { fetchVideoStatus, mutateVideo, type VideoSnapshot } from "../lib/api";
 import type { ReferenceAttachment } from "../lib/reference";
 
@@ -6,14 +6,34 @@ export function useVideo(ready: boolean, visible: boolean) {
   const [snapshot, setSnapshot] = useState<VideoSnapshot>();
   const [prompt, setPrompt] = useState("");
   const [seed, setSeed] = useState("42");
+  const [selectedFrames, setFrames] = useState<number>();
   const [reference, setReference] = useState<ReferenceAttachment>();
   const [error, setError] = useState("");
   const [connectionError, setConnectionError] = useState("");
   const [pending, setPending] = useState(false);
-  const operation = useRef(false);
+  const [statusConfirmed, setStatusConfirmed] = useState(false);
+  const [interrupted, setInterrupted] = useState(false);
+  const operation = useRef<number | null>(null);
   const revision = useRef(0);
+  const needsHistory = useRef(false);
   const job = snapshot?.job;
+  const jobId = job?.id;
+  const format = snapshot?.model.videoFormat;
+  const frames = selectedFrames !== undefined && format?.frameOptions.includes(selectedFrames)
+    ? selectedFrames : format?.defaultFrames;
   const running = job?.status === "running" || job?.status === "stopping";
+  const available = ready && statusConfirmed;
+
+  useLayoutEffect(() => {
+    if (ready) return;
+    revision.current += 1;
+    operation.current = null;
+    needsHistory.current = true;
+    setPending(false);
+    setStatusConfirmed(false);
+    setConnectionError("");
+    setError("");
+  }, [ready]);
 
   useEffect(() => {
     if (!ready || (!visible && !running)) return;
@@ -22,36 +42,45 @@ export function useVideo(ready: boolean, visible: boolean) {
     async function poll() {
       const current = revision.current;
       try {
-        const data = await fetchVideoStatus(running);
-        if (!active || current !== revision.current || operation.current) return;
+        const data = await fetchVideoStatus(running && !needsHistory.current);
+        if (!active || current !== revision.current || operation.current !== null) return;
+        if (needsHistory.current) {
+          // A clip may have reached disk before the service could report completion.
+          setInterrupted(Boolean(running && jobId && data.job.id !== jobId && !data.clips?.some((clip) => clip.id === jobId)));
+          needsHistory.current = false;
+        }
         setSnapshot((current) => ({ ...data, clips: data.clips ?? current?.clips ?? [] }));
+        setStatusConfirmed(true);
         setConnectionError("");
       } catch {
-        if (active) setConnectionError("Video status is unavailable. Reconnecting…");
+        if (active && current === revision.current) setConnectionError("Video status is unavailable. Reconnecting…");
       } finally {
         if (active) timer = setTimeout(poll, running ? 900 : 4000);
       }
     }
     void poll();
     return () => { active = false; clearTimeout(timer); };
-  }, [ready, visible, running]);
+  }, [ready, visible, running, jobId]);
 
   const update = useCallback(async (action: "generate" | "stop" | "remove", payload?: object) => {
-    if (operation.current) return;
-    operation.current = true;
-    revision.current += 1;
+    if (!available || operation.current !== null) return;
+    const request = ++revision.current;
+    operation.current = request;
     setPending(true);
     setError("");
+    if (action === "generate") setInterrupted(false);
     try {
       const data = await mutateVideo(action, payload);
-      setSnapshot((old) => old ? { ...old, ...data } : old);
+      if (operation.current === request) setSnapshot((old) => old ? { ...old, ...data } : old);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "The video operation failed.");
+      if (operation.current === request) setError(cause instanceof Error ? cause.message : "The video operation failed.");
     } finally {
-      operation.current = false;
-      setPending(false);
+      if (operation.current === request) {
+        operation.current = null;
+        setPending(false);
+      }
     }
-  }, []);
+  }, [available]);
 
   const generate = () => {
     if (!reference || !prompt.trim()) return;
@@ -60,20 +89,26 @@ export function useVideo(ready: boolean, visible: boolean) {
       setError("Use a whole-number seed from 0 to 2,147,483,647.");
       return;
     }
-    void update("generate", { prompt, seed: value, referenceImage: reference.dataUrl, device: "AUTO" });
+    void update("generate", { prompt, seed: value, referenceImage: reference.dataUrl, device: "AUTO", frames });
   };
 
   const reset = useCallback(() => {
     revision.current += 1;
+    operation.current = null;
+    setPending(false);
+    setStatusConfirmed(false);
+    setInterrupted(false);
     setSnapshot(undefined);
     setReference(undefined);
     setPrompt("");
     setSeed("42");
+    setFrames(undefined);
     setError("");
   }, []);
 
   return {
-    clips: snapshot?.clips, model: snapshot?.model, job, running, pending, error,
-    connectionError, setError, prompt, setPrompt, seed, setSeed, reference, setReference, generate, update, reset,
+    clips: snapshot?.clips, model: snapshot?.model, job, running, available, recovering: ready && !available && !!snapshot,
+    pending, interrupted, error,
+    connectionError, setError, prompt, setPrompt, seed, setSeed, frames, setFrames, reference, setReference, generate, update, reset,
   };
 }

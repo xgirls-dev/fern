@@ -21,7 +21,11 @@ try {
     deletions += 1;
     return route.fulfill({ json: { storage } });
   });
+  await page.evaluate(() => {
+    navigator.storage.estimate = async () => ({ usage: 5 * 1024 * 1024 });
+  });
   await page.getByRole("button", { name: "Local data", exact: true }).click();
+  await expect(page.getByRole("article", { name: "Workspace data", exact: true })).toContainText("5 MB");
   const trigger = page.getByRole("button", { name: "Clear Local Data", exact: true });
   await page.evaluate(() => {
     window.studio.saveWorkspaceBackup = (snapshot) => new Promise((resolve) => {

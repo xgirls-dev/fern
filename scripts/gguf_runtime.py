@@ -5,10 +5,12 @@ import base64
 import ctypes
 import hashlib
 import http.client
+import io
 import json
 import os
 import platform
 import re
+import select
 import secrets
 import socket
 import subprocess
@@ -82,6 +84,7 @@ class CompletionCancellation:
         self._lock = threading.Lock()
         self._socket: socket.socket | None = None
         self.streaming = False
+        self.summary_streaming = False
 
     def cancel(self) -> None:
         self._requested.set()
@@ -108,6 +111,62 @@ class CompletionCancellation:
                 self._socket = None
 
 
+class _CompletionReader(io.RawIOBase):
+    def __init__(self, transport: socket.socket, cancellation: CompletionCancellation, timeout: float) -> None:
+        super().__init__()
+        self.transport = transport
+        self.cancellation = cancellation
+        self.timeout = timeout
+
+    def makefile(self, _mode: str) -> io.BufferedReader:
+        return io.BufferedReader(self)
+
+    def readable(self) -> bool:
+        return True
+
+    def readinto(self, buffer) -> int:
+        # A concurrent shutdown does not always wake a pending Winsock receive.
+        # Poll for readability before each read so Stop has a bounded wait.
+        deadline = time.monotonic() + self.timeout
+        while True:
+            self.cancellation.check()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("The GGUF runtime did not send response data.")
+            readable, _, _ = select.select([self.transport], [], [], min(remaining, 0.1))
+            if readable:
+                self.cancellation.check()
+                return self.transport.recv_into(buffer)
+
+
+def _completion_events(response: http.client.HTTPResponse, cancellation: CompletionCancellation) -> Iterator[dict]:
+    for raw in response:
+        cancellation.check()
+        if not raw.startswith(b"data:"):
+            continue
+        line = raw[5:].strip()
+        if line == b"[DONE]":
+            return
+        event = json.loads(line)
+        if error := event.get("error"):
+            message = error.get("message", "GGUF inference failed.")
+            if message == "Compute error.":
+                raise GGUFComputeError(message)
+            raise RuntimeError(message)
+        yield event
+    cancellation.check()
+    raise RuntimeError("The GGUF runtime disconnected during the response.")
+
+
+def _prefill_percent(progress: dict) -> int | None:
+    total, cached, processed = (progress.get(key) for key in ("total", "cache", "processed"))
+    if any(type(value) is not int for value in (total, cached, processed)) or not 0 <= cached <= processed < total:
+        return None
+    # Show the uncached part the engine has to compute. Group updates so the
+    # composer and screen reader share a stable status while batches finish.
+    return 5 * (20 * (processed - cached) // (total - cached))
+
+
 def apple_silicon() -> bool:
     return sys.platform == "darwin" and platform.machine().lower() in ("arm64", "aarch64")
 
@@ -118,7 +177,7 @@ def runtime_supported() -> bool:
     )
 
 
-def _runtime_ready(install: Path, backend: str) -> bool:
+def _runtime_ready(install: Path, backend: str, *, packaged_metal: bool = False) -> bool:
     windows = sys.platform == "win32"
     server = "llama-server.exe" if windows else "llama-server"
     if not (install / server).is_file() or (not windows and not os.access(install / server, os.X_OK)):
@@ -126,6 +185,8 @@ def _runtime_ready(install: Path, backend: str) -> bool:
     if windows and backend != "vulkan":
         return True
     required = {server}
+    if packaged_metal:
+        required.add("default.metallib")
     if sys.platform == "darwin":
         required.update(("libggml-metal.dylib", "libllama-server-impl.dylib", "libmtmd.dylib"))
     elif backend == "vulkan":
@@ -133,10 +194,14 @@ def _runtime_ready(install: Path, backend: str) -> bool:
     elif backend == "openvino":
         required.add("libggml-openvino.so")
     try:
-        files = json.loads((install / _RUNTIME_MANIFEST).read_text(encoding="utf-8"))
+        manifest = "runtime.json" if packaged_metal else _RUNTIME_MANIFEST
+        files = json.loads((install / manifest).read_text(encoding="utf-8"))
         return isinstance(files, dict) and required <= files.keys() and all(
             name == Path(name).name and type(size) is int and size > 0
-            and (install / name).is_file() and (install / name).stat().st_size == size
+            and (install / name).is_file()
+            and (actual_size := (install / name).stat().st_size) > 0
+            # Electron signs packaged Mach-O files after staging the manifest.
+            and (packaged_metal or actual_size == size)
             for name, size in files.items()
         )
     except (OSError, ValueError):
@@ -150,6 +215,10 @@ def ensure_runtime(root: Path, backend: str, progress: Callable[[str], None]) ->
     if sys.platform == "darwin":
         if backend not in ("metal", "cpu"):
             raise ValueError("Choose Metal or CPU for GGUF inference on macOS.")
+        if backend == "metal":
+            packaged = Path(__file__).resolve().parents[1] / "runtime" / f"llama-{_BUILD}-macos-arm64-precompiled"
+            if _runtime_ready(packaged, backend, packaged_metal=True):
+                return packaged / "llama-server"
         size, checksum = _MAC_ARM64_ASSET
         install = root / f"llama-{_BUILD}-macos-arm64"
         filename = f"llama-{_BUILD}-bin-macos-arm64.tar.gz"
@@ -205,6 +274,61 @@ def ensure_runtime(root: Path, backend: str, progress: Callable[[str], None]) ->
     return executable
 
 
+class _StartupLog:
+    """Read timings and phases from the pinned llama-server's startup log."""
+
+    _timestamp = re.compile(rb"^(\d+)\.(\d{2})\.(\d{3})\.(\d{3}) [A-Z] ")
+    _markers = (
+        ("initializing", b"llama_server: initializing ...", None),
+        ("fit", b"common_fit_a: fitting params to device memory ...", "Checking model memory…"),
+        ("fitted", b"common_fit_params: fitting params to free memory took ", None),
+        ("weights", b"load_tensors: loading model tensors,", "Loading model weights…"),
+        ("context", b"llama_context: constructing llama_context", "Preparing model context…"),
+        ("warmup", b"common_init_: warming up the model with an empty run", "Warming up model…"),
+        ("ready", b"server_run_i: model loaded", None),
+    )
+
+    def __init__(self, path: Path, on_phase: Callable[[str, str], None] | None) -> None:
+        self.path = path
+        self.on_phase = on_phase
+        self.offset = 0
+        self.marks: dict[str, float] = {}
+
+    def read(self, *, notify: bool = True) -> None:
+        latest = None
+        try:
+            with self.path.open("rb") as log:
+                log.seek(self.offset)
+                for line in log:
+                    if not line.endswith(b"\n"):
+                        break
+                    self.offset += len(line)
+                    for key, marker, label in self._markers:
+                        if key not in self.marks and marker in line and (time_match := self._timestamp.match(line)):
+                            minutes, seconds, millis, micros = map(int, time_match.groups())
+                            self.marks[key] = (minutes * 60 + seconds) * 1000 + millis + micros / 1000
+                            latest = label or latest
+                            break
+        except OSError:
+            return
+        if notify and latest and self.on_phase:
+            self.on_phase("loading-model", latest)
+
+    def timings(self) -> dict[str, float]:
+        spans = (
+            ("memoryFitMs", "fit", "fitted"),
+            ("weightLoadMs", "weights", "context"),
+            ("contextSetupMs", "context", "warmup"),
+            ("postContextSetupMs", "warmup", "ready"),
+        )
+        timings = {metric: self.marks[end] - self.marks[start] for metric, start, end in spans
+                   if start in self.marks and end in self.marks and self.marks[start] <= self.marks[end]}
+        if "initializing" in self.marks:
+            # The first server marker follows argument parsing and backend setup.
+            timings["engineInitializationMs"] = self.marks["initializing"]
+        return timings
+
+
 class GGUFServer:
     def __init__(
         self, executable: Path, model: Path, projector: Path | None, device: str, backend: str,
@@ -248,6 +372,8 @@ class GGUFServer:
                 "--host", "127.0.0.1", "--port", str(port), "--api-key", self.key, "--no-webui",
                 "--ctx-size", str(context_size), "--parallel", "1", "--reasoning-format", "deepseek",
                 "--jinja", "--no-context-shift",
+                # Startup phases and GPU placement are emitted at trace verbosity.
+                "--log-timestamps", "-lv", "4",
             ]
             for option, flag in (
                 ("flashAttention", "--flash-attn"), ("promptBatch", "--batch-size"), ("microBatch", "--ubatch-size"),
@@ -258,19 +384,22 @@ class GGUFServer:
             if projector:
                 command += ["--mmproj", str(projector), "--image-max-tokens", str(MAX_IMAGE_TOKENS)]
                 command.append("--mmproj-offload" if gpu_projector else "--no-mmproj-offload")
-            if gpu_projector or backend == "metal":
-                # llama.cpp emits GPU layer placement at trace verbosity.
-                command.extend(("-lv", "4"))
             if on_phase is not None:
-                on_phase("loading-model", "Loading model…")
+                if backend == "metal":
+                    on_phase("selecting-device", "Preparing Apple GPU…")
+                else:
+                    on_phase("loading-model", "Loading model…")
             server_started = time.perf_counter()
             with self.log_path.open("wb") as log:
                 self.process = subprocess.Popen(
                     command, cwd=executable.parent, env=env, stdin=subprocess.DEVNULL,
                     stdout=log, stderr=subprocess.STDOUT, creationflags=flags,
                 )
-            self._wait_ready()
+            startup = _StartupLog(self.log_path, on_phase)
+            self._wait_ready(startup)
             self.startup_timing["serverReadyMs"] = (time.perf_counter() - server_started) * 1000
+            startup.read(notify=False)
+            self.startup_timing.update(startup.timings())
             if gpu_projector or backend == "metal":
                 verification_started = time.perf_counter()
                 placement = self.log_path.read_text(encoding="utf-8", errors="replace")
@@ -330,7 +459,7 @@ class GGUFServer:
         result.check_returncode()
         return match[1]
 
-    def _wait_ready(self) -> None:
+    def _wait_ready(self, startup: _StartupLog | None = None) -> None:
         assert self.process is not None
         started_at = time.monotonic()
         deadline = started_at + 180
@@ -349,6 +478,8 @@ class GGUFServer:
                         return
             except OSError:
                 pass
+            if startup is not None:
+                startup.read()
             now = time.monotonic()
             if now < deadline:
                 # Small models often load before the next long polling interval.
@@ -395,7 +526,9 @@ class GGUFServer:
         tokens = self._post("/tokenize", {"content": template, "add_special": True})["tokens"]
         return len(tokens) + 384 * sum(bool(turn.get("imagePath")) for turn in messages)
 
-    def _summarize(self, transcript: str) -> str:
+    def _summarize(self, transcript: str, emit: Callable[[dict], None],
+                   cancellation: CompletionCancellation) -> str:
+        cancellation.check()
         # Forks and retried versions can ask this engine to summarize identical text.
         key = hashlib.sha256(transcript.encode("utf-8", "surrogatepass")).digest()
         if cached := self.compaction_summaries.pop(key, None):
@@ -407,7 +540,7 @@ class GGUFServer:
             before = self._post("/detokenize", {"tokens": tokens[:half]})["content"]
             after = self._post("/detokenize", {"tokens": tokens[-half:]})["content"]
             transcript = before + "\n…\n" + after
-        result = self._post("/v1/chat/completions", {
+        body = {
             "messages": [
                 {"role": "system", "content": (
                     "Summarize this earlier conversation in concise factual notes. Preserve user preferences, "
@@ -416,10 +549,20 @@ class GGUFServer:
                 )},
                 {"role": "user", "content": transcript},
             ],
-            "temperature": 0, "max_tokens": 224,
+            "temperature": 0, "max_tokens": 224, "stream": True,
             "chat_template_kwargs": {"enable_thinking": False},
-        }, timeout=120)
-        summary = result["choices"][0]["message"].get("content", "").strip()
+        }
+        text = []
+        with self._completion(body, emit, cancellation, announce_wait=False, timeout=120) as response:
+            for event in _completion_events(response, cancellation):
+                for choice in event.get("choices", []):
+                    delta = choice.get("delta", {})
+                    if delta.get("content") or delta.get("reasoning_content"):
+                        cancellation.summary_streaming = True
+                    if token := delta.get("content"):
+                        text.append(token)
+        cancellation.summary_streaming = False
+        summary = "".join(text).strip()
         if not summary:
             raise RuntimeError("The local model could not compact the earlier conversation. Choose a larger context.")
         if len(self.compaction_summaries) == _COMPACTION_CACHE_LIMIT:
@@ -429,15 +572,20 @@ class GGUFServer:
 
     @contextmanager
     def _completion(self, body: dict, emit: Callable[[dict], None],
-                    cancellation: CompletionCancellation) -> Iterator[http.client.HTTPResponse]:
-        connection = http.client.HTTPConnection(urllib.parse.urlsplit(self.base).netloc, timeout=180)
+                    cancellation: CompletionCancellation, *, announce_wait: bool = True,
+                    timeout: float = 180) -> Iterator[http.client.HTTPResponse]:
+        connection = http.client.HTTPConnection(urllib.parse.urlsplit(self.base).netloc, timeout=timeout)
         try:
             connection.connect()
             assert connection.sock is not None
-            # Shutdown wakes a blocked response read and tells llama.cpp to cancel this request.
-            with cancellation.watch(connection.sock):
+            # HTTPConnection can close its socket when handing off a close-delimited
+            # response. Keep a live socket handle for cancelling that response.
+            with connection.sock.dup() as cancel_socket, cancellation.watch(cancel_socket):
+                connection.response_class = lambda _socket, **kwargs: http.client.HTTPResponse(
+                    _CompletionReader(cancel_socket, cancellation, timeout), **kwargs)
                 emit({"type": "cancellable"})
-                emit({"type": "phase", "stage": "waiting-for-first-token", "text": "Waiting for the first token…"})
+                if announce_wait:
+                    emit({"type": "phase", "stage": "waiting-for-first-token", "text": "Waiting for the first token…"})
                 connection.request("POST", "/v1/chat/completions", json.dumps(body).encode("utf-8"), {
                     "Authorization": f"Bearer {self.key}", "Content-Type": "application/json", "Connection": "close",
                 })
@@ -457,6 +605,7 @@ class GGUFServer:
                  cancellation: CompletionCancellation | None = None) -> dict[str, Any]:
         cancellation = cancellation or CompletionCancellation()
         cancellation.check()
+        cancellation.summary_streaming = False
         preparing = time.perf_counter()
         reasoning = request.get("mode") == "reasoning"
         options: dict[str, Any] = {"chat_template_kwargs": {"enable_thinking": reasoning}}
@@ -474,7 +623,7 @@ class GGUFServer:
 
         def compact(transcript: str) -> str:
             emit({"type": "phase", "stage": "preparing-conversation", "text": "Compacting earlier turns…"})
-            return self._summarize(transcript)
+            return self._summarize(transcript, emit, cancellation)
 
         def prompt_tokens(turns: list[dict[str, Any]]) -> int:
             return self._prompt_tokens(turns, options)
@@ -524,7 +673,7 @@ class GGUFServer:
         body = {
             **options, "messages": messages, "max_tokens": max_tokens,
             "temperature": request["temperature"], "top_p": request["topP"], "seed": request["seed"],
-            "stream": True, "stream_options": {"include_usage": True},
+            "stream": True, "stream_options": {"include_usage": True}, "return_progress": True,
         }
         sampling = request.get("sampling") or {}
         for option, parameter in (("topK", "top_k"), ("minP", "min_p"), ("repeatPenalty", "repeat_penalty"), ("stopSequences", "stop")):
@@ -535,24 +684,17 @@ class GGUFServer:
         usage = {}
         engine_timing = {}
         first_chunk = None
-        finished = False
         finish_reason = None
+        prefill_percent = -1
         started = time.perf_counter()
         with self._completion(body, emit, cancellation) as response:
-            for raw in response:
-                cancellation.check()
-                if not raw.startswith(b"data:"):
-                    continue
-                line = raw[5:].strip()
-                if line == b"[DONE]":
-                    finished = True
-                    break
-                event = json.loads(line)
-                if event.get("error"):
-                    message = event["error"].get("message", "GGUF inference failed.")
-                    if message == "Compute error.":
-                        raise GGUFComputeError(message)
-                    raise RuntimeError(message)
+            for event in _completion_events(response, cancellation):
+                if first_chunk is None and isinstance(progress := event.get("prompt_progress"), dict):
+                    percent = _prefill_percent(progress)
+                    if percent is not None and percent > prefill_percent:
+                        prefill_percent = percent
+                        text_label = f"Processing prompt · {percent}%" if percent else "Processing prompt…"
+                        emit({"type": "phase", "text": text_label})
                 if event.get("usage"):
                     usage = event["usage"]
                 # llama.cpp includes these slot counters on the final stream chunk.
@@ -581,8 +723,6 @@ class GGUFServer:
                         for key, value in change.get("function", {}).items():
                             if key in call["function"]:
                                 call["function"][key] += value
-        if not finished:
-            raise RuntimeError("The GGUF runtime disconnected during the response.")
         if calls and finish_reason != "tool_calls":
             raise RuntimeError("The chat model did not finish its tool call. Increase Maximum output in Chat settings and retry.")
         elapsed = max(time.perf_counter() - started, 0.001)

@@ -2959,7 +2959,7 @@ class Handler(BaseHTTPRequestHandler):
                 worker.close()
             flux2.release_pipeline()
         self.send_json(202, {"job": VIDEO_JOBS.start({
-            "prompt": prompt.strip(), "seed": seed, "reference": frame,
+            "prompt": prompt.strip(), "seed": seed, "reference": frame, "frames": payload.get("frames", spec["frames"]),
         }, release_models)})
 
     def handle_post(self) -> None:

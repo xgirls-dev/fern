@@ -66,11 +66,17 @@ function replaceFindHighlight(previous: Range | undefined, next: Range | undefin
   } else if (ranges?.size === 0) CSS.highlights.delete(findHighlight);
 }
 
-function revealFindRange(feed: HTMLElement, range: Range) {
+function revealFindRange(feed: HTMLElement, range: Range, image?: HTMLImageElement | null) {
   const line = Array.from(range.getClientRects()).find((rect) => rect.width && rect.height);
-  if (!line) return;
+  if (!line || !feed.clientHeight) return false;
   const viewport = feed.getBoundingClientRect();
-  if (line.top < viewport.top + 8 || line.bottom > viewport.bottom - 12) {
+  const top = viewport.top + 8;
+  const bottom = viewport.bottom - 12;
+  if (image) {
+    const visibleImageTop = Math.max(image.getBoundingClientRect().top, line.bottom - (bottom - top));
+    if (visibleImageTop < top) feed.scrollTop += visibleImageTop - top;
+    else if (line.bottom > bottom) feed.scrollTop += line.bottom - bottom;
+  } else if (line.top < top || line.bottom > bottom) {
     feed.scrollTop += line.top - viewport.top - Math.min(40, viewport.height / 4);
   }
   const scroller = range.startContainer.parentElement?.closest(horizontalScroller);
@@ -78,6 +84,7 @@ function revealFindRange(feed: HTMLElement, range: Range) {
     const bounds = scroller.getBoundingClientRect();
     if (line.left < bounds.left || line.right > bounds.right) scroller.scrollLeft += line.left - bounds.left - 16;
   }
+  return true;
 }
 
 function characterBounds(text: Text, offset: number) {
@@ -240,26 +247,46 @@ export function useTextScroll(threadId: string, { persistPosition = true, paneFo
     savePosition(feed);
   }, [cancelRestore, savePosition]);
 
-  const revealMessage = useCallback((id: string, find?: Pick<ChatSearchMatch, "query" | "occurrence">,
+  const revealMessage = useCallback((id: string, find?: Pick<ChatSearchMatch, "query" | "occurrence" | "imageIndex">,
     block: ScrollLogicalPosition = "nearest", scroll = true) => {
     const feed = feedRef.current;
     const row = feed?.querySelector(`[data-chat-message="${CSS.escape(id)}"]`);
     if (!feed || !row) return;
     let target = find && row.querySelector("[data-find-target]");
     let range = find && target ? renderedMatch(target, find) : undefined;
+    let pendingReveal = scroll;
+    let retryFrame: number | undefined;
+    const reveal = () => {
+      if (!pendingReveal || !range) return;
+      const image = find?.imageIndex === undefined ? undefined : target?.closest("figure")?.querySelector("img");
+      if (revealFindRange(feed, range, image)) {
+        pendingReveal = false;
+        savePosition(feed, row);
+      }
+    };
+    const revealWhenLaidOut = () => {
+      reveal();
+      if (!pendingReveal || !range || retryFrame !== undefined) return;
+      // The matched text can already exist before it has a measurable box.
+      retryFrame = requestAnimationFrame(() => {
+        retryFrame = undefined;
+        reveal();
+      });
+    };
     if (find) replaceFindHighlight(undefined, range);
     if (scroll) {
       cancelRestore();
       following.current = false;
-      if (range) revealFindRange(feed, range);
-      else (target ?? row).scrollIntoView({ block });
-      savePosition(feed, row);
+      revealWhenLaidOut();
+      if (pendingReveal) {
+        (target ?? row).scrollIntoView({ block });
+        savePosition(feed, row);
+      }
     }
     if (!find) return;
 
     // Streaming Markdown can replace the text nodes behind a highlight. Refresh the
     // range in place, revealing it once if the selected text has yet to paint.
-    let pendingReveal = scroll && !range;
     const observer = new MutationObserver((changes) => {
       const nextTarget = row.querySelector("[data-find-target]");
       if (target === nextTarget && !changes.some(({ target: changed }) => nextTarget?.contains(changed))) return;
@@ -267,14 +294,11 @@ export function useTextScroll(threadId: string, { persistPosition = true, paneFo
       const updated = target ? renderedMatch(target, find) : undefined;
       replaceFindHighlight(range, updated);
       range = updated;
-      if (updated && pendingReveal) {
-        pendingReveal = false;
-        revealFindRange(feed, updated);
-        savePosition(feed, row);
-      }
+      revealWhenLaidOut();
     });
     observer.observe(row, { subtree: true, childList: true, characterData: true });
     return () => {
+      if (retryFrame !== undefined) cancelAnimationFrame(retryFrame);
       observer.disconnect();
       replaceFindHighlight(range, undefined);
     };

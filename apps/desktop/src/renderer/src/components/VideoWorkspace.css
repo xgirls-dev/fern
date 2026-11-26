@@ -50,8 +50,9 @@
   white-space: nowrap;
 }
 .video-reference-caption, .video-format-row, .video-clip-details { color: var(--muted); font-size: 12px; }
-.video-format-row > span, .video-results-header > h2, .video-clip-details > span { margin-inline-end: auto; }
-.video-format-row input { width: 100px; padding-inline: 8px; }
+.video-results-header > h2, .video-clip-details > span { margin-inline-end: auto; }
+.video-format-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.video-format-row :is(.ui-select, input) { width: 100%; }
 .video-actions, .video-setup { margin-top: 16px; }
 .video-actions { flex-wrap: wrap; }
 .video-setup p { margin: 0 0 8px; color: var(--muted); font-size: 13px; }

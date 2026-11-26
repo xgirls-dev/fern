@@ -42,7 +42,7 @@ The preview is unnotarized. If macOS blocks the first launch, open **System Sett
 
 ### Start a session
 
-- **Chat.** Open **New thread → Chat**, write a draft, and choose **Browse models** if you need a local model. Fern recommends the smallest compatible download in its catalog. Attach an image and choose a vision model to ask about it. **Gemma 4 E4B · GGUF** includes its matching vision projector.
+- **Chat.** Open **New thread → Chat**, write a draft, and choose **Browse models** if you need a local model. Fern recommends the smallest compatible download in its catalog. With **CPU** selected in **Preferences → Compute**, choose **Qwen2.5 0.5B Instruct** for a 491 MB text-only download. **Gemma 4 E4B · GGUF** includes its matching vision projector for chats with images.
 - **Create an image.** Go to **Models → Image** and install a model available for your device. **Klein 4B** is the smaller FLUX.2 option. Choose **New thread → Create image**, select the model, and enter a prompt.
 - **Make an image in Chat.** Install Gemma 4 E4B and a compatible image model such as Klein 4B. Keep **Preferences → Compute → Generation device** set to **Available GPU**. In a Gemma chat, choose **Auto** or the installed model under **Chat settings → Image generation**. Try “Create a crisp wildlife photograph of a red fox in fresh snow,” then “What works well in this shot?”
 
@@ -92,7 +92,7 @@ Open **Images** to browse renders, inspect settings, save a copy, or remix a res
 
 On Windows with a compatible Intel GPU, install **Wan 2.2 Turbo** in **Models → Video**. Open **Video**, choose a PNG, JPEG, or WebP first frame, and describe the motion. You can also send a generated image to Video with **Animate image**.
 
-The current preset makes a **544 × 704** portrait clip with **21 frames at 16 fps**, about **1.3 seconds**. Preview the clip, revisit it in the clip history, or export it as WebM.
+The default makes a **544 × 704** portrait clip with **21 frames at 16 fps**, about **1.3 seconds**. Choose **Duration** for clips from 4 to 10 seconds. Longer clips generate more frames at the same frame rate and need more time and GPU memory. Preview the clip, revisit it in the clip history, or export it as WebM.
 
 ### Speech
 
@@ -111,7 +111,7 @@ Choose **New thread → Create speech** on Windows. Use a **Qwen3-TTS** preset v
 
 **Available GPU** is the default in Preferences. Choose **CPU** explicitly for models that support it. NVIDIA on Windows requires a build with the matching OpenVINO NVIDIA plugin and a model that supports that path.
 
-On Windows and Omarchy, text-only GGUF uses llama.cpp with OpenVINO, and GGUF vision on Intel uses llama.cpp with Vulkan. On Apple Silicon, llama.cpp uses Metal for GGUF chat and vision. Fern downloads pinned engines as needed. Your operating system supplies the graphics drivers.
+On Windows and Omarchy, GGUF text uses OpenVINO or Vulkan on the GPU, and GGUF vision uses Vulkan on supported Intel GPUs. On Apple Silicon, Auto uses Metal for GGUF chat and vision. Selecting CPU uses llama.cpp’s native CPU engine for GGUF text and vision. Fern downloads pinned engines as needed. Your operating system supplies the graphics drivers.
 
 ## Benchmarks
 

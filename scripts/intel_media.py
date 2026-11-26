@@ -68,11 +68,11 @@ def run_process(command, event, log_path, *, cwd, env=None, timeout=600, update=
             creationflags=WINDOW_FLAG,
         )
         try:
-            deadline = time.monotonic() + timeout
+            deadline = None if timeout is None else time.monotonic() + timeout
             while process.poll() is None:
                 if event.wait(0.2):
                     check_cancel(event)
-                if time.monotonic() > deadline:
+                if deadline is not None and time.monotonic() > deadline:
                     raise RuntimeError("The Intel GPU runtime timed out. Retry the operation.")
                 if update:
                     update(log_path)
@@ -232,7 +232,7 @@ class IntelMedia:
             f"Install {spec['label']} in Models before generating." if not present else
             f"{spec['runtimeBackend']} · Intel GPU"
         )
-        return {
+        status = {
             "selectedModel": model, "modelId": spec["repo"], "modelDir": str(self.folder(model)),
             "runtimeReady": ready, "runtimeNote": note, "platformSupported": available, "requestedDevice": device,
             "selectedDevice": "INTEL_GPU" if ready else None, "modelRevision": spec["revision"],
@@ -240,6 +240,13 @@ class IntelMedia:
             "adapters": [{"id": "INTEL_GPU", "label": "Intel GPU", "available": available,
                           "runtimeReady": ready, "note": note, "supportsReferenceImage": model == VIDEO_ID}],
         }
+
+        if model == VIDEO_ID:
+            status["videoFormat"] = {
+                "width": spec["defaultWidth"], "height": spec["defaultHeight"], "fps": spec["fps"],
+                "defaultFrames": spec["frames"], "frameOptions": spec["frameOptions"],
+            }
+        return status
 
     def arguments(self, model, event, log):
         self.ensure_runtime(event, log)
@@ -445,6 +452,7 @@ class IntelMedia:
         self.close()
         args = self.arguments(VIDEO_ID, event, log)
         spec = INTEL_MEDIA_CATALOG[VIDEO_ID]
+        frames = request["frames"]
         reference = stage / "reference.png"
         width, height = spec["defaultWidth"], spec["defaultHeight"]
         request["reference"].save(reference, format="PNG")
@@ -453,31 +461,39 @@ class IntelMedia:
         started = time.perf_counter()
         phases = ("Loading Wan 2.2 on Intel GPU…", "Generating frames on Intel GPU…", "Decoding the clip…", "Writing WebM…")
         phase = 0
+        step = 0
+        steps = spec["defaultSteps"]
+        sampling_progress = re.compile(rf"\|\s+(\d+)/{steps}\s+-")
 
         def progress(path):
-            nonlocal phase
+            nonlocal phase, step
             content = path.read_text(encoding="utf-8", errors="replace")
             next_phase = 0
             if "generate_video completed" in content:
                 next_phase = 3
-            elif "vae decode graph" in content:
+            elif "decode_video_outputs latent" in content or "vae decode graph" in content:
                 next_phase = 2
             elif "total params memory size" in content:
                 next_phase = 1
             if next_phase > phase:
                 phase = next_phase
                 log(phases[phase])
+            if phase == 1 and (sample := content.rpartition("] sample ")[2]) != content:
+                completed = max((int(value) for value in sampling_progress.findall(sample)), default=0)
+                if step < completed <= steps:
+                    step = completed
+                    log(f"Generating frames on Intel GPU… Step {step} of {steps} complete")
 
         details = run_process([
             str(self.runtime / "sd-cli.exe"), "-M", "vid_gen", *args, "--init-img", str(reference),
-            "--seed", str(request["seed"]), "--steps", str(spec["defaultSteps"]), "--cfg-scale", "1",
+            "--seed", str(request["seed"]), "--steps", str(steps), "--cfg-scale", "1",
             "--sampling-method", "euler", "--scheduler", spec["preset"]["scheduler"],
-            "-W", str(width), "-H", str(height), "--video-frames", str(spec["frames"]),
+            "-W", str(width), "-H", str(height), "--video-frames", str(frames),
             "--fps", str(spec["fps"]), "-p", request["prompt"], "-o", str(output),
-        ], event, stage / "runtime.log", cwd=self.runtime, update=progress)
+        ], event, stage / "runtime.log", cwd=self.runtime, timeout=None, update=progress)
         verify_vulkan_residency(details)
-        if f"decoded {width}x{height}x{spec['frames']}x3" not in details:
-            raise RuntimeError("Wan did not return the expected frames.")
+        if f"decoded {width}x{height}x{frames}x3" not in details:
+            raise RuntimeError(f"Wan did not return the requested {frames} frames.")
         if not output.is_file():
             raise RuntimeError("Wan did not create a video.")
         with output.open("rb") as stream:

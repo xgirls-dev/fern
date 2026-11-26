@@ -7,7 +7,7 @@ import { ModelLibrary, type InstalledModel } from "./ModelLibrary";
 import { TextModelLibrary } from "./TextModelLibrary";
 import { SpeechModelRequirements } from "./SpeechModelRequirements";
 import type { ModelSetup, SetupSelection } from "../lib/modelSetup";
-import { recommendedTextModelIssue, textModelReadiness } from "../lib/textThreads";
+import { formatTextModelDownloadSize, recommendedTextModelIssue, textModelReadiness } from "../lib/textThreads";
 
 export type ModelCategory = "image" | "text" | "audio" | "video";
 export function ModelsView({ category: tab, onCategoryChange, text, audio, setup, onReturnToDraft, imageGpuAvailable }: {
@@ -49,8 +49,10 @@ export function ModelsView({ category: tab, onCategoryChange, text, audio, setup
   const unfinishedDownload = compatibleDownloads.find((model) =>
     model.id === install?.modelId && install.status !== "idle" && install.status !== "complete");
   const recommendedText = repairTarget ?? (!installedText
-    ? unfinishedDownload ?? compatibleDownloads.sort((a, b) => a.bytes - b.bytes ||
-      Number(b.id === text.status.defaultModelId) - Number(a.id === text.status.defaultModelId))[0]
+    ? unfinishedDownload ?? compatibleDownloads
+      .filter((model) => model.recommendedDevices?.includes(text.computeDevice) !== false)
+      .sort((a, b) => a.bytes - b.bytes ||
+        Number(b.id === text.status.defaultModelId) - Number(a.id === text.status.defaultModelId))[0]
     : undefined);
   const installedTool = text.status.imageToolModels?.[0];
   const installedImage = needsImageTools ? installedTool : imageCatalog.find((model) => model.installed &&
@@ -90,7 +92,7 @@ export function ModelsView({ category: tab, onCategoryChange, text, audio, setup
             onChange={(modelId) => setTextSelection({ setup, modelId })}
             options={compatibleText.map(({ id, name }) => ({ value: id, label: name }))} /> : <span>{installedText ? `${installedText.name} · ${selectedTextReadiness?.label}` :
             repairTarget ? `${repairTarget.name} · Needs repair` :
-            recommendedText ? `${recommendedText.name} · ${(recommendedText.bytes / 1e9).toFixed(2)} GB download` :
+            recommendedText ? `${recommendedText.name} · ${formatTextModelDownloadSize(recommendedText.bytes)} download` :
             !text.statusLoaded ? "Checking chat models…" :
             needsVision ? "Choose a chat model with vision." : "Choose a compatible chat model."}</span>}
         </div>}

@@ -21,6 +21,7 @@ export function TextPromptEditor({ draftKey, content, original, replaceLatest, f
 }) {
   const { fieldRef: field, bindField } = useTextDraftField(draftKey, content, 240);
   const statusId = useId();
+  const resendScopeId = `${statusId}-resend`;
   const canApply = !!content.trim() || hasImage;
   const canSend = canApply && !sendUnavailable && (!replaceLatest || content.trim() !== original.trim());
   const sendLabel = replaceLatest ? "Send revision" : "Send in new chat";
@@ -71,11 +72,12 @@ export function TextPromptEditor({ draftKey, content, original, replaceLatest, f
       <div className="text-prompt-editor-actions">
         <Button variant="ghost" onClick={onCancel}>Cancel</Button>
         <Button variant="secondary" disabled={!canApply} onClick={() => onApply(false)}>Open branch draft</Button>
-        {onResend && <Button variant="secondary" disabled={!canSend} onClick={onResend}>Resend</Button>}
+        {onResend && <Button variant="secondary" disabled={!canSend} onClick={onResend} aria-describedby={resendScopeId}>Resend here</Button>}
         <Button type="submit" variant="primary" disabled={!canSend} aria-describedby={sendUnavailable ? statusId : undefined}><Send size={15} aria-hidden="true" />{sendLabel}</Button>
       </div>
       {sendUnavailable && <span id={statusId} className="text-prompt-editor-status" role="status">{sendUnavailable}</span>}
       {!sendUnavailable && replaceLatest && <span className="text-prompt-editor-status">The previous prompt and reply stay in Prompt versions.</span>}
+      {onResend && <span id={resendScopeId} className="text-prompt-editor-status">Resending here replaces this prompt and the messages after it. You can restore the original in Versions.</span>}
     </form>
   );
 }
