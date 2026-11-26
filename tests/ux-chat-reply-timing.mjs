@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { expect } from "@playwright/test";
-import { measureWarmStop, observeChatReply, readReplyTiming } from "../apps/desktop/e2e/chat-reply-timing.mjs";
-import { fixture } from "./ui-fixture.mjs";
+import { measureWarmStop, observeChatReply, readReplyTiming, verifyPromptDetails } from "../apps/desktop/e2e/chat-reply-timing.mjs";
+import { fixture, savedTextWorkspace } from "./ui-fixture.mjs";
 
 let stream;
 let connections = 0;
@@ -71,7 +71,7 @@ try {
     state.textStatus.job = {
       ...state.textStatus.job, partialText: "ORCHID-42", status: "complete", finishedAt: Date.now() / 1000,
       result: { inputTokens: 37, outputTokens: 6, generationSeconds: 0.4, tokensPerSecond: 15, backend: "OpenVINO", device: "GPU",
-        runtimeTiming: { prefillMs: 20, decodeMs: 80, cachedPromptTokens: 32 } },
+        runtimeTiming: { prefillMs: 20, decodeMs: 80, evaluatedPromptTokens: 5, cachedPromptTokens: 32 } },
     };
     emit({ job: state.textStatus.job });
     stream.end();
@@ -88,6 +88,11 @@ try {
   assert.equal(warm.followUp.runtime.cachedPromptTokens, 32);
   assert.equal(warm.followUp.backend, "OpenVINO");
   assert(await page.evaluate(() => window.EventSource === window.originalBenchEventSource));
+  await expect.poll(async () => (await savedTextWorkspace(page))?.threads.find(({ id }) => id === state.textRequests[2].threadId)?.messages.at(-1)?.jobId)
+    .toBe(state.textRequests[2].requestId);
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(reply.locator(".text-message-content")).toContainText("ORCHID-42");
+  assert.equal(await verifyPromptDetails(reply, warm.followUp.runtime), "Prompt processing 20 ms · 5 tokens processed · 32 tokens reused");
   assert.deepEqual(errors, []);
   console.log("The benchmark distinguishes loading, first answer, backend Stop, composer readiness, and the warm follow-up.");
 } finally {
