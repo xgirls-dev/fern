@@ -73,7 +73,7 @@ try {
   await stream.evaluate((row) => { row.dataset.connectedReply = "true"; });
   state.textStatus.job = { ...state.textStatus.job, phase: "Queued…" };
   await expect(composerStatus).toHaveText("Starting response…");
-  for (const phase of ["Checking model memory…", "Loading model weights…", "Preparing model context…", "Warming up model…"]) {
+  for (const phase of ["Preparing Apple GPU…", "Checking model memory…", "Loading model weights…", "Preparing model context…", "Warming up model…"]) {
     state.textStatus.job = { ...state.textStatus.job, phase };
     await expect(stream).toHaveAttribute("data-connected-reply", "true");
     await expect(stream).toContainText(phase);

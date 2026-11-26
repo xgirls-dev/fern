@@ -475,7 +475,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   const localError = actionError && (actionError.threadId ? actionError.threadId === threadId : focused) ? actionError : null;
   const catalogNotice = reconnecting || modelNotice?.tone === "error" ? null : catalogError;
   const undoBlocked = responseHere;
-  const reportingModelSetup = /^(Checking model memory|Loading model weights|Preparing model context|Warming up model)…$/.test(phase);
+  const reportingModelSetup = /^(Preparing Apple GPU|Checking model memory|Loading model weights|Preparing model context|Warming up model)…$/.test(phase);
   const statusLabel = serviceUnavailable && responseHere ? "Response interrupted."
     : reconnecting ? stopping ? "Reconnecting to stop…" : "Reconnecting to the text runtime…"
     : stopping ? "Stopping…"
