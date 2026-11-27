@@ -42,6 +42,12 @@ try {
   await expect(stream.locator(".text-reply-stage svg")).toHaveCount(0);
   assert.equal(await page.evaluate(() => window.firstReplyFrame), true,
     "The first loading row should fit inside the conversation on its first frame");
+  update({ phase: "Starting the text worker…" });
+  await expect(status).toHaveText("Starting response…");
+  await expect(stream.locator(".text-reply-stage")).toHaveText("Starting response…");
+  await page.clock.fastForward(25_100);
+  await expect(status).toHaveText("Still starting the response…");
+  await expect(button("Stop generation")).toBeEnabled();
   update({ phase: "Releasing the image model…" });
   await expect(status).toHaveText("Releasing the image model…");
   await expect(stream).toContainText("Releasing the image model…");
@@ -69,6 +75,9 @@ try {
   await expect(button("Stop generation")).toBeEnabled();
   update({ phase: "Preparing conversation…" });
   await expect(status).toHaveText("Preparing conversation…");
+  await page.clock.fastForward(25_100);
+  await expect(status).toHaveText("Still preparing the conversation…");
+  await expect(button("Stop generation")).toBeEnabled();
   update({ phase: "Waiting for the first token…" });
   await expect(status).toHaveText("Waiting for the first token…");
   await expect(stream).toContainText("Waiting for the first token…");

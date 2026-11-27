@@ -219,6 +219,11 @@ os._exit(0)
         self.assertEqual(source["reference"]["passageIndex"], 0)
         self.assertEqual(source["reference"]["quotedCharacters"], len(document["text"]))
         self.assertEqual([call.args[0]["type"] for call in emit.call_args_list].count("residency"), 1)
+        self.assertEqual([call.args[0]["text"] for call in emit.call_args_list
+                          if call.args[0]["type"] == "phase" and "text" in call.args[0]], [
+            "Loading the OpenVINO model…", "Preparing conversation…", "Waiting for the first token…",
+            "Preparing conversation…", "Waiting for the first token…",
+        ])
 
     def test_text_model_status_surfaces_fresh_install_disk_and_companion_requirements(self):
         with patch.object(api, "TEXT_MODEL_REGISTRY", self.registry), patch.object(api, "apple_silicon", return_value=False):
@@ -799,7 +804,7 @@ for line in sys.stdin:
                     "requestedDevice": "AUTO", "device": "GPU",
                 })
                 self.assertEqual([event.kwargs["phase"] for event in events.call_args_list if "phase" in event.kwargs], [
-                    "Preparing conversation…", "Starting the text worker…", "Loading the OpenVINO model…",
+                    "Starting the text worker…", "Loading the OpenVINO model…",
                 ])
         finally:
             worker.close()

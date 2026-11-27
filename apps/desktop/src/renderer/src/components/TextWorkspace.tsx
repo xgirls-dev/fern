@@ -478,13 +478,14 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   const localError = actionError && (actionError.threadId ? actionError.threadId === threadId : focused) ? actionError : null;
   const catalogNotice = reconnecting || modelNotice?.tone === "error" ? null : catalogError;
   const undoBlocked = responseHere;
+  const startingLabel = replyPaused ? "Still starting the response…" : "Starting response…";
   const reportingModelSetup = /^(Preparing Apple GPU|Checking model memory|Loading model weights|Preparing model context|Warming up model)…$/.test(phase);
   const statusLabel = serviceUnavailable && responseHere ? "Response interrupted."
     : reconnecting ? stopping ? "Reconnecting to stop…" : "Reconnecting to the text runtime…"
     : stopping ? "Stopping…"
     : restoringReply ? restorationLabel
     : pendingHere ? liveJob && liveJob.status !== "idle" ? "Finishing response…" : "Starting response…"
-    : phase === "Queued…" ? "Starting response…"
+    : phase === "Queued…" || phase === "Starting the text worker…" ? startingLabel
     : creatingImage ? "Creating an image…"
     : imageReleaseLabel ? imageReleaseLabel
     : phase.startsWith("Finding document") ? phase
@@ -492,21 +493,21 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
     : /download/i.test(phase) ? replyPaused ? "Still downloading the text runtime…" : "Downloading the text runtime…"
     : phase.startsWith("Checking hardware") ? replyPaused ? "Still checking hardware…" : "Checking hardware…"
     : reportingModelSetup ? replyPaused ? `Still ${phase.charAt(0).toLowerCase()}${phase.slice(1)}` : phase
-    : /^(loading|starting the text worker)/i.test(phase) ? replyPaused ? "Still loading the model…" : "Loading model…" : null;
+    : /^loading/i.test(phase) ? replyPaused ? "Still loading the model…" : "Loading model…" : null;
   const hasReplyContent = !!replyContent.trim();
   const hasReplyReasoning = !!replyReasoning?.trim();
-  const waitingForToken = phase.startsWith("Waiting for");
-  const prefillLabel = phase.startsWith("Processing prompt")
+  const waitingLabel = phase.startsWith("Processing prompt")
     ? replyPaused ? phase.replace("Processing prompt", "Still processing prompt") : phase
-    : null;
+    : phase.startsWith("Waiting for") ? replyPaused ? "Still waiting for the first token…" : "Waiting for the first token…"
+    : phase === "Preparing conversation…" || phase === "Model ready. Preparing the conversation…"
+      ? replyPaused ? "Still preparing the conversation…" : "Preparing conversation…"
+      : startingLabel;
   const replyProgress = useMemo<TextReplyProgress>(() => checkingImage ? { kind: "image-check", label: "Checking the image…" }
     : statusLabel ? { kind: "status", label: statusLabel }
     : hasReplyContent ? { kind: "answer", label: replyPaused ? "Waiting for more text…" : "Responding…" }
     : hasReplyReasoning ? { kind: "reasoning", label: replyPaused ? "Still reasoning…" : "Reasoning…" }
-    : { kind: "status", label: prefillLabel ?? (waitingForToken
-      ? replyPaused ? "Still waiting for the first token…" : "Waiting for the first token…"
-      : replyPaused ? "Still preparing the conversation…" : "Preparing conversation…") },
-  [checkingImage, hasReplyContent, hasReplyReasoning, prefillLabel, replyPaused, statusLabel, waitingForToken]);
+    : { kind: "status", label: waitingLabel },
+  [checkingImage, hasReplyContent, hasReplyReasoning, replyPaused, statusLabel, waitingLabel]);
   const unavailableReason = modelNotice?.label ?? (!modelAvailable ? "Choose an installed model to send" : incompatibleImages ? "Choose a vision model or remove the attachment" : "");
   const activity = responseHere ? replyProgress.label
     : loadingJob && !serviceUnavailable ? statusError ? "Reconnecting to the model load…"
