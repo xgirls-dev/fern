@@ -18,6 +18,8 @@ Download `Fern-Setup-*.exe` and run it. The installer includes the desktop app, 
 
 Use Windows 10 or 11 with current graphics drivers. Check the download size in **Models** and leave space for model preparation, compiled caches, and outputs.
 
+If runtime setup fails or reports a verification error, close Fern and run a fresh installer from the release page. Then reopen Fern with the same Windows account to return to your saved chats and models.
+
 ### Omarchy x86-64 beta
 
 Download the `fern-*-x86_64.pkg.tar.zst` package. Use `pacman -U` with the downloaded filename, then open **Fern** from the app launcher. [Latest release](https://github.com/xgirls-dev/fern/releases/latest)
