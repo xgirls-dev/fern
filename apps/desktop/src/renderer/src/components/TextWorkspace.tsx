@@ -195,6 +195,7 @@ export interface TextWorkspaceProps {
   pane: ChatPane;
   focused: boolean;
   split: boolean;
+  replyAnnouncementRoot: HTMLDivElement | null;
   onChooseChat: () => void;
   onOpenThreadSearch: () => void;
   onClosePane: () => void;
@@ -215,7 +216,7 @@ export interface TextWorkspaceProps {
   onOpenCompute: () => void;
 }
 
-export function TextWorkspace({ studio, thread: activeThread, pane, focused, split, onChooseChat, onOpenThreadSearch, onClosePane,
+export function TextWorkspace({ studio, thread: activeThread, pane, focused, split, replyAnnouncementRoot, onChooseChat, onOpenThreadSearch, onClosePane,
   sidebarCollapsed = false, backendFailure, backendRestarting, onRestartBackend, onSetupModels, focusRequested, onFocusRequestHandled,
   findRequest, onFindRequestHandled, imageGpuAvailable,
   onOpenImage, onNewChat, onCreateImage, onCreateSpeech, onOpenCompute }: TextWorkspaceProps) {
@@ -990,9 +991,10 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
     }}>Dismiss error</Button>
   </>}>{failedStop?.message ?? localError?.message}</InlineNotice>;
   const loadProgressInInspector = loadingModel && panel === "settings";
+  const paneName = split ? pane === "primary" ? "Left chat" : "Right chat" : undefined;
 
   return (
-    <section className={`text-workspace${empty ? " text-workspace--empty" : ""}`} aria-label={split ? pane === "primary" ? "Left chat" : "Right chat" : "Text conversation"}>
+    <section className={`text-workspace${empty ? " text-workspace--empty" : ""}`} aria-label={paneName ?? "Text conversation"}>
       <header className="workspace-header text-header">
         <div className="workspace-heading">
           <WorkspaceThreadTitle
@@ -1207,7 +1209,8 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
               inputRef.current?.focus({ preventScroll: true });
             }}><ArrowDown size={16} aria-hidden="true" /></TooltipIconButton>}
         </div>
-        <TextReplyAnnouncement key={activeThread.id} jobId={displayJobId} inspectionMessageId={inspectionMessageId} messages={activeThread.messages} conversation={feedRef} />
+        <TextReplyAnnouncement key={activeThread.id} jobId={displayJobId} inspectionMessageId={inspectionMessageId}
+          messages={activeThread.messages} conversation={feedRef} root={replyAnnouncementRoot} paneName={paneName} />
         {empty && <div className="text-empty-actions" role="group" aria-label="Creation workspaces">
           <Button variant="ghost" onClick={onCreateImage}><ImagePlus size={15} aria-hidden="true" /> Create image</Button>
           <Button variant="ghost" onClick={onCreateSpeech}><AudioLines size={15} aria-hidden="true" /> Create speech</Button>

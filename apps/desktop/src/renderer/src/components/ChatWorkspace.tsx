@@ -7,7 +7,7 @@ import { SegmentedControl } from "./ui/controls";
 import { ResizeHandle } from "./ui/ResizeHandle";
 import { TooltipScope } from "./ui/Tooltip";
 
-type WorkspaceProps = Omit<TextWorkspaceProps, "thread" | "pane" | "focused" | "split" | "onChooseChat" | "onClosePane"> & {
+type WorkspaceProps = Omit<TextWorkspaceProps, "thread" | "pane" | "focused" | "split" | "replyAnnouncementRoot" | "onChooseChat" | "onClosePane"> & {
   storagePlaceholder: ReactNode;
 };
 
@@ -18,6 +18,7 @@ export function ChatWorkspace({ storagePlaceholder, ...props }: WorkspaceProps) 
   const layout = useRef<HTMLDivElement>(null);
   const divider = useRef<HTMLDivElement>(null);
   const primaryPaneId = useId();
+  const [replyAnnouncementRoot, setReplyAnnouncementRoot] = useState<HTMLDivElement | null>(null);
   const [picker, setPicker] = useState<ChatPane | null>(null);
   const [dragSize, setDragSize] = useState<number | null>(null);
   const [dropPane, setDropPane] = useState<ChatPane | null>(null);
@@ -53,6 +54,7 @@ export function ChatWorkspace({ storagePlaceholder, ...props }: WorkspaceProps) 
   const handlesChat = (event: DragEvent) => event.dataTransfer.types.includes(CHAT_NAV_DRAG);
 
   return <TooltipScope><div className="chat-split-shell">
+    <div className="sr-only" ref={setReplyAnnouncementRoot} />
     {split && <div className="chat-pane-switcher">
       <SegmentedControl label="Chat panes" value={activePane} options={[
         { value: "primary", label: "Left chat" },
@@ -80,6 +82,7 @@ export function ChatWorkspace({ storagePlaceholder, ...props }: WorkspaceProps) 
       <div id={primaryPaneId} className="chat-pane" data-chat-pane="primary" data-focused={activePane === "primary"}
         onPointerDownCapture={() => studio.focusPane("primary")} onFocusCapture={() => studio.focusPane("primary")}>
         <TextWorkspace {...props} thread={primaryThread} pane="primary" focused={activePane === "primary"} split={split}
+          replyAnnouncementRoot={replyAnnouncementRoot}
           onChooseChat={() => setPicker(split ? "primary" : "secondary")}
           onClosePane={() => { studio.closePane("primary"); focusComposer("primary"); }} />
       </div>
@@ -92,6 +95,7 @@ export function ChatWorkspace({ storagePlaceholder, ...props }: WorkspaceProps) 
         <div className="chat-pane" data-chat-pane="secondary" data-focused={activePane === "secondary"}
           onPointerDownCapture={() => studio.focusPane("secondary")} onFocusCapture={() => studio.focusPane("secondary")}>
           <TextWorkspace {...props} thread={secondaryThread} pane="secondary" focused={activePane === "secondary"} split
+            replyAnnouncementRoot={replyAnnouncementRoot}
             onChooseChat={() => setPicker("secondary")}
             onClosePane={() => { studio.closePane("secondary"); focusComposer("primary"); }} />
         </div>
