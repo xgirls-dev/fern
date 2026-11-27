@@ -97,6 +97,13 @@ try {
   await composer.waitFor();
   assert.equal(await composer.inputValue(), "Earlier draft");
 
+  await page.getByRole("button", { name: "Preferences", exact: true }).click();
+  await page.keyboard.press("Control+k");
+  await search.fill("Open current chat");
+  await search.press("Enter");
+  await expect(composer).toBeFocused();
+  await expect(composer).toHaveValue("Earlier draft");
+
   await page.setViewportSize({ width: 864, height: 547 });
   const sidebar = page.getByRole("complementary", { name: "Fern navigation" });
   const expand = page.getByRole("button", { name: "Expand sidebar", exact: true });

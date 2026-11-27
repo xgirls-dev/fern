@@ -77,11 +77,22 @@ try {
   await feed.focus();
   await page.keyboard.press("Control+k");
   const commands = page.getByRole("combobox", { name: "Search commands or threads" });
+  await commands.press("Escape");
+  await expect(feed).toBeFocused();
+  await page.keyboard.press("Control+k");
   await commands.fill("Open current chat");
   await expect(page.getByRole("option", { selected: true })).toContainText("Open current chat");
   await commands.press("Enter");
   await expect(draft).toBeFocused();
   await expect(draft).toHaveValue("Keep the exact draft.");
+  expect(await draft.evaluate((element) => [element.selectionStart, element.selectionEnd])).toEqual([3, 7]);
+  await expect.poll(async () => Math.abs(await anchorOffset() - expected)).toBeLessThan(10);
+
+  await feed.focus();
+  await page.keyboard.press("Control+k");
+  await commands.fill("Open current chat");
+  await page.getByRole("option", { name: /Open current chat/ }).click();
+  await expect(draft).toBeFocused();
   expect(await draft.evaluate((element) => [element.selectionStart, element.selectionEnd])).toEqual([3, 7]);
   await expect.poll(async () => Math.abs(await anchorOffset() - expected)).toBeLessThan(10);
   const resumedOffset = await anchorOffset();
