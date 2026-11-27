@@ -17,6 +17,7 @@ export function estimateTextRowHeight(message: TextMessage) {
 }
 
 const PAGE_SIZE = 12;
+const PAGES_PER_GROUP = 32;
 export const TEXT_TRANSCRIPT_WINDOW_THRESHOLD = 72;
 const OVERSCAN = "640px 0px";
 const CACHED_CHATS = 20;
@@ -94,6 +95,16 @@ const TranscriptPage = memo(function TranscriptPage({ index, first, last, estima
   return <div ref={element} className="text-transcript-page" data-chat-page={index} data-deferred={!mounted || undefined}
     aria-hidden={mounted ? undefined : true}
     style={mounted ? undefined : { height: rememberedHeight }}>{liveReply ? [...rows, liveReply] : rows}</div>;
+});
+
+const TranscriptPageGroup = memo(function TranscriptPageGroup({ pages, liveReply }: {
+  pages: readonly ReactElement<{ liveReply?: ReactElement }>[];
+  liveReply?: ReactElement;
+}) {
+  if (!liveReply) return pages;
+  const children = pages.slice();
+  children[children.length - 1] = cloneElement(children[children.length - 1], { liveReply });
+  return children;
 });
 
 export const TextTranscriptWindow = memo(function TextTranscriptWindow({ threadId, items, revealIndex, restoreIndex, renderItem, liveReply, keepFollowingTail }: {
@@ -254,11 +265,16 @@ export const TextTranscriptWindow = memo(function TextTranscriptWindow({ threadI
       estimate={page.estimatedHeight} cache={cache.pages} windowed={windowed} renderItem={mounted ? renderItem : undefined}
       storedCount={page.count - (hasTail ? 1 : 0)} />;
   }), [cache, canDeferPages, focused, hasLiveReply, nearby, pageCount, pages, renderItem, restorePage, revealPage, selection, tailPages, windowed]);
+  // Keep each page in the same group as the chat grows so its rows can retain focus and selection.
+  const groups = useMemo(() => Array.from({ length: Math.ceil(pageElements.length / PAGES_PER_GROUP) }, (_, index) => {
+    const start = index * PAGES_PER_GROUP;
+    return <TranscriptPageGroup key={index} pages={pageElements.slice(start, start + PAGES_PER_GROUP)} />;
+  }), [pageElements]);
   if (!pageCount) return null;
 
-  // Keep every page in the same keyed list when a new tail page is added.
-  const children = liveReply ? pageElements.slice() : pageElements;
-  if (liveReply) children[pageCount - 1] = cloneElement(pageElements[pageCount - 1], { liveReply });
+  // A stream update needs only the last group and its final page.
+  const children = liveReply ? groups.slice() : groups;
+  if (liveReply) children[children.length - 1] = cloneElement(children[children.length - 1], { liveReply });
   return <div ref={root} className="text-transcript-pages" onFocusCapture={(event) => setFocused(pageOf(event.target, root.current))}
     onBlurCapture={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setFocused(null); }}>
     {children}

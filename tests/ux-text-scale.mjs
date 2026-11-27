@@ -5,7 +5,7 @@ import { chooseMessageAction, fixture } from "./ui-fixture.mjs";
 const id = "text-thread-long-history";
 const otherId = "text-thread-short-history";
 const thresholdId = "text-thread-window-threshold";
-const messages = Array.from({ length: 420 }, (_, index) => ({
+const messages = Array.from({ length: 384 }, (_, index) => ({
   id: `row-${index}`, role: index % 2 ? "assistant" : "user", createdAt: index + 1,
   content: index % 2
     ? `## Reply ${index}\n\n${"A self-contained paragraph to test a long conversation. ".repeat(14)}\n\n- Save the result.\n- Keep the notes.`
@@ -42,8 +42,9 @@ async function find(query) {
 }
 
 try {
-  await expect(row("row-419")).toBeVisible();
-  await expect.poll(() => visiblePosition(row("row-419"))).toBe(true);
+  const previousTail = row("row-383");
+  await expect(previousTail).toBeVisible();
+  await expect.poll(() => visiblePosition(previousTail)).toBe(true);
   const settledMountCount = await rows.count();
   assert(settledMountCount <= 96, `The latest view mounted ${settledMountCount} of ${messages.length} messages`);
   assert.equal(await row("row-211").count(), 0);
@@ -72,12 +73,14 @@ try {
       return observed;
     };
   });
+  await previousTail.evaluate((element) => { element.dataset.previousTailNode = "true"; });
   await composer.fill("Continue the long conversation");
   await button("Send message").click();
   const stream = feed.locator(".text-message--streaming");
   await expect(stream).toBeVisible();
-  assert.deepEqual(await watchedPages.evaluate((stopWatching) => stopWatching()), [35],
-    "Sending at a page boundary should observe only the new transcript page");
+  assert.deepEqual(await watchedPages.evaluate((stopWatching) => stopWatching()), [32],
+    "Sending at a page group boundary should observe only the new transcript page");
+  await expect(previousTail).toHaveAttribute("data-previous-tail-node", "true");
   await watchedPages.dispose();
   await stream.evaluate((element) => { element.dataset.streamingNode = "true"; });
   const match = await find("Prompt 96");
