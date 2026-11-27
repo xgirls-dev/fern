@@ -30,6 +30,18 @@ Set `FERN_BENCH_STREAM_CODE_LINES=350` to stress syntax coloring. This replay me
 
 Set `FERN_BENCH_STREAM_HISTORY=3000` to stream after a saved transcript. The fixture seeds the same synthetic history in each profile and opens it before sending the prompt. Compare runs with the same message count.
 
+## Measure repeated Send feedback
+
+Use a visible Electron window for the desktop Send target. Hidden windows can delay the first frame even when the reply row is already in the DOM.
+
+```sh
+FERN_E2E_VISIBLE=1 node benchmarks/chat-streaming.mjs electron send-feedback > chat-send-feedback.json
+```
+
+The replay starts with 1,000 saved messages and sends 120 short prompts in one chat. A balanced sequence alternates between pointer and Enter, lets the draft settle for two frames, and uses a deterministic reply after each Send. The report includes per-input median, p95, and worst time from the input event to the first frame with a reply in progress. It also reports when the reply row reached the DOM. Compare runs at the same actual window size and with the same visibility.
+
+Set `FERN_BENCH_SEND_SAMPLES` to a multiple of four from 4 through 500, or set `FERN_BENCH_STREAM_HISTORY` to choose a different starting transcript. The replay also runs in built Chromium with `renderer send-feedback`.
+
 ## Read the report
 
 - **Send to first frame** measures the first frame opportunity after the click or Enter. **Send to reply commit** measures the first streaming row mutation in the DOM. **Send to feedback** measures the first frame with that row present.
