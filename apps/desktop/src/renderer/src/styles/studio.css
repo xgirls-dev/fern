@@ -71,7 +71,7 @@ body {
 .text-conversation { display: flex; flex: 1 1 0; flex-direction: column; overflow: auto; min-height: 0; padding: 28px max(28px, calc((100% - 760px) / 2)) 18px; overscroll-behavior: contain; }
 .text-conversation[data-following] { overflow-anchor: none; }
 .text-conversation:focus-visible { outline: var(--ui-focus-ring); outline-offset: -2px; }
-.text-transcript { display: flex; flex: 0 0 auto; flex-direction: column; gap: 24px; min-width: 0; }
+.text-transcript { display: flex; flex: 0 0 auto; flex-direction: column; gap: 16px; min-width: 0; }
 .text-transcript-pages, .text-transcript-page { display: flex; flex: 0 0 auto; flex-direction: column; gap: inherit; min-width: 0; }
 .text-transcript-page[data-deferred] { overflow-anchor: none; }
 .text-empty-state { display: flex; flex: 1; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 0; }
@@ -263,6 +263,9 @@ body {
   .text-message:not(:is(:hover, :focus-within, [data-actions-persistent])) > .text-message-tools > .text-message-actions > .text-icon-button:not([aria-expanded="true"]) {
     opacity: 0;
   }
+  .text-message:not(:is(:hover, :focus-within, [data-actions-persistent])) > .text-message-tools > .text-message-actions > .text-response-speed {
+    visibility: hidden;
+  }
 }
 .text-message-action-menu { width: 204px; max-height: min(224px, var(--available-height)); }
 .text-message-action-menu .ui-menu-item { justify-content: flex-start; }
@@ -351,7 +354,6 @@ body {
   .text-branch-source > span { display: none; }
   .text-header { padding-inline: 16px; min-height: 52px; }
   .text-conversation { padding: 20px 18px; }
-  .text-transcript { gap: 20px; }
   .text-composer-area { padding-inline: 12px; padding-bottom: 4px; }
   .text-workspace--empty .text-composer-area { padding-bottom: 10px; }
   .text-composer .text-menu-trigger { max-width: 180px; }

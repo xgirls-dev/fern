@@ -37,20 +37,27 @@ async function openMenu(id) {
 
 try {
   const olderCopy = row("reply-one").getByRole("button", { name: "Copy message" });
+  const olderSpeed = row("reply-one").locator(".text-response-speed");
+  const latestSpeed = row("reply-two").locator(".text-response-speed");
   await olderCopy.scrollIntoViewIfNeeded();
   await page.mouse.move(0, 0);
   await expect(olderCopy).toHaveCSS("opacity", "0");
+  await expect(olderSpeed).toHaveCSS("visibility", "hidden");
+  await expect(latestSpeed).toBeVisible();
   await expect(more("reply-two")).toHaveCSS("opacity", "1");
   const quietRow = await row("reply-one").boundingBox();
   assert(quietRow);
   await page.mouse.move(quietRow.x + quietRow.width / 2, quietRow.y + quietRow.height / 2);
   await expect(olderCopy).toHaveCSS("opacity", "1");
+  await expect(olderSpeed).toBeVisible();
   assert.deepEqual(await row("reply-one").boundingBox(), quietRow, "Revealing actions should keep the transcript layout stable");
   await page.mouse.move(0, 0);
   await expect(olderCopy).toHaveCSS("opacity", "0");
+  await expect(olderSpeed).toHaveCSS("visibility", "hidden");
   const device = await page.context().newCDPSession(page);
   await device.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 });
   await expect(olderCopy).toHaveCSS("opacity", "1");
+  await expect(olderSpeed).toBeVisible();
   await device.send("Emulation.setTouchEmulationEnabled", { enabled: false });
   await device.detach();
   await expect(row("prompt-one").getByRole("button", { name: "Edit message" })).toBeVisible();
@@ -64,6 +71,7 @@ try {
 
   await more("reply-one").focus();
   await expect(olderCopy).toHaveCSS("opacity", "1");
+  await expect(olderSpeed).toBeVisible();
   await page.keyboard.press("ArrowDown");
   await expect(more("reply-one")).toHaveAttribute("aria-expanded", "true");
   await expect(item("Branch from response")).toBeFocused();
