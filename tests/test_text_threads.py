@@ -837,6 +837,38 @@ for line in sys.stdin:
             self.assertEqual(job["failureDiagnostics"]["stage"], "finding-documents")
             generate.assert_not_called()
 
+    def test_stop_during_document_lookup_skips_remaining_passages(self):
+        directory = self.root / "chat-documents"
+        document = api.store_document(directory, "Warehouse.txt", b"Warehouse badge notes. " * 500)
+        cancel = threading.Event()
+        original_terms = chat_documents._terms
+        scanned_passages = 0
+
+        def stop_while_ranking(text):
+            nonlocal scanned_passages
+            if len(text) > 100:
+                scanned_passages += 1
+                cancel.set()
+            return original_terms(text)
+
+        with (
+            patch.object(api, "DATA_DIR", self.root),
+            patch.object(api, "TEXT_MODEL_REGISTRY", self.registry),
+            patch.object(api.TEXT_GENERATION_WORKER, "generate") as generate,
+            patch.object(chat_documents, "_terms", side_effect=stop_while_ranking),
+            patch.dict(api.TEXT_JOB, {"id": "document-stop", "status": "running", "partialText": ""}, clear=True),
+        ):
+            api.run_text_generation({
+                "modelId": self.model["id"], "device": "CPU", "contextSize": 1024,
+                "messages": [{"role": "user", "content": "Find the warehouse badge."}],
+                "documentIds": [document["id"]],
+            }, "document-stop", cancel)
+            job = api.text_job_snapshot()
+            self.assertEqual(job["status"], "stopped")
+            self.assertIsNone(job["error"])
+            self.assertEqual(scanned_passages, 1)
+            generate.assert_not_called()
+
     def test_reply_records_documents_left_out_after_passages_are_fitted(self):
         directory = self.root / "chat-documents"
         first = api.store_document(directory, "Schedule.txt", b"The atlas workshop begins at noon.")
