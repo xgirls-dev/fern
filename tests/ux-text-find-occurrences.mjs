@@ -53,17 +53,11 @@ try {
   await button("Find in chat").click();
   await page.evaluate(() => {
     const getRects = Range.prototype.getClientRects;
-    let pendingFrames = 12;
-    function finishLayout() {
-      pendingFrames -= 1;
-      if (pendingFrames) requestAnimationFrame(finishLayout);
-      else Range.prototype.getClientRects = getRects;
-    }
     Range.prototype.getClientRects = function () {
       if (this.toString() === "quiet cedar" && this.startContainer.parentElement?.closest("p")?.textContent.startsWith("First sighting")) {
         if (!window.firstFindLayoutDeferred) {
           window.firstFindLayoutDeferred = true;
-          requestAnimationFrame(finishLayout);
+          setTimeout(() => { Range.prototype.getClientRects = getRects; }, 1_100);
         }
         return [];
       }

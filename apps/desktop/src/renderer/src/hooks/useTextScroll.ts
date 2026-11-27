@@ -14,7 +14,8 @@ const tailTolerance = 2;
 // A streaming update can add a line between scrolling down and handling the scroll event.
 const resumeTolerance = 24;
 const scrollInputWindow = 160;
-const findLayoutWaitMs = 750;
+const findLayoutRetries = 32;
+const findLayoutMaxDelay = 96;
 
 function distanceFromTail(feed: HTMLElement) {
   return feed.scrollHeight - feed.clientHeight - feed.scrollTop;
@@ -258,11 +259,12 @@ export function useTextScroll(threadId: string, { persistPosition = true, paneFo
     let target = find && row.querySelector("[data-find-target]");
     let range = find && target ? renderedMatch(target, find) : undefined;
     let pendingReveal = scroll;
-    let retryFrame: number | undefined;
-    let retryUntil: number | undefined;
+    let retryTimer: number | undefined;
+    let attemptsLeft = findLayoutRetries;
+    let retryDelay = 16;
     const cancelRetry = () => {
-      if (retryFrame !== undefined) cancelAnimationFrame(retryFrame);
-      retryFrame = undefined;
+      window.clearTimeout(retryTimer);
+      retryTimer = undefined;
       if (cancelFindReveal.current === finishReveal) cancelFindReveal.current = undefined;
     };
     const finishReveal = () => {
@@ -280,16 +282,15 @@ export function useTextScroll(threadId: string, { persistPosition = true, paneFo
     };
     const revealWhenLaidOut = () => {
       reveal();
-      if (!pendingReveal || !range || retryFrame !== undefined) return;
-      // The matched text can exist before it has a measurable box, including
-      // across multiple frames while the transcript window settles.
-      const now = performance.now();
-      retryUntil ??= now + findLayoutWaitMs;
-      if (now >= retryUntil) return;
-      retryFrame = requestAnimationFrame(() => {
-        retryFrame = undefined;
+      if (!pendingReveal || !range || retryTimer !== undefined || attemptsLeft === 0) return;
+      // A slow frame can use up a wall-clock deadline before layout produces a box.
+      // Back off on repeated misses so we do not read geometry on every frame.
+      attemptsLeft -= 1;
+      retryTimer = window.setTimeout(() => {
+        retryTimer = undefined;
         revealWhenLaidOut();
-      });
+      }, retryDelay);
+      retryDelay = Math.min(retryDelay * 2, findLayoutMaxDelay);
     };
     if (find) replaceFindHighlight(undefined, range);
     if (scroll) {
