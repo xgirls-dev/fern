@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { EventEmitter, once } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
 import { createServer } from "node:http";
 import os from "node:os";
@@ -26,7 +27,8 @@ const sampleCount = 100;
 const appendIntervalMs = 50;
 const phase = "Waiting for the first token…";
 const markerPattern = "stream-part-[0-9]{3}";
-let connection;
+const jobEvents = new EventEmitter();
+let activeResponse;
 const textStatus = {
   models: [{ id: "local", name: "Local model", installed: true, format: "gguf" }],
   ggufAvailable: true, supportsJobEvents: true, supportsJobPolling: true, job: { id: null, status: "idle" },
@@ -38,7 +40,8 @@ function openJobEvents(request, response) {
   const params = new URL(request.url, "http://127.0.0.1").searchParams;
   response.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-store", "Access-Control-Allow-Origin": "*" });
   response.flushHeaders();
-  connection = { id: params.get("jobId"), response };
+  activeResponse = response;
+  jobEvents.emit("connected", { id: params.get("jobId"), response });
 }
 
 async function openElectron() {
@@ -104,8 +107,8 @@ const { page, state, close, errors, eventsOrigin } = mode === "electron" ? await
   builtRenderer: true, firstRun: true, platform: process.platform, viewport, textStatus, textJobEvents: openJobEvents,
 });
 
-function emit(frame) {
-  connection.response.write("data: " + JSON.stringify(frame) + "\n\n");
+function emit(response, frame) {
+  response.write("data: " + JSON.stringify(frame) + "\n\n");
 }
 
 function summarize(samples) {
@@ -322,12 +325,17 @@ try {
     });
   }, { sampleCount, markerPattern, sendMethod, eventsOrigin, trace, codeLines });
 
-  if (sendMethod === "enter") await composer.press("Enter");
-  else await send.click();
-  await expect.poll(() => state.textRequests.length).toBe(1);
-  const job = state.textStatus.job;
-  await expect.poll(() => connection?.id).toBe(job.id);
-  emit({ job: { ...job, phase } });
+  const readyStream = once(jobEvents, "connected", { signal: AbortSignal.timeout(10_000) }).then(([{ id, response }]) => {
+    assert.equal(state.textRequests.length, 1, "Send must start exactly one request.");
+    const job = state.textStatus.job;
+    assert.equal(id, job.id, "The stream must be for the submitted reply.");
+    emit(response, { job: { ...job, phase } });
+    return { job, response };
+  });
+  const [{ job, response }] = await Promise.all([
+    readyStream,
+    sendMethod === "enter" ? composer.press("Enter") : send.click(),
+  ]);
 
   let partialText = "";
   for (let number = 1; number <= sampleCount; number += 1) {
@@ -337,7 +345,7 @@ try {
       : number % 10 === 0 ? "**" + marker + "** notes are ready. 🎙️" : marker + " notes are ready.";
     const text = (number === 1 ? "" : number % 10 === 0 ? "\n\n" : " ") + line;
     partialText += text;
-    emit({ append: { phase, text, reasoning: "" } });
+    emit(response, { append: { phase, text, reasoning: "" } });
   }
   const fence = String.fromCharCode(96).repeat(3);
   const code = codeLines === 1 ? "const ready = true;" : Array.from({ length: codeLines }, (_, index) =>
@@ -345,7 +353,7 @@ try {
   const formatting = "\n\n| Item | Status |\n| --- | --- |\n| Notes | Ready |\n\n" + fence +
     "js\n" + code + "\n" + fence;
   await delay(appendIntervalMs);
-  emit({ append: { phase, text: formatting, reasoning: "" } });
+  emit(response, { append: { phase, text: formatting, reasoning: "" } });
   await delay(appendIntervalMs);
   const residentModel = { modelId: job.modelId, backend: "openvino", device: "CPU",
     gguf: { contextSize: 8192, loadOptions: {} } };
@@ -355,8 +363,8 @@ try {
     residentModel,
   };
   state.textStatus.residentModel = residentModel;
-  emit({ job: state.textStatus.job });
-  connection.response.end();
+  emit(response, { job: state.textStatus.job });
+  response.end();
 
   const measurement = await page.evaluate(() => window.fernStreamingMeasurement);
   assert(!measurement.error, measurement.error);
@@ -375,6 +383,6 @@ try {
     ...(frameTrace ? { trace: frameTrace } : {}),
   }, null, 2));
 } finally {
-  connection?.response.end();
+  if (activeResponse && !activeResponse.writableEnded) activeResponse.end();
   await close();
 }

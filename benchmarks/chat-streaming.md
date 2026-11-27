@@ -33,7 +33,7 @@ Set `FERN_BENCH_STREAM_HISTORY=3000` to stream after a saved transcript. The fix
 ## Read the report
 
 - **Send to first frame** measures the first frame opportunity after the click or Enter. **Send to reply commit** measures the first streaming row mutation in the DOM. **Send to feedback** measures the first frame with that row present.
-- **Send to first event** measures Send to receipt of the first status snapshot. The fixture controls when that snapshot arrives.
+- **Send to first event** measures Send to receipt of the first status snapshot. The fixture sends the snapshot as soon as the stream connects.
 - **First text receipt to frame** measures when the first incremental text arrives in the renderer and when it is first present in a render opportunity. The per-update samples use the same boundary for each of the 100 unique markers.
 - **Terminal receipt to formatted frame** measures the completed event to the first frame with the settled reply, table, and code block.
 - **Longest frame gap** measures all sampled animation frames from Send through final formatting. It includes the first frame after clicking.
