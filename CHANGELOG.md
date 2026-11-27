@@ -9,7 +9,7 @@ lands directly on `main` instead of through labeled pull requests.
 ### Fixed
 
 - Resume a prepared Windows runtime upgrade after a restart and recover the prior runtime if setup is interrupted.
-- Open Linux windows with one title bar, keep the application menu within reach, and leave space for desktop panels.
+- Open Linux windows with one title bar and keep the application menu within reach. Floating windows leave room for panels, and compact scaled Wayland windows open maximized.
 
 ## [0.1.49] - 2026-11-25
 
