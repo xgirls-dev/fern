@@ -6,6 +6,7 @@ export const TRANSCRIPTS = "transcripts";
 export const HEADER = "header";
 
 export type ThreadRecord = Omit<TextThread, "messages">;
+type ThreadPatch = { id: string; fields: Partial<ThreadRecord> };
 export type WorkspaceHeader = Omit<TextThreadWorkspace, "threads"> & { order: string[]; membershipRevision?: string };
 export type Transcript = { id: string; messages: TextMessage[]; revision?: string };
 export type TranscriptWrite = { id: string; revision: string } & (
@@ -19,7 +20,7 @@ export type TranscriptWrite = { id: string; revision: string } & (
 );
 export type ChatDatabaseWrite = {
   removed: string[];
-  threads: ThreadRecord[];
+  threads: (ThreadRecord | ThreadPatch)[];
   transcripts: TranscriptWrite[];
   header?: WorkspaceHeader;
 };
@@ -61,7 +62,20 @@ export async function commitChatDatabase(write: ChatDatabaseWrite): Promise<void
         metadata.delete(id);
         transcripts.delete(id);
       }
-      for (const thread of write.threads) metadata.put(thread, thread.id);
+      for (const thread of write.threads) {
+        if (!("fields" in thread)) {
+          metadata.put(thread, thread.id);
+          continue;
+        }
+        const read = metadata.get(thread.id);
+        read.onsuccess = () => {
+          try {
+            const existing = read.result as ThreadRecord | undefined;
+            if (existing?.id !== thread.id) throw new Error("The saved chat changed before this edit could be applied.");
+            metadata.put({ ...existing, ...thread.fields }, thread.id);
+          } catch (error) { abort(error); }
+        };
+      }
       for (const change of write.transcripts) {
         if ("messages" in change) {
           transcripts.put(change);
