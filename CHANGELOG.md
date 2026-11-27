@@ -16,6 +16,7 @@ lands directly on `main` instead of through labeled pull requests.
 - Show when Chat prepares the Apple GPU before loading a GGUF model.
 - Show when Chat checks model memory, loads weights, prepares the context, and warms up a GGUF model.
 - Show measured prompt processing time and reused tokens in GGUF response details.
+- Tighten chat spacing and reveal older replies’ speed alongside their actions.
 - Reuse the processed prompt across follow-ups in long GGUF chats when the retained history still fits.
 - Show progress as a local GGUF model processes the chat prompt before its first reply token.
 
