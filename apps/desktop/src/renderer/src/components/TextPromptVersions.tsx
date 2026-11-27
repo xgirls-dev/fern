@@ -53,10 +53,10 @@ export function TextPromptVersions({ alternatives, onRestore, searchMatch, onClo
         {response && hasImages && <div>{renderImages(response, match?.imageIndex)}</div>}
         {match?.section === "reasoning" && response?.reasoning && <div>
           <span className="text-prompt-version-label">Reasoning</span>
-          <div data-find-target><TextMarkdown content={response.reasoning} /></div>
+          <div data-find-target><TextMarkdown content={response.reasoning} stopped={response.status === "stopped"} /></div>
         </div>}
         {response?.content ? <div data-find-target={match?.section === "body" && !promptMatched || undefined}>
-          <TextMarkdown content={response.content} />
+          <TextMarkdown content={response.content} stopped={response.status === "stopped"} />
         </div> : !hasImages &&
           <p>{response?.error ?? "No reply was saved for this version."}</p>}
       </div>
