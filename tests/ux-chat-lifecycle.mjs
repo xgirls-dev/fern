@@ -99,6 +99,18 @@ try {
   await capture("08-compact-split-loading");
   const left = page.getByRole("region", { name: "Left chat", exact: true });
   const switcher = page.getByRole("group", { name: "Chat panes" });
+  await composer(right).fill("Keep this draft beside the running reply.");
+  await history.press("Home");
+  const readingPosition = () => history.evaluate((feed) => feed.scrollTop);
+  await expect.poll(readingPosition).toBe(0);
+  await button("Left chat", switcher).click();
+  await expect(right).toBeHidden();
+  await button("Open running chat", left).press("Enter");
+  await expect(composer(right)).toBeFocused();
+  await expect(composer(right)).toHaveValue("Keep this draft beside the running reply.");
+  await expect.poll(readingPosition).toBe(0);
+  await expect(left).toBeHidden();
+  await expect(button("Stop generation", right)).toBeVisible();
   await button("Left chat", switcher).click();
   await expect(right).toBeHidden();
   await composer(left).fill("Keep working in the left chat.");

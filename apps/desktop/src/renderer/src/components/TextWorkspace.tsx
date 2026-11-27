@@ -199,6 +199,7 @@ export interface TextWorkspaceProps {
   onChooseChat: () => void;
   onOpenThreadSearch: () => void;
   onClosePane: () => void;
+  onOpenRunningChat: (id: string) => void;
   sidebarCollapsed?: boolean;
   backendFailure?: BackendFailure | null;
   backendRestarting?: boolean;
@@ -216,7 +217,7 @@ export interface TextWorkspaceProps {
   onOpenCompute: () => void;
 }
 
-export function TextWorkspace({ studio, thread: activeThread, pane, focused, split, replyAnnouncementRoot, onChooseChat, onOpenThreadSearch, onClosePane,
+export function TextWorkspace({ studio, thread: activeThread, pane, focused, split, replyAnnouncementRoot, onChooseChat, onOpenThreadSearch, onClosePane, onOpenRunningChat,
   sidebarCollapsed = false, backendFailure, backendRestarting, onRestartBackend, onSetupModels, focusRequested, onFocusRequestHandled,
   findRequest, onFindRequestHandled, imageGpuAvailable,
   onOpenImage, onNewChat, onCreateImage, onCreateSpeech, onOpenCompute }: TextWorkspaceProps) {
@@ -1200,7 +1201,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
           <div className="text-composer-hint-copy">
             <span className={showPhaseInReply ? "sr-only" : undefined} role="status" aria-atomic="true">
               {modelNotice || loadProgressInInspector ? "" : activity || unavailableReason}</span>
-            {otherResponseThread && <Button variant="ghost" className="text-open-running" onClick={() => studio.selectThread(otherResponseThread.id)}>Open running chat</Button>}
+            {otherResponseThread && <Button variant="ghost" className="text-open-running" onClick={() => onOpenRunningChat(otherResponseThread.id)}>Open running chat</Button>}
             {composerHint && <span className="text-keyboard-hint" data-essential={showDraftCount || !!stopHint || undefined}>{composerHint}</span>}
           </div>
           {showScrollButton && <TooltipIconButton ref={bindScrollLatestControl} shape="circle" className="text-scroll-latest"
