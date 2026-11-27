@@ -160,6 +160,7 @@ def run_gguf(file: Path, device: str, projector: Path | None) -> int:
                     if load_only:
                         cancellation.check()
                         return {"type": "result", "backend": engine, "device": target, "runtimeTiming": load_timing}
+                    emit({"type": "cancellable"})
                     emit({"type": "phase", "stage": "preparing-conversation", "text": "Preparing conversation…"})
                     try:
                         log_offset = server.log_path.stat().st_size
@@ -194,7 +195,9 @@ def run_gguf(file: Path, device: str, projector: Path | None) -> int:
             except InterruptedError:
                 # A disconnected prefill can still hold the inference slot. Once decoding
                 # begins, both a private summary and a reply can be interrupted over HTTP.
-                if server is not None and not (cancellation.streaming or cancellation.summary_streaming):
+                if server is not None and cancellation.completion_in_flight and not (
+                    cancellation.streaming or cancellation.summary_streaming
+                ):
                     emit({"type": "residency", "model": None})
                     server.close(force=True)
                     server = None

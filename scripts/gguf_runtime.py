@@ -83,6 +83,7 @@ class CompletionCancellation:
         self._requested = threading.Event()
         self._lock = threading.Lock()
         self._socket: socket.socket | None = None
+        self.completion_in_flight = False
         self.streaming = False
         self.summary_streaming = False
 
@@ -93,7 +94,7 @@ class CompletionCancellation:
                 try:
                     self._socket.shutdown(socket.SHUT_RDWR)
                 except OSError:
-                    pass  # The completion may have closed the socket already.
+                    pass  # The runtime may have closed the socket already.
 
     def check(self) -> None:
         if self._requested.is_set():
@@ -111,7 +112,7 @@ class CompletionCancellation:
                 self._socket = None
 
 
-class _CompletionReader(io.RawIOBase):
+class _CancellableResponseReader(io.RawIOBase):
     def __init__(self, transport: socket.socket, cancellation: CompletionCancellation, timeout: float) -> None:
         super().__init__()
         self.transport = transport
@@ -517,16 +518,16 @@ class GGUFServer:
                 self.process.wait()
         self.diagnostics.cleanup()
 
-    def _post(self, route: str, body: dict, timeout: float = 30) -> dict:
-        with self.http.open(self._request(route, body), timeout=timeout) as response:
+    def _post(self, route: str, body: dict, cancellation: CompletionCancellation) -> dict:
+        with self._post_response(route, body, cancellation, timeout=30) as response:
             return json.load(response)
 
-    def _prompt_tokens(self, messages: list[dict], options: dict) -> int:
+    def _prompt_tokens(self, messages: list[dict], options: dict, cancellation: CompletionCancellation) -> int:
         # Count the actual chat template without sending pixels twice. Allow extra room
         # for image boundary tokens and for models with fixed visual embeddings.
         text_messages = [{key: value for key, value in turn.items() if key != "imagePath"} for turn in messages]
-        template = self._post("/apply-template", {**options, "messages": text_messages})["prompt"]
-        tokens = self._post("/tokenize", {"content": template, "add_special": True})["tokens"]
+        template = self._post("/apply-template", {**options, "messages": text_messages}, cancellation)["prompt"]
+        tokens = self._post("/tokenize", {"content": template, "add_special": True}, cancellation)["tokens"]
         return len(tokens) + 384 * sum(bool(turn.get("imagePath")) for turn in messages)
 
     def _summarize(self, transcript: str, emit: Callable[[dict], None],
@@ -537,11 +538,11 @@ class GGUFServer:
         if cached := self.compaction_summaries.pop(key, None):
             self.compaction_summaries[key] = cached
             return cached
-        tokens = self._post("/tokenize", {"content": transcript, "parse_special": False})["tokens"]
+        tokens = self._post("/tokenize", {"content": transcript, "parse_special": False}, cancellation)["tokens"]
         half = self.context_size // 4
         if len(tokens) > half * 2:
-            before = self._post("/detokenize", {"tokens": tokens[:half]})["content"]
-            after = self._post("/detokenize", {"tokens": tokens[-half:]})["content"]
+            before = self._post("/detokenize", {"tokens": tokens[:half]}, cancellation)["content"]
+            after = self._post("/detokenize", {"tokens": tokens[-half:]}, cancellation)["content"]
             transcript = before + "\n…\n" + after
         body = {
             "messages": [
@@ -574,9 +575,10 @@ class GGUFServer:
         return summary
 
     @contextmanager
-    def _completion(self, body: dict, emit: Callable[[dict], None],
-                    cancellation: CompletionCancellation, *, announce_wait: bool = True,
-                    timeout: float = 180) -> Iterator[http.client.HTTPResponse]:
+    def _post_response(self, route: str, body: dict, cancellation: CompletionCancellation, *,
+                       timeout: float, before_send: Callable[[], None] | None = None) -> Iterator[http.client.HTTPResponse]:
+        cancellation.check()
+        payload = json.dumps(body).encode("utf-8")
         connection = http.client.HTTPConnection(urllib.parse.urlsplit(self.base).netloc, timeout=timeout)
         try:
             connection.connect()
@@ -585,11 +587,10 @@ class GGUFServer:
             # response. Keep a live socket handle for cancelling that response.
             with connection.sock.dup() as cancel_socket, cancellation.watch(cancel_socket):
                 connection.response_class = lambda _socket, **kwargs: http.client.HTTPResponse(
-                    _CompletionReader(cancel_socket, cancellation, timeout), **kwargs)
-                emit({"type": "cancellable"})
-                if announce_wait:
-                    emit({"type": "phase", "stage": "waiting-for-first-token", "text": "Waiting for the first token…"})
-                connection.request("POST", "/v1/chat/completions", json.dumps(body).encode("utf-8"), {
+                    _CancellableResponseReader(cancel_socket, cancellation, timeout), **kwargs)
+                if before_send is not None:
+                    before_send()
+                connection.request("POST", route, payload, {
                     "Authorization": f"Bearer {self.key}", "Content-Type": "application/json", "Connection": "close",
                 })
                 with connection.getresponse() as response:
@@ -604,9 +605,25 @@ class GGUFServer:
         finally:
             connection.close()
 
+    @contextmanager
+    def _completion(self, body: dict, emit: Callable[[dict], None],
+                    cancellation: CompletionCancellation, *, announce_wait: bool = True,
+                    timeout: float = 180) -> Iterator[http.client.HTTPResponse]:
+        def begin_completion() -> None:
+            if announce_wait:
+                emit({"type": "phase", "stage": "waiting-for-first-token", "text": "Waiting for the first token…"})
+            cancellation.check()
+            cancellation.completion_in_flight = True
+
+        with self._post_response("/v1/chat/completions", body, cancellation,
+                                 timeout=timeout, before_send=begin_completion) as response:
+            yield response
+            cancellation.completion_in_flight = False
+
     def generate(self, request: dict[str, Any], emit: Callable[[dict], None],
                  cancellation: CompletionCancellation | None = None) -> dict[str, Any]:
         cancellation = cancellation or CompletionCancellation()
+        cancellation.completion_in_flight = False
         cancellation.check()
         cancellation.summary_streaming = False
         preparing = time.perf_counter()
@@ -628,8 +645,16 @@ class GGUFServer:
             emit({"type": "phase", "stage": "preparing-conversation", "text": "Compacting earlier turns…"})
             return self._summarize(transcript, emit, cancellation)
 
+        last_measured: list[dict[str, Any]] | None = None
+        last_count = 0
+
         def prompt_tokens(turns: list[dict[str, Any]]) -> int:
-            return self._prompt_tokens(turns, options)
+            nonlocal last_measured, last_count
+            cancellation.check()
+            if turns != last_measured:
+                last_count = self._prompt_tokens(turns, options, cancellation)
+                last_measured = turns
+            return last_count
 
         def fit(budget: int) -> tuple[list[dict[str, Any]], CompactedHistory | None]:
             return fit_context(history, prompt_tokens, compact, budget,
@@ -667,6 +692,7 @@ class GGUFServer:
             max_tokens = min(requested_tokens, context_budget - prompt_tokens(history))
         messages = []
         for message in history:
+            cancellation.check()
             content = message["content"]
             if image_path := message.get("imagePath"):
                 url = "data:image/png;base64," + base64.b64encode(Path(image_path).read_bytes()).decode("ascii")
