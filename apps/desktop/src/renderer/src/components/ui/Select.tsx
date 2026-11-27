@@ -2,6 +2,7 @@ import { Select as BaseSelect } from "@base-ui/react/select";
 import Check from "lucide-react/dist/esm/icons/check.mjs";
 import ChevronDown from "lucide-react/dist/esm/icons/chevron-down.mjs";
 import type { ComponentProps } from "react";
+import { isComposingKey } from "../../lib/keyboard";
 import { Tooltip } from "./Tooltip";
 
 type SelectValue = string | number;
@@ -21,12 +22,28 @@ type SelectProps<T extends SelectValue> = Omit<ComponentProps<"button">, "onChan
 
 export function Select<T extends SelectValue>({
   value, options, onChange, placeholder = "Choose an option", appearance = "field",
-  className = "", disabled, name, form, finalFocus, popupContainer, triggerTooltip, triggerTooltipSide, ...trigger
+  className = "", disabled, name, form, finalFocus, popupContainer, triggerTooltip, triggerTooltipSide, onKeyDown, ...trigger
 }: SelectProps<T>) {
   const emptyOptionLabel = value === "" ? options.find((option) => option.value === value)?.label : undefined;
   const selectTrigger = <BaseSelect.Trigger
     className={`ui-field ui-select ui-select--${appearance} ${className}`}
     {...trigger}
+    onKeyDown={(event) => {
+      onKeyDown?.(event);
+      if (event.defaultPrevented || isComposingKey(event.nativeEvent) || event.altKey || event.ctrlKey || event.metaKey ||
+          (event.key !== "Home" && event.key !== "End")) return;
+      // The list handles these keys after focus moves into it. The trigger can
+      // still receive a key while the open list is taking focus.
+      const anchor = event.currentTarget;
+      const listId = anchor.getAttribute("aria-controls");
+      if (!listId) return;
+      const items = anchor.ownerDocument.getElementById(listId)?.querySelectorAll<HTMLElement>('[role="option"]');
+      const item = items?.[event.key === "Home" ? 0 : items.length - 1];
+      if (!item) return;
+      event.preventDefault();
+      item.focus({ preventScroll: true });
+      item.scrollIntoView({ block: "nearest", inline: "nearest" });
+    }}
   >
     <BaseSelect.Value className="ui-select-value" placeholder={placeholder}>{emptyOptionLabel}</BaseSelect.Value>
     <BaseSelect.Icon className="ui-select-chevron"><ChevronDown size={14} aria-hidden="true" /></BaseSelect.Icon>

@@ -190,8 +190,13 @@ try {
   const settingsModel = settings.getByRole("combobox", { name: "Settings model", exact: true });
   await settingsModel.press("ArrowDown");
   await expect(options).toBeVisible();
-  await page.keyboard.press("End");
   const lastModel = options.getByRole("option", { name: longModelName, exact: true });
+  // Deliver the key to the trigger, as can happen before the open list takes focus.
+  await settingsModel.press("End");
+  await expect(lastModel).toBeFocused();
+  await settingsModel.press("Home");
+  await expect(options.getByRole("option", { name: "Local model", exact: true })).toBeFocused();
+  await page.keyboard.press("End");
   await expect(lastModel).toBeFocused();
   await expect.poll(() => options.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
   await expect.poll(() => lastModel.evaluate((option) => {
