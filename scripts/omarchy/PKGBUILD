@@ -6,7 +6,7 @@ arch=('x86_64')
 url='https://github.com/xgirls-dev/fern'
 license=('MIT')
 depends=('alsa-lib' 'gcc-libs' 'gtk3' 'hicolor-icon-theme' 'libnotify'
-         'libsecret' 'libxss' 'libxtst' 'mesa' 'nss' 'vulkan-icd-loader' 'xdg-utils')
+         'libsecret' 'libxss' 'libxtst' 'mesa' 'nss' 'vulkan-icd-loader' 'wayland-utils' 'xdg-utils')
 optdepends=('intel-compute-runtime: OpenVINO inference on Intel GPUs'
             'ocl-icd: OpenCL loader for Intel GPU inference'
             'vulkan-intel: GGUF vision and image generation in chat on Intel GPUs')
@@ -16,7 +16,31 @@ package() {
     install -d "$pkgdir/opt/fern" "$pkgdir/usr/bin"
     cp -a "${FERN_UNPACKED:?}/." "$pkgdir/opt/fern/"
     chmod 4755 "$pkgdir/opt/fern/chrome-sandbox"
-    ln -s /opt/fern/fern "$pkgdir/usr/bin/fern"
+    install -Dm755 /dev/stdin "$pkgdir/usr/bin/fern" <<'LAUNCHER'
+#!/bin/sh
+
+# Chromium uses text-input-v3 by default. Compositors that expose only v1
+# need an explicit switch. A supplied socket is reserved for the app itself.
+if [ -z "${WAYLAND_SOCKET:-}" ] &&
+   { [ -n "${WAYLAND_DISPLAY:-}" ] || [ "${XDG_SESSION_TYPE:-}" = wayland ]; }; then
+    for arg do
+        case "$arg" in
+            --) break ;;
+            --ozone-platform=x11|--enable-wayland-ime|--enable-wayland-ime=*|\
+            --disable-wayland-ime|--disable-wayland-ime=*|--wayland-text-input-version|--wayland-text-input-version=*)
+                exec /opt/fern/fern "$@" ;;
+        esac
+    done
+    if protocols=$(timeout 0.15s wayland-info -i zwp_text_input_manager_ 2>/dev/null); then
+        case "$protocols" in
+            *"'zwp_text_input_manager_v3'"*) ;;
+            *"'zwp_text_input_manager_v1'"*) set -- --enable-wayland-ime --wayland-text-input-version=1 "$@" ;;
+        esac
+    fi
+fi
+
+exec /opt/fern/fern "$@"
+LAUNCHER
     install -Dm644 "$FERN_UNPACKED/resources/icon.png" \
         "$pkgdir/usr/share/icons/hicolor/512x512/apps/fern.png"
     install -Dm644 "$FERN_UNPACKED/resources/licenses/fern.txt" \
