@@ -11,6 +11,7 @@ import tempfile
 import zipfile
 from collections import Counter, deque
 from contextlib import AbstractContextManager, nullcontext
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterator, TypedDict
 
@@ -52,6 +53,12 @@ class DocumentPassage(TypedDict):
     text: str
     documentId: str
     passageIndex: int
+
+
+@dataclass
+class RetrievedDocuments:
+    names_by_id: dict[str, str]
+    passages: list[DocumentPassage]
 
 
 def document_ids(value: Any) -> list[str]:
@@ -227,8 +234,11 @@ def _sample_document_order(passages: list[DocumentPassage]) -> Iterator[Document
             spans.extend(((start, middle), (middle + 1, end)))
 
 
-def retrieve_passages(directory: Path, ids: list[str], messages: list[dict[str, Any]], context_size: int) -> list[DocumentPassage]:
+def retrieve_document_context(
+    directory: Path, ids: list[str], messages: list[dict[str, Any]], context_size: int,
+) -> RetrievedDocuments:
     passages = []
+    names_by_id = {}
     unavailable = []
     for document_id in ids:
         record = _read(_path(directory, document_id))
@@ -236,13 +246,12 @@ def retrieve_passages(directory: Path, ids: list[str], messages: list[dict[str, 
             unavailable.append(document_id)
             continue
         name = record["document"]["name"]
+        names_by_id[document_id] = name
         passages.extend({"name": name, "location": passage["location"], "text": passage["text"],
                          "documentId": document_id, "passageIndex": index}
                         for index, passage in enumerate(record["passages"]))
     if unavailable:
         raise ChatDocumentsUnavailable(unavailable)
-    if not passages:
-        return []
     size = sum(len(passage["text"]) + len(passage["name"]) + 32 for passage in passages)
     if size > min(context_size, 24_000):
         questions = [item["content"][:6000] for item in messages[-7:] if item["role"] == "user"]
@@ -266,7 +275,7 @@ def retrieve_passages(directory: Path, ids: list[str], messages: list[dict[str, 
             break
         selected.append(passage)
         remaining -= len(passage["text"]) + len(passage["name"]) + 32
-    return selected
+    return RetrievedDocuments(names_by_id, selected)
 
 
 def _passage_fingerprint(passage: dict[str, Any]) -> str:

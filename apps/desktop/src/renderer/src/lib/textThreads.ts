@@ -1,6 +1,6 @@
 import type { ChatImageModel, ChatImageSettings } from "./chatImageSettings";
 import { normalizeChatFolders, type ChatFolder } from "./chatFolders";
-import { normalizeChatDocuments, normalizeDocumentSources, type ChatDocument, type ChatDocumentSource } from "./chatDocuments";
+import { MAX_CHAT_DOCUMENTS, normalizeChatDocuments, normalizeDocumentSources, type ChatDocument, type ChatDocumentSource } from "./chatDocuments";
 import { normalizeTextFailure, textFailureCode, type TextFailureDiagnostics } from "./textFailure";
 
 const DEFAULT_CONTEXT_SIZE = 8192;
@@ -92,6 +92,7 @@ export interface TextMessage {
     finishReason?: "length" | "stop";
     visionChecked?: boolean;
     documentSources?: ChatDocumentSource[];
+    omittedDocumentNames?: string[];
     runtimeTiming?: { prefillMs?: number; evaluatedPromptTokens?: number; cachedPromptTokens?: number };
     context?: {
       size: number; compactedMessages: number; images: number; imageNames?: string[];
@@ -363,6 +364,9 @@ export function textResponseMetrics(metrics: TextMessage["metrics"] | null): Tex
     ? { prefillMs, evaluatedPromptTokens, cachedPromptTokens } : undefined;
   const contextCount = (value: number | undefined) => typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined;
   const imageNames = Array.isArray(context?.imageNames) ? context.imageNames.filter(isOutputImage) : undefined;
+  const omittedDocumentNames = Array.isArray(metrics.omittedDocumentNames)
+    ? metrics.omittedDocumentNames.filter((name) => typeof name === "string" && name.length > 0 && name.length <= 255).slice(0, MAX_CHAT_DOCUMENTS)
+    : undefined;
   const requestContext = context && {
     ...context, imageNames,
     omittedImages: contextCount(context.omittedImages),
@@ -371,7 +375,7 @@ export function textResponseMetrics(metrics: TextMessage["metrics"] | null): Tex
   };
   return { inputTokens, outputTokens, generationSeconds, tokensPerSecond, modelName, device, backend,
     mode, seed, temperature, topP, maxNewTokens, visionChecked, context: requestContext, sampling: metrics.sampling, loadOptions: metrics.loadOptions,
-    documentSources: normalizeDocumentSources(metrics.documentSources), runtimeTiming,
+    documentSources: normalizeDocumentSources(metrics.documentSources), omittedDocumentNames, runtimeTiming,
     finishReason: finishReason === "length" || finishReason === "stop" ? finishReason : undefined };
 }
 

@@ -12,7 +12,7 @@ from pypdf import PdfWriter
 from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from chat_documents import add_document_context, document_ids, read_document_source, retrieve_passages, store_document
+from chat_documents import add_document_context, document_ids, read_document_source, retrieve_document_context, store_document
 
 
 def pdf_with_pages(*contents: str) -> bytes:
@@ -59,8 +59,9 @@ class ChatDocumentTests(unittest.TestCase):
             with self.subTest(name=name):
                 document = self.attach(name, bytes_)
                 self.assertEqual(document, self.attach(name, bytes_))
-                passages = retrieve_passages(self.root, [document["id"]], [{"role": "user", "content": "Summarize"}], 8192)
-                self.assertIn(phrase, passages[0]["text"])
+                retrieved = retrieve_document_context(self.root, [document["id"]], [{"role": "user", "content": "Summarize"}], 8192)
+                self.assertEqual(retrieved.names_by_id, {document["id"]: name})
+                self.assertIn(phrase, retrieved.passages[0]["text"])
         self.assertEqual(len(list(self.root.iterdir())), 3)
 
     def test_long_pdf_retrieval_uses_current_and_prior_questions_and_page_labels(self):
@@ -72,7 +73,7 @@ class ChatDocumentTests(unittest.TestCase):
             {"role": "assistant", "content": "It is ZY-4179."},
             {"role": "user", "content": "And who is the coordinator?"},
         ]
-        passages = retrieve_passages(self.root, document_ids([document["id"]]), question, 4096)
+        passages = retrieve_document_context(self.root, document_ids([document["id"]]), question, 4096).passages
         self.assertEqual(passages[0]["location"], "Page 27")
         self.assertIn("Mara Bell", passages[0]["text"])
         def measure(turns):
@@ -97,7 +98,7 @@ class ChatDocumentTests(unittest.TestCase):
         document = self.attach("Schedule.txt", (phrase * 25 + "Follow-up discussion.").encode())
         other = self.attach("Schedule.txt", b"A newer schedule for a different event.")
         question = [{"role": "user", "content": "What is the schedule?"}]
-        passages = retrieve_passages(self.root, [document["id"]], question, 4096)
+        passages = retrieve_document_context(self.root, [document["id"]], question, 4096).passages
         grounded, sources, _ = add_document_context(question, passages, 1300,
             lambda turns: len(turns[-1]["content"]), chars_per_unit=1)
         reference = sources[0]["reference"]
@@ -122,7 +123,7 @@ class ChatDocumentTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "saved documents"):
             document_ids(["../not-a-document"])
         with self.assertRaisesRegex(ValueError, "attached document is missing"):
-            retrieve_passages(self.root, ["doc-" + "a" * 64], [{"role": "user", "content": "Look up policy"}], 8192)
+            retrieve_document_context(self.root, ["doc-" + "a" * 64], [{"role": "user", "content": "Look up policy"}], 8192)
 
     def test_retrieval_names_all_unavailable_ids_and_same_file_repairs_corrupt_record(self):
         good = self.attach("Overview.txt", b"Meet on Monday.")
@@ -134,9 +135,9 @@ class ChatDocumentTests(unittest.TestCase):
         messages = [{"role": "user", "content": "When and where should I go?"}]
 
         with self.assertRaises(ValueError) as failure:
-            retrieve_passages(self.root, ids, messages, 8192)
+            retrieve_document_context(self.root, ids, messages, 8192)
         self.assertEqual(failure.exception.document_ids, [missing["id"], damaged["id"]])
         self.assertEqual(self.attach("Schedule.txt", b"The workshop begins at noon."), missing)
         self.assertEqual(self.attach("Address.txt", b"Use the east entrance."), damaged)
-        self.assertEqual([item["name"] for item in retrieve_passages(self.root, ids, messages, 8192)],
+        self.assertEqual([item["name"] for item in retrieve_document_context(self.root, ids, messages, 8192).passages],
                          ["Overview.txt", "Schedule.txt", "Address.txt"])
