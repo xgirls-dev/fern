@@ -20,6 +20,13 @@ const devices = { AUTO: "Auto", GPU: "GPU", CPU: "CPU" } as const;
 const platforms = { darwin: "macOS", linux: "Linux", win32: "Windows" } as const;
 const architectures = { arm64: "arm64", x64: "x64" } as const;
 const failureCodes = new Set(["intel-vulkan-driver", "empty-response", "backend-restarted", "out-of-memory"]);
+const memoryFailure = /\bout of (?:(?:gpu|host|device) )?memory\b|\b(?:VK_ERROR_OUT_OF_(?:DEVICE|HOST)_MEMORY|ErrorOutOf(?:Device|Host)Memory|CL_MEM_OBJECT_ALLOCATION_FAILURE|CL_OUT_OF_HOST_MEMORY|std::bad_alloc)\b|\bexceeded max size of memory object allocation\b/i;
+
+export function textFailureCode(code: unknown, error?: unknown): string | null {
+  if (typeof code === "string" && code) return code;
+  // Older replies can contain the runtime error without its structured code.
+  return typeof error === "string" && memoryFailure.test(error) ? "out-of-memory" : null;
+}
 
 export interface TextFailureDiagnostics {
   stage?: keyof typeof stages;
