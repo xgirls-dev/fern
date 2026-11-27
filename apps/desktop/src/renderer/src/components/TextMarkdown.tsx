@@ -248,12 +248,12 @@ const MarkdownBlock = memo(function MarkdownBlock({ node }: { node: RootContent 
 }, (previous, next) => previous.node === next.node ||
   (!isTable(next.node) && !isTable(previous.node) && JSON.stringify(previous.node) === JSON.stringify(next.node)));
 
-export const TextMarkdown = memo(function TextMarkdown({ content, streaming = false, receivingReply = streaming, preserveSelection = false,
+export const TextMarkdown = memo(function TextMarkdown({ content, streaming = false, receivingReply = streaming, stopped = false, preserveSelection = false,
   documentSources, onOpenSource }: {
-  content: string; streaming?: boolean; receivingReply?: boolean; preserveSelection?: boolean;
+  content: string; streaming?: boolean; receivingReply?: boolean; stopped?: boolean; preserveSelection?: boolean;
   documentSources?: readonly ChatDocumentSource[]; onOpenSource?: OpenDocumentSource;
 }) {
-  const { blocks: parsed, pending } = useChatMarkdown(content, streaming, receivingReply);
+  const { blocks: parsed, pending } = useChatMarkdown(content, streaming, receivingReply, stopped);
   const rendered = useRef(parsed);
   // A pending parse can replace visible nodes even when the reply text is held.
   useLayoutEffect(() => {

@@ -118,7 +118,8 @@ function finishParsedReply(previous: ParsedWorkerMarkdown | null, content: strin
   return [...previous.nodes.slice(0, prefix.blockCount), ...parseChatMarkdown(tail, false).children];
 }
 
-export function useChatMarkdown(content: string, streaming: boolean, receivingReply = streaming) {
+export function useChatMarkdown(content: string, streaming: boolean, receivingReply = streaming, stopped = false) {
+  const preview = streaming || stopped;
   const view = useId();
   const [workerFailed, setWorkerFailed] = useState(false);
   const [largeResult, setLargeResult] = useState<ParsedWorkerMarkdown | null>(null);
@@ -134,11 +135,11 @@ export function useChatMarkdown(content: string, streaming: boolean, receivingRe
     return root && { content, nodes: root.children, plain: true };
   }, [content, workerCandidate]);
   const shouldOffload = workerCandidate && !plainResult;
-  const smallResult = useMemo(() => shouldOffload ? null : plainResult ?? parseSmallReply(content, streaming, receivingReply, latestSmall.current),
-    [content, plainResult, receivingReply, shouldOffload, streaming]);
-  const finalNodes = useMemo(() => shouldOffload && !streaming ? finishParsedReply(largeResult, content) : null,
-    [content, largeResult, shouldOffload, streaming]);
-  const needsWorker = shouldOffload && !finalNodes && (largeResult?.content !== content || largeResult.streaming !== streaming);
+  const smallResult = useMemo(() => shouldOffload ? null : plainResult ?? parseSmallReply(content, preview, receivingReply, latestSmall.current),
+    [content, plainResult, preview, receivingReply, shouldOffload]);
+  const finalNodes = useMemo(() => shouldOffload && !preview ? finishParsedReply(largeResult, content) : null,
+    [content, largeResult, preview, shouldOffload]);
+  const needsWorker = shouldOffload && !finalNodes && (largeResult?.content !== content || largeResult.streaming !== preview);
 
   useLayoutEffect(() => {
     if (smallResult) latestSmall.current = smallResult;
@@ -169,7 +170,7 @@ export function useChatMarkdown(content: string, streaming: boolean, receivingRe
     // has a separate queue, even when the same row is reused for regeneration.
     const queue = streaming || (!receivingReply && wasReceivingReply.current) ? "live" : "history";
     wasReceivingReply.current = receivingReply;
-    waiting.current = needsWorker ? { content, streaming, view, queue } : null;
+    waiting.current = needsWorker ? { content, streaming: preview, view, queue } : null;
     if (inFlight.current && inFlight.current.queue !== queue) {
       inFlight.current.cancel();
       inFlight.current = null;
@@ -228,7 +229,7 @@ export function useChatMarkdown(content: string, streaming: boolean, receivingRe
       inFlight.current = { queue, cancel };
     }
     drain();
-  }, [content, needsWorker, receivingReply, streaming, view]);
+  }, [content, needsWorker, preview, receivingReply, streaming, view]);
 
   const blocks = smallResult?.nodes ?? finalNodes
     ?? (fitsContent(largeResult, content) ? largeResult!.nodes : null)

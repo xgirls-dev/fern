@@ -55,6 +55,7 @@ try {
   assert(measured.terminalEventMs <= measured.settledFrameMs);
   // The backend acknowledges Stop before reporting that the job has ended.
   const stoppedIds = [];
+  const partialMarkdown = "1. **Woodworking";
   await page.route("**/api/text/stop", async (route) => {
     stoppedIds.push(route.request().postDataJSON().requestId);
     await route.fulfill({ status: 202, json: { textJob: state.textStatus.job } });
@@ -65,7 +66,7 @@ try {
 
   async function driveWarmStop() {
     await expect.poll(() => connections).toBe(2);
-    state.textStatus.job = { ...state.textStatus.job, partialText: "1. A notebook", phase: "Waiting for the first token…" };
+    state.textStatus.job = { ...state.textStatus.job, partialText: partialMarkdown, phase: "Waiting for the first token…" };
     emit({ job: state.textStatus.job });
     await expect.poll(() => connections).toBe(3);
     state.textStatus.job = {
@@ -88,9 +89,15 @@ try {
   assert.equal(warm.followUp.runtime.cachedPromptTokens, 32);
   assert.equal(warm.followUp.backend, "OpenVINO");
   assert(await page.evaluate(() => window.EventSource === window.originalBenchEventSource));
+  const stoppedReply = page.getByRole("article", { name: "Model response", exact: true })
+    .filter({ hasText: "Stopped · Partial response" });
+  await expect(stoppedReply.locator("li strong")).toHaveText("Woodworking", { timeout: 3_000 });
+  await expect.poll(async () => (await savedTextWorkspace(page))?.threads.find(({ id }) => id === state.textRequests[1].threadId)
+    ?.messages.find(({ jobId }) => jobId === stoppedIds[0])?.content).toBe(partialMarkdown);
   await expect.poll(async () => (await savedTextWorkspace(page))?.threads.find(({ id }) => id === state.textRequests[2].threadId)?.messages.at(-1)?.jobId)
     .toBe(state.textRequests[2].requestId);
-  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.reload();
+  await expect(stoppedReply.locator("li strong")).toHaveText("Woodworking", { timeout: 15_000 });
   await expect(reply.locator(".text-message-content")).toContainText("ORCHID-42");
   assert.equal(await verifyPromptDetails(reply, warm.followUp.runtime), "Prompt processing 20 ms · 5 tokens processed · 32 tokens reused");
   assert.deepEqual(errors, []);
