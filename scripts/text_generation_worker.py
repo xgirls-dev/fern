@@ -250,18 +250,16 @@ def run(model_path: str, device: str, projector_path: str = "") -> int:
             if not load_only and request.get("op") != "generate":
                 raise ValueError("Unsupported text worker request.")
             emit({"type": "runtime", "backend": "openvino", "device": device})
-            preparing = {"type": "phase", "stage": "preparing-conversation"}
             if pipeline is None:
                 emit({"type": "phase", "stage": "loading-model", "text": "Loading the OpenVINO model…"})
                 pipeline = genai.LLMPipeline(str(folder), device)
                 tokenizer = pipeline.get_tokenizer()
                 emit({"type": "residency", "model": {"backend": "openvino", "device": device}})
-                preparing["text"] = "Model ready. Preparing the conversation…"
 
             if load_only:
                 emit({"type": "result", "backend": "openvino", "device": device})
                 continue
-            emit(preparing)
+            emit({"type": "phase", "stage": "preparing-conversation", "text": "Preparing conversation…"})
 
             messages = request["messages"]
             if request.get("systemPrompt", "").strip():

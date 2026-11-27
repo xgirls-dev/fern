@@ -931,7 +931,7 @@ def record_text_image_context(result: dict[str, Any], request: dict[str, Any]) -
 
 def run_text_generation(payload: dict[str, Any], job_id: str, cancel_event: threading.Event) -> None:
     model_load = bool(payload.get("modelLoad"))
-    start_stage = "loading-model" if model_load else "preparing-conversation"
+    start_stage = "loading-model" if model_load else "request-admission"
     diagnostics = {"stage": start_stage, "requestedDevice": payload.get("device")}
 
     def release_apple_image_worker() -> None:
@@ -967,8 +967,6 @@ def run_text_generation(payload: dict[str, Any], job_id: str, cancel_event: thre
             raise ValueError("Add this text model again; its files are no longer available.")
         device = payload["device"]
         diagnostics["runtime"] = "gguf" if model.get("format") == "gguf" else "openvino"
-        if not model_load:
-            append_text_event(job_id, phase="Preparing conversation…")
         passages = []
         if attachments := payload.get("documentIds"):
             diagnostics["stage"] = "finding-documents"
