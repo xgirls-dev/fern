@@ -33,6 +33,7 @@ export interface StudioApi {
   setTheme: (theme: ThemeMode) => Promise<"light" | "dark">;
   onThemeChanged: (listener: (theme: "light" | "dark") => void) => () => void;
   minimizeWindow: () => Promise<void>;
+  openApplicationMenu?: (left: number, bottom: number) => Promise<void>;
   toggleMaximizeWindow: () => Promise<boolean>;
   onWindowMaximizedChanged: (listener: (maximized: boolean) => void) => () => void;
   closeWindow: () => Promise<void>;

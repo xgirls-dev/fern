@@ -1,7 +1,8 @@
-import { memo, useEffect, useState, type RefObject } from "react";
+import { memo, useEffect, useState, type MouseEvent, type RefObject } from "react";
 import PanelLeft from "lucide-react/dist/esm/icons/panel-left.mjs";
 import Search from "lucide-react/dist/esm/icons/search.mjs";
 import Copy from "lucide-react/dist/esm/icons/copy.mjs";
+import Menu from "lucide-react/dist/esm/icons/menu.mjs";
 import Minus from "lucide-react/dist/esm/icons/minus.mjs";
 import Moon from "lucide-react/dist/esm/icons/moon.mjs";
 import Square from "lucide-react/dist/esm/icons/square.mjs";
@@ -33,10 +34,20 @@ export const TitleBar = memo(function TitleBar({
 }: TitleBarProps) {
   const commandShortcut = shortcutLabel(shortcuts.commands);
   const [maximized, setMaximized] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   useEffect(() => {
     if (!useNativeWindowControls) return window.studio.onWindowMaximizedChanged(setMaximized);
   }, []);
   const resizeLabel = maximized ? "Restore window" : "Maximize";
+  const openApplicationMenu = async (event: MouseEvent<HTMLButtonElement>) => {
+    const { left, bottom } = event.currentTarget.getBoundingClientRect();
+    setMenuOpen(true);
+    try {
+      await window.studio.openApplicationMenu?.(left, bottom);
+    } finally {
+      setMenuOpen(false);
+    }
+  };
   return (
     <TooltipScope><header
       className={`titlebar${useNativeWindowControls ? " titlebar--native-controls" : ""}`}
@@ -77,6 +88,12 @@ export const TitleBar = memo(function TitleBar({
             <Moon size={14} aria-hidden="true" />
           )}
         </TooltipIconButton>
+        {window.studio.openApplicationMenu && (
+          <TooltipIconButton aria-label="Application menu" aria-haspopup="menu" aria-expanded={menuOpen}
+            tooltip="Application menu" tooltipSide="bottom" onClick={openApplicationMenu}>
+            <Menu size={16} aria-hidden="true" />
+          </TooltipIconButton>
+        )}
 
         {!useNativeWindowControls ? (
           <div className="titlebar-window-controls">

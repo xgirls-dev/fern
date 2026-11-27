@@ -9,6 +9,7 @@ import {
   ipcMain,
   Menu,
   nativeTheme,
+  screen,
   shell,
 } from "electron";
 import { PythonBackend } from "./python-backend";
@@ -111,22 +112,20 @@ function resolvePreloadPath(): string {
 }
 
 function createWindow(apiBaseUrl?: string): BrowserWindow {
+  const linux = process.platform === "linux";
+  const workArea = linux ? screen.getPrimaryDisplay().workAreaSize : undefined;
+  const minWidth = 800;
+  const minHeight = 520;
   const window = new BrowserWindow({
-    width: 1440,
-    height: 920,
     // Electron sizes are logical pixels. Leave room for system chrome on scaled displays.
-    minWidth: 800,
-    minHeight: 520,
+    width: Math.max(minWidth, Math.min(1440, workArea?.width ?? 1440)),
+    height: Math.max(minHeight, Math.min(920, workArea?.height ?? 920)),
+    minWidth,
+    minHeight,
     show: false,
     icon: getAppIconPath(),
     backgroundColor: nativeTheme.shouldUseDarkColors ? "#212121" : "#fafafa",
-    frame: process.platform === "linux",
-    titleBarStyle:
-      process.platform === "darwin"
-        ? "hiddenInset"
-        : process.platform === "win32"
-          ? "hidden"
-          : "default",
+    titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "hidden",
     ...(process.platform === "win32"
       ? {
           titleBarOverlay: {
@@ -337,6 +336,18 @@ function registerIpc(): void {
 
   ipcMain.handle("studio:window-close", (event) => {
     BrowserWindow.fromWebContents(event.sender)?.close();
+  });
+
+  ipcMain.handle("studio:open-application-menu", (event, left: number, bottom: number) => {
+    if (process.platform !== "linux" || !Number.isFinite(left) || !Number.isFinite(bottom)) return;
+    const window = BrowserWindow.fromWebContents(event.sender);
+    const menu = Menu.getApplicationMenu();
+    if (!window || !menu) return;
+    const zoom = event.sender.getZoomFactor();
+    const { width, height } = window.getContentBounds();
+    const x = Math.min(width, Math.max(0, Math.round(left * zoom)));
+    const y = Math.min(height, Math.max(0, Math.round(bottom * zoom)));
+    return new Promise<void>((resolve) => menu.popup({ window, x, y, callback: resolve }));
   });
 
   ipcMain.handle("studio:copy-text", (_event, text: string) => {

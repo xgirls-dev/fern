@@ -87,6 +87,9 @@ const studioApi: StudioApi = {
   },
 
   minimizeWindow: () => ipcRenderer.invoke("studio:window-minimize"),
+  ...(process.platform === "linux" ? {
+    openApplicationMenu: (left, bottom) => ipcRenderer.invoke("studio:open-application-menu", left, bottom),
+  } : {}),
   toggleMaximizeWindow: () =>
     ipcRenderer.invoke("studio:window-toggle-maximize"),
   onWindowMaximizedChanged: (listener) => {
