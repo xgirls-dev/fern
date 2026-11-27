@@ -1,4 +1,4 @@
-import { useId, useRef, useState, type CSSProperties, type DragEvent, type ReactNode } from "react";
+import { useId, useLayoutEffect, useRef, useState, type CSSProperties, type DragEvent, type ReactNode } from "react";
 import { CHAT_NAV_DRAG, chatFolderPath } from "../lib/chatFolders";
 import type { ChatPane } from "../lib/textThreads";
 import { TextWorkspace, type TextWorkspaceProps } from "./TextWorkspace";
@@ -19,11 +19,19 @@ export function ChatWorkspace({ storagePlaceholder, ...props }: WorkspaceProps) 
   const split = Boolean(secondaryThread);
   const layout = useRef<HTMLDivElement>(null);
   const divider = useRef<HTMLDivElement>(null);
+  const restoreRunningChatFocus = useRef<string | null>(null);
   const primaryPaneId = useId();
   const [replyAnnouncementRoot, setReplyAnnouncementRoot] = useState<HTMLDivElement | null>(null);
   const [picker, setPicker] = useState<ChatPane | null>(null);
   const [dragSize, setDragSize] = useState<number | null>(null);
   const [dropPane, setDropPane] = useState<ChatPane | null>(null);
+  const visibleThreadId = activePane === "primary" ? primaryThread.id : secondaryThread?.id;
+  useLayoutEffect(() => {
+    if (restoreRunningChatFocus.current !== visibleThreadId) return;
+    restoreRunningChatFocus.current = null;
+    layout.current?.querySelector<HTMLTextAreaElement>(`[data-chat-pane="${activePane}"] textarea[name="message"]`)
+      ?.focus({ preventScroll: true });
+  }, [activePane, visibleThreadId]);
   // Keep the composer unmounted until the saved draft is ready.
   if (!studio.storageReady) return storagePlaceholder;
 
@@ -38,17 +46,16 @@ export function ChatWorkspace({ storagePlaceholder, ...props }: WorkspaceProps) 
       folderPath: chatFolderPath(folderIndex, thread.folderId),
     })) : [];
 
-  const focusComposer = (pane: ChatPane, options?: FocusOptions) => requestAnimationFrame(() => {
-    layout.current?.querySelector<HTMLTextAreaElement>(`[data-chat-pane="${pane}"] textarea[name="message"]`)?.focus(options);
+  const focusComposer = (pane: ChatPane) => requestAnimationFrame(() => {
+    layout.current?.querySelector<HTMLTextAreaElement>(`[data-chat-pane="${pane}"] textarea[name="message"]`)?.focus();
   });
   const select = (id: string, pane: ChatPane) => {
     studio.compareThread(id, pane);
     focusComposer(pane);
   };
   const openRunningChat = (id: string) => {
-    const pane = primaryThread.id === id ? "primary" : secondaryThread?.id === id ? "secondary" : activePane;
+    restoreRunningChatFocus.current = id;
     studio.selectThread(id);
-    focusComposer(pane, { preventScroll: true });
   };
   const percentAt = (clientX: number) => {
     const bounds = layout.current?.getBoundingClientRect();
