@@ -67,7 +67,7 @@ from text_model_download import managed_download_id, remove_download as remove_t
 from gguf_metadata import is_projector, read_metadata as read_gguf_metadata
 from gguf_runtime import RUNTIME_PLATFORM_ERROR, apple_silicon, runtime_supported as gguf_runtime_supported
 from chat_image_tools import CHAT_IMAGE_SIZE, IMAGE_MODEL_PRIORITY, IMAGE_TOOL, chat_image_overrides, image_tool_prompt
-from chat_documents import MAX_DOCUMENT_BYTES, ChatDocumentsUnavailable, document_ids, read_document_source, retrieve_passages, store_document
+from chat_documents import MAX_DOCUMENT_BYTES, ChatDocumentsUnavailable, document_ids, read_document_source, retrieve_document_context, store_document
 from chat_context import DEFAULT_CONTEXT_SIZE, validate_context_size, validate_gguf_load_options
 from tts_model_download import model_download_details as tts_model_download_details
 from tts_model_download import model_ready as tts_export_ready, require_fresh_install_space as require_tts_install_space
@@ -967,11 +967,11 @@ def run_text_generation(payload: dict[str, Any], job_id: str, cancel_event: thre
             raise ValueError("Add this text model again; its files are no longer available.")
         device = payload["device"]
         diagnostics["runtime"] = "gguf" if model.get("format") == "gguf" else "openvino"
-        passages = []
+        documents = None
         if attachments := payload.get("documentIds"):
             diagnostics["stage"] = "finding-documents"
             append_text_event(job_id, phase="Finding document passages…")
-            passages = retrieve_passages(DATA_DIR / "chat-documents", attachments, payload["messages"], payload["contextSize"])
+            documents = retrieve_document_context(DATA_DIR / "chat-documents", attachments, payload["messages"], payload["contextSize"])
         if cancel_event.is_set():
             raise InterruptedError()
 
@@ -1012,8 +1012,8 @@ def run_text_generation(payload: dict[str, Any], job_id: str, cancel_event: thre
         request = {key: value for key, value in payload.items() if key not in ("selectedImageName", "unavailableImageNames")}
         if image_model:
             request["tools"] = [IMAGE_TOOL]
-        if passages:
-            request["documentPassages"] = passages
+        if documents and documents.passages:
+            request["documentPassages"] = documents.passages
         result = generate(request)
         if model_load:
             with TEXT_JOB_LOCK:
@@ -1096,6 +1096,11 @@ def run_text_generation(payload: dict[str, Any], job_id: str, cancel_event: thre
                 result["context"] = review_context
             result["finishReason"] = continuation.get("finishReason")
         record_text_image_context(result, payload)
+        if documents:
+            used_documents = {source.get("reference", {}).get("documentId") for source in result.get("documentSources", [])}
+            omitted = [name for document_id, name in documents.names_by_id.items() if document_id not in used_documents]
+            if omitted:
+                result["omittedDocumentNames"] = omitted
         if cancel_event.is_set():
             raise InterruptedError()
         with TEXT_JOB_LOCK:

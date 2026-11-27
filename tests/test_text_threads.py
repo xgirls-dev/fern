@@ -837,6 +837,39 @@ for line in sys.stdin:
             self.assertEqual(job["failureDiagnostics"]["stage"], "finding-documents")
             generate.assert_not_called()
 
+    def test_reply_records_documents_left_out_after_passages_are_fitted(self):
+        directory = self.root / "chat-documents"
+        first = api.store_document(directory, "Schedule.txt", b"The atlas workshop begins at noon.")
+        second = api.store_document(directory, "Schedule.txt", b"The dispatch workshop begins at two.")
+        payload = {
+            "modelId": self.model["id"], "device": "CPU", "contextSize": 1024,
+            "messages": [{"role": "user", "content": "When does the workshop start?"}],
+            "documentIds": [first["id"], second["id"]],
+            "maxNewTokens": 128, "seed": 1, "temperature": 0, "topP": 0.9,
+        }
+
+        def generate(**kwargs):
+            request = kwargs["request"]
+            passages = request["documentPassages"]
+            self.assertEqual({passage["documentId"] for passage in passages}, {first["id"], second["id"]})
+            _, sources, _ = chat_documents.add_document_context(
+                request["messages"], passages, input_budget, lambda turns: len(turns[-1]["content"]), chars_per_unit=1,
+            )
+            return {"text": "Here is the schedule.", "documentSources": sources}
+
+        with (patch.object(api, "DATA_DIR", self.root),
+              patch.object(api, "TEXT_MODEL_REGISTRY", self.registry),
+              patch.object(api.TEXT_GENERATION_WORKER, "generate", side_effect=generate)):
+            for input_budget, expected_sources in ((420, [first["id"]]), (1024, [first["id"], second["id"]])):
+                with (self.subTest(input_budget=input_budget),
+                      patch.dict(api.TEXT_JOB, {"id": "coverage", "status": "running", "partialText": ""}, clear=True)):
+                    api.run_text_generation(payload, "coverage", threading.Event())
+                    job = api.text_job_snapshot()
+                    self.assertEqual(job["status"], "complete", job.get("error"))
+                    self.assertEqual([source["reference"]["documentId"] for source in job["result"]["documentSources"]], expected_sources)
+                    self.assertEqual(job["result"].get("omittedDocumentNames"),
+                                     ["Schedule.txt"] if len(expected_sources) == 1 else None)
+
     def test_chat_image_tool_returns_an_artifact_to_the_same_text_worker(self):
         event = threading.Event()
         call = {"id": "image-call", "type": "function", "function": {"name": "generate_image", "arguments": '{"prompt":"red teapot"}'}}

@@ -20,14 +20,16 @@ const composer = page.getByRole("textbox", { name: "Message", exact: true });
 const context = page.getByRole("spinbutton", { name: /^Context length/ });
 const output = page.getByRole("spinbutton", { name: /^Maximum output/ });
 const openChat = (id) => page.locator(`button[data-thread-id=${JSON.stringify(id)}]`).click();
-async function newChat() {
+async function newChat(previousId) {
   await page.locator(".sidebar-new-button").click();
   await page.getByRole("menuitem", { name: "Chat", exact: true }).click();
+  const selected = page.locator(`button[aria-current="page"][data-thread-id]:not([data-thread-id=${JSON.stringify(previousId)}])`);
+  await expect(selected).toHaveAccessibleName("Text thread: New text thread");
   await expect(composer).toHaveValue("");
+  return selected.getAttribute("data-thread-id");
 }
-async function savedDraft(draft) {
-  await expect.poll(async () => (await savedTextWorkspace(page))?.threads.some((thread) => thread.draft === draft)).toBe(true);
-  return (await savedTextWorkspace(page)).threads.find((thread) => thread.draft === draft).id;
+async function savedChat(id) {
+  return (await savedTextWorkspace(page))?.threads.find((thread) => thread.id === id);
 }
 
 try {
@@ -40,21 +42,21 @@ try {
   await page.reload();
   await expect(page.getByRole("heading", { name: previous.title, exact: true })).toBeVisible();
   await expect.poll(() => catalogRequests).toBeGreaterThan(0);
-  await newChat();
+  const firstId = await newChat(previous.id);
   const originalDraft = "Use the saved settings from this model.";
   await composer.fill(originalDraft);
-  const firstId = await savedDraft(originalDraft);
-  await newChat();
+  await expect.poll(async () => (await savedChat(firstId))?.draft).toBe(originalDraft);
+  const secondId = await newChat(firstId);
   const editedDraft = "Use a custom output limit.";
   await composer.fill(editedDraft);
-  const secondId = await savedDraft(editedDraft);
+  await expect.poll(async () => (await savedChat(secondId))?.draft).toBe(editedDraft);
   await button("Chat settings").click();
   await expect(output).toHaveValue("512");
   await output.click();
   await expect(output).toBeFocused();
   await output.press("ArrowUp");
   await expect(output).toHaveValue("513");
-  await expect.poll(async () => (await savedTextWorkspace(page))?.threads.find(({ id }) => id === secondId)?.maxNewTokens).toBe(513);
+  await expect.poll(async () => (await savedChat(secondId))?.maxNewTokens).toBe(513);
   const beforeReload = catalogRequests;
   await page.reload();
   await expect(composer).toHaveValue(editedDraft);
@@ -66,9 +68,10 @@ try {
   await expect(context).toHaveValue(String(defaults.contextSize));
   await expect(output).toHaveValue("513");
   await expect(page.getByLabel("Temperature value", { exact: true })).toHaveValue(String(defaults.temperature));
-  await expect.poll(async () => (await savedTextWorkspace(page))?.threads.find(({ id }) => id === secondId)?.modelId).toBe(model.id);
+  await expect.poll(async () => (await savedChat(secondId))?.modelId).toBe(model.id);
 
   await openChat(previous.id);
+  await expect(composer).toHaveValue("");
   if (!(await context.isVisible())) await button("Chat settings").click();
   await expect(context).toHaveValue("4096");
   await openChat(firstId);

@@ -11,6 +11,7 @@ const first = {
     fingerprint: "b".repeat(64) },
 };
 const older = { number: 2, name: "Earlier notes.txt", location: "Section 1", excerpt: "Check in at the east entrance." };
+const omittedName = `Workshop-${"Archive".repeat(23)}.pdf`;
 const answer = "The workshop begins at noon [1]. See the earlier notes [2].\n\n`array[1]` and [Unknown [1]](https://example.com/) stay as written [3].\n\n| Room | Source |\n| --- | --- |\n| Cedar | [1] |";
 const { page, errors, close } = await fixture({
   firstRun: true, viewport: { width: 800, height: 615 },
@@ -20,7 +21,8 @@ const { page, errors, close } = await fixture({
       metrics: { inputTokens: 100, outputTokens: 35, generationSeconds: 2, tokensPerSecond: 17.5, documentSources: [first, older] } },
     { id: "prompt-two", role: "user", content: "Show the source again.", createdAt: 3 },
     { id: "reply-two", role: "assistant", content: "**[1] Schedule.pdf · Page 9**\n\nThe answer uses [1].", status: "complete", createdAt: 4,
-      metrics: { inputTokens: 130, outputTokens: 20, generationSeconds: 2, tokensPerSecond: 10, documentSources: [first] } },
+      metrics: { inputTokens: 130, outputTokens: 20, generationSeconds: 2, tokensPerSecond: 10, documentSources: [first],
+        omittedDocumentNames: [omittedName] } },
   ] }] },
 });
 const transcript = page.getByRole("log");
@@ -82,6 +84,18 @@ try {
 
   await page.reload();
   await expect(composer).toHaveValue(draft);
+  await expect(replies.first().getByRole("button", { name: "Context details", exact: true })).toHaveCount(0);
+  await expect(replies.last().getByText("One attached document was left out.", { exact: true })).toBeVisible();
+  const context = replies.last().getByRole("button", { name: "Context details", exact: true });
+  await context.press("Enter");
+  await expect(context).toHaveAttribute("aria-expanded", "true");
+  const details = replies.last().getByRole("region", { name: "Response details", exact: true });
+  await expect(details.getByRole("listitem")).toHaveText(`No excerpt was sent from ${omittedName}.`);
+  assert(await details.evaluate((element) => element.scrollWidth <= element.clientWidth),
+    "Long document names should wrap inside Context details");
+  await context.press("Enter");
+  await expect(context).toBeFocused();
+  await expect(details).toHaveCount(0);
   await replies.last().getByText("Document sources", { exact: true }).click();
   const sourceList = replies.last().locator(".text-document-sources");
   const listTrigger = sourceList.getByRole("button", { name: `Open source [1], ${first.name}, ${first.location}`, exact: true });
