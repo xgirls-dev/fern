@@ -355,7 +355,7 @@ export function GenerationControls({
                   : "Official Turbo runs 8 fixed steps and generates 1 image per request. Fern uses an available GPU automatically. This OpenVINO graph does not use the checkpoint’s KV cache, so it can be slower than CUDA Turbo. Larger canvases need more memory and take longer."}
               </p>
             ) : null}
-            {isCustomImage ? <p className="model-note field-note">{modelStatus?.familyLabel ?? "Custom OpenVINO GenAI model"} · text-to-image only. Fern uses the selected family to apply safe canvas limits and recommended defaults.</p> : null}
+            {isCustomImage ? <p className="model-note field-note">{modelStatus?.familyLabel ?? "Custom image model"} · {supportsReference ? "text-to-image and reference editing" : "text-to-image only"}</p> : null}
             <ImageCanvasFields model={settings.model} settings={settings} modelStatus={modelStatus}
               errors={errors} onChange={onSettingsChange} />
 

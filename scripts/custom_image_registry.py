@@ -1,4 +1,4 @@
-"""Registry for user-added OpenVINO GenAI text-to-image exports."""
+"""Registry for user-added OpenVINO exports and local SDXL GGUF models."""
 from __future__ import annotations
 
 import hashlib
@@ -11,6 +11,8 @@ from typing import Any
 
 from defusedxml import ElementTree
 
+from gguf_metadata import read_metadata
+
 
 FAMILIES: dict[str, dict[str, Any]] = {
     "stable-diffusion": {"label": "Stable Diffusion 1.x / 2.x", "classes": {"StableDiffusionPipeline"}, "steps": 30, "guidance": 7.0, "width": 512, "height": 512, "multiple": 8, "minimum": 256, "maximum": 1920},
@@ -19,18 +21,67 @@ FAMILIES: dict[str, dict[str, Any]] = {
     "flux": {"label": "FLUX.1", "classes": {"FluxPipeline"}, "steps": 28, "guidance": 3.5, "width": 1024, "height": 1024, "multiple": 16, "minimum": 256, "maximum": 1920},
     "flux2-klein": {"label": "FLUX.2 Klein", "classes": {"FluxPipeline", "Flux2Pipeline", "Flux2KleinPipeline"}, "steps": 4, "guidance": 1.0, "width": 1024, "height": 1024, "multiple": 16, "minimum": 256, "maximum": 1920},
     "lcm": {"label": "Latent Consistency Model", "classes": {"LatentConsistencyModelPipeline"}, "steps": 4, "guidance": 1.0, "width": 512, "height": 512, "multiple": 8, "minimum": 256, "maximum": 1920},
+    "sdxl-gguf": {"label": "Stable Diffusion XL · GGUF", "steps": 25, "guidance": 5.0, "width": 1024, "height": 1024, "multiple": 8, "minimum": 512, "maximum": 1536},
+    "sdxl-gguf-split": {"label": "Stable Diffusion XL · split GGUF", "steps": 25, "guidance": 5.0, "width": 1024, "height": 1024, "multiple": 8, "minimum": 512, "maximum": 1536},
 }
+GGUF_FAMILIES = frozenset({"sdxl-gguf", "sdxl-gguf-split"})
+GGUF_COMPANIONS = ("clip_l", "clip_g", "vae")
+
+
+def is_gguf_id(model_id: str | None) -> bool:
+    return isinstance(model_id, str) and model_id.startswith("custom-gguf-")
+
+
+def inspect_gguf(folder: Path, family: str) -> dict[str, Any]:
+    assets = {}
+    for role in GGUF_COMPANIONS:
+        matches = [
+            path for path in folder.iterdir()
+            if path.stem.casefold() == role and path.suffix.lower() in (".gguf", ".safetensors")
+        ]
+        if len(matches) > 1:
+            raise ValueError(f"Keep one {role} companion in the GGUF model folder.")
+        if matches:
+            assets[role] = matches[0]
+        elif family == "sdxl-gguf-split":
+            raise ValueError(f"The split SDXL model is missing {role}.gguf or {role}.safetensors.")
+    models = [
+        path for path in folder.iterdir()
+        if path.suffix.lower() == ".gguf" and path.stem.casefold() not in GGUF_COMPANIONS
+    ]
+    if len(models) != 1:
+        raise ValueError("Choose a folder containing one SDXL model .gguf file.")
+    model = models[0]
+    assets["diffusion" if family == "sdxl-gguf-split" else "checkpoint"] = model
+    for path in assets.values():
+        if path.is_symlink() or not path.is_file() or path.stat().st_size <= 0:
+            raise ValueError(f"The linked GGUF model file is missing or unreadable: {path.name}.")
+        if path.suffix.lower() == ".gguf":
+            metadata = read_metadata(path, require_architecture=False)
+            architecture = metadata.get("general.architecture")
+            if path == model and architecture and architecture not in ("sdxl", "stable-diffusion", "stable_diffusion"):
+                raise ValueError(f"The selected GGUF declares {architecture}, which is not an SDXL diffusion model.")
+    identity = os.path.normcase(str(folder)).encode("utf-8")
+    return {
+        "id": "custom-gguf-" + hashlib.sha256(identity).hexdigest()[:16],
+        "label": re.sub(r"[\r\n\t]+", " ", model.stem).strip()[:100] or "Custom SDXL model",
+        "path": str(folder), "family": family, "pipelineClass": "StableDiffusionXLPipeline",
+        "assets": {role: path.name for role, path in assets.items()},
+        "bytes": sum(path.stat().st_size for path in assets.values()),
+    }
 
 
 def inspect_model(path: str | Path, family: str) -> dict[str, Any]:
     if family not in FAMILIES:
-        raise ValueError("Choose a supported OpenVINO image model family.")
+        raise ValueError("Choose a supported custom image model family.")
     try:
         folder = Path(path).expanduser().resolve(strict=True)
     except OSError as error:
-        raise ValueError("The model folder is missing or cannot be read. Choose the export folder again.") from error
+        raise ValueError("The model folder is missing or cannot be read. Choose the model folder again.") from error
     if not folder.is_dir():
-        raise ValueError("Choose a folder containing an OpenVINO image model export.")
+        raise ValueError("Choose a folder containing the custom image model.")
+    if family in GGUF_FAMILIES:
+        return inspect_gguf(folder, family)
     index_path = folder / "model_index.json"
     if not index_path.is_file() or index_path.stat().st_size <= 0:
         raise ValueError("This folder is missing model_index.json. Select the OpenVINO GenAI export folder itself.")
@@ -97,6 +148,8 @@ class CustomImageRegistry:
         label: str | None = None,
     ) -> dict[str, Any]:
         with self._lock:
+            if family in GGUF_FAMILIES and source_type != "local":
+                raise ValueError("Link GGUF diffusion models from a local folder.")
             model = inspect_model(path, family)
             if source_type not in ("local", "huggingface"):
                 raise ValueError("The custom model source is not supported.")
@@ -119,7 +172,7 @@ class CustomImageRegistry:
                     model["label"] = previous.get("label") or model["label"]
                 models[existing] = model
             self._write(models)
-            return {**model, "familyLabel": FAMILIES[family]["label"], "defaultSteps": FAMILIES[family]["steps"], "defaultGuidance": FAMILIES[family]["guidance"], "defaultWidth": FAMILIES[family]["width"], "defaultHeight": FAMILIES[family]["height"], "installed": True, "state": "installed", "downloaded": model["bytes"], "runtimeReady": True, "supportsReferenceImage": False}
+            return self.get(model["id"])
 
     def remove(self, model_id: str) -> None:
         with self._lock:
@@ -145,8 +198,10 @@ class CustomImageRegistry:
                 inspected = {**item, "label": item.get("label") or re.sub(r"[\r\n\t]+", " ", folder.name).strip()[:100] or "Custom image model"}
             else:
                 inspected = inspect_model(item["path"], item["family"])
+                if is_gguf_id(model_id) and inspected["assets"] != item.get("assets"):
+                    raise ValueError("The linked GGUF model or companions changed. Add the folder again in Models.")
             family = FAMILIES[item["family"]]
-            return {**item, **inspected, "familyLabel": family["label"], "defaultSteps": family["steps"], "defaultGuidance": family["guidance"], "defaultWidth": family["width"], "defaultHeight": family["height"], "installed": True, "state": "installed", "downloaded": inspected["bytes"], "runtimeReady": True, "supportsReferenceImage": False}
+            return {**item, **inspected, "familyLabel": family["label"], "defaultSteps": family["steps"], "defaultGuidance": family["guidance"], "defaultWidth": family["width"], "defaultHeight": family["height"], "installed": True, "state": "installed", "downloaded": inspected["bytes"], "runtimeReady": True, "supportsReferenceImage": is_gguf_id(model_id)}
         except (KeyError, OSError, TypeError, ValueError) as error:
             family = FAMILIES.get(item.get("family"), {})
             return {**item, "familyLabel": family.get("label", "Unsupported family"), "installed": False, "state": "repair-needed", "downloaded": 0, "runtimeReady": False, "supportsReferenceImage": False, "error": str(error)}

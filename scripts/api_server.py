@@ -52,6 +52,7 @@ import flux3_klein_runtime
 import tame_pony_pipeline as tame_pony
 import custom_image_pipeline as custom_image
 import custom_image_registry
+from custom_image_registry import GGUF_FAMILIES, is_gguf_id
 import custom_image_download
 import flux2_klein_text_encoder
 import lora_download
@@ -80,7 +81,7 @@ TEXT_GENERATION_WORKER = TextGenerationProcess()
 from model_manager import ModelManager, remove_tree
 from model_catalog import APPLE_IMAGE_ID, APPLE_IMAGE_SPEC, INTEL_MEDIA_CATALOG, model_spec
 import apple_image
-from intel_media import IntelMedia, PLATFORM_NOTE as INTEL_MEDIA_PLATFORM_NOTE, SANA_RUNTIME_RESERVE_BYTES, VIDEO_ID, Z_IMAGE_ID, supported as intel_media_supported
+from intel_media import IntelMedia, PLATFORM_NOTE as INTEL_MEDIA_PLATFORM_NOTE, SANA_RUNTIME_RESERVE_BYTES, VIDEO_ID, Z_IMAGE_ID, supported as intel_media_supported, uses_intel_media
 from video_jobs import VideoJobs
 from PIL import ImageOps
 import gallery_store
@@ -682,7 +683,7 @@ def chat_image_catalog() -> list[dict[str, Any]]:
     except ValueError:
         custom_models = []
     for item in custom_models:
-        if not item or not item.get("installed"):
+        if not item or not item.get("installed") or (is_gguf_id(item["id"]) and not intel_media_supported()):
             continue
         family = custom_image_registry.FAMILIES[item["family"]]
         models.append({key: item[key] for key in ("id", "label", "defaultWidth", "defaultHeight", "defaultSteps", "defaultGuidance")} | {
@@ -945,7 +946,7 @@ def run_text_generation(payload: dict[str, Any], job_id: str, cancel_event: thre
     try:
         image_model = payload.get("imageModel")
         inspection_image = payload.get("inspectionImage")
-        if image_model not in INTEL_MEDIA_CATALOG and not inspection_image:
+        if not uses_intel_media(image_model) and not inspection_image:
             INTEL_MEDIA.close()
         if apple_silicon():
             release_apple_image_worker()
@@ -1584,6 +1585,8 @@ def model_snapshot(device: str, model="9b") -> dict[str, Any]:
         return INTEL_MEDIA.status(model, device)
     if custom_image.is_model(model):
         try:
+            if is_gguf_id(model):
+                return INTEL_MEDIA.custom_status(model, device)
             return custom_image.model_status(device, model)
         except ValueError as error:
             return {"selectedModel": model, "runtimeReady": False, "runtimeNote": str(error), "requestedDevice": device, "adapters": []}
@@ -1885,6 +1888,9 @@ def validate_flux_payload(payload: dict[str, Any]) -> dict[str, Any]:
     device = normalize_device(raw_device)
     if device == APPLE_GPU and model != APPLE_IMAGE_ID:
         raise ValueError("Choose an image model that supports Apple GPU.")
+    custom_gguf = custom_model and is_gguf_id(model)
+    if custom_gguf and device not in ("AUTO", "INTEL_GPU"):
+        raise ValueError("Choose Intel GPU or Auto to generate with a custom GGUF model.")
     if custom_model and device in ("NVIDIA_GPU",):
         raise ValueError("Custom OpenVINO GenAI image models support Intel GPU or CPU. Select Auto, Intel GPU, or CPU.")
     custom_spec = custom_image.model_spec(model) if custom_model else None
@@ -1949,8 +1955,8 @@ def validate_flux_payload(payload: dict[str, Any]) -> dict[str, Any]:
     loras = payload.get("loras", [])
     if not isinstance(loras, list) or len(loras) > 4:
         raise ValueError("Choose up to four LoRAs.")
-    if loras and model not in (*flux2.LORA_MODEL_KEYS, Z_IMAGE_ID):
-        raise ValueError("Choose Klein 4B LoRA, Klein 9B LoRA, or Z-Image Turbo to use adapters.")
+    if loras and model not in (*flux2.LORA_MODEL_KEYS, Z_IMAGE_ID) and not custom_gguf:
+        raise ValueError("Choose a model that supports LoRAs.")
     checked_loras = []
     lora_paths = set()
     for lora in loras:
@@ -1972,7 +1978,7 @@ def validate_flux_payload(payload: dict[str, Any]) -> dict[str, Any]:
     if model == flux3.MODEL_KEY and reference_image is not None:
         raise ValueError("This FLUX.3 Klein OpenVINO quant currently supports text-to-image only.")
     is_tame_pony = tame_pony.is_model(model)
-    if (is_tame_pony or custom_model) and reference_image is not None:
+    if (is_tame_pony or (custom_model and not custom_gguf)) and reference_image is not None:
         raise ValueError("This model currently supports text-to-image only.")
 
     custom_family = custom_image_registry.FAMILIES[custom_spec["family"]] if custom_spec else None
@@ -2070,7 +2076,8 @@ def run_flux_generation(
             raise FluxGenerationCancelled("Generation stopped by user.")
 
     stage = CACHE_DIR / ("generation-" + job_id)
-    intel_model = payload["model"] in INTEL_MEDIA_CATALOG
+    custom_gguf = is_gguf_id(payload["model"])
+    intel_model = uses_intel_media(payload["model"])
     apple_model = payload["model"] == APPLE_IMAGE_ID
     try:
         if not intel_model:
@@ -2137,7 +2144,9 @@ def run_flux_generation(
                 "guidance": payload["guidance"],
                 "device": resolve_qwen_turbo_device(payload["device"]) if payload["model"] == QWEN_TURBO_MODEL_ID else payload["device"],
                 "modelPath": str(
-                    INTEL_MEDIA.folder(payload["model"])
+                    INTEL_MEDIA.image_spec(payload["model"])["path"]
+                    if custom_gguf
+                    else INTEL_MEDIA.folder(payload["model"])
                     if intel_model
                     else MODEL_MANAGER.folder(APPLE_IMAGE_ID)
                     if apple_model
@@ -2452,7 +2461,7 @@ def prepare_image_inspection(payload: dict[str, Any]) -> dict[str, Any]:
         prompt += f" The image was requested as follows: {artifact['prompt']}. Mention any obvious mismatch."
     return {
         "modelId": model_id, "threadId": thread_id, "device": device, "inspectionImage": artifact,
-        "requireGpuVision": metadata.get("model") in INTEL_MEDIA_CATALOG or metadata.get("model") == APPLE_IMAGE_ID,
+        "requireGpuVision": uses_intel_media(metadata.get("model")) or metadata.get("model") == APPLE_IMAGE_ID,
         "messages": [{"role": "user", "content": prompt, "imagePath": str(path)}],
         "mode": "instant", "toolChoice": "none", "contextSize": context_size, "loadOptions": load_options,
         "systemPrompt": "", "temperature": 0.2, "topP": 0.9, "maxNewTokens": 96, "seed": 0,
@@ -3178,7 +3187,7 @@ class Handler(BaseHTTPRequestHandler):
                             if model.get("supportsVision") and path.parent == OUTPUTS.resolve():
                                 if path.is_file():
                                     turn["imagePath"] = str(path)
-                                    require_gpu_vision |= saved.get("model") in INTEL_MEDIA_CATALOG or saved.get("model") == APPLE_IMAGE_ID
+                                    require_gpu_vision |= uses_intel_media(saved.get("model")) or saved.get("model") == APPLE_IMAGE_ID
                                 elif re.fullmatch(r"[a-zA-Z0-9_-]+\.png", filename):
                                     unavailable_images.add(filename)
                     if message.get("image") is not None:
@@ -3261,7 +3270,7 @@ class Handler(BaseHTTPRequestHandler):
                     "imageSettings": image_settings,
                     "loadOptions": load_options,
                     "documentIds": document_ids(payload.get("documentIds")),
-                    "requireGpuVision": require_gpu_vision or image_model in INTEL_MEDIA_CATALOG or image_model == APPLE_IMAGE_ID,
+                    "requireGpuVision": require_gpu_vision or uses_intel_media(image_model) or image_model == APPLE_IMAGE_ID,
                     **({"selectedImageName": selected_image_name} if selected_image_name else {}),
                     **({"unavailableImageNames": sorted(unavailable_images)} if unavailable_images else {}),
                 }
@@ -3377,7 +3386,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(409, {"error": "The generation job cannot be stopped.", "job": current})
                 return
             cancel_event.set()
-            if FLUX_JOB.get("model") in INTEL_MEDIA_CATALOG:
+            if uses_intel_media(FLUX_JOB.get("model")):
                 INTEL_MEDIA.interrupt()
             elif FLUX_JOB.get("model") == QWEN_TURBO_MODEL_ID:
                 QWEN_GENERATION_WORKER.interrupt()
@@ -3487,6 +3496,8 @@ class Handler(BaseHTTPRequestHandler):
                 family = body.get("family")
                 if not isinstance(path, str) or not isinstance(family, str):
                     raise ValueError("Choose an export folder and supported model family.")
+                if family in GGUF_FAMILIES and not intel_media_supported():
+                    raise ValueError(INTEL_MEDIA_PLATFORM_NOTE)
                 custom_image_registry.MODEL_REGISTRY.add(path, family)
                 self.send_json(200, {"models": model_library_snapshot()})
             except Exception as error:
@@ -3575,8 +3586,14 @@ class Handler(BaseHTTPRequestHandler):
                     with FLUX_JOB_LOCK:
                         if FLUX_JOB["status"] == "running":
                             raise ValueError("Stop generation before removing a model.")
-                    CUSTOM_IMAGE_GENERATION_WORKER.close()
-                    custom_entry = custom_image.model_spec(model)
+                    if is_gguf_id(model):
+                        if text_job_running():
+                            raise ValueError("Finish the active chat before unlinking a GGUF image model.")
+                        INTEL_MEDIA.close()
+                        custom_entry = custom_image_registry.MODEL_REGISTRY.get(model)
+                    else:
+                        CUSTOM_IMAGE_GENERATION_WORKER.close()
+                        custom_entry = custom_image.model_spec(model)
                     if custom_entry.get("sourceType") == "huggingface":
                         owned_root = (MODELS_DIR / "custom-image-models").resolve()
                         owned_path = Path(custom_entry["path"]).resolve(strict=True)
@@ -3692,7 +3709,7 @@ class Handler(BaseHTTPRequestHandler):
         with operation_lock:
             status = (
                 model_snapshot(payload["device"], payload["model"])
-                if payload["model"] in (QWEN_TURBO_MODEL_ID, APPLE_IMAGE_ID, *INTEL_MEDIA_CATALOG)
+                if payload["model"] in (QWEN_TURBO_MODEL_ID, APPLE_IMAGE_ID) or uses_intel_media(payload["model"])
                 else flux3.model_status(payload["device"])
                 if payload["model"] == flux3.MODEL_KEY
                 else custom_image.model_status(payload["device"], payload["model"])

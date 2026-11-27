@@ -120,7 +120,7 @@ export interface GenerationPayload {
 }
 
 export type KleinLoraModel = "4b-lora" | "9b-lora";
-export type LoraImageModel = KleinLoraModel | "z-image-turbo";
+export type LoraImageModel = KleinLoraModel | "z-image-turbo" | `custom-gguf-${string}`;
 
 export interface LoraSelection {
   path: string;

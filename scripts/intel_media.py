@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import io
 import json
 import os
 import platform
@@ -21,6 +22,7 @@ from pathlib import Path
 
 from PIL import Image
 
+from custom_image_registry import FAMILIES, MODEL_REGISTRY, is_gguf_id
 from model_catalog import INTEL_MEDIA_CATALOG, installed
 from sana_sprint_worker import EVENT as SANA_EVENT, PROGRESS as SANA_PROGRESS
 from text_model_download import download_file
@@ -35,10 +37,15 @@ GPU_RESIDENCY = re.compile(r"total params memory size = .*?\(VRAM ([\d.]+)MB, RA
 FLAGS = {
     "diffusion": "--diffusion-model", "llm": "--llm", "t5": "--t5xxl",
     "vae": "--vae", "tae": "--tae", "tokenizer": "--tokenizer",
+    "checkpoint": "--model", "clip_l": "--clip_l", "clip_g": "--clip_g",
 }
 VIDEO_ID = "wan22-turbo"
 Z_IMAGE_ID = "z-image-turbo"
 SANA_RUNTIME_RESERVE_BYTES = 4 * 1024**3
+
+
+def uses_intel_media(model):
+    return model in INTEL_MEDIA_CATALOG or is_gguf_id(model)
 
 
 def supported():
@@ -128,6 +135,7 @@ class IntelMedia:
         self.server_origin = None
         self.server_adapter: dict[str, str | float] | None = None
         self.server_lora_files = ()
+        self.server_model_files = ()
         self.server_lora_stage = None
         self.server_log = None
         self.server_timer = None
@@ -135,6 +143,37 @@ class IntelMedia:
 
     def folder(self, model):
         return self.models / INTEL_MEDIA_CATALOG[model]["folder"]
+
+    def image_spec(self, model):
+        if not is_gguf_id(model):
+            return INTEL_MEDIA_CATALOG[model]
+        item = MODEL_REGISTRY.get(model)
+        if not item or not item["installed"]:
+            raise ValueError(item.get("error") if item else "Link the local GGUF model folder in Models.")
+        return {**item, "preset": {"scheduler": "discrete"}}
+
+    def custom_status(self, model, device):
+        spec = self.image_spec(model)
+        family = FAMILIES[spec["family"]]
+        available = supported()
+        ready = available and device in ("AUTO", "INTEL_GPU")
+        note = (
+            PLATFORM_NOTE if not available else
+            "Choose Intel GPU or Auto to generate with a custom GGUF model." if not ready else
+            "Vulkan · Intel GPU"
+        )
+        return {
+            "selectedModel": model, "modelId": spec["label"], "modelDir": spec["path"],
+            "requestedDevice": device, "selectedDevice": "INTEL_GPU" if ready else None,
+            "modelRevision": "local-custom", "family": spec["family"], "familyLabel": family["label"],
+            "runtimeBackend": "Vulkan", "runtimeReady": ready, "runtimeNote": note,
+            "supportsReferenceImage": True, "supportsCustomModel": True, "platformSupported": available,
+            "minimumDimension": family["minimum"], "maximumDimension": family["maximum"],
+            "dimensionMultiple": family["multiple"], "defaultSteps": family["steps"],
+            "defaultGuidance": family["guidance"], "defaultWidth": family["width"], "defaultHeight": family["height"],
+            "adapters": [{"id": "INTEL_GPU", "label": "Intel GPU", "available": available,
+                          "runtimeReady": ready, "note": note, "supportsReferenceImage": True}],
+        }
 
     def runtime_ready(self):
         try:
@@ -250,18 +289,20 @@ class IntelMedia:
 
     def arguments(self, model, event, log):
         self.ensure_runtime(event, log)
-        spec = INTEL_MEDIA_CATALOG[model]
+        spec = self.image_spec(model)
         preset = spec["preset"]
         device, gpu = intel_vulkan_device(self.runtime / "sd-cli.exe")
         log(f"Vulkan device · {gpu}")
         backend = f"te={device},vae={device},diffusion={device}"
         args = [
-            "--backend", backend, "--params-backend", backend, "--auto-fit", "off",
-            "--flash-attn", "off,diffusion=on", "--flow-shift", str(preset["flow_shift"]),
-            "--max-vram", f"{device}={preset['gpu_budget_gib']}", "-v",
+            "--backend", backend, "--params-backend", backend, "--auto-fit", "off", "-v",
         ]
+        if "flow_shift" in preset:
+            args.extend(("--flash-attn", "off,diffusion=on", "--flow-shift", str(preset["flow_shift"]),
+                         "--max-vram", f"{device}={preset['gpu_budget_gib']}"))
+        folder = Path(spec["path"]) if is_gguf_id(model) else self.folder(model)
         for role, asset in spec["assets"].items():
-            args.extend((FLAGS[role], str(self.folder(model) / asset)))
+            args.extend((FLAGS[role], str(folder / asset)))
         if adapter := preset.get("lora"):
             directory = (self.folder(model) / adapter["path"]).parent
             args.extend(("--lora-model-dir", str(directory), "--lora-apply-mode", "at_runtime"))
@@ -285,6 +326,7 @@ class IntelMedia:
         stop_process(self.server)
         self.server = self.server_model = self.server_origin = self.server_adapter = None
         self.server_lora_files = ()
+        self.server_model_files = ()
         if self.server_lora_stage:
             self.server_lora_stage.cleanup()
             self.server_lora_stage = None
@@ -336,7 +378,8 @@ class IntelMedia:
                 [str(executable), *args, "--listen-ip", "127.0.0.1", "--listen-port", str(number)],
                 cwd=self.runtime, stdout=output, stderr=subprocess.STDOUT, creationflags=WINDOW_FLAG,
             )
-        log(f"Loading {INTEL_MEDIA_CATALOG[model]['label']} on Intel GPU…")
+        spec = self.image_spec(model)
+        log(f"Loading {spec['label']} on Intel GPU…")
         while self.server.poll() is None:
             check_cancel(event)
             try:
@@ -350,7 +393,7 @@ class IntelMedia:
                 expected = {f"adapter-{index}.safetensors" for index in range(1, len(lora_files) + 1)}
                 if not expected <= found:
                     raise RuntimeError("The Vulkan runtime could not open every selected LoRA.")
-            if adapter := INTEL_MEDIA_CATALOG[model]["preset"].get("lora"):
+            if adapter := spec["preset"].get("lora"):
                 expected_name = Path(adapter["path"]).name
                 for item in self.request("/sdapi/v1/loras"):
                     if item["path"] == expected_name:
@@ -385,7 +428,17 @@ class IntelMedia:
             started = time.perf_counter() - float(result["generationTime"])
         else:
             self.sana.close()
-            active_loras = [item for item in request.get("loras", []) if item["enabled"] and item["strength"]] if model == Z_IMAGE_ID else []
+            spec = self.image_spec(model)
+            custom = is_gguf_id(model)
+            active_loras = [
+                item for item in request.get("loras", []) if item["enabled"] and item["strength"]
+            ] if model == Z_IMAGE_ID or custom else []
+            model_files = []
+            if custom:
+                for role, filename in spec["assets"].items():
+                    info = (Path(spec["path"]) / filename).stat()
+                    model_files.append((role, filename, info.st_size, info.st_mtime_ns))
+            model_files = tuple(model_files)
             local_adapters = []
             local_files = []
             for index, item in enumerate(active_loras, start=1):
@@ -400,8 +453,9 @@ class IntelMedia:
                     self.server_timer = None
                 try:
                     if (not self.server or self.server.poll() is not None or self.server_model != model
-                            or self.server_lora_files != lora_files):
+                            or self.server_lora_files != lora_files or self.server_model_files != model_files):
                         self.start_server(model, event, log, lora_files)
+                        self.server_model_files = model_files
                     check_cancel(event)
                     log("Generating on Intel GPU…")
                     started = time.perf_counter()
@@ -409,7 +463,7 @@ class IntelMedia:
                         "prompt": request["prompt"], "width": request["width"], "height": request["height"],
                         "seed": request["seed"], "steps": request["steps"], "cfg_scale": request["guidance"],
                         "batch_size": 1, "sampler_name": "Euler",
-                        "scheduler": INTEL_MEDIA_CATALOG[model]["preset"]["scheduler"],
+                        "scheduler": spec["preset"]["scheduler"],
                     }
                     adapter = self.server_adapter
                     adapters = [adapter] if adapter else local_adapters
@@ -417,19 +471,26 @@ class IntelMedia:
                         settings["lora"] = adapters
                         log_offset = self.server_log.stat().st_size
                     # Stop terminates the local server and releases the socket read.
-                    result = self.request("/sdapi/v1/txt2img", settings, timeout=None)
+                    route = "/sdapi/v1/txt2img"
+                    if custom and (reference := request.get("reference_image")) is not None:
+                        buffer = io.BytesIO()
+                        reference.save(buffer, format="PNG")
+                        settings.update(init_images=[base64.b64encode(buffer.getvalue()).decode("ascii")],
+                                        denoising_strength=0.7)
+                        route = "/sdapi/v1/img2img"
+                    result = self.request(route, settings, timeout=None)
                     if adapters:
                         with self.server_log.open("rb") as stream:
                             stream.seek(log_offset)
                             adapter_log = stream.read().decode("utf-8", errors="replace")
                         counts = re.findall(r"\((\d+) / (\d+)\) LoRA tensors have been applied", adapter_log)
                         if adapter:
-                            count = str(INTEL_MEDIA_CATALOG[model]["preset"]["lora"]["tensor_count"])
+                            count = str(spec["preset"]["lora"]["tensor_count"])
                             if (count, count) not in counts:
                                 raise RuntimeError("The required LoRA adapter did not apply completely.")
                             log(f"Applied {count}/{count} LoRA tensors on Intel Vulkan.")
                         elif len(counts) < len(adapters) or any(applied == "0" or applied != total for applied, total in counts):
-                            raise RuntimeError("A selected LoRA did not apply completely. Choose adapters trained for Z-Image Turbo.")
+                            raise RuntimeError(f"A selected LoRA did not apply completely. Choose adapters trained for {spec.get('familyLabel', spec['label'])}.")
                         else:
                             log("Applied the selected LoRAs on Intel Vulkan.")
                     image = base64.b64decode(result["images"][0].split(",")[-1], validate=True)

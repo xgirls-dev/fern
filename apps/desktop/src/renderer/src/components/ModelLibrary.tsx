@@ -70,6 +70,10 @@ const CUSTOM_IMAGE_FAMILIES = [
   ["flux2-klein", "FLUX.2 Klein"],
   ["lcm", "Latent Consistency Model"],
 ] as const;
+const CUSTOM_GGUF_FAMILIES = [
+  ["sdxl-gguf", "Stable Diffusion XL · GGUF"],
+  ["sdxl-gguf-split", "Stable Diffusion XL · split GGUF"],
+] as const;
 export function ModelLibrary({ recommendedId, category = "image", onCatalogChange }: {
   category?: "image" | "video";
   recommendedId?: string;
@@ -85,6 +89,7 @@ export function ModelLibrary({ recommendedId, category = "image", onCatalogChang
   const [removeEncoder, setRemoveEncoder] = useState<string | null>(null);
   const removalFocus = useReturnFocus();
   const [customFamily, setCustomFamily] = useState<string>("sdxl");
+  const customGguf = CUSTOM_GGUF_FAMILIES.some(([family]) => family === customFamily);
   const [customRepo, setCustomRepo] = useState("");
   const [customDownload, setCustomDownload] = useState<CustomImageDownload>({ status: "idle" });
   const [addingCustom, setAddingCustom] = useState(false);
@@ -262,13 +267,14 @@ export function ModelLibrary({ recommendedId, category = "image", onCatalogChang
       {category === "image" && window.studio.platform !== "darwin" ? <details className="model-library-custom" ref={customDetails}>
       <summary className="ui-disclosure-trigger model-library-custom-trigger"><Plus size={15} aria-hidden="true" />Add custom model<ChevronDown className="model-library-custom-chevron" size={14} aria-hidden="true" /></summary>
       <div className="model-library-import">
-        <p>Choose the family that matches your OpenVINO export, then download it or link a folder on this device.</p>
         <label>
           <span>Model family</span>
           <Select aria-label="Custom image model family" value={customFamily} disabled={addingCustom || startingDownload || downloading || busy}
-            options={CUSTOM_IMAGE_FAMILIES.map(([value, label]) => ({ value, label }))} onChange={setCustomFamily} />
+            options={[...CUSTOM_IMAGE_FAMILIES, ...(window.studio.platform === "win32" ? CUSTOM_GGUF_FAMILIES : [])].map(([value, label]) => ({ value, label }))} onChange={setCustomFamily} />
         </label>
-        <div className="model-library-hub-repo">
+        {customGguf ? <p>{customFamily === "sdxl-gguf-split"
+          ? "Choose a folder with one SDXL diffusion GGUF and the clip_l, clip_g, and vae companion files in GGUF or safetensors format."
+          : "Choose a folder with one complete SDXL GGUF checkpoint."} Inference uses Intel Vulkan.</p> : <div className="model-library-hub-repo">
           <label htmlFor="custom-model-repository">Hugging Face repository</label>
           <div className="model-library-download-row">
             <Input id="custom-model-repository" name="repository" autoComplete="off" spellCheck={false} placeholder="owner/model or Hugging Face URL…" value={customRepo} disabled={startingDownload || downloading || busy} onChange={(event) => setCustomRepo(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && customRepo.trim() && !startingDownload && !downloading && !busy && !addingCustom && !error) void downloadCustomModel(); }} />
@@ -278,9 +284,9 @@ export function ModelLibrary({ recommendedId, category = "image", onCatalogChang
               <Button variant="primary" disabled={!customRepo.trim() || startingDownload || addingCustom || downloading || busy || Boolean(error)} onClick={() => void downloadCustomModel()}>{startingDownload ? "Starting…" : "Download"}</Button>
             )}
           </div>
-        </div>
+        </div>}
         <div className="model-library-local-source">
-          <div><strong>Already have an export?</strong><p>Link a local folder without copying its files.</p></div>
+          <div><strong>{customGguf ? "Link an SDXL model" : "Already have an export?"}</strong><p>Link a local folder without copying its files.</p></div>
           <Button disabled={addingCustom || startingDownload || downloading || busy || Boolean(error)} onClick={() => void addCustomModel()}>{addingCustom ? "Validating…" : "Add local folder"}</Button>
         </div>
         {customDownload.status !== "idle" ? (
