@@ -112,16 +112,20 @@ function resolvePreloadPath(): string {
 }
 
 function createWindow(apiBaseUrl?: string): BrowserWindow {
-  const linux = process.platform === "linux";
-  const workArea = linux ? screen.getPrimaryDisplay().workAreaSize : undefined;
-  const minWidth = 800;
-  const minHeight = 520;
+  let width = 1440;
+  let height = 920;
+  if (process.platform === "linux") {
+    // Wayland can report the full output as its work area even when a panel
+    // takes up space. Leave room for the compositor to place a floating window.
+    const workArea = screen.getPrimaryDisplay().workAreaSize;
+    width = Math.min(width, Math.floor(workArea.width * 7 / 8));
+    height = Math.min(height, Math.floor(workArea.height * 7 / 8));
+  }
   const window = new BrowserWindow({
-    // Electron sizes are logical pixels. Leave room for system chrome on scaled displays.
-    width: Math.max(minWidth, Math.min(1440, workArea?.width ?? 1440)),
-    height: Math.max(minHeight, Math.min(920, workArea?.height ?? 920)),
-    minWidth,
-    minHeight,
+    width,
+    height,
+    minWidth: Math.min(800, width),
+    minHeight: Math.min(520, height),
     show: false,
     icon: getAppIconPath(),
     backgroundColor: nativeTheme.shouldUseDarkColors ? "#212121" : "#fafafa",
