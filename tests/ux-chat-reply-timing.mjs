@@ -4,26 +4,31 @@ import { measureWarmStop, observeChatReply, readReplyTiming, verifyPromptDetails
 import { fixture, savedTextWorkspace } from "./ui-fixture.mjs";
 
 let stream;
-let connections = 0;
+const connections = [];
+const firstConnection = Promise.withResolvers();
 const { page, state, errors, close } = await fixture({
   firstRun: true,
   textStatus: {
     models: [{ id: "local", name: "Local model", installed: true, format: "gguf" }],
     ggufAvailable: true, supportsJobEvents: true, supportsJobPolling: true, job: { id: null, status: "idle" },
   },
-  textJobEvents: (_request, response) => {
+  textJobEvents: (request, response) => {
     response.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-store" });
     response.flushHeaders();
     stream = response;
-    connections++;
+    connections.push(new URL(request.url, "http://localhost").searchParams.get("jobId"));
+    firstConnection.resolve();
   },
 });
 const emit = (frame) => stream.write("data: " + JSON.stringify(frame) + "\n\n");
 const firstAdmission = Promise.withResolvers();
 
 try {
-  const idleJob = state.textStatus.job;
-  await page.route("**/api/text/job", (route) => route.fulfill({ json: connections ? state.textStatus.job : idleJob }));
+  await page.route("**/api/text/job", async (route) => {
+    // Keep polling from winning the first admission without reporting an idle runtime after it accepted the job.
+    if (!connections.length && state.textStatus.job.id) await firstConnection.promise;
+    await route.fulfill({ json: state.textStatus.job });
+  });
   await page.route("**/api/text/generate", async (route) => {
     const request = route.request().postDataJSON();
     const { requestId, threadId, modelId } = request;
@@ -97,10 +102,10 @@ try {
   });
 
   async function driveWarmStop() {
-    await expect.poll(() => connections).toBe(2);
+    await expect.poll(() => connections.length).toBe(2);
     state.textStatus.job = { ...state.textStatus.job, partialText: partialMarkdown, phase: "Waiting for the first token…" };
     emit({ job: state.textStatus.job });
-    await expect.poll(() => connections).toBe(3);
+    await expect.poll(() => connections.length).toBe(3);
     state.textStatus.job = {
       ...state.textStatus.job, partialText: "ORCHID-42", status: "complete", finishedAt: Date.now() / 1000,
       result: { inputTokens: 37, outputTokens: 6, generationSeconds: 0.4, tokensPerSecond: 15, backend: "OpenVINO", device: "GPU",
@@ -111,7 +116,8 @@ try {
   }
 
   const [warm] = await Promise.all([measureWarmStop(page, () => state.textStatus.job, "local"), driveWarmStop()]);
-  assert.equal(connections, 3, "The committed status must reuse each accepted stream.");
+  assert.deepEqual(connections, state.textRequests.map(({ requestId }) => requestId),
+    "The committed status must reuse each accepted stream.");
   assert.deepEqual(stoppedIds, [state.textRequests[1].requestId]);
   assert(state.textRequests[2].messages.some(({ role, content }) => role === "user" && content.includes("ORCHID-42")));
   assert.equal(state.textRequests[2].threadId, state.textRequests[1].threadId);
@@ -137,6 +143,7 @@ try {
   console.log("The benchmark distinguishes loading, first answer, backend Stop, composer readiness, and the warm follow-up.");
 } finally {
   firstAdmission.resolve();
+  firstConnection.resolve();
   stream?.end();
   await close();
 }

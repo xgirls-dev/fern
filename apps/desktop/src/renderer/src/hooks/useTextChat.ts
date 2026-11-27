@@ -581,6 +581,8 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
       if (pending) finishSubmission(pending);
       retryDelay = retryInterval;
       const terminal = isTerminalTextJob(job);
+      // The EventSource already closes on a terminal frame. Retain the watch
+      // until React commits that frame so a running render can still reuse it.
       if (!receivingJobEvents.current || terminal) invalidatePoll();
       receivingJobEvents.current = true;
       setStatus((current) => {
@@ -588,7 +590,6 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
         return applyTextJobStatus(current, job);
       });
       setStatusError(null);
-      if (terminal) watch.close();
     };
     const onLost = () => {
       if (jobWatch.current !== watch) return;
