@@ -2363,7 +2363,7 @@ def run_flux_generation(
         if payload["model"] == QWEN_TURBO_MODEL_ID:
             mark_runtime(status="ready", device=payload["device"], message="Qwen Turbo is ready for another image.", error=None)
         elif intel_model:
-            mark_runtime(status="ready", device=payload["device"], message=f"{model_spec(payload['model'])['label']} is ready for another image.", error=None)
+            mark_runtime(status="ready", device=payload["device"], message=f"{last_record['modelLabel']} is ready for another image.", error=None)
         elif payload["model"] == flux3.MODEL_KEY:
             mark_runtime(status="ready", device=payload["device"], message="FLUX.3 Klein is ready for another image.", error=None)
         elif tame_pony.is_model(payload["model"]):
