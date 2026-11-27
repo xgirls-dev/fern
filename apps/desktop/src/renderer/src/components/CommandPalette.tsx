@@ -11,7 +11,7 @@ import Sparkles from "lucide-react/dist/esm/icons/sparkles.mjs";
 import AudioLines from "lucide-react/dist/esm/icons/audio-lines.mjs";
 import MessageSquare from "lucide-react/dist/esm/icons/message-square.mjs";
 import Square from "lucide-react/dist/esm/icons/square.mjs";
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Dialog, DialogTitle } from "./ui/Dialog";
 import { SearchDialogField } from "./ui/SearchDialogField";
 import { shortcutLabel, shortcuts } from "../lib/workspaceNavigation";
@@ -88,6 +88,8 @@ export function CommandPalette({
   const searchRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const keyboardNavigation = useRef(false);
+  const restoringFocus = useRef(true);
+  const finalFocus = useCallback(() => restoringFocus.current, []);
   const [query, setQuery] = useState("");
   const [activeId, setActiveId] = useState<string>();
   const threadIndex = useMemo(() => indexPaletteThreads(threads), [threads]);
@@ -257,6 +259,13 @@ export function CommandPalette({
 
   const selectAction = (action: PaletteAction | undefined) => {
     if (!action) return;
+    if (action.id === "open-text") {
+      // The chat focuses its draft after the palette unmounts in this commit.
+      restoringFocus.current = false;
+      onClose();
+      action.onSelect();
+      return;
+    }
     onClose();
     window.setTimeout(action.onSelect, 0);
   };
@@ -275,7 +284,7 @@ export function CommandPalette({
   };
 
   return (
-    <Dialog variant="search" onClose={onClose} initialFocus={searchRef}>
+    <Dialog variant="search" onClose={onClose} initialFocus={searchRef} finalFocus={finalFocus}>
       <DialogTitle className="sr-only">Commands</DialogTitle>
       <SearchDialogField
         closeLabel="Close commands"
