@@ -27,7 +27,7 @@ import { notify } from "../lib/notifications";
 import { reuseUnchangedStatus } from "../lib/statusSnapshot";
 import { createTextThreadStorage } from "../lib/textThreadStorage";
 import { formatTextTranscript, type TranscriptDestination } from "../lib/textTranscript";
-import { captureTextFailure } from "../lib/textFailure";
+import { captureTextFailure, textFailureCode } from "../lib/textFailure";
 import {
   chatTokenLimits, closeChatPane, compareChatThread, ggufLoadOptions, modelDefaultsFromThread, normalizeChatSplit,
   chatPresetSettings, showChatThread, snapshotTextVersion, textSamplingOverrides, visibleChatPane, type ChatPane,
@@ -156,7 +156,9 @@ function settleTextJob(workspace: TextThreadWorkspace, job: TextJob, lastRunning
   const assistant: TextMessage = {
     id: `response-${jobId}`, jobId, role: "assistant", content,
     status: empty ? "failed" : outcome,
-    error: empty ? emptyError : job.error, errorCode: empty ? "empty-response" : job.errorCode, failureDiagnostics,
+    error: empty ? emptyError : job.error,
+    errorCode: empty ? "empty-response" : textFailureCode(job.errorCode, outcome === "failed" ? job.error : undefined),
+    failureDiagnostics,
     reasoning: outcome === "complete" && job.partialReasoning?.trim() ? job.partialReasoning
       : keepStreamedText(preview?.reasoning, job.partialReasoning),
     generatedImage: image,

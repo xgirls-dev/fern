@@ -71,10 +71,11 @@ try {
 
   await send("Give me a list of supplies.");
   update({ status: "failed", partialText: "Start with one notebook per group.",
-    error: "The local model ran out of memory.", finishedAt: Date.now() / 1000 });
+    error: "The local model ran out of memory.", errorCode: null, finishedAt: Date.now() / 1000 });
   const failed = page.getByRole("article", { name: "Model response", exact: true }).last();
   await expect(failed).toContainText("Start with one notebook per group.");
-  await expect(failed).toContainText("The local model ran out of memory.");
+  await expect(button("Adjust context", failed)).toBeEnabled();
+  await expect(failed).toContainText("The model ran out of memory.");
   await expect(button("Continue response", failed)).toBeEnabled();
   await capture("06-failed");
 

@@ -1,7 +1,7 @@
 import type { ChatImageModel, ChatImageSettings } from "./chatImageSettings";
 import { normalizeChatFolders, type ChatFolder } from "./chatFolders";
 import { normalizeChatDocuments, normalizeDocumentSources, type ChatDocument, type ChatDocumentSource } from "./chatDocuments";
-import { normalizeTextFailure, type TextFailureDiagnostics } from "./textFailure";
+import { normalizeTextFailure, textFailureCode, type TextFailureDiagnostics } from "./textFailure";
 
 const DEFAULT_CONTEXT_SIZE = 8192;
 export const MIN_CHAT_CONTEXT = 1024;
@@ -876,7 +876,7 @@ function restoreMessage(message: TextMessage, restoreAlternatives = true): TextM
     id: typeof message.id === "string" ? message.id : `message-${crypto.randomUUID()}`,
     createdAt: Number.isFinite(message.createdAt) ? message.createdAt : Date.now(),
     error: typeof message.error === "string" ? message.error : null,
-    errorCode: typeof message.errorCode === "string" ? message.errorCode : null,
+    errorCode: textFailureCode(message.errorCode, message.role === "assistant" && message.status === "failed" ? message.error : undefined),
     failureDiagnostics: message.role === "assistant" && message.status === "failed" ? normalizeTextFailure(message.failureDiagnostics) : undefined,
     modelName: typeof message.modelName === "string" ? message.modelName : undefined,
     image: message.role === "user" && isChatImage(message.image) ? message.image : undefined,

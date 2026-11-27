@@ -4,10 +4,18 @@ import { chooseSelectOption } from "./select-option.mjs";
 import { chooseMessageAction, fixture, savedTextWorkspace } from "./ui-fixture.mjs";
 
 const threadId = "text-thread-memory";
+const earlierId = "text-thread-earlier-memory";
 const { page, state, errors, close } = await fixture({
   firstRun: true,
   legacyTextWorkspace: { activeId: threadId, threads: [{
     id: threadId, title: "Workshop notes", modelId: "local", contextSize: 8192, draft: "Summarize the workshop.", messages: [],
+  }, {
+    id: earlierId, title: "Earlier local chat", modelId: "local", contextSize: 8192, draft: "Keep this earlier draft.",
+    messages: [
+      { id: "earlier-prompt", role: "user", content: "Make a quick plan.", createdAt: 1 },
+      { id: "earlier-reply", role: "assistant", content: "An earlier partial answer", createdAt: 2,
+        status: "failed", error: "Runtime stopped: std::bad_alloc at /private/older.gguf" },
+    ],
   }] },
   textStatus: {
     models: [
@@ -99,6 +107,17 @@ try {
     const responses = saved.threads.find(({ id }) => id === threadId).messages.filter(({ role }) => role === "assistant");
     return responses.flatMap((response) => [response, ...(response.alternatives ?? [])]).map(({ content }) => content);
   }).toEqual(expect.arrayContaining(["A useful partial answer", "The workshop is ready for review."]));
+
+  await page.setViewportSize({ width: 1200, height: 760 });
+  await button("Text thread: Earlier local chat").click();
+  await expect(reply).toContainText("An earlier partial answer");
+  await expect(reply).toContainText("The model ran out of memory.");
+  await expect(reply).not.toContainText("/private/older.gguf");
+  await expect(composer).toHaveValue("Keep this earlier draft.");
+  await reply.getByRole("button", { name: "Adjust context", exact: true }).press("Enter");
+  await expect(context).toBeFocused();
+  await expect(context).toHaveValue("8192");
+  assert.equal(state.textRequests.length, 3);
   assert.deepEqual(errors, []);
   console.log("Chat memory recovery preserves the partial answer, prompt, and draft across context and model changes.");
 } finally {
