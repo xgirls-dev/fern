@@ -126,7 +126,6 @@ function createWindow(apiBaseUrl?: string): BrowserWindow {
     icon: getAppIconPath(),
     backgroundColor: nativeTheme.shouldUseDarkColors ? "#212121" : "#fafafa",
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "hidden",
-    autoHideMenuBar: linux,
     ...(process.platform === "win32"
       ? {
           titleBarOverlay: {
@@ -337,6 +336,18 @@ function registerIpc(): void {
 
   ipcMain.handle("studio:window-close", (event) => {
     BrowserWindow.fromWebContents(event.sender)?.close();
+  });
+
+  ipcMain.handle("studio:open-application-menu", (event, left: number, bottom: number) => {
+    if (process.platform !== "linux" || !Number.isFinite(left) || !Number.isFinite(bottom)) return;
+    const window = BrowserWindow.fromWebContents(event.sender);
+    const menu = Menu.getApplicationMenu();
+    if (!window || !menu) return;
+    const zoom = event.sender.getZoomFactor();
+    const { width, height } = window.getContentBounds();
+    const x = Math.min(width, Math.max(0, Math.round(left * zoom)));
+    const y = Math.min(height, Math.max(0, Math.round(bottom * zoom)));
+    return new Promise<void>((resolve) => menu.popup({ window, x, y, callback: resolve }));
   });
 
   ipcMain.handle("studio:copy-text", (_event, text: string) => {
