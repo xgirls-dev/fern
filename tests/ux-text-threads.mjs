@@ -66,7 +66,8 @@ try {
   await until(() => state.textRequests.length === 5, 'rejected-request retry');
   assert.equal(state.textRequests.at(-1).messages.length, 5);
   state.textStatus.job = { ...state.textStatus.job, status: 'failed', partialText: 'A useful partial response', error: 'GPU out of memory', finishedAt: Date.now()/1000 };
-  await page.getByText('GPU out of memory', { exact: true }).waitFor();
+  await page.getByText('The model ran out of memory.', { exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Choose model', exact: true }).waitFor();
   await page.getByText('A useful partial response', { exact: true }).waitFor();
   await page.screenshot({ path: `${dir}/text-desktop.png`, fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
