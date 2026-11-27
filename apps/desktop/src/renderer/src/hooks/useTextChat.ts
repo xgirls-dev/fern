@@ -73,6 +73,7 @@ const idleStatus: TextRuntimeStatus = {
   job: { id: null, threadId: null, modelId: null, status: "idle", phase: null, partialText: "", startedAt: null, finishedAt: null, result: null, error: null },
 };
 const UNLOADING_MODEL = "Unloading model…";
+const QUIET_JOB_POLL_INTERVAL_MS = 2_000;
 
 interface TextSubmission {
   id: string;
@@ -84,6 +85,8 @@ interface TextJobWatch {
   jobId: string;
   threadId: string;
   jobOnly: boolean;
+  checkTerminalAt?: number;
+  checkTerminal: () => Promise<void>;
   close: () => void;
 }
 
@@ -357,7 +360,6 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
   const submission = useRef<TextSubmission | null>(null);
   const activePoll = useRef<symbol | null>(null);
   const jobWatch = useRef<TextJobWatch | null>(null);
-  const receivingJobEvents = useRef(false);
   const [submitting, setSubmitting] = useState(false);
   const invalidatePoll = useCallback(() => {
     activePoll.current = null;
@@ -553,8 +555,13 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
   useEffect(() => {
     if (!ready) return;
     const timer = window.setInterval(() => {
+      const watch = jobWatch.current;
       // A live stream can miss the terminal update after Stop.
-      if (!useJobPoll || !receivingJobEvents.current || stoppingId) void refresh();
+      if (!useJobPoll || watch?.checkTerminalAt === undefined || stoppingId) void refresh();
+      else if (performance.now() >= watch.checkTerminalAt && !activePoll.current) {
+        // A connection can stay open without delivering the final job update.
+        void watch.checkTerminal();
+      }
     }, useJobPoll ? 150 : busy ? 500 : 4000);
     return () => window.clearInterval(timer);
   }, [ready, busy, refresh, stoppingId, useJobPoll]);
@@ -567,13 +574,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     let retryDelay = retryInterval;
     let retryTimer: number | undefined;
     let unsubscribe: (() => void) | undefined;
-    const watch: TextJobWatch = { jobId, threadId, jobOnly, close: () => {
-      if (jobWatch.current !== watch) return;
-      jobWatch.current = null;
-      window.clearTimeout(retryTimer);
-      unsubscribe?.();
-      receivingJobEvents.current = false;
-    } };
+    let checkingTerminal = false;
     const onJob = (job: TextJob) => {
       if (jobWatch.current !== watch) return;
       const pending = submission.current;
@@ -581,10 +582,14 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
       if (pending) finishSubmission(pending);
       retryDelay = retryInterval;
       const terminal = isTerminalTextJob(job);
-      // The EventSource already closes on a terminal frame. Retain the watch
-      // until React commits that frame so a running render can still reuse it.
-      if (!receivingJobEvents.current || terminal) invalidatePoll();
-      receivingJobEvents.current = true;
+      // Close the stream when either path sees the final status. Retain the watch
+      // until React commits the reply so a running render can still reuse it.
+      if (terminal) {
+        window.clearTimeout(retryTimer);
+        unsubscribe?.();
+      }
+      if (watch.checkTerminalAt === undefined || terminal) invalidatePoll();
+      watch.checkTerminalAt = terminal ? Infinity : performance.now() + QUIET_JOB_POLL_INTERVAL_MS;
       setStatus((current) => {
         if (current.job.id !== jobId || current.job.threadId !== threadId || current.job.status !== "running") return current;
         return applyTextJobStatus(current, job);
@@ -593,7 +598,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     };
     const onLost = () => {
       if (jobWatch.current !== watch) return;
-      receivingJobEvents.current = false;
+      watch.checkTerminalAt = undefined;
       void pollStatus(jobOnly);
       retryTimer = window.setTimeout(connect, retryDelay);
       retryDelay = Math.min(retryDelay * 2, 4000);
@@ -601,6 +606,23 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     const connect = () => {
       if (jobWatch.current === watch) unsubscribe = subscribeToTextJob(threadId, jobId, onJob, onLost);
     };
+    const checkTerminal = async () => {
+      if (checkingTerminal) return;
+      checkingTerminal = true;
+      watch.checkTerminalAt = performance.now() + QUIET_JOB_POLL_INTERVAL_MS;
+      try {
+        const job = await fetchTextJob();
+        // The stream owns live progress. Only the matching terminal job can settle it.
+        if (job?.id === jobId && job.threadId === threadId && isTerminalTextJob(job)) onJob(job);
+      } catch { /* The regular recovery path still handles connection failures. */ }
+      finally { checkingTerminal = false; }
+    };
+    const watch: TextJobWatch = { jobId, threadId, jobOnly, checkTerminal, close: () => {
+      if (jobWatch.current !== watch) return;
+      jobWatch.current = null;
+      window.clearTimeout(retryTimer);
+      unsubscribe?.();
+    } };
     jobWatch.current = watch;
     connect();
     return watch;
