@@ -98,8 +98,15 @@ async function writeDatabase(workspace: TextThreadWorkspace, previous: TextThrea
   };
   for (const { messages, ...thread } of changed) {
     const { id } = thread;
-    write.threads.push(thread);
-    const existing = old.get(id)?.messages;
+    const previousThread = old.get(id);
+    if (previousThread) {
+      const { messages: _, ...metadata } = previousThread;
+      const keys = new Set([...Object.keys(metadata), ...Object.keys(thread)] as (keyof ThreadRecord)[]);
+      const fields = [...keys].filter((key) => !Object.is(metadata[key], thread[key]));
+      // A draft-only save must leave newer titles and settings on disk alone.
+      if (fields.length) write.threads.push({ id, fields: Object.fromEntries(fields.map((key) => [key, thread[key]])) });
+    } else write.threads.push(thread);
+    const existing = previousThread?.messages;
     if (messages === existing) continue;
     const revision = crypto.randomUUID();
     if (existing && revisions?.has(id) && existing.length >= BACKGROUND_TRANSCRIPT_SIZE) {
