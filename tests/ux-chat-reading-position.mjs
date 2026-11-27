@@ -14,7 +14,7 @@ const { page, state, errors, close } = await fixture({
   viewport: { width: 1500, height: 900 },
   textStatus: { models, ggufAvailable: true, supportsJobPolling: true, job: { id: null, status: "idle" } },
   legacyTextWorkspace: { activeId: leftId, threads: [
-    { id: leftId, title: "Reading in the left pane", modelId: "local", messages },
+    { id: leftId, title: "Reading in the left pane", modelId: "local", draft: "Keep the exact draft.", messages },
     { id: rightId, title: "Streaming in the right pane", modelId: "local", messages: [] },
   ] },
 });
@@ -71,8 +71,28 @@ try {
   await expect(anchor).toBeInViewport();
   await expect.poll(async () => Math.abs(await anchorOffset() - expected)).toBeLessThan(10);
   await expect(feed).not.toHaveAttribute("data-following", "true");
+
+  const draft = left.getByRole("textbox", { name: "Message" });
+  await draft.evaluate((element) => element.setSelectionRange(3, 7));
+  await feed.focus();
+  await page.keyboard.press("Control+k");
+  const commands = page.getByRole("combobox", { name: "Search commands or threads" });
+  await commands.fill("Open current chat");
+  await expect(page.getByRole("option", { selected: true })).toContainText("Open current chat");
+  await commands.press("Enter");
+  await expect(draft).toBeFocused();
+  await expect(draft).toHaveValue("Keep the exact draft.");
+  expect(await draft.evaluate((element) => [element.selectionStart, element.selectionEnd])).toEqual([3, 7]);
+  await expect.poll(async () => Math.abs(await anchorOffset() - expected)).toBeLessThan(10);
+  const resumedOffset = await anchorOffset();
+
+  const otherPane = page.getByRole("group", { name: "Chat panes" }).getByRole("button", { name: "Right chat", exact: true });
+  await otherPane.press("Enter");
+  await expect(right).toBeVisible();
+  await expect(otherPane).toBeFocused();
+  await expect(right.getByRole("article", { name: "Response in progress" })).toBeVisible();
   expect(errors).toEqual([]);
-  console.log(`Returning to the resized chat pane restored the message at ${await anchorOffset()}px (previously ${expected}px).`);
+  console.log(`Commands focused the draft without moving the reading anchor (${expected}px to ${resumedOffset}px) or stealing focus from the other pane.`);
 } finally {
   await close();
 }

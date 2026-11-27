@@ -203,7 +203,8 @@ export interface TextWorkspaceProps {
   backendRestarting?: boolean;
   onRestartBackend?: () => void;
   onSetupModels: (task: SetupTask, threadId: string) => void;
-  focusRequest?: number;
+  focusRequested: boolean;
+  onFocusRequestHandled: () => void;
   findRequest?: { threadId: string; query: string } | null;
   onFindRequestHandled: () => void;
   imageGpuAvailable?: boolean;
@@ -215,7 +216,8 @@ export interface TextWorkspaceProps {
 }
 
 export function TextWorkspace({ studio, thread: activeThread, pane, focused, split, onChooseChat, onOpenThreadSearch, onClosePane,
-  sidebarCollapsed = false, backendFailure, backendRestarting, onRestartBackend, onSetupModels, focusRequest = 0, findRequest, onFindRequestHandled, imageGpuAvailable,
+  sidebarCollapsed = false, backendFailure, backendRestarting, onRestartBackend, onSetupModels, focusRequested, onFocusRequestHandled,
+  findRequest, onFindRequestHandled, imageGpuAvailable,
   onOpenImage, onNewChat, onCreateImage, onCreateSpeech, onOpenCompute }: TextWorkspaceProps) {
   const { status, statusError, actionError, busy } = studio;
   const { refreshModels } = studio;
@@ -296,18 +298,17 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   const focusBranchId = useRef<string | undefined>(undefined);
   const focusAfterRevision = useRef<string | undefined>(undefined);
   const [editJump, setEditJump] = useState<{ threadId: string; messageId: string } | null>(null);
-  const handledFocusRequest = useRef(0);
   useLayoutEffect(() => {
-    if (!focused || focusRequest === handledFocusRequest.current) return;
+    if (!focused || !focusRequested) return;
     if (findRequest || document.activeElement?.closest('[role="menu"], [aria-haspopup="menu"][aria-expanded="true"], [aria-modal="true"]')) {
-      handledFocusRequest.current = focusRequest;
+      onFocusRequestHandled();
       return;
     }
     if (panel) { setPanel(null); return; }
-    handledFocusRequest.current = focusRequest;
     setFindThreadId(null);
     inputRef.current?.focus({ preventScroll: true });
-  }, [findRequest, focusRequest, focused, panel]);
+    onFocusRequestHandled();
+  }, [findRequest, focusRequested, focused, onFocusRequestHandled, panel]);
   useEffect(() => {
     if (findRequest?.threadId !== activeThread.id) return;
     setPanel(null);

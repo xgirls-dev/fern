@@ -11,6 +11,7 @@ lands directly on `main` instead of through labeled pull requests.
 - Resume a prepared Windows runtime upgrade after a restart and recover the prior runtime if setup is interrupted.
 - Open Linux windows with one title bar and keep the application menu within reach. Floating windows leave room for panels, and compact scaled Wayland windows open maximized.
 - Use native input composition on Linux desktops that offer the first Wayland text-input protocol, including Weston.
+- Return keyboard focus to the draft when opening the current chat from Commands, while keeping the transcript in place.
 
 ## [0.1.49] - 2026-11-25
 
