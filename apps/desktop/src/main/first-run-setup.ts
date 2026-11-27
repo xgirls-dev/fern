@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { createReadStream, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { app, BrowserWindow, nativeTheme } from "electron";
@@ -37,6 +38,24 @@ function runtimeInstalled(root: string, revision: string): boolean {
 function runtimeReady(): boolean {
   try { return runtimeInstalled(join(app.getPath("userData"), "runtime"), runtimeRevision()); }
   catch { return false; }
+}
+
+async function verifyRuntimeArchive(window: BrowserWindow, archive: string, revision: string): Promise<void> {
+  const controller = new AbortController();
+  const cancel = () => controller.abort();
+  window.once("closed", cancel);
+  try {
+    const hash = createHash("sha256");
+    for await (const chunk of createReadStream(archive, { signal: controller.signal })) hash.update(chunk);
+    if (hash.digest("hex") !== revision) {
+      throw new Error("The bundled AI runtime could not be verified. Reinstall Fern from a fresh download.");
+    }
+  } catch (error) {
+    if (controller.signal.aborted) throw new RuntimeSetupCancelled("Setup cancelled.");
+    throw error;
+  } finally {
+    window.removeListener("closed", cancel);
+  }
 }
 
 function extractRuntime(window: BrowserWindow, archive: string, stage: string): Promise<void> {
@@ -82,7 +101,10 @@ async function ensureRuntime(window: BrowserWindow): Promise<void> {
   if (!runtimeInstalled(stage, revision)) {
     const archive = join(process.resourcesPath, "runtime-release.zip");
     if (!existsSync(archive)) throw new Error("The bundled AI runtime archive is missing. Please reinstall Fern.");
-    updateStatus(window, "Installing the Fern AI runtime...");
+    updateStatus(window, "Checking the bundled AI runtime…");
+    await verifyRuntimeArchive(window, archive, revision);
+    if (window.isDestroyed()) throw new RuntimeSetupCancelled("Setup cancelled.");
+    updateStatus(window, "Installing the Fern AI runtime…");
     await rm(stage, cleanup);
     if (window.isDestroyed()) throw new RuntimeSetupCancelled("Setup cancelled.");
     mkdirSync(stage, { recursive: true });

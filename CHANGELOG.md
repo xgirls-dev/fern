@@ -8,6 +8,7 @@ lands directly on `main` instead of through labeled pull requests.
 
 ### Fixed
 
+- Verify the bundled Windows runtime before replacing the existing runtime during setup.
 - Resume a prepared Windows runtime upgrade after a restart and recover the prior runtime if setup is interrupted.
 - Open Linux windows with one title bar and keep the application menu within reach. Floating windows leave room for panels, and compact scaled Wayland windows open maximized.
 - Use native input composition on Linux desktops that offer the first Wayland text-input protocol, including Weston.

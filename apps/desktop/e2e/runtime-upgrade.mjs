@@ -9,11 +9,12 @@ import { savedTextWorkspace } from "../../../tests/ui-fixture.mjs";
 
 const [installerApp, mode] = process.argv.slice(2);
 assert(process.platform === "win32" && path.isAbsolute(installerApp));
-assert(["baseline", "candidate"].includes(mode));
+assert(["baseline", "checksum-baseline", "candidate"].includes(mode));
 const scratch = await mkdtemp(path.join(os.tmpdir(), "fern-runtime-upgrade-"));
 const executable = path.join(scratch, "app", path.basename(installerApp));
 const resources = path.join(scratch, "app", "resources");
 const bundledArchive = path.join(resources, "runtime-release.zip");
+const manifestPath = path.join(resources, "runtime-release.json");
 const missingArchive = `${bundledArchive}.held`;
 const profile = path.join(scratch, "profile");
 const workspace = path.join(scratch, "workspace");
@@ -48,14 +49,15 @@ async function openChat() {
   return { page, composer };
 }
 
-async function failSetup() {
+async function failSetup(message = /The bundled AI runtime archive is missing/) {
   const { stdout, stderr } = await execFile(executable, args, { env, windowsHide: true, timeout: 45_000 });
-  assert.match(stdout + stderr, /The bundled AI runtime archive is missing/);
+  assert.match(stdout + stderr, message);
 }
 
 try {
   await cp(path.dirname(installerApp), path.dirname(executable), { recursive: true });
-  const manifest = JSON.parse((await readFile(path.join(resources, "runtime-release.json"), "utf8")).replace(/^\uFEFF/, ""));
+  const manifestText = await readFile(manifestPath, "utf8");
+  const manifest = JSON.parse(manifestText.replace(/^\uFEFF/, ""));
   const revision = `${manifest.archiveSha256}\n`;
   const older = `${manifest.archiveSha256 === "a".repeat(64) ? "b".repeat(64) : "a".repeat(64)}\n`;
   await mkdir(path.dirname(localFile), { recursive: true });
@@ -67,36 +69,65 @@ try {
   app = null;
   assert.equal(await readFile(marker(target), "utf8"), revision);
 
-  // Model an interruption after the old runtime has been moved and before the stage is installed.
-  await rename(target, previous);
-  await writeFile(marker(previous), older);
-  await mkdir(stage);
-  await writeFile(path.join(stage, "partial"), "incomplete extraction");
-  await rename(bundledArchive, missingArchive);
-  try {
-    await failSetup();
-    const survivingRuntime = mode === "candidate" ? target : previous;
-    assert.equal(await readFile(marker(survivingRuntime), "utf8"), older);
-    await assert.rejects(readFile(marker(mode === "candidate" ? previous : target)), { code: "ENOENT" });
-    await rm(stage, { recursive: true });
-
-    // Use the complete runtime from the first launch as the finished stage.
-    await rename(survivingRuntime, stage);
-    await writeFile(marker(stage), revision);
-    if (mode === "baseline") {
-      await failSetup();
-      assert.equal(await readFile(marker(stage), "utf8"), revision);
-      console.log("Baseline reproduced: the old runtime stayed parked and setup could not resume a complete stage.");
-    } else {
-      const reopened = await openChat();
-      await expect(reopened.composer).toHaveValue(draft);
-      assert.equal(await readFile(marker(target), "utf8"), revision);
-      await assert.rejects(readFile(marker(stage)), { code: "ENOENT" });
-      console.log("Runtime upgrade recovered the prior runtime on failure and then opened the saved draft from a complete stage.");
+  if (mode !== "baseline") {
+    // A valid archive paired with the wrong digest must not be installed under that digest.
+    await writeFile(manifestPath, JSON.stringify({ ...manifest, archiveSha256: older.trim() }));
+    try {
+      if (mode === "checksum-baseline") {
+        const accepted = await openChat();
+        await expect(accepted.composer).toHaveValue(draft);
+        assert.equal(await readFile(marker(target), "utf8"), older);
+        console.log("Baseline installed the archive under a digest that did not match its contents.");
+      } else {
+        await failSetup(/The bundled AI runtime could not be verified/);
+        assert.equal(await readFile(marker(target), "utf8"), revision);
+        await assert.rejects(readFile(marker(stage)), { code: "ENOENT" });
+        assert.equal(await readFile(localFile, "utf8"), "A local file that runtime setup must preserve.");
+      }
+    } finally {
+      await writeFile(manifestPath, manifestText);
     }
-    assert.equal(await readFile(localFile, "utf8"), "A local file that runtime setup must preserve.");
-  } finally {
-    await rename(missingArchive, bundledArchive);
+    if (mode === "candidate") {
+      const repaired = await openChat();
+      await expect(repaired.composer).toHaveValue(draft);
+      await app.close();
+      app = null;
+      console.log("Setup refused a mismatched archive. Restoring the verified bundle reopened the original draft.");
+    }
+  }
+
+  if (mode !== "checksum-baseline") {
+    // Model an interruption after moving the old runtime aside and before installing the stage.
+    await rename(target, previous);
+    await writeFile(marker(previous), older);
+    await mkdir(stage);
+    await writeFile(path.join(stage, "partial"), "incomplete extraction");
+    await rename(bundledArchive, missingArchive);
+    try {
+      await failSetup();
+      const survivingRuntime = mode === "candidate" ? target : previous;
+      assert.equal(await readFile(marker(survivingRuntime), "utf8"), older);
+      await assert.rejects(readFile(marker(mode === "candidate" ? previous : target)), { code: "ENOENT" });
+      await rm(stage, { recursive: true });
+
+      // Use the complete runtime from the first launch as the finished stage.
+      await rename(survivingRuntime, stage);
+      await writeFile(marker(stage), revision);
+      if (mode === "baseline") {
+        await failSetup();
+        assert.equal(await readFile(marker(stage), "utf8"), revision);
+        console.log("Baseline reproduced: the old runtime stayed parked and setup could not resume a complete stage.");
+      } else {
+        const reopened = await openChat();
+        await expect(reopened.composer).toHaveValue(draft);
+        assert.equal(await readFile(marker(target), "utf8"), revision);
+        await assert.rejects(readFile(marker(stage)), { code: "ENOENT" });
+        console.log("Runtime upgrade recovered the prior runtime on failure and then opened the saved draft from a complete stage.");
+      }
+      assert.equal(await readFile(localFile, "utf8"), "A local file that runtime setup must preserve.");
+    } finally {
+      await rename(missingArchive, bundledArchive);
+    }
   }
 } finally {
   await app?.close();
