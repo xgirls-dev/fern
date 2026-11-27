@@ -112,16 +112,28 @@ function resolvePreloadPath(): string {
 }
 
 function createWindow(apiBaseUrl?: string): BrowserWindow {
-  const linux = process.platform === "linux";
-  const workArea = linux ? screen.getPrimaryDisplay().workAreaSize : undefined;
-  const minWidth = 800;
-  const minHeight = 520;
+  const preferredWidth = 1440;
+  const preferredHeight = 920;
+  let width = preferredWidth;
+  let height = preferredHeight;
+  let maximizeOnShow = false;
+  if (process.platform === "linux") {
+    // Wayland can report the full output as its work area even when a panel
+    // takes up space. Leave room for the compositor to place a floating window.
+    const { workAreaSize: workArea, scaleFactor } = screen.getPrimaryDisplay();
+    width = Math.min(width, Math.floor(workArea.width * 7 / 8));
+    height = Math.min(height, Math.floor(workArea.height * 7 / 8));
+    const ozone = app.commandLine.getSwitchValue("ozone-platform");
+    const wayland = ozone === "wayland" || (!ozone && Boolean(process.env.WAYLAND_DISPLAY || process.env.WAYLAND_SOCKET));
+    // A scaled floating surface can be placed before the compositor assigns
+    // its final scale. On compact outputs let Wayland place the first window.
+    maximizeOnShow = wayland && scaleFactor > 1 && (width < preferredWidth || height < preferredHeight);
+  }
   const window = new BrowserWindow({
-    // Electron sizes are logical pixels. Leave room for system chrome on scaled displays.
-    width: Math.max(minWidth, Math.min(1440, workArea?.width ?? 1440)),
-    height: Math.max(minHeight, Math.min(920, workArea?.height ?? 920)),
-    minWidth,
-    minHeight,
+    width,
+    height,
+    minWidth: Math.min(800, width),
+    minHeight: Math.min(520, height),
     show: false,
     icon: getAppIconPath(),
     backgroundColor: nativeTheme.shouldUseDarkColors ? "#212121" : "#fafafa",
@@ -159,7 +171,9 @@ function createWindow(apiBaseUrl?: string): BrowserWindow {
   window.on("unmaximize", publishMaximized);
 
   const showWindow = () => {
-    if (process.env.FERN_E2E_HEADLESS !== "1") window.show();
+    if (process.env.FERN_E2E_HEADLESS === "1") return;
+    if (maximizeOnShow) window.maximize();
+    window.show();
   };
   // A hidden Wayland surface may never receive the frame that fires ready-to-show.
   if (process.platform === "linux") {
