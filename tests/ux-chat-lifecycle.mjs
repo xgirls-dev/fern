@@ -97,8 +97,35 @@ try {
   await button("Jump to latest message", right).click();
   await expect(status(right)).toHaveClass(/sr-only/);
   await capture("08-compact-split-loading");
+  const left = page.getByRole("region", { name: "Left chat", exact: true });
+  const switcher = page.getByRole("group", { name: "Chat panes" });
+  await composer(right).fill("Keep this draft beside the running reply.");
+  await history.press("Home");
+  const readingPosition = () => history.evaluate((feed) => feed.scrollTop);
+  await expect.poll(readingPosition).toBe(0);
+  await button("Left chat", switcher).click();
+  await expect(right).toBeHidden();
+  await button("Open running chat", left).press("Enter");
+  await expect(composer(right)).toBeFocused();
+  await expect(composer(right)).toHaveValue("Keep this draft beside the running reply.");
+  await expect.poll(readingPosition).toBe(0);
+  await expect(left).toBeHidden();
+  await expect(button("Stop generation", right)).toBeVisible();
+  await button("Left chat", switcher).click();
+  await expect(right).toBeHidden();
+  await composer(left).fill("Keep working in the left chat.");
+  update({ status: "complete", partialText: "## Handbook entry\n\n- Pack the supplies.", finishedAt: Date.now() / 1000 });
+  const backgroundReply = page.getByRole("status", { name: "Reply status", exact: true }).filter({ hasText: /Reply ready\.$/ });
+  await expect(backgroundReply).toHaveCount(1);
+  await expect(backgroundReply).toHaveText("Right chat. Reply ready.");
+  await expect(composer(left)).toBeFocused();
+  await expect(composer(left)).toHaveValue("Keep working in the left chat.");
+  await expect(right).toBeHidden();
+  await button("Right chat", switcher).click();
+  await expect(right.getByRole("heading", { name: "Handbook entry" })).toBeVisible();
+  await expect(backgroundReply).toHaveCount(1);
   assert.deepEqual(errors, []);
-  console.log("The chat lifecycle keeps local progress visible, preserves recovery actions, and shows status when reading older messages.");
+  console.log("The chat lifecycle preserves recovery actions, shows progress when reading older messages, and announces replies from a hidden split pane.");
 } finally {
   await close();
 }
