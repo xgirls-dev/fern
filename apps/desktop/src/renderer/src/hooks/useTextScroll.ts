@@ -14,6 +14,7 @@ const tailTolerance = 2;
 // A streaming update can add a line between scrolling down and handling the scroll event.
 const resumeTolerance = 24;
 const scrollInputWindow = 160;
+const findLayoutWaitMs = 750;
 
 function distanceFromTail(feed: HTMLElement) {
   return feed.scrollHeight - feed.clientHeight - feed.scrollTop;
@@ -171,6 +172,7 @@ export function useTextScroll(threadId: string, { persistPosition = true, paneFo
   const lastTop = useRef(0);
   const lastGap = useRef(0);
   const downwardScrollUntil = useRef(0);
+  const cancelFindReveal = useRef<(() => void) | undefined>(undefined);
   const layout = useRef({ width: 0, hidden: false });
   const [historyVisible, setHistoryVisible] = useState(true);
   const [followingLatest, setFollowingLatest] = useState(true);
@@ -240,6 +242,7 @@ export function useTextScroll(threadId: string, { persistPosition = true, paneFo
   const jumpToLatest = useCallback(() => {
     const feed = feedRef.current;
     if (!feed) return;
+    cancelFindReveal.current?.();
     cancelRestore();
     if (chatSelectionIntersects(feed)) window.getSelection()?.removeAllRanges();
     following.current = true;
@@ -248,7 +251,7 @@ export function useTextScroll(threadId: string, { persistPosition = true, paneFo
   }, [cancelRestore, savePosition]);
 
   const revealMessage = useCallback((id: string, find?: Pick<ChatSearchMatch, "query" | "occurrence" | "imageIndex">,
-    block: ScrollLogicalPosition = "nearest", scroll = true) => {
+    block: ScrollLogicalPosition = "nearest", scroll = true, onFindHandled?: () => void) => {
     const feed = feedRef.current;
     const row = feed?.querySelector(`[data-chat-message="${CSS.escape(id)}"]`);
     if (!feed || !row) return;
@@ -256,25 +259,42 @@ export function useTextScroll(threadId: string, { persistPosition = true, paneFo
     let range = find && target ? renderedMatch(target, find) : undefined;
     let pendingReveal = scroll;
     let retryFrame: number | undefined;
+    let retryUntil: number | undefined;
+    const cancelRetry = () => {
+      if (retryFrame !== undefined) cancelAnimationFrame(retryFrame);
+      retryFrame = undefined;
+      if (cancelFindReveal.current === finishReveal) cancelFindReveal.current = undefined;
+    };
+    const finishReveal = () => {
+      pendingReveal = false;
+      cancelRetry();
+      onFindHandled?.();
+    };
     const reveal = () => {
       if (!pendingReveal || !range) return;
       const image = find?.imageIndex === undefined ? undefined : target?.closest("figure")?.querySelector("img");
       if (revealFindRange(feed, range, image)) {
-        pendingReveal = false;
+        finishReveal();
         savePosition(feed, row);
       }
     };
     const revealWhenLaidOut = () => {
       reveal();
       if (!pendingReveal || !range || retryFrame !== undefined) return;
-      // The matched text can already exist before it has a measurable box.
+      // The matched text can exist before it has a measurable box, including
+      // across multiple frames while the transcript window settles.
+      const now = performance.now();
+      retryUntil ??= now + findLayoutWaitMs;
+      if (now >= retryUntil) return;
       retryFrame = requestAnimationFrame(() => {
         retryFrame = undefined;
-        reveal();
+        revealWhenLaidOut();
       });
     };
     if (find) replaceFindHighlight(undefined, range);
     if (scroll) {
+      if (find) cancelFindReveal.current = finishReveal;
+      else cancelFindReveal.current?.();
       cancelRestore();
       following.current = false;
       revealWhenLaidOut();
@@ -298,7 +318,7 @@ export function useTextScroll(threadId: string, { persistPosition = true, paneFo
     });
     observer.observe(row, { subtree: true, childList: true, characterData: true });
     return () => {
-      if (retryFrame !== undefined) cancelAnimationFrame(retryFrame);
+      cancelRetry();
       observer.disconnect();
       replaceFindHighlight(range, undefined);
     };
@@ -322,6 +342,7 @@ export function useTextScroll(threadId: string, { persistPosition = true, paneFo
       default: return;
     }
     event.preventDefault();
+    cancelFindReveal.current?.();
     feed.scrollTop = target;
     onScroll();
   }, [jumpToLatest, onScroll]);
@@ -412,14 +433,18 @@ export function useTextScroll(threadId: string, { persistPosition = true, paneFo
     };
     const onWheel = (event: WheelEvent) => {
       if (event.ctrlKey || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
+      cancelFindReveal.current?.();
       downwardScrollUntil.current = event.deltaY > 0 ? performance.now() + scrollInputWindow : 0;
     };
+    const onPointerDown = () => cancelFindReveal.current?.();
     feed.addEventListener("wheel", onWheel, { passive: true });
+    feed.addEventListener("pointerdown", onPointerDown);
     document.addEventListener("selectionchange", onSelection);
     return () => {
       observer.disconnect();
       markdownObserver.disconnect();
       feed.removeEventListener("wheel", onWheel);
+      feed.removeEventListener("pointerdown", onPointerDown);
       document.removeEventListener("selectionchange", onSelection);
     };
   }, [keepFollowingTail, onScroll, pauseFollowing, persistPosition, savePosition, threadId]);
