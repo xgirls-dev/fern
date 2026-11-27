@@ -257,6 +257,26 @@ class GGUFCompletionTests(unittest.TestCase):
         process.terminate.assert_not_called()
         process.wait.assert_called_once()
 
+    def test_only_mac_cpu_chat_skips_metal_device_initialization(self) -> None:
+        process = Mock()
+        process.poll.return_value = 0
+        for platform, device_count in (("darwin", "0"), ("linux", "2")):
+            with (
+                self.subTest(platform=platform),
+                patch("gguf_runtime.sys.platform", platform),
+                patch.dict(os.environ, {"GGML_METAL_DEVICES": "2"}),
+                patch.object(GGUFServer, "_wait_ready"),
+                patch("gguf_runtime.subprocess.Popen", return_value=process) as launch,
+            ):
+                server = GGUFServer(Path("llama-server"), Path("model.gguf"), None, "CPU", "cpu")
+                try:
+                    self.assertEqual(launch.call_args.kwargs["env"]["GGML_METAL_DEVICES"], device_count)
+                    self.assertEqual(os.environ["GGML_METAL_DEVICES"], "2")
+                    command = launch.call_args.args[0]
+                    self.assertEqual(command[command.index("--device") + 1], "none")
+                finally:
+                    server.close()
+
     def test_metal_startup_loads_and_verifies_placement_without_a_separate_probe(self) -> None:
         process = Mock()
         process.poll.return_value = 0
@@ -265,12 +285,15 @@ class GGUFCompletionTests(unittest.TestCase):
         def launch(command, **options):
             on_phase.assert_called_once_with("selecting-device", "Preparing Apple GPU…")
             self.assertEqual(command[command.index("--device") + 1], "MTL0")
+            self.assertEqual(options["env"]["GGML_METAL_DEVICES"], "1")
             self.assertIn("--mmproj-offload", command)
             self.assertIn("--log-timestamps", command)
             options["stdout"].write(b"offloaded 38/38 layers to GPU\nmtmd_backends: using MTL0 backend\n")
             return process
 
         with (
+            patch("gguf_runtime.sys.platform", "darwin"),
+            patch.dict(os.environ, {"GGML_METAL_DEVICES": "1"}),
             patch("gguf_runtime.subprocess.run") as probe,
             patch.object(GGUFServer, "_wait_ready"),
             patch("gguf_runtime.subprocess.Popen", side_effect=launch),
