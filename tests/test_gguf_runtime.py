@@ -583,6 +583,56 @@ class GGUFCompletionTests(unittest.TestCase):
                 upstream.shutdown()
                 serving.join()
 
+    def test_stop_disconnects_prompt_preparation_before_starting_a_completion(self) -> None:
+        for route in ("/apply-template", "/tokenize"):
+            with self.subTest(route=route):
+                blocked = threading.Event()
+                release = threading.Event()
+                routes = []
+
+                class DelayedPreparation(BaseHTTPRequestHandler):
+                    def do_POST(self):
+                        self.rfile.read(int(self.headers["Content-Length"]))
+                        routes.append(self.path)
+                        payload = b'{"prompt":"formatted prompt","tokens":[1,2]}'
+                        self.send_response(200)
+                        self.send_header("Content-Length", str(len(payload)))
+                        self.end_headers()
+                        if self.path == route:
+                            blocked.set()
+                            release.wait(5)
+                        try:
+                            self.wfile.write(payload)
+                        except OSError:
+                            pass
+
+                with ThreadingHTTPServer(("127.0.0.1", 0), DelayedPreparation) as upstream:
+                    serving = threading.Thread(target=upstream.serve_forever, daemon=True)
+                    serving.start()
+                    engine = GGUFServer.__new__(GGUFServer)
+                    engine.base, engine.key = f"http://127.0.0.1:{upstream.server_port}", "test"
+                    engine.context_size, engine.history = 2048, {}
+                    cancellation = CompletionCancellation()
+                    emit = Mock()
+                    request = {"messages": [{"role": "user", "content": "Hello."}], "maxNewTokens": 64}
+                    try:
+                        with ThreadPoolExecutor(1) as pool:
+                            result = pool.submit(engine.generate, request, emit, cancellation)
+                            try:
+                                self.assertTrue(blocked.wait(3))
+                                cancellation.cancel()
+                                with self.assertRaises(InterruptedError):
+                                    result.result(timeout=0.7)
+                            finally:
+                                release.set()
+                    finally:
+                        upstream.shutdown()
+                        serving.join()
+
+                self.assertEqual(routes, ["/apply-template"] if route == "/apply-template" else ["/apply-template", "/tokenize"])
+                self.assertFalse(cancellation.completion_in_flight)
+                emit.assert_not_called()
+
     def test_cancel_disconnects_a_private_summary_without_caching_partial_text(self) -> None:
         chunk = b'data: {"choices":[{"delta":{"content":"Partial private summary"}}]}\n\n'
         release = threading.Event()
@@ -623,19 +673,20 @@ class GGUFCompletionTests(unittest.TestCase):
                 upstream.shutdown()
                 serving.join()
 
-        emit.assert_called_once_with({"type": "cancellable"})
+        emit.assert_not_called()
+        self.assertTrue(cancellation.completion_in_flight)
         self.assertFalse(cancellation.streaming)
         self.assertEqual(engine.compaction_summaries, {})
 
-    def test_worker_keeps_engine_after_stopping_summary_decode_but_reloads_after_prefill(self) -> None:
+    def test_worker_reloads_engine_only_when_stopping_a_completion_before_decode(self) -> None:
         from text_generation_worker import run_gguf
 
         requests = [
             {"op": "generate", "contextSize": 2048, "messages": [{"role": "user", "content": question}]}
             for question in ("First", "Next")
         ]
-        for summary_streaming in (False, True):
-            with self.subTest(summary_streaming=summary_streaming):
+        for stopped_at in ("preparation", "prefill", "summary-decode", "reply-decode"):
+            with self.subTest(stopped_at=stopped_at):
                 stream = io.StringIO("".join(json.dumps(request) + "\n" for request in [*requests, {"op": "shutdown"}]))
                 engines = [
                     Mock(backend="cpu", context_size=2048, load_options={}, startup_timing={})
@@ -647,9 +698,13 @@ class GGUFCompletionTests(unittest.TestCase):
 
                 answer = {"type": "result", "text": "Next", "runtimeTiming": {}}
 
-                def generate(request, _emit, cancellation):
+                def generate(request, emit_generation, cancellation):
                     if request["messages"][0]["content"] == "First":
-                        cancellation.summary_streaming = summary_streaming
+                        self.assertEqual(emit.call_args_list[-2].args[0], {"type": "cancellable"})
+                        self.assertIs(emit_generation, emit)
+                        cancellation.completion_in_flight = stopped_at != "preparation"
+                        cancellation.summary_streaming = stopped_at == "summary-decode"
+                        cancellation.streaming = stopped_at == "reply-decode"
                         raise InterruptedError("Generation stopped.")
                     return answer
 
@@ -666,10 +721,10 @@ class GGUFCompletionTests(unittest.TestCase):
                 ):
                     self.assertEqual(run_gguf(Path("model.gguf"), "CPU", None), 0)
 
-                self.assertEqual(load.call_count, 1 if summary_streaming else 2)
-                self.assertEqual(engines[0].generate.call_count, 2 if summary_streaming else 1)
+                self.assertEqual(load.call_count, 2 if stopped_at == "prefill" else 1)
+                self.assertEqual(engines[0].generate.call_count, 1 if stopped_at == "prefill" else 2)
                 self.assertIn({"type": "cancelled"}, [call.args[0] for call in emit.call_args_list])
-                if not summary_streaming:
+                if stopped_at == "prefill":
                     engines[0].close.assert_called_once_with(force=True)
 
     def test_force_close_kills_the_runtime_without_waiting_for_graceful_shutdown(self) -> None:
@@ -694,11 +749,13 @@ class VulkanRuntimeTests(unittest.TestCase):
                    "temperature": 0, "topP": 1, "seed": 0}
         for prompt, requested, expected in ((768, 512, 512), (768, 2450, 2450), (768, 4096, 3072), (2200, 4096, 1640)):
             with self.subTest(prompt=prompt, requested=requested):
+                server._prompt_tokens.reset_mock()
                 server._prompt_tokens.return_value = prompt
                 server._completion.return_value = io.BytesIO(b"data: [DONE]\n")
                 result = server.generate({**request, "maxNewTokens": requested}, Mock())
                 self.assertEqual(server._completion.call_args.args[0]["max_tokens"], expected)
                 self.assertEqual(result["maxNewTokens"], expected)
+                server._prompt_tokens.assert_called_once()
 
     def test_download_reuse_and_repair_missing_backend_dll(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
