@@ -1,4 +1,4 @@
-import { cloneElement, memo, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from "react";
+import { createContext, memo, use, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import { flushSync } from "react-dom";
 
 import type { TextMessage } from "../lib/textThreads";
@@ -20,6 +20,7 @@ const PAGE_SIZE = 12;
 export const TEXT_TRANSCRIPT_WINDOW_THRESHOLD = 72;
 const OVERSCAN = "640px 0px";
 const CACHED_CHATS = 20;
+const LiveReplyContext = createContext<ReactElement | undefined>(undefined);
 
 export interface TextTranscriptItem {
   key: string;
@@ -62,7 +63,7 @@ function pageOf(node: Node | null, container: HTMLElement | null): number | null
   return page && container?.contains(page) ? Number(page.dataset.chatPage) : null;
 }
 
-const TranscriptPage = memo(function TranscriptPage({ index, first, last, estimate, windowed, cache, renderItem, storedCount, liveReply }: {
+const TranscriptPage = memo(function TranscriptPage({ index, first, last, estimate, windowed, cache, renderItem, storedCount, hasLiveReply }: {
   index: number;
   first: string;
   last: string;
@@ -71,8 +72,9 @@ const TranscriptPage = memo(function TranscriptPage({ index, first, last, estima
   cache: Map<number, Measurement>;
   renderItem?: (index: number) => ReactElement;
   storedCount: number;
-  liveReply?: ReactElement;
+  hasLiveReply: boolean;
 }) {
+  const liveReply = hasLiveReply ? use(LiveReplyContext) : undefined;
   const element = useRef<HTMLDivElement>(null);
   const mounted = !!renderItem;
   const cached = cache.get(index);
@@ -252,15 +254,13 @@ export const TextTranscriptWindow = memo(function TextTranscriptWindow({ threadI
     const hasTail = hasLiveReply && index === pageCount - 1;
     return <TranscriptPage key={index} index={index} first={page.first} last={page.last}
       estimate={page.estimatedHeight} cache={cache.pages} windowed={windowed} renderItem={mounted ? renderItem : undefined}
-      storedCount={page.count - (hasTail ? 1 : 0)} />;
+      storedCount={page.count - (hasTail ? 1 : 0)} hasLiveReply={hasTail} />;
   }), [cache, canDeferPages, focused, hasLiveReply, nearby, pageCount, pages, renderItem, restorePage, revealPage, selection, tailPages, windowed]);
   if (!pageCount) return null;
 
-  // Keep every page in the same keyed list when a new tail page is added.
-  const children = liveReply ? pageElements.slice() : pageElements;
-  if (liveReply) children[pageCount - 1] = cloneElement(pageElements[pageCount - 1], { liveReply });
+  // Only the page with the live row reads the changing reply.
   return <div ref={root} className="text-transcript-pages" onFocusCapture={(event) => setFocused(pageOf(event.target, root.current))}
     onBlurCapture={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setFocused(null); }}>
-    {children}
+    <LiveReplyContext value={liveReply}>{pageElements}</LiveReplyContext>
   </div>;
 });
