@@ -356,6 +356,9 @@ class GGUFServer:
             env = {key: value for key, value in os.environ.items() if not key.startswith("LLAMA_ARG_")}
             if sys.platform == "linux":
                 env["LD_LIBRARY_PATH"] = str(executable.parent)
+            if sys.platform == "darwin" and backend == "cpu":
+                # llama.cpp registers Metal and compiles shaders before it applies --device none.
+                env["GGML_METAL_DEVICES"] = "0"
             if backend == "openvino":
                 env.update(GGML_OPENVINO_DEVICE=device)
             flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)

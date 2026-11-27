@@ -18,6 +18,7 @@ lands directly on `main` instead of through labeled pull requests.
 - Show measured prompt processing time and reused tokens in GGUF response details.
 - Reuse the processed prompt across follow-ups in long GGUF chats when the retained history still fits.
 - Show progress as a local GGUF model processes the chat prompt before its first reply token.
+- Skip Metal shader setup when starting GGUF chat in CPU mode on Apple Silicon.
 
 ### Fixed
 
