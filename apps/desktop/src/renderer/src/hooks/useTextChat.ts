@@ -79,6 +79,13 @@ interface TextSubmission {
   modelLoad?: boolean;
 }
 
+interface TextJobWatch {
+  jobId: string;
+  threadId: string;
+  jobOnly: boolean;
+  close: () => void;
+}
+
 type DraftAttachment =
   | { status: "saving"; filename: string }
   | { status: "failed"; message: string; retryFile?: File };
@@ -315,6 +322,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
   const [refreshKey, setRefreshKey] = useState(0);
   const submission = useRef<TextSubmission | null>(null);
   const activePoll = useRef<symbol | null>(null);
+  const jobWatch = useRef<TextJobWatch | null>(null);
   const receivingJobEvents = useRef(false);
   const [submitting, setSubmitting] = useState(false);
   const invalidatePoll = useCallback(() => {
@@ -334,6 +342,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
   }, []);
   useLayoutEffect(() => {
     if (ready) return;
+    jobWatch.current?.close();
     invalidatePoll();
     if (submission.current) finishSubmission(submission.current);
     const interrupted = liveJobRef.current;
@@ -345,14 +354,6 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     setStoppingId(null);
     setStopFailure(null);
   }, [finishSubmission, invalidatePoll, ready, setStatus, setWorkspace]);
-  const acceptJob = useCallback((accepted: TextJobAcceptance, pending: TextSubmission) => {
-    if (submission.current !== pending) return;
-    const job = "textJob" in accepted ? accepted.textJob : accepted.job?.job;
-    if (!confirmsSubmission(job, pending)) throw new Error("Fern did not receive confirmation for this response.");
-    invalidatePoll();
-    setStatus((current) => "textJob" in accepted ? applyTextJobStatus(current, accepted.textJob) : accepted.job);
-    setStatusError(null);
-  }, [invalidatePoll, setStatus]);
   const submissionIsMissing = useCallback(async (pending: TextSubmission) => {
     if (submission.current !== pending) return false;
     try {
@@ -521,41 +522,71 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     return () => window.clearInterval(timer);
   }, [ready, busy, refresh, stoppingId, useJobPoll]);
 
-  useEffect(() => {
-    if (!ready || !watchedThreadId || !watchedJobId) return;
+  const watchTextJob = useCallback((jobId: string, threadId: string, jobOnly: boolean) => {
+    const existing = jobWatch.current;
+    if (existing?.jobId === jobId && existing.threadId === threadId && existing.jobOnly === jobOnly) return existing;
+    existing?.close();
     const retryInterval = 500;
     let retryDelay = retryInterval;
     let retryTimer: number | undefined;
-    let close: (() => void) | undefined;
+    let unsubscribe: (() => void) | undefined;
+    const watch: TextJobWatch = { jobId, threadId, jobOnly, close: () => {
+      if (jobWatch.current !== watch) return;
+      jobWatch.current = null;
+      window.clearTimeout(retryTimer);
+      unsubscribe?.();
+      receivingJobEvents.current = false;
+    } };
     const onJob = (job: TextJob) => {
+      if (jobWatch.current !== watch) return;
       const pending = submission.current;
       if (pending && !confirmsSubmission(job, pending)) return;
       if (pending) finishSubmission(pending);
       retryDelay = retryInterval;
-      if (!receivingJobEvents.current || isTerminalTextJob(job)) invalidatePoll();
+      const terminal = isTerminalTextJob(job);
+      if (!receivingJobEvents.current || terminal) invalidatePoll();
       receivingJobEvents.current = true;
       setStatus((current) => {
-        if (current.job.id !== watchedJobId || current.job.threadId !== watchedThreadId || current.job.status !== "running") return current;
+        if (current.job.id !== jobId || current.job.threadId !== threadId || current.job.status !== "running") return current;
         return applyTextJobStatus(current, job);
       });
       setStatusError(null);
+      if (terminal) watch.close();
     };
     const onLost = () => {
+      if (jobWatch.current !== watch) return;
       receivingJobEvents.current = false;
-      void pollStatus(supportsJobPolling);
+      void pollStatus(jobOnly);
       retryTimer = window.setTimeout(connect, retryDelay);
       retryDelay = Math.min(retryDelay * 2, 4000);
     };
     const connect = () => {
-      close = subscribeToTextJob(watchedThreadId, watchedJobId, onJob, onLost);
+      if (jobWatch.current === watch) unsubscribe = subscribeToTextJob(threadId, jobId, onJob, onLost);
     };
+    jobWatch.current = watch;
     connect();
-    return () => {
-      window.clearTimeout(retryTimer);
-      close?.();
-      receivingJobEvents.current = false;
-    };
-  }, [finishSubmission, invalidatePoll, pollStatus, ready, setStatus, supportsJobPolling, watchedJobId, watchedThreadId]);
+    return watch;
+  }, [finishSubmission, invalidatePoll, pollStatus, setStatus]);
+
+  useEffect(() => () => jobWatch.current?.close(), []);
+  useEffect(() => {
+    if (!ready || !watchedThreadId || !watchedJobId) return;
+    return watchTextJob(watchedJobId, watchedThreadId, supportsJobPolling).close;
+  }, [ready, supportsJobPolling, watchTextJob, watchedJobId, watchedThreadId]);
+
+  const acceptJob = useCallback((accepted: TextJobAcceptance, pending: TextSubmission) => {
+    if (submission.current !== pending) return;
+    const job = "textJob" in accepted ? accepted.textJob : accepted.job?.job;
+    if (!confirmsSubmission(job, pending)) throw new Error("Fern did not receive confirmation for this response.");
+    invalidatePoll();
+    setStatus((current) => "textJob" in accepted ? applyTextJobStatus(current, accepted.textJob) : accepted.job);
+    setStatusError(null);
+    // The runtime has accepted the job. Start listening while React commits its status.
+    const status = "textJob" in accepted ? statusRef.current : accepted.job;
+    if (status.supportsJobEvents && job?.status === "running") {
+      watchTextJob(pending.id, pending.threadId, status.supportsJobPolling === true);
+    }
+  }, [invalidatePoll, setStatus, watchTextJob]);
 
   const requestStop = useCallback((requestId: string, awaiting?: { threadId: string; modelId: string | null; modelLoad?: true }) => {
     if (stopDispatched.current === requestId) return;

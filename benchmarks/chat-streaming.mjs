@@ -155,6 +155,10 @@ try {
     const marker = new RegExp(markerPattern, "g");
     const arrivals = new Map();
     const rendered = new Map();
+    let requestStarted;
+    let responseReceived;
+    let streamCreated;
+    let streamOpened;
     let firstBackend;
     let firstText;
     let terminal;
@@ -180,6 +184,15 @@ try {
       timingObserver.disconnect();
     }
     if (trace) {
+      const nativeFetch = window.fetch;
+      window.fetch = function (input, options) {
+        const url = new URL(input instanceof Request ? input.url : input, location.href);
+        if (url.pathname !== "/api/text/generate") return nativeFetch.call(this, input, options);
+        requestStarted ??= performance.now();
+        const request = nativeFetch.call(this, input, options);
+        void request.then(() => { responseReceived ??= performance.now(); }, () => {});
+        return request;
+      };
       const NativeWorker = window.Worker;
       window.Worker = class extends NativeWorker {
         constructor(url, options) {
@@ -211,6 +224,10 @@ try {
         const isJobStream = endpoint.pathname === "/api/text/job/events";
         super(isJobStream && eventsOrigin ? eventsOrigin + endpoint.pathname + endpoint.search : url, options);
         if (!isJobStream) return;
+        if (trace) {
+          streamCreated ??= performance.now();
+          this.addEventListener("open", () => { streamOpened ??= performance.now(); }, { once: true });
+        }
         this.addEventListener("message", ({ data }) => {
           const received = performance.now();
           const event = JSON.parse(data);
@@ -310,6 +327,8 @@ try {
               samples: [...rendered.values()],
               ...(trace ? { trace: { sentAt: sent, terminalAt: terminal, terminalCommittedAt: terminalCommitted ?? null,
                 settledAt: formattedAt, observedAt: now, workerEvents, longTasks, longFrames,
+                startup: Object.fromEntries(Object.entries({ requestStarted, responseReceived, streamCreated, streamOpened,
+                  firstBackend }).map(([name, at]) => [name, at === undefined ? null : at - sent])),
                 updates: [...rendered.values()].map((sample) => {
                   const received = arrivals.get(sample.marker);
                   return { marker: sample.marker, receivedAt: received, committedAt: committed.get(sample.marker) ?? null,
