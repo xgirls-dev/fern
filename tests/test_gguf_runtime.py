@@ -26,14 +26,20 @@ class GGUFCompletionTests(unittest.TestCase):
         server = GGUFServer.__new__(GGUFServer)
         server.process = Mock()
         server.process.poll.return_value = 1
-        server.backend, server.device = "vulkan", "GPU"
         with tempfile.TemporaryDirectory() as directory:
             server.log_path = Path(directory) / "runtime.log"
-            server.log_path.write_text("vk::Device::allocateMemory: ErrorOutOfDeviceMemory\n" + "diagnostic\n" * 900)
-            with self.assertRaises(TextRuntimeMemoryError) as failure:
-                server._wait_ready()
-            self.assertEqual(text_runtime_error_code(failure.exception), OUT_OF_MEMORY)
-            self.assertNotIn("ErrorOutOfDeviceMemory", str(failure.exception))
+            for backend, device, detail in (
+                ("vulkan", "GPU", "vk::Device::allocateMemory: ErrorOutOfDeviceMemory"),
+                ("cpu", "CPU", "ggml_aligned_malloc: insufficient memory (attempted to allocate 69.27 MB)"),
+                ("cpu", "CPU", "mmap failed: Cannot allocate memory"),
+            ):
+                with self.subTest(detail=detail):
+                    server.backend, server.device = backend, device
+                    server.log_path.write_text(detail + "\n" + "diagnostic\n" * 900)
+                    with self.assertRaises(TextRuntimeMemoryError) as failure:
+                        server._wait_ready()
+                    self.assertEqual(text_runtime_error_code(failure.exception), OUT_OF_MEMORY)
+                    self.assertNotIn(detail, str(failure.exception))
             server.log_path.write_text("The GGUF file is malformed.")
             with self.assertRaisesRegex(RuntimeError, "GGUF file is malformed") as invalid_model:
                 server._wait_ready()

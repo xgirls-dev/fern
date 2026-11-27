@@ -14,7 +14,7 @@ const { page, state, errors, close } = await fixture({
     messages: [
       { id: "earlier-prompt", role: "user", content: "Make a quick plan.", createdAt: 1 },
       { id: "earlier-reply", role: "assistant", content: "An earlier partial answer", createdAt: 2,
-        status: "failed", error: "Runtime stopped: std::bad_alloc at /private/older.gguf" },
+        status: "failed", error: "ggml_aligned_malloc: insufficient memory\nCould not load /private/older.gguf" },
     ],
   }] },
   textStatus: {

@@ -5,6 +5,7 @@ import re
 OUT_OF_MEMORY = "out-of-memory"
 _MEMORY_FAILURE = re.compile(
     r"\bout of (?:(?:gpu|host|device) )?memory\b"
+    r"|\b(?:ggml_aligned_malloc:\s*insufficient memory|cannot allocate memory)\b"
     r"|\b(?:VK_ERROR_OUT_OF_(?:DEVICE|HOST)_MEMORY|ErrorOutOf(?:Device|Host)Memory"
     r"|CL_MEM_OBJECT_ALLOCATION_FAILURE|CL_OUT_OF_HOST_MEMORY|std::bad_alloc)\b"
     r"|\bexceeded max size of memory object allocation\b",

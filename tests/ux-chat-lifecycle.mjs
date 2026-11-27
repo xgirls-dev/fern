@@ -71,7 +71,7 @@ try {
 
   await send("Give me a list of supplies.");
   update({ status: "failed", partialText: "Start with one notebook per group.",
-    error: "The local model ran out of memory.", errorCode: null, finishedAt: Date.now() / 1000 });
+    error: "ggml_aligned_malloc: insufficient memory (attempted to allocate 69.27 MB)", errorCode: null, finishedAt: Date.now() / 1000 });
   const failed = page.getByRole("article", { name: "Model response", exact: true }).last();
   await expect(failed).toContainText("Start with one notebook per group.");
   await expect(button("Adjust context", failed)).toBeEnabled();
