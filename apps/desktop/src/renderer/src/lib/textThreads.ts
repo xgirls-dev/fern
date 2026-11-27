@@ -110,6 +110,8 @@ export interface TextThread {
   archived: boolean;
   updatedAt: number;
   modelId: string | null;
+  // While a new chat waits for its model, remember the fields edited in that chat.
+  pendingModelDefaults?: readonly (keyof TextModelDefaults)[];
   device: TextDevice;
   systemPrompt: string;
   temperature: number;
@@ -310,7 +312,8 @@ export function normalizeChatSplit(percent: unknown): number {
   return typeof percent === "number" && Number.isFinite(percent) ? Math.round(Math.min(65, Math.max(35, percent))) : 50;
 }
 
-export type TextModelDefaults = Pick<TextThread, "contextSize" | "temperature" | "topP" | "maxNewTokens" | "sampling" | "loadOptions">;
+export const textModelDefaultFields = ["contextSize", "temperature", "topP", "maxNewTokens", "sampling", "loadOptions"] as const;
+export type TextModelDefaults = Pick<TextThread, typeof textModelDefaultFields[number]>;
 export type ChatPresetSettings = Pick<TextThread, "systemPrompt" | "temperature" | "topP" | "maxNewTokens" | "sampling">;
 export interface ChatPreset {
   id: string;
@@ -491,7 +494,7 @@ export function ggufLoadOptions(options: GgufLoadOptions | undefined, contextSiz
   };
 }
 
-export function resolveTextModel(status: TextRuntimeStatus, thread: TextThread): string | undefined {
+export function resolveTextModel(status: TextRuntimeStatus, thread: Pick<TextThread, "modelId">): string | undefined {
   if (thread.modelId != null) return thread.modelId;
   const installed = status.models.filter((model) => model.installed);
   const ready = installed.filter((model) => textModelReadiness(status, model).usable);
@@ -958,6 +961,9 @@ export function restoreTextThreads(value: unknown): TextThreadWorkspace | undefi
       imageModel: typeof thread.imageModel === "string" ? thread.imageModel : "auto",
       systemPrompt: typeof thread.systemPrompt === "string" ? thread.systemPrompt : "",
       modelId: typeof thread.modelId === "string" ? thread.modelId : null,
+      pendingModelDefaults: Array.isArray(thread.pendingModelDefaults) && typeof thread.modelId !== "string"
+        && !thread.messages.length && !thread.pendingJobId
+        ? thread.pendingModelDefaults.filter((key) => textModelDefaultFields.includes(key)) : undefined,
       pendingJobId: typeof thread.pendingJobId === "string" ? thread.pendingJobId : null,
       pendingContext: typeof thread.pendingJobId === "string" ? normalizeRequestContext(thread.pendingContext) : undefined,
       pendingPreview: typeof thread.pendingJobId === "string" ? restoreTextReplyPreview(thread.pendingPreview) : undefined,

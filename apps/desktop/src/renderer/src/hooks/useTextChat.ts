@@ -52,6 +52,7 @@ import {
   restoreTextMessages,
   showReplyVersion,
   textRuntimeIssue,
+  textModelDefaultFields,
   textPromptHistory,
   textPromptExceedsLimit,
   textResponseMetrics,
@@ -212,13 +213,43 @@ function useTextReplyPause(job: TextJob | null) {
   return progress !== null && progress === pausedProgress;
 }
 
-function openNewChat(workspace: TextThreadWorkspace, attachmentChats?: ReadonlySet<string>): TextThreadWorkspace {
-  const untouched = workspace.threads.find((thread) => !thread.archived && !thread.renamed &&
-    !attachmentChats?.has(thread.id) &&
+function untouchedNewChat(thread: TextThread) {
+  return !thread.archived && !thread.renamed &&
     !thread.messages.length && !thread.draft && !thread.draftImage && !thread.draftContextImage && !thread.pendingJobId && !thread.systemPrompt &&
-    thread.title === "New text thread");
-  if (untouched) return showChatThread(workspace, untouched.id);
-  const thread = createTextThread();
+    !thread.documents?.length && !thread.promptEdit && !thread.modelId && !thread.sampling && !thread.loadOptions &&
+    !thread.imageRenderSettings && thread.title === "New text thread" &&
+    thread.contextSize === 8192 && thread.temperature === 0.7 && thread.topP === 0.9 && thread.maxNewTokens === 512;
+}
+
+function newChatModelSettings(workspace: TextThreadWorkspace, status: TextRuntimeStatus): Partial<TextThread> | undefined {
+  if (!workspace.modelDefaults || !Object.keys(workspace.modelDefaults).length) return;
+  const modelId = resolveTextModel(status, { modelId: null });
+  if (!modelId) return { pendingModelDefaults: [] };
+  const defaults = workspace.modelDefaults[modelId];
+  return defaults ? { ...defaults, modelId } : undefined;
+}
+
+function applyPendingModelDefaults(workspace: TextThreadWorkspace, status: TextRuntimeStatus): TextThreadWorkspace {
+  if (!workspace.threads.some((thread) => thread.pendingModelDefaults)) return workspace;
+  const settings = newChatModelSettings(workspace, status);
+  if (settings?.pendingModelDefaults) return workspace;
+  return { ...workspace, threads: workspace.threads.map((thread) => {
+    if (!thread.pendingModelDefaults) return thread;
+    const inherited = { ...settings };
+    for (const key of thread.pendingModelDefaults) delete inherited[key];
+    return { ...thread, ...inherited, pendingModelDefaults: undefined };
+  }) };
+}
+
+function openNewChat(workspace: TextThreadWorkspace, status: TextRuntimeStatus): TextThreadWorkspace {
+  const untouched = workspace.threads.find(untouchedNewChat);
+  const settings = newChatModelSettings(workspace, status);
+  if (untouched) {
+    const next = showChatThread(workspace, untouched.id);
+    return settings ? { ...next, threads: workspace.threads.map((thread) =>
+      thread === untouched ? { ...thread, ...settings } : thread) } : next;
+  }
+  const thread = { ...createTextThread(), ...settings };
   return { ...showChatThread(workspace, thread.id), threads: [thread, ...workspace.threads] };
 }
 
@@ -278,8 +309,11 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
       const job = status.job;
       // Commit the terminal status and transcript together so a completed reply
       // never renders once more as a pending response.
-      const workspace = job === current.status.job ? current.workspace
+      const settled = job === current.status.job ? current.workspace
         : settleTextJob(current.workspace, job, current.lastRunningJob, status.models, observedAt);
+      const catalogChanged = status.models !== current.status.models || status.defaultModelId !== current.status.defaultModelId ||
+        status.ggufAvailable !== current.status.ggufAvailable || status.runtimeAvailable !== current.status.runtimeAvailable;
+      const workspace = catalogChanged ? applyPendingModelDefaults(settled, status) : settled;
       return { ...current, status, workspace, lastRunningJob: job.status === "running" ? job : current.lastRunningJob };
     });
   }, []);
@@ -413,11 +447,14 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     void conversationStore.load().then((saved) => {
       if (!mounted || resettingStorage.current) return;
       scheduledWorkspace.current = saved;
-      const next = queuedNewChat.current ? openNewChat(saved) : saved;
+      const newChatRequested = queuedNewChat.current;
       queuedNewChat.current = false;
       const observedAt = Date.now();
-      setChatState((current) => ({ ...current, workspace:
-        settleTextJob(next, current.status.job, current.lastRunningJob, current.status.models, observedAt) }));
+      setChatState((current) => {
+        const next = newChatRequested ? openNewChat(saved, current.status) : saved;
+        const settled = settleTextJob(next, current.status.job, current.lastRunningJob, current.status.models, observedAt);
+        return { ...current, workspace: applyPendingModelDefaults(settled, current.status) };
+      });
       setStorageReady(true);
       setStorageError(null);
     }).catch(() => {
@@ -702,7 +739,15 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     setChatState((current) => {
       const workspace = {
         ...current.workspace,
-        threads: current.workspace.threads.map((thread) => thread.id === id ? { ...thread, ...patch, updatedAt } : thread),
+        threads: current.workspace.threads.map((thread) => {
+          if (thread.id !== id) return thread;
+          const updated = { ...thread, ...patch, updatedAt };
+          const pending = thread.pendingModelDefaults;
+          if (!pending) return updated;
+          if ("modelId" in patch) return { ...updated, pendingModelDefaults: undefined };
+          const overrides = textModelDefaultFields.filter((key) => key in patch && !pending.includes(key));
+          return overrides.length ? { ...updated, pendingModelDefaults: [...pending, ...overrides] } : updated;
+        }),
       };
       const deletions = versionChange && current.messageDeletions.get(id);
       if (!versionChange || !deletions?.length) return { ...current, workspace };
@@ -722,36 +767,23 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     const current = workspaceRef.current;
     const folders = current.folders ?? EMPTY_CHAT_FOLDERS;
     const folderId = folders.some((folder) => folder.id === requestedFolder) ? requestedFolder : undefined;
-    const model = status.models.find((item) => item.installed && item.id === status.defaultModelId)
-      ?? status.models.find((item) => item.installed);
     const untouched = current.threads.find((thread) =>
       (!(comparisonPane || current.secondaryId) || (thread.id !== current.activeId && thread.id !== current.secondaryId)) &&
-      thread.folderId === folderId && !thread.archived && !thread.renamed &&
-      !thread.messages.length && !thread.draft && !thread.draftImage && !thread.draftContextImage && !thread.pendingJobId && !thread.systemPrompt &&
-      !thread.documents?.length && !attachmentStates.has(thread.id) && !thread.promptEdit &&
-      !thread.modelId && !thread.sampling && !thread.loadOptions && !thread.imageRenderSettings && thread.title === "New text thread"
-      && thread.contextSize === 8192 && thread.temperature === 0.7 && thread.topP === 0.9 && thread.maxNewTokens === 512);
-    const defaults = model ? current.modelDefaults?.[model.id] : undefined;
-    const place = (state: typeof current, id: string) =>
-      comparisonPane ? compareChatThread(state, id, comparisonPane) : showChatThread(state, id);
-    if (untouched) {
-      setWorkspace((current) => ({
-        ...place(current, untouched.id), folders: revealChatFolder(current.folders ?? EMPTY_CHAT_FOLDERS, folderId),
-        threads: defaults && model
-          ? current.threads.map((item) => item.id === untouched.id ? { ...item, ...defaults, modelId: model.id } : item)
-          : current.threads,
-      }));
-      setActionError(null);
-      return untouched.id;
-    }
-    const thread = { ...createTextThread(), ...defaults, folderId, ...(defaults && model ? { modelId: model.id } : {}) };
-    setWorkspace((current) => ({
-      ...place(current, thread.id), threads: [thread, ...current.threads],
-      folders: revealChatFolder(current.folders ?? EMPTY_CHAT_FOLDERS, folderId),
-    }));
+      thread.folderId === folderId && !attachmentStates.has(thread.id) && untouchedNewChat(thread));
+    const thread = untouched ?? { ...createTextThread(), folderId };
+    setChatState((current) => {
+      const { workspace, status } = current;
+      const settings = newChatModelSettings(workspace, status);
+      const placed = comparisonPane ? compareChatThread(workspace, thread.id, comparisonPane) : showChatThread(workspace, thread.id);
+      const conversations = !untouched ? [{ ...thread, ...settings }, ...workspace.threads]
+        : settings ? workspace.threads.map((item) => item.id === thread.id && untouchedNewChat(item) ? { ...item, ...settings } : item)
+          : workspace.threads;
+      return { ...current, workspace: { ...placed, threads: conversations,
+        folders: revealChatFolder(workspace.folders ?? EMPTY_CHAT_FOLDERS, folderId) } };
+    });
     setActionError(null);
     return thread.id;
-  }, [attachmentStates, setWorkspace, status.defaultModelId, status.models, setActionError, storageReady]);
+  }, [attachmentStates, setActionError, storageReady]);
 
   const selectThread = useCallback((id: string) => {
     setWorkspace((current) => {
