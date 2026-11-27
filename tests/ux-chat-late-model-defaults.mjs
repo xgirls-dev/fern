@@ -47,10 +47,14 @@ try {
   await newChat();
   const editedDraft = "Use a custom output limit.";
   await composer.fill(editedDraft);
-  await button("Chat settings").click();
-  await output.fill("1000");
-  await expect.poll(async () => (await savedTextWorkspace(page))?.threads.find(({ draft }) => draft === editedDraft)?.maxNewTokens).toBe(1000);
   const secondId = await savedDraft(editedDraft);
+  await button("Chat settings").click();
+  await expect(output).toHaveValue("512");
+  await output.click();
+  await expect(output).toBeFocused();
+  await output.press("ArrowUp");
+  await expect(output).toHaveValue("513");
+  await expect.poll(async () => (await savedTextWorkspace(page))?.threads.find(({ id }) => id === secondId)?.maxNewTokens).toBe(513);
   const beforeReload = catalogRequests;
   await page.reload();
   await expect(composer).toHaveValue(editedDraft);
@@ -60,7 +64,7 @@ try {
   await expect(button("Text model: Gemma")).toBeVisible();
   await button("Chat settings").click();
   await expect(context).toHaveValue(String(defaults.contextSize));
-  await expect(output).toHaveValue("1000");
+  await expect(output).toHaveValue("513");
   await expect(page.getByLabel("Temperature value", { exact: true })).toHaveValue(String(defaults.temperature));
   await expect.poll(async () => (await savedTextWorkspace(page))?.threads.find(({ id }) => id === secondId)?.modelId).toBe(model.id);
 
