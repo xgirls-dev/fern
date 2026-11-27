@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
+import { createPortal } from "react-dom";
 import type { TextMessage } from "../lib/textThreads";
 
 function messageForOutcome(reply: TextMessage, inspection: boolean) {
@@ -18,11 +19,13 @@ function messageForOutcome(reply: TextMessage, inspection: boolean) {
   return "";
 }
 
-export function TextReplyAnnouncement({ jobId, inspectionMessageId, messages, conversation }: {
+export function TextReplyAnnouncement({ jobId, inspectionMessageId, messages, conversation, root, paneName }: {
   jobId: string | null;
   inspectionMessageId?: string;
   messages: TextMessage[];
   conversation: RefObject<HTMLDivElement | null>;
+  root: HTMLDivElement | null;
+  paneName?: string;
 }) {
   const active = useRef<{ jobId: string; inspectionMessageId?: string } | undefined>(undefined);
   const [announcement, setAnnouncement] = useState("");
@@ -46,7 +49,8 @@ export function TextReplyAnnouncement({ jobId, inspectionMessageId, messages, co
     const announce = () => {
       if (feed?.querySelector(`${rowSelector} ${pendingSection} [data-chat-markdown-formatting]`)) return false;
       active.current = undefined;
-      setAnnouncement(messageForOutcome(reply, !!inspection));
+      const outcome = messageForOutcome(reply, !!inspection);
+      setAnnouncement(outcome && paneName ? `${paneName}. ${outcome}` : outcome);
       return true;
     };
     if (announce() || !feed) return;
@@ -55,7 +59,8 @@ export function TextReplyAnnouncement({ jobId, inspectionMessageId, messages, co
     });
     observer.observe(feed, { childList: true, subtree: true });
     return () => observer.disconnect();
-  }, [conversation, inspectionMessageId, jobId, messages]);
+  }, [conversation, inspectionMessageId, jobId, messages, paneName]);
 
-  return <span className="sr-only" role="status" aria-label="Reply status" aria-atomic="true">{announcement}</span>;
+  // Compact split chat hides the inactive pane, including its accessibility tree.
+  return root && createPortal(<span role="status" aria-label="Reply status" aria-atomic="true">{announcement}</span>, root);
 }
