@@ -787,6 +787,7 @@ for line in sys.stdin:
         try:
             with (patch.object(api, "TEXT_MODEL_REGISTRY", self.registry),
                   patch.object(api.TEXT_GENERATION_WORKER, "generate", side_effect=load_worker),
+                  patch.object(api, "append_text_event", wraps=api.append_text_event) as events,
                   patch.object(api.flux2, "release_pipeline"),
                   patch.dict(api.TEXT_JOB, {"id": "failure-test", "status": "running"}, clear=True)):
                 api.run_text_generation({"modelId": self.model["id"], "device": "AUTO"}, "failure-test", threading.Event())
@@ -797,6 +798,9 @@ for line in sys.stdin:
                     "stage": "loading-model", "runtime": "openvino", "backend": "openvino",
                     "requestedDevice": "AUTO", "device": "GPU",
                 })
+                self.assertEqual([event.kwargs["phase"] for event in events.call_args_list if "phase" in event.kwargs], [
+                    "Preparing conversation…", "Starting the text worker…", "Loading the OpenVINO model…",
+                ])
         finally:
             worker.close()
 
