@@ -1201,22 +1201,27 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
       setActionError("Choose a vision model to send this image.");
       return;
     }
-    const history = textPromptHistory(messages, model);
-    if (!history.messages.length) return;
-    const title = !thread.renamed && thread.messages.length === 0 && thread.title === "New text thread"
-      ? text.replace(/\s+/g, " ").slice(0, 56)
-      : thread.title;
-    const requestId = crypto.randomUUID();
     const imageOptions = status.imageToolModels ?? [];
     const imageModel = !prompt.continuationOf && model.supportsTools && model.supportsVision && computeDevice === "GPU" && imageGpuAvailable !== false
       ? (thread.imageModel === "auto" ? imageOptions[0] : imageOptions.find((item) => item.id === thread.imageModel))
       : undefined;
+    const { contextSize, maxNewTokens } = chatTokenLimits(thread, model);
+    const loadOptions = ggufLoadOptions(thread.loadOptions, contextSize);
+    const resident = status.residentModel;
+    const canKeepPrefix = !revision && !rewriteId && !continueFrom && !sourceId && !imageModel && !thread.documents?.length &&
+      resident?.modelId === model.id && resident.gguf?.contextSize === contextSize &&
+      JSON.stringify(loadOptions) === JSON.stringify(ggufLoadOptions(resident.gguf.loadOptions, contextSize));
+    const history = textPromptHistory(messages, model, canKeepPrefix ? { contextSize, maxNewTokens, systemPrompt: thread.systemPrompt } : undefined);
+    if (!history.messages.length) return;
     const imageSettings = imageModel ? chatImageSettings(imageModel, thread.imageRenderSettings?.[imageModel.id]) : undefined;
     if (imageModel && imageSettings && Object.keys(chatImageErrors(imageModel, imageSettings)).length) {
       setActionError("Correct the image settings or turn image generation off before sending.", thread.id, "image-settings");
       return;
     }
-    const { contextSize, maxNewTokens } = chatTokenLimits(thread, model);
+    const title = !thread.renamed && thread.messages.length === 0 && thread.title === "New text thread"
+      ? text.replace(/\s+/g, " ").slice(0, 56)
+      : thread.title;
+    const requestId = crypto.randomUUID();
     const receipt = beginSubmission(requestId, thread.id);
     const snapshot = rewriteId ? snapshotTextVersion(thread.messages) : undefined;
     const pending: Partial<TextThread> = {
@@ -1245,7 +1250,7 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
           ...(imageSettings.references?.length ? { referenceImages: imageSettings.references.map((image) => image.name) } : {}),
           ...(imageSettings.useMessageImage ? { useMessageImage: true } : {}),
         } } : {}),
-        ...(model.format === "gguf" ? { contextSize, loadOptions: ggufLoadOptions(thread.loadOptions, contextSize) } : {}),
+        ...(model.format === "gguf" ? { contextSize, loadOptions } : {}),
         systemPrompt: thread.systemPrompt,
         temperature: thread.temperature,
         topP: thread.topP,

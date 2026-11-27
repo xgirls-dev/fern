@@ -761,7 +761,9 @@ function shortenHistoryMessage(message: TextPromptMessage) {
   return length < message.content.length ? { ...message, content: message.content.slice(0, length) } : message;
 }
 
-export function textPromptHistory(history: TextMessage[], model: TextModel): { messages: TextPromptMessage[]; context?: TextRequestContext } {
+export function textPromptHistory(history: TextMessage[], model: TextModel, residentContext?: {
+  contextSize: number; maxNewTokens: number; systemPrompt: string;
+}): { messages: TextPromptMessage[]; context?: TextRequestContext } {
   const imageOrigins = new Map<string, string | undefined>();
   const turns: { user: TextPromptMessage; reply: TextPromptMessage; omittedAttachment: boolean }[] = [];
   let prompt: { message: TextPromptMessage; omittedAttachment: boolean } | undefined;
@@ -805,7 +807,24 @@ export function textPromptHistory(history: TextMessage[], model: TextModel): { m
   const gguf = model.format === "gguf";
   // Let the GGUF window grow from 149 to 156 complete turns so appending one
   // exchange usually keeps the exact prompt prefix available to the engine.
-  const turnLimit = gguf ? 149 + (turns.length % GGUF_HISTORY_WINDOW_STEP) : 49;
+  let turnLimit = gguf ? 149 + (turns.length % GGUF_HISTORY_WINDOW_STEP) : 49;
+  if (gguf && residentContext && !prompt.message.image && !prompt.message.includedImage) {
+    const previous = history.at(-2);
+    const metrics = previous?.metrics;
+    const dropped = previous?.requestContext?.omittedMessages ?? 0;
+    const retainedTurns = turns.length - dropped / 2;
+    const { contextSize, maxNewTokens, systemPrompt } = residentContext;
+    if (retainedTurns > turnLimit && dropped > 0 && dropped % 2 === 0 && previous?.status === "complete" &&
+        previous.role === "assistant" && previous.modelName === model.name && metrics?.context?.size === contextSize &&
+        !metrics.context.compactedMessages && !metrics.context.images && !metrics.documentSources?.length &&
+        !previous.generatedImage && !previous.generatedImages?.length && Number.isSafeInteger(metrics.inputTokens) && metrics.inputTokens > 0) {
+      // Keep the same oldest turn if the measured prompt has room for the next exchange.
+      // Budget one token per added UTF-8 byte, plus room for the template and server reserve.
+      const added = new TextEncoder().encode(previous.content + prompt.message.content + systemPrompt).length;
+      const reserved = Math.min(maxNewTokens, Math.floor(contextSize / 2));
+      if (metrics.inputTokens + added + reserved + 384 <= contextSize) turnLimit = retainedTurns;
+    }
+  }
   const recent = [prompt.message];
   let characters = prompt.message.content.length;
   let shortenedMessages = 0;
