@@ -236,11 +236,17 @@ def _sample_document_order(passages: list[DocumentPassage]) -> Iterator[Document
 
 def retrieve_document_context(
     directory: Path, ids: list[str], messages: list[dict[str, Any]], context_size: int,
+    *, is_cancelled: Callable[[], bool] | None = None,
 ) -> RetrievedDocuments:
+    def check_cancelled() -> None:
+        if is_cancelled is not None and is_cancelled():
+            raise InterruptedError()
+
     passages = []
     names_by_id = {}
     unavailable = []
     for document_id in ids:
+        check_cancelled()
         record = _read(_path(directory, document_id))
         if record is None:
             unavailable.append(document_id)
@@ -250,6 +256,7 @@ def retrieve_document_context(
         passages.extend({"name": name, "location": passage["location"], "text": passage["text"],
                          "documentId": document_id, "passageIndex": index}
                         for index, passage in enumerate(record["passages"]))
+    check_cancelled()
     if unavailable:
         raise ChatDocumentsUnavailable(unavailable)
     size = sum(len(passage["text"]) + len(passage["name"]) + 32 for passage in passages)
@@ -258,16 +265,26 @@ def retrieve_document_context(
         current = _terms(questions[-1])
         prior = _terms(" ".join(questions[:-1]))
         terms = current | prior
-        matches = [(_terms(passage["text"]) | _terms(Path(passage["name"]).stem)) & terms for passage in passages]
+        matches = []
+        if terms:
+            filename_terms = {identifier: _terms(Path(name).stem) for identifier, name in names_by_id.items()}
+            for passage in passages:
+                check_cancelled()
+                matches.append((_terms(passage["text"]) | filename_terms[passage["documentId"]]) & terms)
         frequencies = Counter(term for found in matches for term in found)
         if frequencies:
             weights = {term: math.log1p(len(passages) / (1 + frequency)) * (3 if term in current else 1)
                        for term, frequency in frequencies.items()}
-            ranked = zip(passages, matches)
-            passages = [passage for passage, _ in sorted(ranked, key=lambda item: -sum(weights[term] for term in item[1]))]
+
+            def score(item: tuple[DocumentPassage, set[str]]) -> float:
+                check_cancelled()
+                return -sum(weights[term] for term in item[1])
+
+            passages = [passage for passage, _ in sorted(zip(passages, matches), key=score)]
         else:
             passages = list(_sample_document_order(passages))
 
+    check_cancelled()
     remaining = min(context_size * 6, 120_000)
     selected = []
     for passage in passages:

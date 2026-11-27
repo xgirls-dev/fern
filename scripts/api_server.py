@@ -971,7 +971,10 @@ def run_text_generation(payload: dict[str, Any], job_id: str, cancel_event: thre
         if attachments := payload.get("documentIds"):
             diagnostics["stage"] = "finding-documents"
             append_text_event(job_id, phase="Finding document passages…")
-            documents = retrieve_document_context(DATA_DIR / "chat-documents", attachments, payload["messages"], payload["contextSize"])
+            documents = retrieve_document_context(
+                DATA_DIR / "chat-documents", attachments, payload["messages"], payload["contextSize"],
+                is_cancelled=cancel_event.is_set,
+            )
         if cancel_event.is_set():
             raise InterruptedError()
 
