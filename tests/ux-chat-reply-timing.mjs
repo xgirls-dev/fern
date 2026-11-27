@@ -19,17 +19,43 @@ const { page, state, errors, close } = await fixture({
   },
 });
 const emit = (frame) => stream.write("data: " + JSON.stringify(frame) + "\n\n");
+const firstAdmission = Promise.withResolvers();
 
 try {
-  await page.route("**/api/text/job", (route) => route.fulfill({ json: state.textStatus.job }));
-  await page.evaluate(() => { window.originalBenchEventSource = window.EventSource; });
+  const idleJob = state.textStatus.job;
+  await page.route("**/api/text/job", (route) => route.fulfill({ json: connections ? state.textStatus.job : idleJob }));
+  await page.route("**/api/text/generate", async (route) => {
+    const request = route.request().postDataJSON();
+    const { requestId, threadId, modelId } = request;
+    state.textRequests.push(request);
+    await firstAdmission.promise;
+    const textJob = { id: requestId, threadId, modelId, status: "running", partialText: "", phase: "Loading model…",
+      startedAt: Date.now() / 1000, result: null, error: null };
+    state.textStatus.job = textJob;
+    await route.fulfill({ status: 202, json: { textJob } });
+  }, { times: 1 });
+  await page.evaluate(() => {
+    const NativeEventSource = window.EventSource;
+    window.EventSource = class extends NativeEventSource {
+      constructor(url, options) {
+        super(url, options);
+        window.firstStreamPhase ??= document.querySelector(".text-message--streaming .text-reply-stage")?.textContent;
+      }
+    };
+    window.originalBenchEventSource = window.EventSource;
+    window.originalBenchFetch = window.fetch;
+  });
   await page.getByRole("textbox", { name: "Message", exact: true }).fill("Measure a short synthetic reply.");
   const send = page.getByRole("button", { name: "Send message", exact: true });
   const timing = await observeChatReply(send);
   await send.click();
   const reply = page.locator(".text-message--assistant").last();
   await expect(reply).toHaveClass(/text-message--streaming/);
+  await expect(reply).toContainText("Starting response…");
+  firstAdmission.resolve();
   await expect.poll(() => Boolean(stream)).toBe(true);
+  assert.equal(await page.evaluate(() => window.firstStreamPhase), "Starting response…",
+    "A confirmed job should connect before the renderer commits the loading status.");
   const running = state.textStatus.job;
   emit({ job: { ...running, phase: "Loading model…" } });
   await expect(reply.getByText("Loading model…", { exact: true })).toBeVisible();
@@ -44,10 +70,16 @@ try {
   stream.end();
 
   const measured = await readReplyTiming(timing);
-  for (const name of ["feedbackFrameMs", "firstBackendEventMs", "firstAnswerEventMs",
+  for (const name of ["feedbackFrameMs", "generateRequestMs", "generateResponseMs", "streamStartMs", "streamOpenMs",
+    "firstBackendEventMs", "firstAnswerEventMs",
     "firstAnswerFrameMs", "terminalEventMs", "settledFrameMs", "maxFrameGapMs"]) {
     assert(Number.isFinite(measured[name]) && measured[name] >= 0, name);
   }
+  assert(measured.generateRequestMs <= measured.generateResponseMs);
+  assert(measured.generateRequestMs <= measured.streamStartMs);
+  assert(measured.streamStartMs <= measured.streamOpenMs);
+  assert(measured.streamOpenMs <= measured.firstBackendEventMs);
+  assert(await page.evaluate(() => window.fetch === window.originalBenchFetch));
   assert(measured.feedbackFrameMs < measured.firstAnswerEventMs);
   assert(measured.firstBackendEventMs < measured.firstAnswerEventMs);
   assert(measured.firstAnswerEventMs <= measured.firstAnswerFrameMs);
@@ -79,6 +111,7 @@ try {
   }
 
   const [warm] = await Promise.all([measureWarmStop(page, () => state.textStatus.job, "local"), driveWarmStop()]);
+  assert.equal(connections, 3, "The committed status must reuse each accepted stream.");
   assert.deepEqual(stoppedIds, [state.textRequests[1].requestId]);
   assert(state.textRequests[2].messages.some(({ role, content }) => role === "user" && content.includes("ORCHID-42")));
   assert.equal(state.textRequests[2].threadId, state.textRequests[1].threadId);
@@ -103,6 +136,7 @@ try {
   assert.deepEqual(errors, []);
   console.log("The benchmark distinguishes loading, first answer, backend Stop, composer readiness, and the warm follow-up.");
 } finally {
+  firstAdmission.resolve();
   stream?.end();
   await close();
 }

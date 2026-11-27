@@ -14,6 +14,10 @@ export function observeChatReply(send, { measureStop = false } = {}) {
         const sent = performance.now();
         const NativeEventSource = window.EventSource;
         const nativeFetch = window.fetch;
+        let generateRequest = null;
+        let generateResponse = null;
+        let streamStart = null;
+        let streamOpen = null;
         let firstEvent = null;
         let firstAnswerEvent = null;
         let terminalEvent = null;
@@ -46,17 +50,21 @@ export function observeChatReply(send, { measureStop = false } = {}) {
         function timedFetch(input, options) {
           const url = new URL(input instanceof Request ? input.url : input, location.href);
           if (stopKey !== null && url.pathname === "/api/text/stop") stopRequest ??= performance.now();
-          return nativeFetch.call(this, input, options);
+          if (url.pathname !== "/api/text/generate") return nativeFetch.call(this, input, options);
+          generateRequest ??= performance.now();
+          const request = nativeFetch.call(this, input, options);
+          void request.then(() => { generateResponse ??= performance.now(); }, () => {});
+          return request;
         }
-        if (measureStop) {
-          feed.addEventListener("keydown", recordStop, true);
-          window.fetch = timedFetch;
-        }
+        if (measureStop) feed.addEventListener("keydown", recordStop, true);
+        window.fetch = timedFetch;
 
         class TimedEventSource extends NativeEventSource {
           constructor(url, options) {
             super(url, options);
             if (new URL(url, location.href).pathname !== "/api/text/job/events") return;
+            streamStart ??= performance.now();
+            this.addEventListener("open", () => { streamOpen ??= performance.now(); }, { once: true });
             this.addEventListener("message", ({ data }) => {
               let event;
               try { event = JSON.parse(data); } catch { return; }
@@ -95,6 +103,10 @@ export function observeChatReply(send, { measureStop = false } = {}) {
             const afterSend = (at) => at === null ? null : at - sent;
             finish({
               feedbackFrameMs: afterSend(feedback),
+              generateRequestMs: afterSend(generateRequest),
+              generateResponseMs: afterSend(generateResponse),
+              streamStartMs: afterSend(streamStart),
+              streamOpenMs: afterSend(streamOpen),
               firstBackendEventMs: afterSend(firstEvent),
               firstAnswerEventMs: afterSend(firstAnswerEvent),
               firstAnswerFrameMs: afterSend(firstAnswerFrame),
