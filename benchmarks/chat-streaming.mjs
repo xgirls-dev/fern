@@ -12,17 +12,22 @@ import { fixture, savedTextWorkspace } from "../tests/ui-fixture.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const mode = process.argv[2] ?? "renderer";
+const scenario = process.argv[3] ?? "streaming";
 const sendMethod = process.env.FERN_BENCH_STREAM_SEND ?? "click";
 const workload = process.env.FERN_BENCH_STREAM_WORKLOAD ?? "mixed";
 assert(["renderer", "electron"].includes(mode), "Choose renderer or electron.");
+assert(["streaming", "send-feedback"].includes(scenario), "Choose streaming or send-feedback.");
 assert(["click", "enter"].includes(sendMethod), "Choose click or enter for FERN_BENCH_STREAM_SEND.");
 assert(["mixed", "prose"].includes(workload), "Choose mixed or prose for FERN_BENCH_STREAM_WORKLOAD.");
 const visible = mode === "electron" && process.env.FERN_E2E_VISIBLE === "1";
 const trace = process.env.FERN_BENCH_STREAM_TRACE === "1";
 const codeLines = Number(process.env.FERN_BENCH_STREAM_CODE_LINES ?? 1);
 assert(Number.isInteger(codeLines) && codeLines > 0 && codeLines <= 350, "Choose 1–350 lines of code.");
-const historyMessages = Number(process.env.FERN_BENCH_STREAM_HISTORY ?? 0);
+const historyMessages = Number(process.env.FERN_BENCH_STREAM_HISTORY ?? (scenario === "send-feedback" ? 1000 : 0));
 assert(Number.isInteger(historyMessages) && historyMessages >= 0 && historyMessages <= 12_000, "Choose 0–12,000 saved messages.");
+const sendSamples = Number(process.env.FERN_BENCH_SEND_SAMPLES ?? 120);
+assert(scenario !== "send-feedback" || (Number.isInteger(sendSamples) && sendSamples >= 4 && sendSamples <= 500 && sendSamples % 4 === 0),
+  "Choose a multiple of four from 4–500 for FERN_BENCH_SEND_SAMPLES.");
 const sampleCount = 100;
 const appendIntervalMs = 50;
 const phase = "Waiting for the first token…";
@@ -74,7 +79,7 @@ async function openElectron() {
         `--user-data-dir=${path.join(scratch, "profile")}`],
       env, cwd: root, timeout: 180_000,
     });
-    const page = await app.firstWindow();
+    const page = await app.firstWindow({ timeout: 90_000 });
     const window = await app.browserWindow(page);
     await window.evaluate((browserWindow, { width, height }) => {
       browserWindow.setContentSize(width, height);
@@ -121,7 +126,109 @@ function summarize(samples) {
   };
 }
 
-try {
+function revision() {
+  return process.env.FERN_BENCH_REVISION
+    ?? execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
+}
+
+function measureSendFeedback(trigger, method) {
+  return trigger.evaluateHandle((element, method) => ({
+    result: new Promise((resolve) => {
+      const eventType = method === "enter" ? "keydown" : "click";
+      let frame;
+      let observer;
+      function finish(result) {
+        clearTimeout(timeout);
+        if (frame !== undefined) cancelAnimationFrame(frame);
+        observer?.disconnect();
+        element.removeEventListener(eventType, start, true);
+        resolve(result);
+      }
+      function start(event) {
+        if (method === "enter" && event.key !== "Enter") return;
+        const sent = performance.now();
+        const feed = element.closest(".text-workspace").querySelector(".text-conversation");
+        const hasReply = () => feed.querySelector(".text-message--streaming");
+        let domMs;
+        observer = new MutationObserver(() => {
+          if (domMs === undefined && hasReply()) domMs = performance.now() - sent;
+        });
+        observer.observe(feed, { childList: true, subtree: true, attributes: true, attributeFilter: ["class"] });
+        function sample() {
+          if (hasReply()) {
+            const frameMs = performance.now() - sent;
+            finish({ domMs: domMs ?? frameMs, frameMs });
+          } else frame = requestAnimationFrame(sample);
+        }
+        frame = requestAnimationFrame(sample);
+      }
+      const timeout = setTimeout(() => finish({ error: "Send did not display a reply in progress." }), 10_000);
+      element.addEventListener(eventType, start, { capture: true, once: true });
+    }),
+  }), method);
+}
+
+async function replaySendFeedback(composer, send, browser) {
+  const methods = ["click", "enter", "enter", "click"];
+  if (eventsOrigin) await page.evaluate((origin) => {
+    const Native = window.EventSource;
+    window.EventSource = class extends Native {
+      constructor(url, options) {
+        const endpoint = new URL(url, location.href);
+        super(endpoint.pathname === "/api/text/job/events"
+          ? origin + endpoint.pathname + endpoint.search : url, options);
+      }
+    };
+  }, eventsOrigin);
+
+  const samples = [];
+  const reply = page.getByRole("article", { name: "Model response", exact: true }).last();
+  for (let index = 0; index < sendSamples; index += 1) {
+    const method = methods[index % methods.length];
+    const number = index + 1;
+    await composer.fill(`Review worksheet ${number}.`);
+    await expect(send).toBeEnabled();
+    if (method === "click") await send.hover();
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const timing = await measureSendFeedback(method === "click" ? send : composer, method);
+    const connected = once(jobEvents, "connected", { signal: AbortSignal.timeout(10_000) });
+    const [connections] = await Promise.all([connected, method === "click" ? send.click() : composer.press("Enter")]);
+    const [{ id, response }] = connections;
+    const job = state.textStatus.job;
+    assert.equal(id, job.id, "The stream must belong to the submitted reply.");
+    assert.equal(state.textRequests.length, number, "Send must start exactly one request.");
+    emit(response, { job: { ...job, phase } });
+    const measurement = await timing.evaluate(({ result }) => result);
+    await timing.dispose();
+    assert(!measurement.error, measurement.error);
+    assert(Number.isFinite(measurement.frameMs) && measurement.domMs >= 0 && measurement.frameMs >= measurement.domMs);
+
+    const answer = `Worksheet ${number} is ready.`;
+    state.textStatus.job = {
+      ...job, status: "complete", partialText: answer, finishedAt: Date.now() / 1000,
+      result: { inputTokens: 20, outputTokens: 8, generationSeconds: 0.2, tokensPerSecond: 40 },
+    };
+    emit(response, { job: state.textStatus.job });
+    response.end();
+    await expect(reply).toContainText(answer);
+    samples.push({ number, method, ...measurement });
+  }
+  assert.deepEqual(errors, []);
+  const summarizeMethod = (method) => {
+    const family = samples.filter((sample) => sample.method === method);
+    return { samples: family.length, feedbackMs: summarize(family.map(({ frameMs }) => frameMs)),
+      replyDomMs: summarize(family.map(({ domMs }) => domMs)) };
+  };
+  console.log(JSON.stringify({
+    revision: revision(), mode, visible, scenario, browser,
+    host: { os: os.version(), arch: os.arch(), cpu: os.cpus()[0]?.model, memoryBytes: os.totalmem() },
+    fixture: "deterministic server-sent events", historyMessages, count: samples.length,
+    feedbackMs: summarize(samples.map(({ frameMs }) => frameMs)),
+    click: summarizeMethod("click"), enter: summarizeMethod("enter"), samples,
+  }, null, 2));
+}
+
+async function run() {
   await page.route("**/api/text/job", (route) => route.fulfill({
     json: state.textStatus.job, headers: { "Access-Control-Allow-Origin": "*" },
   }));
@@ -150,6 +257,7 @@ try {
     });
   }
   const browser = await page.evaluate(() => ({ userAgent: navigator.userAgent, width: innerWidth, height: innerHeight, devicePixelRatio }));
+  if (scenario === "send-feedback") return replaySendFeedback(composer, send, browser);
   await composer.fill("Draft workshop notes and end with a short table and code example.");
   await (sendMethod === "enter" ? composer : send).evaluate((trigger, { sampleCount, markerPattern, sendMethod, eventsOrigin, trace, codeLines }) => {
     const marker = new RegExp(markerPattern, "g");
@@ -392,15 +500,17 @@ try {
   assert.equal(samples.length, sampleCount);
   for (const [key, value] of Object.entries(milestones)) assert(Number.isFinite(value) && value >= 0, key);
   assert.deepEqual(errors, []);
-  const revision = process.env.FERN_BENCH_REVISION
-    ?? execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
   console.log(JSON.stringify({
-    revision, mode, visible, sendMethod, browser, fixture: "deterministic server-sent events",
+    revision: revision(), mode, visible, sendMethod, browser, fixture: "deterministic server-sent events",
     host: { os: os.version(), arch: os.arch(), cpu: os.cpus()[0]?.model, memoryBytes: os.totalmem() },
     sampleCount, appendIntervalMs, codeLines, workload, historyMessages, milestones,
     receiptToFrameMs: summarize(samples.map(({ receiptToFrameMs }) => receiptToFrameMs)), samples,
     ...(frameTrace ? { trace: frameTrace } : {}),
   }, null, 2));
+}
+
+try {
+  await run();
 } finally {
   if (activeResponse && !activeResponse.writableEnded) activeResponse.end();
   await close();
