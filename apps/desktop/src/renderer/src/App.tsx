@@ -96,7 +96,8 @@ export function App() {
   const [modelCategory, setModelCategory] = useState<"image" | "text" | "audio" | "video">(
     modelSetup && modelSetup.task !== "image" ? "text" : "image",
   );
-  const [chatFocusRequest, setChatFocusRequest] = useState(0);
+  const [chatFocusRequested, setChatFocusRequested] = useState(false);
+  const clearChatFocusRequest = useCallback(() => setChatFocusRequested(false), []);
   const [chatFindRequest, setChatFindRequest] = useState<{ threadId: string; query: string } | null>(null);
   const clearChatFindRequest = useCallback(() => setChatFindRequest(null), []);
   const [computeFocusRequest, setComputeFocusRequest] = useState(0);
@@ -222,17 +223,20 @@ export function App() {
     setActiveSection("tts");
   }, [tts.newThread]);
 
+  const resumeChat = useCallback(() => {
+    setActiveSection("text");
+    setChatFocusRequested(true);
+  }, []);
+
   const newTextThread = useCallback((folderId?: string) => {
     text.newThread(folderId);
-    setActiveSection("text");
-    setChatFocusRequest((value) => value + 1);
-  }, [text.newThread]);
+    resumeChat();
+  }, [resumeChat, text.newThread]);
 
   const duplicateTextThread = useCallback((id: string) => {
     text.copyThread(id);
-    setActiveSection("text");
-    setChatFocusRequest((value) => value + 1);
-  }, [text.copyThread]);
+    resumeChat();
+  }, [resumeChat, text.copyThread]);
 
   const selectTextThread = useCallback((id: string) => {
     text.selectThread(id);
@@ -307,8 +311,7 @@ export function App() {
         });
         text.selectThread(threadId);
       }
-      setActiveSection("text");
-      setChatFocusRequest((value) => value + 1);
+      resumeChat();
     }
   };
 
@@ -616,7 +619,7 @@ export function App() {
           {activeSection === "preferences" ? <Suspense fallback={<div className="dashboard-loading" role="status">Opening preferences…</div>}><PreferencesView
             active={activeSection === "preferences"}
             computeFocusRequest={computeFocusRequest}
-            onReturnToChat={computeFocusRequest ? () => { setComputeFocusRequest(0); setActiveSection("text"); setChatFocusRequest((value) => value + 1); } : undefined}
+            onReturnToChat={computeFocusRequest ? () => { setComputeFocusRequest(0); resumeChat(); } : undefined}
             theme={studio.settings.theme}
             sidebarCollapsed={wideSidebarCollapsed}
             compactLayout={compactLayout}
@@ -646,7 +649,8 @@ export function App() {
                 sidebarCollapsed={sidebarIsCollapsed}
                 onOpenThreadSearch={openChatThreadSearch}
                 onSetupModels={openModelSetup}
-                focusRequest={chatFocusRequest}
+                focusRequested={chatFocusRequested}
+                onFocusRequestHandled={clearChatFocusRequest}
                 findRequest={chatFindRequest}
                 onFindRequestHandled={clearChatFindRequest}
                 imageGpuAvailable={imageGpuAvailable}
@@ -1072,7 +1076,7 @@ export function App() {
         onOpenVideo={openVideo}
         videoRunning={video.running}
         onStopVideo={() => void video.update("stop")}
-        onOpenText={() => setActiveSection("text")}
+        onOpenText={resumeChat}
         onExportChat={activeSection === "text" && text.activeThread.messages.length
           ? (destination) => void text.exportTranscript(text.activeThread.id, destination) : undefined}
         onOpenLibrary={openLibrary}

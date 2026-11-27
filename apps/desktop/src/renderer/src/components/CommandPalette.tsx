@@ -106,7 +106,7 @@ export function CommandPalette({
       { id: "new-audio", label: shortcuts.speech.label, description: "Start a Qwen3-TTS thread", shortcut: shortcutLabel(shortcuts.speech), icon: <AudioLines size={16} aria-hidden="true" />, onSelect: onNewAudio },
       { id: "open-audio", label: "Open audio workspace", description: "Return to the selected audio thread", icon: <AudioLines size={16} aria-hidden="true" />, onSelect: onOpenAudio },
       { id: "new-text", label: shortcuts.chat.label, description: "Start a local conversation", shortcut: shortcutLabel(shortcuts.chat), icon: <MessageSquare size={16} aria-hidden="true" />, onSelect: onNewText },
-      { id: "open-text", label: "Open current chat", description: "Return to the selected chat", icon: <MessageSquare size={16} aria-hidden="true" />, onSelect: onOpenText },
+      { id: "open-text", label: "Open current chat", description: "Focus the draft in the selected chat", icon: <MessageSquare size={16} aria-hidden="true" />, onSelect: onOpenText },
       ...(onExportChat ? [
         { id: "copy-chat", label: "Copy chat transcript", description: "Copy this conversation as Markdown", icon: <Copy size={16} aria-hidden="true" />, onSelect: () => onExportChat("clipboard") },
         { id: "save-chat", label: "Save chat as Markdown", description: "Write this conversation to a local file", icon: <Download size={16} aria-hidden="true" />, onSelect: () => onExportChat("file") },
