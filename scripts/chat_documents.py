@@ -37,6 +37,10 @@ STOP_WORDS = set(
     "me my of on or our please should tell than that them then there these they this to was "
     "we were what when where which who why will with would you your about document says".split()
 )
+ASCII_WORD_TABLE = str.maketrans({
+    character: character.lower() if character.isalnum() else " "
+    for character in map(chr, range(128))
+})
 
 
 class ChatDocumentsUnavailable(ValueError):
@@ -213,6 +217,9 @@ def store_document(directory: Path, name: Any, content: Any, *,
 
 
 def _terms(text: str) -> set[str]:
+    if text.isascii():
+        words = text.translate(ASCII_WORD_TABLE).split()
+        return {word for word in words if len(word) >= 2} - STOP_WORDS
     terms = set(re.findall(r"[^\W_]{2,}", text.casefold())) - STOP_WORDS
     # Character pairs provide matching for Japanese and Chinese text without spaces.
     for span in re.findall(r"[\u3040-\u30ff\u3400-\u9fff]{2,}", text):
