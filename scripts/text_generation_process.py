@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import subprocess
 import threading
@@ -18,6 +19,7 @@ if TYPE_CHECKING:
 EVENT_PREFIX = "FERN_TEXT_EVENT:"
 STOP_TIMEOUT = 0.8
 UNLOAD_TIMEOUT = 6
+logger = logging.getLogger(__name__)
 
 
 class TextWorkerError(RuntimeError):
@@ -265,7 +267,7 @@ class TextGenerationProcess:
                     line = raw.rstrip()
                     if not line.startswith(EVENT_PREFIX):
                         reported_memory_failure |= has_memory_failure(line)
-                        on_phase(line[:300])
+                        logger.debug("Text worker: %s", line[:300])
                         continue
                     event = json.loads(line[len(EVENT_PREFIX):])
                     kind = event.get("type")
@@ -299,8 +301,8 @@ class TextGenerationProcess:
                         raise _GenerationStopped("Generation stopped.")
                     elif kind == "error":
                         detail = str(event.get("error") or "Text generation failed.")
-                        if event.get("traceback"):
-                            on_phase(str(event["traceback"])[-5000:])
+                        if traceback := event.get("traceback"):
+                            logger.debug("Text worker traceback: %s", str(traceback)[-5000:])
                         code = event.get("code") or (OUT_OF_MEMORY if reported_memory_failure else None)
                         raise TextWorkerError(detail, code)
                     else:
