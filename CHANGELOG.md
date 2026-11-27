@@ -6,36 +6,6 @@ lands directly on `main` instead of through labeled pull requests.
 
 ## [Unreleased]
 
-### Added
-
-- Choose clips from 4 to 10 seconds with Wan 2.2 Turbo on Intel Vulkan. Longer renders show sampling and decoding progress and can be stopped.
-
-### Improved
-
-- Add an Apple Silicon preview build option that precompiles Metal shaders before packaging.
-- Keep chat progress on the current stage when the local text runtime writes debug messages.
-- Show when Chat prepares the Apple GPU before loading a GGUF model.
-- Show when Chat checks model memory, loads weights, prepares the context, and warms up a GGUF model.
-- Show measured prompt processing time and reused tokens in GGUF response details.
-- Tighten chat spacing and reveal older replies’ speed alongside their actions.
-- Reuse the processed prompt across follow-ups in long GGUF chats when the retained history still fits.
-- Show progress as a local GGUF model processes the chat prompt before its first reply token.
-- Skip Metal shader setup when starting GGUF chat in CPU mode on Apple Silicon.
-
-### Fixed
-
-- Keep partial Markdown readable after stopping a chat reply, including when reopening the conversation.
-- Fix garbled GGUF replies on Windows and Omarchy when CPU is selected by using llama.cpp’s native CPU engine.
-- Include saved chats and references in the workspace size shown in Local data.
-- Recover a finished video after restarting the local service if it exited while saving the clip.
-- Restart Fern’s local service from Video after an interruption. The first frame and motion prompt stay ready, and completed clips return from history.
-- Finish stopping a chat even when its live stream misses the final update.
-- Bring the selected Find match into view when a long reply finishes formatting.
-- Find every generated image prompt in a chat reply, including saved versions, and jump to the matching image.
-- Return focus to the composer when resending an edited earlier prompt. The editor explains which messages are saved in Versions.
-- Keep the GGUF model loaded when Stop interrupts an in-progress chat summary after it starts generating text.
-- Preserve an unsent inline prompt edit with its conversation version when switching versions.
-
 ## [0.1.49] - 2026-11-25
 
 ### Added
@@ -45,6 +15,9 @@ lands directly on `main` instead of through labeled pull requests.
 - Undo a message deletion with Ctrl+Z or Cmd+Z on Mac while the conversation or its Undo control has focus.
 - Load or unload a chat model in Chat settings. Cancel a load while keeping the draft, or restart the local service from Chat after it exits.
 - Open a document source at the passage sent to the model. Replace or remove a missing attachment and retry the original prompt.
+- Install the compact 491 MB Qwen2.5 0.5B Instruct model from CPU chat setup on Windows, Omarchy, and Apple Silicon.
+- Load compatible local `.safetensors` LoRAs in Z-Image Turbo on Intel Vulkan from Images or Chat.
+- Choose clips from 4 to 10 seconds with Wan 2.2 Turbo on Intel Vulkan. Longer renders show sampling and decoding progress and can be stopped.
 
 ### Improved
 
@@ -54,12 +27,21 @@ lands directly on `main` instead of through labeled pull requests.
 - Find text in saved conversation versions from Search threads. Open the matching message in a preview that keeps the active conversation intact.
 - Show the full text of each received reply update immediately, so delayed animation callbacks cannot leave a reply stuck halfway through a chunk.
 - Show when chat is checking hardware before it begins loading a GGUF model.
+- Show when Chat prepares the Apple GPU before loading a GGUF model.
+- Show when Chat checks model memory, loads weights, prepares the context, and warms up a GGUF model.
+- Show progress as a local GGUF model processes the chat prompt before its first reply token.
 - Keep streaming replies free of animated dots. The composer shows when Fern is responding or waiting for more text.
 - Use a monochrome Stop button in the composer. Escape also stops a reply while you are reading it in the conversation.
 - Keep more of the conversation visible in short windows when the draft contains an image and documents.
 - Reuse a completed GGUF context summary when a follow-up or fork sends the same earlier turns to the loaded model. Chat shows when summarization takes longer.
 - Reuse the loaded Vulkan chat model when switching from an image conversation to plain text.
 - Start Gemma 4 GGUF chat on Vulkan on Windows systems with the tested Intel Arc B390 adapter.
+- Add an Apple Silicon preview build option that precompiles Metal shaders before packaging.
+- Keep chat progress on the current stage when the local text runtime writes debug messages.
+- Show measured prompt processing time and reused tokens in GGUF response details.
+- Tighten chat spacing and reveal older replies’ speed alongside their actions.
+- Reuse the processed prompt across follow-ups in long GGUF chats when the retained history still fits.
+- Start GGUF CPU chat directly on Apple Silicon by skipping Metal shader setup.
 
 ### Fixed
 
@@ -74,6 +56,17 @@ lands directly on `main` instead of through labeled pull requests.
 - Load saved chat images once Fern connects to its local service when it reopens.
 - Retry a GGUF chat on Vulkan when OpenVINO hits a GPU tensor-shape error before the reply begins.
 - Restore the active image context when you remove newer turns that had replaced it.
+- Keep partial Markdown readable after stopping a chat reply, including when reopening the conversation.
+- Fix garbled GGUF replies on Windows and Omarchy when CPU is selected by using llama.cpp’s native CPU engine.
+- Include saved chats and references in the workspace size shown in Local data.
+- Recover a finished video after restarting the local service if it exited while saving the clip.
+- Restart Fern’s local service from Video after an interruption. The first frame and motion prompt stay ready, and completed clips return from history.
+- Finish stopping a chat even when its live stream misses the final update.
+- Bring the selected Find match into view when a long reply finishes formatting.
+- Find every generated image prompt in a chat reply, including saved versions, and jump to the matching image.
+- Return focus to the composer when resending an edited earlier prompt. The editor explains which messages are saved in Versions.
+- Keep the GGUF model loaded when Stop interrupts an in-progress chat summary after it starts generating text.
+- Preserve an unsent inline prompt edit with its conversation version when switching versions.
 
 Full changelog on [GitHub](https://github.com/xgirls-dev/fern/compare/v0.1.48...v0.1.49).
 
