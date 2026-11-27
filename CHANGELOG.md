@@ -6,6 +6,10 @@ lands directly on `main` instead of through labeled pull requests.
 
 ## [Unreleased]
 
+### Fixed
+
+- Resume a prepared Windows runtime upgrade after a restart and recover the prior runtime if setup is interrupted.
+
 ## [0.1.49] - 2026-11-25
 
 ### Added

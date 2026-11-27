@@ -27,37 +27,20 @@ function runtimeRevision(): string {
   return manifest.archiveSha256;
 }
 
-function runtimeReady(): boolean {
-  const root = join(app.getPath("userData"), "runtime");
+function runtimeInstalled(root: string, revision: string): boolean {
   try {
-    return readFileSync(join(root, ".installed"), "utf8").trim() === runtimeRevision()
+    return readFileSync(join(root, ".installed"), "utf8").trim() === revision
       && existsSync(join(root, "python-home", "python.exe"));
   } catch { return false; }
 }
 
-async function ensureRuntime(window: BrowserWindow): Promise<void> {
-  if (window.isDestroyed()) throw new RuntimeSetupCancelled("Setup cancelled.");
-  if (runtimeReady()) return;
-  updateStatus(window, "Installing the Fern AI runtime...");
-  const archive = join(process.resourcesPath, "runtime-release.zip");
-  if (!existsSync(archive)) {
-    throw new Error(
-      "The bundled AI runtime archive is missing. Please reinstall Fern.",
-    );
-  }
-  const target = join(app.getPath("userData"), "runtime");
-  const stage = join(app.getPath("userData"), "runtime-installing");
-  const previous = join(app.getPath("userData"), "runtime-previous");
-  const profile = resolve(app.getPath("userData"));
-  for (const generated of [target, stage, previous]) {
-    if (dirname(resolve(generated)) !== profile) throw new Error("Invalid generated runtime path.");
-  }
-  const revision = runtimeRevision();
-  // All three paths are fixed generated-runtime children of this profile. Model,
-  // output, and thread data live elsewhere and are never touched here.
-  await rm(stage, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
-  mkdirSync(stage, { recursive: true });
-  await new Promise<void>((resolve, reject) => {
+function runtimeReady(): boolean {
+  try { return runtimeInstalled(join(app.getPath("userData"), "runtime"), runtimeRevision()); }
+  catch { return false; }
+}
+
+function extractRuntime(window: BrowserWindow, archive: string, stage: string): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
     const child = spawn("tar.exe", ["-xf", archive, "-C", stage], {
       windowsHide: true,
       stdio: ["ignore", "ignore", "pipe"],
@@ -70,32 +53,55 @@ async function ensureRuntime(window: BrowserWindow): Promise<void> {
     const cancel = () => { cancelled = true; child.kill(); };
     window.once("closed", cancel);
     child.once("error", (error) => { window.removeListener("closed", cancel); reject(error); });
-    child.once("close", async (code) => {
+    child.once("close", (code) => {
       window.removeListener("closed", cancel);
       if (cancelled) { reject(new RuntimeSetupCancelled("Setup cancelled.")); return; }
       const python = join(stage, "python-home", "python.exe");
-      if (code === 0 && existsSync(python)) {
-        try {
-          writeFileSync(join(stage, ".installed"), revision + "\n", "utf8");
-          await rm(previous, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
-          if (existsSync(target)) await renameRuntime(target, previous);
-          try { await renameRuntime(stage, target); }
-          catch (error) {
-            if (existsSync(previous)) await renameRuntime(previous, target);
-            throw error;
-          }
-          try { await rm(previous, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
-          catch (error) { console.warn("Could not remove the previous generated runtime:", error); }
-          resolve();
-        } catch (error) { reject(error); }
-      } else
-        reject(
-          new Error(
-            error.trim() || `Runtime extraction failed with exit code ${code}.`,
-          ),
-        );
+      if (code === 0 && existsSync(python)) resolve();
+      else reject(new Error(error.trim() || `Runtime extraction failed with exit code ${code}.`));
     });
   });
+}
+
+async function ensureRuntime(window: BrowserWindow): Promise<void> {
+  if (window.isDestroyed()) throw new RuntimeSetupCancelled("Setup cancelled.");
+  const profile = resolve(app.getPath("userData"));
+  const target = join(profile, "runtime");
+  const stage = join(profile, "runtime-installing");
+  const previous = join(profile, "runtime-previous");
+  for (const generated of [target, stage, previous]) {
+    if (dirname(resolve(generated)) !== profile) throw new Error("Invalid generated runtime path.");
+  }
+
+  // The app may have closed after moving the old runtime out of the way.
+  if (!existsSync(target) && existsSync(previous)) await renameRuntime(previous, target);
+  const revision = runtimeRevision();
+  if (runtimeInstalled(target, revision)) return;
+
+  const cleanup = { recursive: true, force: true, maxRetries: 10, retryDelay: 100 };
+  if (!runtimeInstalled(stage, revision)) {
+    const archive = join(process.resourcesPath, "runtime-release.zip");
+    if (!existsSync(archive)) throw new Error("The bundled AI runtime archive is missing. Please reinstall Fern.");
+    updateStatus(window, "Installing the Fern AI runtime...");
+    await rm(stage, cleanup);
+    if (window.isDestroyed()) throw new RuntimeSetupCancelled("Setup cancelled.");
+    mkdirSync(stage, { recursive: true });
+    await extractRuntime(window, archive, stage);
+    writeFileSync(join(stage, ".installed"), revision + "\n", "utf8");
+  }
+
+  if (window.isDestroyed()) throw new RuntimeSetupCancelled("Setup cancelled.");
+  updateStatus(window, "Finishing runtime setup…");
+  await rm(previous, cleanup);
+  if (window.isDestroyed()) throw new RuntimeSetupCancelled("Setup cancelled.");
+  if (existsSync(target)) await renameRuntime(target, previous);
+  try { await renameRuntime(stage, target); }
+  catch (error) {
+    if (existsSync(previous)) await renameRuntime(previous, target);
+    throw error;
+  }
+  try { await rm(previous, cleanup); }
+  catch (error) { console.warn("Could not remove the previous generated runtime:", error); }
 }
 
 function setupHtmlV2(): string {
