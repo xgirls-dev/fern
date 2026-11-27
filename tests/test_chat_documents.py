@@ -12,7 +12,7 @@ from pypdf import PdfWriter
 from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from chat_documents import add_document_context, document_ids, read_document_source, retrieve_document_context, store_document
+from chat_documents import _terms, add_document_context, document_ids, read_document_source, retrieve_document_context, store_document
 
 
 def pdf_with_pages(*contents: str) -> bytes:
@@ -48,6 +48,11 @@ class ChatDocumentTests(unittest.TestCase):
     def attach(self, name, data):
         document = store_document(self.root, name, base64.b64encode(data).decode("ascii"))
         return document
+
+    def test_terms_keep_word_boundaries_and_language_matching(self):
+        self.assertEqual(_terms("AA_ALPHA-12.x e-mail / 2026, NFC and ZX."),
+                         {"aa", "alpha", "12", "mail", "2026", "nfc", "zx"})
+        self.assertEqual(_terms("Résumé やまと"), {"résumé", "やまと", "やま", "まと"})
 
     def test_text_word_and_markdown_extract_and_duplicate_upload_is_idempotent(self):
         candidates = [
