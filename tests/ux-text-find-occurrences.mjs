@@ -53,10 +53,18 @@ try {
   await button("Find in chat").click();
   await page.evaluate(() => {
     const getRects = Range.prototype.getClientRects;
+    let pendingFrames = 12;
+    function finishLayout() {
+      pendingFrames -= 1;
+      if (pendingFrames) requestAnimationFrame(finishLayout);
+      else Range.prototype.getClientRects = getRects;
+    }
     Range.prototype.getClientRects = function () {
       if (this.toString() === "quiet cedar" && this.startContainer.parentElement?.closest("p")?.textContent.startsWith("First sighting")) {
-        Range.prototype.getClientRects = getRects;
-        window.firstFindLayoutDeferred = true;
+        if (!window.firstFindLayoutDeferred) {
+          window.firstFindLayoutDeferred = true;
+          requestAnimationFrame(finishLayout);
+        }
         return [];
       }
       return getRects.call(this);
@@ -85,6 +93,38 @@ try {
   await search.press("Escape");
   await expect(row.locator("details")).not.toHaveAttribute("open", "");
   await expect(button("Find in chat")).toBeFocused();
+
+  await button("Find in chat").click();
+  await page.evaluate(() => {
+    const getRects = Range.prototype.getClientRects;
+    let scheduled = false;
+    Range.prototype.getClientRects = function () {
+      if (this.toString() !== "quiet cedar" || !this.startContainer.parentElement?.closest("p")?.textContent.startsWith("First sighting")) {
+        return getRects.call(this);
+      }
+      if (!scheduled) {
+        scheduled = true;
+        requestAnimationFrame(() => {
+          Range.prototype.getClientRects = getRects;
+          const viewport = document.querySelector(".text-conversation");
+          // Apply the wheel event and the viewport movement it would perform in the same frame.
+          viewport.dispatchEvent(new WheelEvent("wheel", { deltaY: 120 }));
+          viewport.scrollTop += 120;
+          window.readerScrollTop = viewport.scrollTop;
+        });
+      }
+      return [];
+    };
+  });
+  await search.fill("quiet cedar");
+  await expect(count).toHaveText("1 of 4");
+  await expect.poll(() => page.evaluate(() => window.readerScrollTop)).toBeGreaterThan(0);
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  const scrollDelta = await page.locator(".text-conversation").evaluate((viewport) => Math.abs(viewport.scrollTop - window.readerScrollTop));
+  assert(scrollDelta <= 1, "A pending match must respect the reader’s scroll position");
+  await search.press("Enter");
+  await activeHit("Second sighting");
+  await search.press("Escape");
 
   await button("Find in chat").click();
   await search.fill("invisible-needle");

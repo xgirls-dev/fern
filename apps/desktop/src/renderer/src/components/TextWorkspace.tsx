@@ -266,7 +266,7 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
   const [replyPreviews, setReplyPreviews] = useState<Record<string, string>>({});
   const findOpen = findThreadId === activeThread.id;
   const activeMatch = findOpen ? findMatch : null;
-  const previousFind = useRef<ChatSearchMatch | null>(null);
+  const handledFind = useRef<ChatSearchMatch | null>(null);
   const previousFindPreview = useRef<{ threadId: string; messageId: string } | undefined>(undefined);
   const closeFind = useCallback(() => {
     setFindThreadId(null);
@@ -593,11 +593,12 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
     const previous = previousFindPreview.current;
     const find = !focusedMessageId && !requestedEdit ? activeMatch : null;
     if (find && (!historyVisible || !feedRef.current?.clientHeight)) return;
-    const shouldScroll = !find || previousFind.current !== find;
-    previousFind.current = find;
+    const shouldScroll = !find || handledFind.current !== find;
+    if (!find) handledFind.current = null;
     const preview = find && (find.savedPromptId || find.versionId !== find.messageId || find.section !== "body" || promptEdit?.messageId === find.messageId);
     previousFindPreview.current = preview && revealId ? { threadId: activeThread.id, messageId: revealId } : undefined;
-    const stopWatching = revealId ? revealMessage(revealId, find ?? undefined, requestedFocus?.block, shouldScroll) : undefined;
+    const stopWatching = revealId ? revealMessage(revealId, find ?? undefined, requestedFocus?.block, shouldScroll,
+      find ? () => { handledFind.current = find; } : undefined) : undefined;
     if (!revealId && previous?.threadId === activeThread.id) revealMessage(previous.messageId);
     if (focusedMessageId) {
       feedRef.current?.querySelector<HTMLElement>(`[data-chat-message="${CSS.escape(focusedMessageId)}"]`)?.focus({ preventScroll: true });
