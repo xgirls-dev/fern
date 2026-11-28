@@ -2829,7 +2829,6 @@ code {
   border-top: 1px solid var(--border);
 }
 
-.lora-control-name { --ui-check-size: 14px; }
 .lora-control-name:has(:focus-visible) { background-color: var(--ui-focus-fill); border-radius: 4px; }
 .lora-control-name .ui-checkbox:focus-visible { filter: none; }
 
