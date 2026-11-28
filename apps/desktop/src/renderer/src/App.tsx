@@ -17,7 +17,7 @@ import { useSidebarLayout } from "./hooks/useSidebarLayout";
 import { useComputePreference } from "./hooks/useComputePreference";
 import { ActivityTerminal } from "./components/ActivityTerminal";
 import { ImageGenerationStatus } from "./components/ImageGenerationStatus";
-import { useImageActivity } from "./hooks/useImageActivity";
+import { useGenerationActivity } from "./hooks/useGenerationActivity";
 import { CommandPalette } from "./components/CommandPalette";
 import { GenerationControls } from "./components/GenerationControls";
 import { PreviewMetadataHud } from "./components/PreviewMetadataHud";
@@ -51,7 +51,7 @@ const ModelsView = lazy(() => import("./components/ModelsView").then((module) =>
 export function App() {
   const compute = useComputePreference();
   const studio = useStudio(compute.device);
-  const imageActivity = useImageActivity(studio.status?.job, studio.resetRevision);
+  const imageActivity = useGenerationActivity("image", studio.status?.job, studio.resetRevision);
   const imageGpu = window.studio.platform === "darwin" ? "APPLE_GPU" : "INTEL_GPU";
   const imageGpuAvailable = studio.status?.model.adapters?.find((adapter) => adapter.id === imageGpu)?.available;
   const tts = useQwen3Tts(studio.ready, compute.device);
@@ -95,6 +95,7 @@ export function App() {
     "create" | "tts" | "text" | "video" | "library" | "models" | "preferences" | "storage"
   >(() => modelSetup && modelSetup.viewing !== false ? "models" : loadLastWorkspace());
   const video = useVideo(studio.ready, activeSection === "video");
+  const videoActivity = useGenerationActivity("video", video.job, studio.resetRevision);
   const audioBusy = ["running", "setting_up", "stopping"].includes(tts.status.status);
   const [modelCategory, setModelCategory] = useState<"image" | "text" | "audio" | "video">(
     modelSetup && modelSetup.task !== "image" ? "text" : "image",
@@ -668,7 +669,8 @@ export function App() {
             <Suspense fallback={<div className="dashboard-loading" role="status">Opening video workspace…</div>}>
               <VideoWorkspace video={video} device={compute.device} busyElsewhere={studio.running || studio.submitting || audioBusy || text.busy}
                 backendFailure={studio.backendFailure} backendConnecting={!studio.ready && studio.connecting} onRestartBackend={studio.restartBackend}
-                openModels={openVideoModels} openCompute={openComputePreferences} />
+                openModels={openVideoModels} openCompute={openComputePreferences}
+                activity={<ActivityTerminal jobs={videoActivity} running={video.available && video.running} scrollbackLabel="Video activity scrollback" />} />
             </Suspense>
           ) : activeSection === "tts" ? (
             <Suspense fallback={<div className="dashboard-loading" role="status">Opening audio workspace…</div>}><Qwen3TtsWorkspace studio={tts} sidebarCollapsed={sidebarIsCollapsed} onOpenThreadSearch={openAudioThreadSearch} /></Suspense>
@@ -795,6 +797,7 @@ export function App() {
                   <ActivityTerminal
                     jobs={imageActivity}
                     running={studio.running}
+                    scrollbackLabel="Image activity scrollback"
                   />
                 </section>
                 <aside

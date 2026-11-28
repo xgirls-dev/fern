@@ -1,23 +1,21 @@
 import { useEffect, useRef, useState } from "react";
-import type { FluxJob } from "../lib/types";
 
 interface ActivityJob {
   id: string;
   lines: string[];
 }
 
-const STORAGE_KEY = "fern-image-activity";
 const MAX_JOBS = 12;
 const MAX_LINES = 120;
 const MAX_LINE_LENGTH = 512;
 
-function recentLines(lines: string[]) {
+function recentLines(lines: readonly string[]) {
   return lines.slice(-MAX_LINES).map((line) => line.slice(0, MAX_LINE_LENGTH));
 }
 
-function readActivity(): ActivityJob[] {
+function readActivity(storageKey: string): ActivityJob[] {
   try {
-    const saved: unknown = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "[]");
+    const saved: unknown = JSON.parse(localStorage.getItem(storageKey) ?? "[]");
     if (Array.isArray(saved)) {
       return saved.filter((job): job is ActivityJob => typeof job?.id === "string" &&
         Array.isArray(job.lines) && job.lines.every((line: unknown) => typeof line === "string"))
@@ -29,8 +27,9 @@ function readActivity(): ActivityJob[] {
   return [];
 }
 
-export function useImageActivity(job: FluxJob | undefined, resetRevision: number) {
-  const [history, setHistory] = useState(readActivity);
+export function useGenerationActivity(workspace: "image" | "video", job: { id: string | null; logs?: readonly string[] } | undefined, resetRevision: number) {
+  const storageKey = `fern-${workspace}-activity`;
+  const [history, setHistory] = useState(() => readActivity(storageKey));
   const reset = useRef({ revision: resetRevision, ignoredJobId: null as string | null });
 
   useEffect(() => {
@@ -39,7 +38,7 @@ export function useImageActivity(job: FluxJob | undefined, resetRevision: number
       setHistory([]);
       return;
     }
-    if (!job?.id || job.id === reset.current.ignoredJobId || !job.logs.length) return;
+    if (!job?.id || job.id === reset.current.ignoredJobId || !job.logs?.length) return;
     const id = job.id;
     const lines = recentLines(job.logs);
     setHistory((current) => {
@@ -53,12 +52,12 @@ export function useImageActivity(job: FluxJob | undefined, resetRevision: number
 
   useEffect(() => {
     try {
-      if (history.length) localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
-      else localStorage.removeItem(STORAGE_KEY);
+      if (history.length) localStorage.setItem(storageKey, JSON.stringify(history));
+      else localStorage.removeItem(storageKey);
     } catch {
       // The terminal keeps its in-memory scrollback.
     }
-  }, [history]);
+  }, [history, storageKey]);
 
   return history;
 }

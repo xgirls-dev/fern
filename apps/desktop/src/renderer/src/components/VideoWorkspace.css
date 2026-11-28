@@ -1,5 +1,8 @@
 .dashboard.dashboard--video { display: block; min-height: 0; padding: 0; overflow: hidden; }
-.video-workspace { --video-inset: max(24px, calc((100% - 1100px) / 2)); }
+.video-workspace {
+  --video-inset: max(24px, calc((100% - 1100px) / 2));
+  --activity-inline-inset: var(--video-inset);
+}
 .video-workspace .shell-page-header { padding-inline: var(--video-inset); }
 .video-body { padding: 24px var(--video-inset) 40px; }
 .video-columns {
@@ -26,18 +29,14 @@
   min-height: 144px;
   border: 1px dashed var(--border-strong);
   border-radius: 12px;
-  background: var(--sidebar-surface);
+  background: var(--input-bg);
   color: var(--foreground);
   cursor: pointer;
   overflow: hidden;
 }
-.video-reference:focus-visible, .video-history-clip:focus-visible, .video-preview video:focus-visible {
-  outline: var(--ui-focus-ring);
-  outline-offset: -2px;
-}
 .video-reference:hover:not(:disabled) { background: var(--secondary-hover); }
 .video-reference small, .video-status { color: var(--muted); font-size: 12px; }
-.video-reference.has-reference { display: block; min-height: 0; padding: 0; border-style: solid; background: var(--sidebar-surface); }
+.video-reference.has-reference { display: block; min-height: 0; padding: 0; border-style: solid; }
 .video-reference img { display: block; height: 168px; aspect-ratio: 544 / 704; object-fit: cover; margin-inline: auto; }
 .video-reference-caption, .video-format-row, .video-actions, .video-results-header, .video-clip-details {
   display: flex;
@@ -96,6 +95,10 @@
 }
 .video-history-clip:hover, .video-history-clip[aria-pressed="true"] { background: var(--secondary-hover); }
 .video-history-clip[aria-pressed="true"] { border-color: var(--border-strong); }
+.video-reference:focus-visible, .video-history-clip:focus-visible, .video-preview:has(video:focus-visible) {
+  background: var(--ui-focus-fill);
+}
+.video-preview video:focus-visible { outline: none; }
 .video-history-clip img { width: 100%; height: 74px; object-fit: cover; border-radius: 4px; }
 .video-history-clip span { padding-inline: 2px; font-size: 12px; }
 @media (max-width: 780px) {

@@ -724,16 +724,16 @@ body {
 .creation-canvas .output-file-label {
   color: var(--muted-2);
 }
-.creation-canvas .activity-terminal-panel {
+:is(.creation-canvas, .video-workspace) .activity-terminal-panel {
   flex: 0 0 auto;
-  margin: 0 24px;
+  margin: 0 var(--activity-inline-inset, 24px);
   border-radius: 0;
   border: 0;
   border-top: 1px solid var(--border);
   background: transparent;
   box-shadow: none;
 }
-.creation-canvas .activity-terminal-header {
+:is(.creation-canvas, .video-workspace) .activity-terminal-header {
   background: transparent;
 }
 
@@ -2819,8 +2819,8 @@ code {
 
 .generation-progress-header .generation-phase { min-width: 0; overflow-wrap: anywhere; }
 
-.creation-canvas .activity-terminal-header:focus-visible { background: var(--ui-focus-fill); }
-.creation-canvas .activity-terminal-body { background: var(--terminal-bg); font: 11px/1.6 var(--font-mono); }
+:is(.creation-canvas, .video-workspace) .activity-terminal-header:focus-visible { background: var(--ui-focus-fill); }
+:is(.creation-canvas, .video-workspace) .activity-terminal-body { background: var(--terminal-bg); font: 11px/1.6 var(--font-mono); }
 .activity-terminal-body:focus-visible { box-shadow: inset 3px 0 var(--ui-focus-fill); }
 .activity-terminal-job + .activity-terminal-job {
   margin-top: var(--ui-space-2);
