@@ -482,7 +482,8 @@ export function useTextChat(ready: boolean, computeDevice: "GPU" | "CPU" = "GPU"
     if (!storageReady) return;
     const previous = scheduledWorkspace.current;
     scheduledWorkspace.current = workspace;
-    const saveImmediately = previous.activeId !== workspace.activeId || previous.threads.length !== workspace.threads.length ||
+    const saveImmediately = previous.activeId !== workspace.activeId || previous.modelDefaults !== workspace.modelDefaults ||
+      previous.threads.length !== workspace.threads.length ||
       workspace.threads.some((thread, index) => {
         const before = previous.threads[index];
         return !before || before.id !== thread.id || before.messages !== thread.messages ||
