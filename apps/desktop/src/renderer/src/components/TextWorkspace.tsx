@@ -73,6 +73,13 @@ interface TranscriptRow {
   estimatedHeight: number;
 }
 
+interface StoredTranscript {
+  threadId: string;
+  messages: readonly TextMessage[];
+  display: readonly TextMessage[];
+  rows: TranscriptRow[];
+}
+
 function TokenField({ label, value, min, max, disabled, help, inputRef, onChange }: {
   label: string; value: number; min: number; max: number; disabled: boolean; help?: string;
   inputRef?: Ref<HTMLInputElement>;
@@ -538,13 +545,28 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
       return showReplyVersion(message, previewId);
     });
   }, [foundMessageId, foundVersionId, messages, replyPreviews, threadId]);
-  const storedRows = useMemo<TranscriptRow[]>(() => {
-    let previouslyTrimmed = false;
-    let previouslySummarized = false;
-    let previouslyOmittedImages = false;
-    let previouslyUnavailableImages = false;
-    return displayMessages.map((message, index) => {
-      const stored = activeThread.messages[index];
+  const committedTranscript = useRef<StoredTranscript | null>(null);
+  const storedTranscript = useMemo<StoredTranscript>(() => {
+    const previous = committedTranscript.current;
+    let unchanged = 0;
+    if (previous?.threadId === threadId) {
+      const limit = Math.min(displayMessages.length, previous.display.length);
+      while (unchanged < limit && messages[unchanged] === previous.messages[unchanged] &&
+          displayMessages[unchanged] === previous.display[unchanged]) unchanged += 1;
+    }
+    // A row's context notice depends on the last stored answer before it.
+    let lastAnswer = unchanged - 1;
+    while (lastAnswer >= 0 && messages[lastAnswer].role !== "assistant") lastAnswer -= 1;
+    const previousRequest = messages[lastAnswer]?.requestContext;
+    const previousContext = messages[lastAnswer]?.metrics?.context;
+    let previouslyTrimmed = !!(previousRequest?.omittedMessages || previousRequest?.shortenedMessages || previousRequest?.omittedAttachments);
+    let previouslySummarized = !!previousContext?.compactedMessages;
+    let previouslyOmittedImages = !!previousContext?.omittedImages;
+    let previouslyUnavailableImages = !!previousContext?.unavailableImages;
+    const rows = previous?.rows.slice(0, unchanged) ?? [];
+    for (let index = unchanged; index < displayMessages.length; index += 1) {
+      const message = displayMessages[index];
+      const stored = messages[index];
       const context = stored.requestContext;
       const trimmed = !!(context?.omittedMessages || context?.shortenedMessages || context?.omittedAttachments);
       const runtimeContext = stored.metrics?.context;
@@ -560,9 +582,12 @@ export function TextWorkspace({ studio, thread: activeThread, pane, focused, spl
         previouslyUnavailableImages = unavailableImages;
       }
       const versionAnchor = message.alternatives?.length ? replyVersions(message)[0].id : message.id;
-      return { message, messageId: stored.id, contextChanged, key: `${activeThread.id}:${versionAnchor}`, estimatedHeight: estimateTextRowHeight(message) };
-    });
-  }, [activeThread.id, activeThread.messages, displayMessages]);
+      rows.push({ message, messageId: stored.id, contextChanged, key: `${threadId}:${versionAnchor}`, estimatedHeight: estimateTextRowHeight(message) });
+    }
+    return { threadId, messages, display: displayMessages, rows };
+  }, [threadId, messages, displayMessages]);
+  useLayoutEffect(() => { committedTranscript.current = storedTranscript; }, [storedTranscript]);
+  const storedRows = storedTranscript.rows;
   // Retry leaves the selected answer in history until its replacement settles.
   // Keep that answer's row mounted across the wait, stream, and final version.
   const retryRow = streamId && lastMessage?.role === "assistant" ? storedRows.at(-1) : undefined;
