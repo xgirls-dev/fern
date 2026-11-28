@@ -45,21 +45,32 @@ try {
   await imagePrompt.fill("Line one\nLine two\nLine three\nLine four");
   assert((await imagePrompt.boundingBox()).height > layout.text.height + 30, "The editor should grow with its content");
   await imagePrompt.fill("A short prompt");
-  const ring = () => page.locator(".prompt-composer").evaluate((el) => ({
-    color: getComputedStyle(el).outlineColor,
-    width: getComputedStyle(el).outlineWidth,
-  }));
+  const composer = page.locator(".prompt-composer");
+  const settings = page.locator(".create-view > .workspace-header").getByRole("button", { name: "Image settings", exact: true });
   for (const theme of ["light", "dark"]) {
     if (await page.locator("html").getAttribute("data-theme") !== theme) await button("Toggle theme").click();
     await imagePrompt.focus();
     await page.keyboard.press("Tab");
     await page.keyboard.press("Shift+Tab");
     assert(await imagePrompt.evaluate((el) => el.matches(":focus-visible")));
-    const focus = await ring();
-    assert.equal(focus.width, "2px");
-    assert.equal(focus.color, theme === "light" ? "rgb(33, 104, 181)" : "rgb(106, 175, 255)");
+    await expect(composer).toHaveCSS("outline-style", "none");
+    await expect(imagePrompt).toHaveCSS("outline-style", "none");
+    const resting = await settings.evaluate((element) => getComputedStyle(element).backgroundColor);
+    await settings.focus();
+    await expect(settings).toHaveCSS("outline-style", "none");
+    assert.notEqual(await settings.evaluate((element) => getComputedStyle(element).backgroundColor), resting);
+    await imagePrompt.focus();
     await page.screenshot({ path: `${dir}/design-compact-image-${theme}.png` });
   }
+  if (await settings.getAttribute("aria-expanded") !== "true") await settings.click();
+  const field = page.locator("#generation-inspector .ui-field:not(:disabled)").first();
+  await expect(field).toBeVisible();
+  const colors = await field.evaluate((element) => ({
+    field: getComputedStyle(element).backgroundColor,
+    surface: getComputedStyle(document.querySelector("#generation-inspector")).backgroundColor,
+  }));
+  const shade = (color) => Number(color.match(/\d+/)?.[0]);
+  assert(shade(colors.field) >= shade(colors.surface), JSON.stringify(colors));
   await page.reload();
   await imagePrompt.waitFor();
   assert.equal(await imagePrompt.inputValue(), "A short prompt");

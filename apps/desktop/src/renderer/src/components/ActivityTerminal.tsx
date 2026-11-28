@@ -1,12 +1,12 @@
 import ChevronDown from "lucide-react/dist/esm/icons/chevron-down.mjs";
 import ChevronUp from "lucide-react/dist/esm/icons/chevron-up.mjs";
 import Terminal from "lucide-react/dist/esm/icons/terminal.mjs";
-import { useEffect, useId, useRef, useState } from "react";
+import { memo, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { Button } from "./ui/controls";
 import { ResizeHandle } from "./ui/ResizeHandle";
 
 interface ActivityTerminalProps {
-  logs: string[];
+  jobs: readonly { id: string; lines: readonly string[] }[];
   running: boolean;
 }
 
@@ -19,7 +19,7 @@ const MIN_HEIGHT = 96;
 const MAX_HEIGHT = 420;
 const COLLAPSED_HEIGHT = 32;
 
-export function ActivityTerminal({ logs, running }: ActivityTerminalProps) {
+export const ActivityTerminal = memo(function ActivityTerminal({ jobs, running }: ActivityTerminalProps) {
   const [expanded, setExpanded] = useState(() => {
     try {
       return (
@@ -50,6 +50,7 @@ export function ActivityTerminal({ logs, running }: ActivityTerminalProps) {
   });
   const [following, setFollowing] = useState(true);
   const bodyRef = useRef<HTMLDivElement>(null);
+  const scrollTop = useRef(0);
   const panelRef = useRef<HTMLElement>(null);
   const panelId = useId();
 
@@ -61,14 +62,16 @@ export function ActivityTerminal({ logs, running }: ActivityTerminalProps) {
     localStorage.setItem(HEIGHT_KEY, String(height));
   }, [height]);
 
-  useEffect(() => {
-    if (!expanded || !bodyRef.current || !following) return;
-    bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
-  }, [expanded, logs, running, following]);
+  useLayoutEffect(() => {
+    if (!expanded || !bodyRef.current) return;
+    const body = bodyRef.current;
+    if (following) body.scrollTop = body.scrollHeight;
+    else body.scrollTop = scrollTop.current;
+  }, [expanded, jobs, following]);
 
   const previewHeight = (next: number) => panelRef.current?.style.setProperty("height", `${next}px`);
 
-  const lineCount = logs.length;
+  const lineCount = jobs.reduce((count, job) => count + job.lines.length, 0);
   const panelHeight = expanded ? height : COLLAPSED_HEIGHT;
 
   return (
@@ -130,8 +133,12 @@ export function ActivityTerminal({ logs, running }: ActivityTerminalProps) {
         <div
           className="activity-terminal-body"
           ref={bodyRef}
+          tabIndex={0}
+          role="region"
+          aria-label="Image activity scrollback"
           onScroll={(event) => {
             const el = event.currentTarget;
+            scrollTop.current = el.scrollTop;
             setFollowing(el.scrollHeight - el.scrollTop - el.clientHeight < 24);
           }}
         >
@@ -144,16 +151,16 @@ export function ActivityTerminal({ logs, running }: ActivityTerminalProps) {
               Jump to latest
             </Button>
           ) : null}
-          {logs.length === 0 ? (
+          {lineCount === 0 ? (
             <div className="activity-terminal-line activity-terminal-line--muted">
-              <span className="activity-terminal-prompt">$</span>
               Waiting for generation activity…
             </div>
           ) : (
-            logs.map((line, index) => (
-              <div key={`${index}:${line}`} className="activity-terminal-line">
-                <span className="activity-terminal-prompt">$</span>
-                <span>{line}</span>
+            jobs.map((job) => (
+              <div key={job.id} className="activity-terminal-job">
+                {job.lines.map((line, index) => (
+                  <div key={index} className="activity-terminal-line">{line}</div>
+                ))}
               </div>
             ))
           )}
@@ -161,4 +168,4 @@ export function ActivityTerminal({ logs, running }: ActivityTerminalProps) {
       )}
     </section>
   );
-}
+});

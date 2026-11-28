@@ -1,6 +1,7 @@
 import { chooseSelectOption, openSelect } from "./select-option.mjs";
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
+import { expect } from "@playwright/test";
 import { fixture } from "./ui-fixture.mjs";
 const { page, state, errors, dir, close } = await fixture();
 const button = (name) => page.getByRole("button", { name, exact: true });
@@ -189,6 +190,12 @@ try {
     await page.locator(".generation-progress-strip").innerText(),
     /Image 2 of 4.*preparing/,
   );
+  await expect(page.locator(".workspace-header").getByRole("button", { name: "Stop generation" })).toBeVisible();
+  await expect(page.locator(".creation-canvas .generation-progress-strip")).toHaveCount(0);
+  await page.screenshot({ path: `${dir}/image-progress-compact.png` });
+  await page.setViewportSize({ width: 1440, height: 920 });
+  await page.screenshot({ path: `${dir}/image-progress-wide.png` });
+  await page.setViewportSize({ width: 1080, height: 720 });
   assert.equal(
     await page.getByRole("progressbar").getAttribute("aria-valuenow"),
     "25",

@@ -16,6 +16,8 @@ import { createThreadSearchSession } from "./hooks/useThreadSearch";
 import { useSidebarLayout } from "./hooks/useSidebarLayout";
 import { useComputePreference } from "./hooks/useComputePreference";
 import { ActivityTerminal } from "./components/ActivityTerminal";
+import { ImageGenerationStatus } from "./components/ImageGenerationStatus";
+import { useImageActivity } from "./hooks/useImageActivity";
 import { CommandPalette } from "./components/CommandPalette";
 import { GenerationControls } from "./components/GenerationControls";
 import { PreviewMetadataHud } from "./components/PreviewMetadataHud";
@@ -49,6 +51,7 @@ const ModelsView = lazy(() => import("./components/ModelsView").then((module) =>
 export function App() {
   const compute = useComputePreference();
   const studio = useStudio(compute.device);
+  const imageActivity = useImageActivity(studio.status?.job, studio.resetRevision);
   const imageGpu = window.studio.platform === "darwin" ? "APPLE_GPU" : "INTEL_GPU";
   const imageGpuAvailable = studio.status?.model.adapters?.find((adapter) => adapter.id === imageGpu)?.available;
   const tts = useQwen3Tts(studio.ready, compute.device);
@@ -674,7 +677,7 @@ export function App() {
               className={`create-view${inspectorView ? " has-inspector" : ""}`}
               aria-labelledby="create-heading"
             >
-              <header className="workspace-header">
+              <header className="workspace-header" data-generating={studio.activeThreadRunning || undefined}>
                 <div className="workspace-heading">
                   <WorkspaceThreadTitle
                     id="create-heading"
@@ -703,6 +706,13 @@ export function App() {
                         : "Flux.2 Klein"}
                   </span>
                 </div>
+                {studio.activeThreadRunning && <ImageGenerationStatus
+                  logs={studio.status?.job.logs ?? []}
+                  phase={studio.runtimeLoading ? studio.runtimeStatus?.message : undefined}
+                  elapsed={studio.elapsed}
+                  stopping={studio.stopping}
+                  onStop={() => void studio.stopGeneration()}
+                />}
                 <div className="workspace-header-actions">
                   {studio.preview && !video.running ? <IconButton title="Animate image" aria-label="Animate image"
                     onClick={() => { if (studio.preview) void animateImage(studio.preview); }}>
@@ -744,16 +754,7 @@ export function App() {
                     onSetupModel={imageSetupNeeded ? () => openModelSetup("image") : undefined}
                     preview={studio.preview}
                     images={studio.threadImages}
-                    logs={
-                      studio.status?.job.threadId === studio.activeThread.id
-                        ? studio.status.job.logs
-                        : []
-                    }
                     running={studio.activeThreadRunning}
-                    stopping={studio.stopping}
-                    phase={studio.runtimeLoading ? studio.runtimeStatus?.message : undefined}
-                    elapsed={studio.elapsed}
-                    onStop={() => void studio.stopGeneration()}
                     onSelectPreview={studio.setPreview}
                     onRemix={remixImage}
                     onRemixInNewThread={remixInNewThread}
@@ -792,13 +793,8 @@ export function App() {
                     onGenerate={() => void studio.generate()}
                   />
                   <ActivityTerminal
-                    key={`activity-${studio.activeThread.id}-${studio.resetRevision}`}
-                    logs={
-                      studio.status?.job.threadId === studio.activeThread.id
-                        ? studio.status.job.logs
-                        : []
-                    }
-                    running={studio.activeThreadRunning}
+                    jobs={imageActivity}
+                    running={studio.running}
                   />
                 </section>
                 <aside
@@ -941,7 +937,6 @@ export function App() {
                 onCreateImage={newThread}
                 preview={studio.preview}
                 images={studio.status?.images ?? []}
-                logs={studio.status?.job.logs ?? []}
                 running={studio.running}
                 onSelectPreview={(image) => {
                   setLightboxImage(image);
