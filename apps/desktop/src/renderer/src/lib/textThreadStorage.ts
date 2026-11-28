@@ -5,11 +5,13 @@ import {
   createTextWorkspace,
   finishTextReply,
   mergeTextReplyPreview,
+  modelDefaultsFromThread,
   restoreFinishedTextReply,
   restoreTextReplyPreview,
   restoreTextThreads,
   showReplyVersion,
   type TextMessage,
+  type TextModelDefaults,
   type TextReplyPreview,
   type TextThread,
   type TextThreadWorkspace,
@@ -19,12 +21,14 @@ const LEGACY = "fern-text-threads:v1";
 const DRAFT_CHECKPOINT = "fern-text-draft-checkpoint:v1";
 const TURN_CHECKPOINT = "fern-text-turn-checkpoint:v1";
 const TRANSCRIPT_EDIT_CHECKPOINT = "fern-text-transcript-edit-checkpoint:v1";
+const MODEL_DEFAULTS_CHECKPOINT = "fern-text-model-defaults-checkpoint:v1";
 const BACKGROUND_TRANSCRIPT_SIZE = 512;
 
 type DraftRecord = Pick<TextThread, "id" | "draft" | "draftImage" | "draftContextImage" | "draftContextImageThreadId" | "documents" | "promptEdit" | "updatedAt">;
 type ReplyCheckpoint = { id: string; jobId: string } & (
   { preview: TextReplyPreview } | { message: TextMessage; selectedId?: string }
 );
+type ModelDefaultsEdit = { id: string; before: string[]; value: TextModelDefaults | null };
 type ExitCheckpoint = { activeId: string; drafts: DraftRecord[]; newThreads: ThreadRecord[]; replies?: ReplyCheckpoint[] };
 type TurnBase = Pick<TextThread, "updatedAt" | "pendingJobId"> & { count: number; lastId?: string };
 type TurnCheckpoint = { thread: TextThread; base?: TurnBase };
@@ -351,6 +355,48 @@ function recoverAddedTurns(workspace: TextThreadWorkspace, raw: string | null, m
   return { ...workspace, activeId, threads };
 }
 
+function modelDefaultsSignature(defaults: TextModelDefaults | undefined) {
+  return JSON.stringify(defaults ?? null);
+}
+
+function checkpointModelDefaults(current: TextThreadWorkspace["modelDefaults"], saved: TextThreadWorkspace["modelDefaults"],
+  writing: TextThreadWorkspace["modelDefaults"]): ModelDefaultsEdit[] {
+  if (current === saved && current === writing) return [];
+  const previous = new Map(Object.entries(saved ?? {}));
+  const pending = new Map(Object.entries(writing ?? {}));
+  const latest = new Map(Object.entries(current ?? {}));
+  const edits: ModelDefaultsEdit[] = [];
+  for (const id of new Set([...previous.keys(), ...pending.keys(), ...latest.keys()])) {
+    const value = latest.get(id);
+    const before = modelDefaultsSignature(previous.get(id));
+    const inFlight = modelDefaultsSignature(pending.get(id));
+    const next = modelDefaultsSignature(value);
+    if (next !== before || next !== inFlight) {
+      edits.push({ id, before: before === inFlight ? [before] : [before, inFlight], value: value ?? null });
+    }
+  }
+  return edits;
+}
+
+function recoverModelDefaults(workspace: TextThreadWorkspace, raw: string | null): TextThreadWorkspace {
+  const edits = parseLocal(raw) as ModelDefaultsEdit[] | null;
+  if (!Array.isArray(edits) || !edits.length) return workspace;
+  const defaults = new Map(Object.entries(workspace.modelDefaults ?? {}));
+  let changed = false;
+  for (const edit of edits) {
+    if (typeof edit?.id !== "string" || !Array.isArray(edit.before) ||
+        (edit.value !== null && (!edit.value || typeof edit.value !== "object" || Array.isArray(edit.value)))) continue;
+    const current = modelDefaultsSignature(defaults.get(edit.id));
+    const value = edit.value === null ? undefined : modelDefaultsFromThread(edit.value);
+    // The in-flight write may have landed during exit. Leave newer values alone.
+    if (current === modelDefaultsSignature(value) || !edit.before.includes(current)) continue;
+    if (value) defaults.set(edit.id, value);
+    else defaults.delete(edit.id);
+    changed = true;
+  }
+  return changed ? { ...workspace, modelDefaults: Object.fromEntries(defaults) } : workspace;
+}
+
 function recoverExitCheckpoint(workspace: TextThreadWorkspace, raw: string | null): TextThreadWorkspace {
   const checkpoint = parseLocal(raw) as Partial<ExitCheckpoint> | null;
   if (!checkpoint || !Array.isArray(checkpoint.drafts) || !Array.isArray(checkpoint.newThreads)) return workspace;
@@ -376,18 +422,24 @@ export function createTextThreadStorage() {
   let transcriptRevisions = new Map<string, string | undefined>();
   let loading: Promise<TextThreadWorkspace> | undefined;
   let writes = Promise.resolve();
+  let modelDefaultsCheckpoint: string | null = null;
   const commit = createDatabaseWriter();
 
   const save = (workspace: TextThreadWorkspace) => {
+    // A queued write can only retire a checkpoint already present when it was requested.
+    const checkpoint = modelDefaultsCheckpoint;
     const next = writes.catch(() => undefined).then(async () => {
-      if (saved === workspace) return;
-      writing = workspace;
-      try {
-        membershipRevision = await writeDatabase(workspace, saved, membershipRevision, transcriptRevisions, commit);
-        saved = workspace;
-      } finally {
-        writing = undefined;
+      if (saved !== workspace) {
+        writing = workspace;
+        try {
+          membershipRevision = await writeDatabase(workspace, saved, membershipRevision, transcriptRevisions, commit);
+          saved = workspace;
+        } finally {
+          writing = undefined;
+        }
       }
+      clearLocal(MODEL_DEFAULTS_CHECKPOINT, checkpoint);
+      if (modelDefaultsCheckpoint === checkpoint) modelDefaultsCheckpoint = null;
     });
     writes = next;
     return next;
@@ -405,13 +457,15 @@ export function createTextThreadStorage() {
         const checkpoint = readLocal(DRAFT_CHECKPOINT);
         const turns = readLocal(TURN_CHECKPOINT);
         const edits = readLocal(TRANSCRIPT_EDIT_CHECKPOINT);
+        const defaults = readLocal(MODEL_DEFAULTS_CHECKPOINT);
         const resumed = recoverAddedTurns(saved ?? migrated ?? createTextWorkspace(), turns, membershipRevision);
-        const restored = recoverExitCheckpoint(recoverTranscriptEdits(resumed, edits), checkpoint);
+        const restored = recoverModelDefaults(recoverExitCheckpoint(recoverTranscriptEdits(resumed, edits), checkpoint), defaults);
         await save(restored);
         if (migrated) clearLocal(LEGACY, legacy);
         clearLocal(DRAFT_CHECKPOINT, checkpoint);
         clearLocal(TURN_CHECKPOINT, turns);
         clearLocal(TRANSCRIPT_EDIT_CHECKPOINT, edits);
+        clearLocal(MODEL_DEFAULTS_CHECKPOINT, defaults);
         return restored;
       })().catch((error: unknown) => { loading = undefined; throw error; });
       return loading;
@@ -419,6 +473,17 @@ export function createTextThreadStorage() {
     save,
     checkpointOnExit(workspace: TextThreadWorkspace) {
       if (!saved) return;
+      const modelDefaults = checkpointModelDefaults(workspace.modelDefaults, saved.modelDefaults, writing ? writing.modelDefaults : saved.modelDefaults);
+      if (modelDefaults.length) {
+        try {
+          const checkpoint = JSON.stringify(modelDefaults);
+          localStorage.setItem(MODEL_DEFAULTS_CHECKPOINT, checkpoint);
+          modelDefaultsCheckpoint = checkpoint;
+        } catch { /* The normal IndexedDB save can still succeed. */ }
+      } else {
+        clearLocal(MODEL_DEFAULTS_CHECKPOINT, modelDefaultsCheckpoint);
+        modelDefaultsCheckpoint = null;
+      }
       if (saved === workspace) {
         clearLocal(TURN_CHECKPOINT, readLocal(TURN_CHECKPOINT));
         clearLocal(TRANSCRIPT_EDIT_CHECKPOINT, readLocal(TRANSCRIPT_EDIT_CHECKPOINT));
@@ -480,6 +545,8 @@ export function createTextThreadStorage() {
       clearLocal(DRAFT_CHECKPOINT, readLocal(DRAFT_CHECKPOINT));
       clearLocal(TURN_CHECKPOINT, readLocal(TURN_CHECKPOINT));
       clearLocal(TRANSCRIPT_EDIT_CHECKPOINT, readLocal(TRANSCRIPT_EDIT_CHECKPOINT));
+      clearLocal(MODEL_DEFAULTS_CHECKPOINT, readLocal(MODEL_DEFAULTS_CHECKPOINT));
+      modelDefaultsCheckpoint = null;
     },
   };
 }
