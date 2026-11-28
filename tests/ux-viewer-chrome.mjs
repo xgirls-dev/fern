@@ -49,14 +49,14 @@ try {
     assert(create.width < 160 && create.y < title.y + title.height && title.y < create.y + create.height, "Keep creation beside the title");
     assert(caption.y + caption.height <= scrollport.y + scrollport.height, "Keep the first row's artwork and its review controls visible");
   }
+  const caption = firstImage.locator("xpath=following-sibling::*[1]");
+  const restingCaptionFill = await caption.evaluate((element) => getComputedStyle(element).backgroundColor);
   await firstImage.focus();
   await page.keyboard.press("Tab");
   await page.keyboard.press("Shift+Tab");
-  const focusRing = await firstImage.evaluate((image) => {
-    const style = getComputedStyle(image);
-    return { width: style.outlineWidth, offset: style.outlineOffset };
-  });
-  assert.deepEqual(focusRing, { width: "2px", offset: "-3px" });
+  await expect(firstImage).toBeFocused();
+  await expect(firstImage).toHaveCSS("outline-style", "none");
+  await expect(caption).not.toHaveCSS("background-color", restingCaptionFill);
   await firstImage.press("Enter");
   const viewer = page.getByRole("dialog", { name: /^Review image \d+ of \d+:/ });
   const imageActions = viewer.getByRole("button", { name: "Image actions for audit-1.png", exact: true });

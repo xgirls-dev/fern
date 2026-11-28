@@ -1692,9 +1692,8 @@ code {
   max-height: 100%;
   box-shadow: none;
 }
-.creation-canvas .stage-image-button:focus-visible { outline: none; }
-.creation-canvas .stage-image-button:focus-visible .stage-image {
-  filter: brightness(1.12);
+.creation-canvas .stage:has(> .stage-image-button:focus-visible) {
+  background-color: var(--card);
 }
 .preview-metadata-hud {
   position: static;

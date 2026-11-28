@@ -48,9 +48,11 @@ try {
   await composer.press("Shift+Tab");
   await expect(goToReply).toBeFocused();
   await expect(goToReply).toHaveCSS("clip-path", "none");
+  const restingReplyFill = await reply.evaluate((element) => getComputedStyle(element).backgroundColor);
   await goToReply.press("Enter");
   await expect(reply).toBeFocused();
-  await expect(reply).toHaveCSS("outline-style", "solid");
+  await expect(reply).toHaveCSS("outline-style", "none");
+  await expect(reply).not.toHaveCSS("background-color", restingReplyFill);
   await expect(reply.getByText("Introduction 1.", { exact: true })).toBeInViewport();
   await expect(feed).not.toHaveAttribute("data-following", "true");
   const liveReading = await position();
