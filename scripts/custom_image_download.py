@@ -41,7 +41,7 @@ class CustomImageDownloadManager:
             repo_id = "/".join(parts)
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*", repo_id):
             raise ValueError("Enter a Hugging Face repository as owner/model.")
-        if family not in custom_image_registry.FAMILIES:
+        if family not in custom_image_registry.FAMILIES or family in custom_image_registry.GGUF_FAMILIES:
             raise ValueError("Choose a supported OpenVINO image model family.")
         with self._lock:
             if self._state.get("status") in ("checking", "downloading", "validating"):

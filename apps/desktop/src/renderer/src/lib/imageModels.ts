@@ -11,7 +11,7 @@ export function kleinLoraLabel(model: KleinLoraModel): string {
 }
 
 export function supportsImageLoras(model?: string): model is LoraImageModel {
-  return isKleinLoraModel(model) || model === "z-image-turbo";
+  return isKleinLoraModel(model) || model === "z-image-turbo" || model?.startsWith("custom-gguf-") === true;
 }
 
 export function selectedImageLoras(settings: StudioSettings) {
@@ -22,7 +22,7 @@ export function selectedImageLoras(settings: StudioSettings) {
 
 export function maxReferenceImages(model = "9b"): number {
   if (model === "4b" || model === "9b" || isKleinLoraModel(model)) return 4;
-  return model === "qwen21-turbo" ? 1 : 0;
+  return model === "qwen21-turbo" || model.startsWith("custom-gguf-") ? 1 : 0;
 }
 
 export function maxImageBatch(model?: string): number {

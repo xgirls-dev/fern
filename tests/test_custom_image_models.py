@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 import hashlib
+import struct
 import tempfile
 import time
 import unittest
@@ -159,6 +160,29 @@ class CustomImageModelTests(unittest.TestCase):
             broken = registry.get(item["id"])
             self.assertFalse(broken["installed"])
             self.assertEqual(broken["state"], "repair-needed")
+
+    def test_split_gguf_reopens_and_reports_missing_companion_without_deleting_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            model = root / "sdxl-unet.gguf"
+            model.write_bytes(b"GGUF" + struct.pack("<IQQ", 3, 1, 0))
+            registry_path = root / "registry.json"
+            registry = custom_image_registry.CustomImageRegistry(registry_path)
+            with self.assertRaisesRegex(ValueError, "missing clip_l"):
+                registry.add(str(root), "sdxl-gguf-split")
+            for name in ("clip_l", "clip_g", "vae"):
+                (root / f"{name}.safetensors").write_bytes(b"fixture")
+            item = registry.add(str(root), "sdxl-gguf-split")
+            reopened = custom_image_registry.CustomImageRegistry(registry_path)
+            self.assertEqual(reopened.get(item["id"])["assets"]["diffusion"], model.name)
+            self.assertTrue(reopened.get(item["id"])["supportsReferenceImage"])
+            (root / "vae.safetensors").unlink()
+            broken = reopened.get(item["id"])
+            self.assertEqual(broken["state"], "repair-needed")
+            self.assertIn("missing vae", broken["error"])
+            reopened.remove(item["id"])
+            self.assertTrue(model.is_file())
+            self.assertTrue((root / "clip_l.safetensors").is_file())
 
     def test_hugging_face_download_stages_validates_and_registers_export(self):
         with tempfile.TemporaryDirectory() as directory:

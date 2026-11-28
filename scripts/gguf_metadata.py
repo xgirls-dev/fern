@@ -11,13 +11,13 @@ _FIXED_SIZE = {0: 1, 1: 1, 2: 2, 3: 2, 4: 4, 5: 4, 6: 4, 7: 1, 10: 8, 11: 8, 12:
 _KEYS = {"general.architecture", "general.name", "general.type", "tokenizer.chat_template"}
 
 
-def read_metadata(path: Path) -> dict[str, str | int]:
+def read_metadata(path: Path, *, require_architecture: bool = True) -> dict[str, str | int]:
     info = path.stat()
-    return _read_metadata(path, info.st_size, info.st_mtime_ns)
+    return _read_metadata(path, info.st_size, info.st_mtime_ns, require_architecture)
 
 
 @lru_cache(maxsize=64)
-def _read_metadata(path: Path, size: int, modified: int) -> dict[str, str | int]:
+def _read_metadata(path: Path, size: int, modified: int, require_architecture: bool) -> dict[str, str | int]:
     if not path.is_file() or path.suffix.lower() != ".gguf" or size < 24:
         raise ValueError("Choose a valid .gguf file.")
     with path.open("rb") as stream, mmap.mmap(stream.fileno(), 0, access=mmap.ACCESS_READ) as data:
@@ -71,7 +71,7 @@ def _read_metadata(path: Path, size: int, modified: int) -> dict[str, str | int]
                 values[key] = integer("<I")
             else:
                 skip(kind)
-        if not values.get("general.architecture"):
+        if require_architecture and not values.get("general.architecture"):
             raise ValueError("The GGUF file does not declare a model architecture.")
         return values
 
