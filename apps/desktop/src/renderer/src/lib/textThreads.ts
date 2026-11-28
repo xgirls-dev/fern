@@ -763,43 +763,59 @@ export function countTextPromptCharacters(content: string, limit: number) {
   return count;
 }
 
-function shortenHistoryMessage(message: TextPromptMessage) {
-  const length = promptPrefixLength(message.content);
-  return length < message.content.length ? { ...message, content: message.content.slice(0, length) } : message;
+function historyUserMessage(message: TextMessage, content: string, vision: boolean, imageThreadId?: string): TextPromptMessage {
+  return {
+    role: "user", content,
+    image: vision ? message.image : undefined,
+    includedImage: vision ? message.includedImage : undefined,
+    imageThreadId,
+  };
+}
+
+function historyMessageContent(message: TextMessage) {
+  return message.content.trim() || (message.generatedImage ? "I generated an image."
+    : message.role === "user" && (message.image || message.includedImage) ? "An image was attached." : "");
 }
 
 export function textPromptHistory(history: TextMessage[], model: TextModel, residentContext?: {
   contextSize: number; maxNewTokens: number; systemPrompt: string;
 }): { messages: TextPromptMessage[]; context?: TextRequestContext } {
+  const vision = Boolean(model.supportsVision);
   const imageOrigins = new Map<string, string | undefined>();
-  const turns: { user: TextPromptMessage; reply: TextPromptMessage; omittedAttachment: boolean }[] = [];
-  let prompt: { message: TextPromptMessage; omittedAttachment: boolean } | undefined;
+  const includedImageOwners = new Map<number, string | undefined>();
+  // Keep the source indices of complete turns so older turns need no request objects.
+  const userIndices: number[] = [];
+  const replyIndices: number[] = [];
+  let userIndex = -1;
+  let userContent = "";
   let unansweredPrompts = 0;
-  for (const message of history) {
+  for (let index = 0; index < history.length; index += 1) {
+    const message = history[index];
     const artifact = message.generatedImage;
-    if (artifact) imageOrigins.set(artifact.name, artifact.originThreadId);
-    for (const variant of message.alternatives ?? []) {
-      if (variant.generatedImage) imageOrigins.set(variant.generatedImage.name, variant.generatedImage.originThreadId);
+    if (vision) {
+      if (artifact) imageOrigins.set(artifact.name, artifact.originThreadId);
+      for (const variant of message.alternatives ?? []) {
+        if (variant.generatedImage) imageOrigins.set(variant.generatedImage.name, variant.generatedImage.originThreadId);
+      }
     }
-    const hasAttachment = message.role === "user" && !!(message.image || message.includedImage);
-    const content = message.content.trim() || (artifact ? "I generated an image." : hasAttachment ? "An image was attached." : "");
+    const content = historyMessageContent(message);
     if (!content) continue;
     if (message.role === "user") {
       // The model requires alternating turns. Unanswered prompts stay in the transcript.
-      if (prompt) unansweredPrompts += 1;
-      prompt = { omittedAttachment: hasAttachment && !model.supportsVision, message: {
-        role: "user", content,
-        image: model.supportsVision ? message.image : undefined,
-        includedImage: model.supportsVision ? message.includedImage : undefined,
-        imageThreadId: model.supportsVision && message.includedImage ? message.includedImageThreadId ?? imageOrigins.get(message.includedImage) : undefined,
-      } };
-    } else if (prompt) {
-      turns.push({ user: prompt.message, reply: { role: "assistant", content, generatedImage: artifact?.name,
-        imageThreadId: artifact?.originThreadId ?? message.imageThreadId }, omittedAttachment: prompt.omittedAttachment });
-      prompt = undefined;
+      if (userIndex !== -1) unansweredPrompts += 1;
+      userIndex = index;
+      userContent = content;
+      if (vision && message.includedImage) {
+        includedImageOwners.set(index, message.includedImageThreadId ?? imageOrigins.get(message.includedImage));
+      }
+    } else if (userIndex !== -1) {
+      userIndices.push(userIndex);
+      replyIndices.push(index);
+      userIndex = -1;
     }
   }
-  if (!prompt) return { messages: [] };
+  if (userIndex === -1) return { messages: [] };
+  const prompt = historyUserMessage(history[userIndex], userContent, vision, includedImageOwners.get(userIndex));
   const continuationOf = history.at(-1)?.continuationOf;
   if (continuationOf) {
     const previous = history.at(-2);
@@ -808,18 +824,19 @@ export function textPromptHistory(history: TextMessage[], model: TextModel, resi
       // Keep the cutoff point available even if the earlier reply gets shortened or compacted.
       // A code point takes at most two UTF-16 code units.
       const ending = [...reply.content.trimEnd().slice(-2_000)].slice(-1_000).join("");
-      prompt.message.content += "\n\nThe previous reply ended with this text:\n" + ending;
+      prompt.content += "\n\nThe previous reply ended with this text:\n" + ending;
     }
   }
   const gguf = model.format === "gguf";
+  const turnCount = replyIndices.length;
   // Let the GGUF window grow from 149 to 156 complete turns so appending one
   // exchange usually keeps the exact prompt prefix available to the engine.
-  let turnLimit = gguf ? 149 + (turns.length % GGUF_HISTORY_WINDOW_STEP) : 49;
-  if (gguf && residentContext && !prompt.message.image && !prompt.message.includedImage) {
+  let turnLimit = gguf ? 149 + (turnCount % GGUF_HISTORY_WINDOW_STEP) : 49;
+  if (gguf && residentContext && !prompt.image && !prompt.includedImage) {
     const previous = history.at(-2);
     const metrics = previous?.metrics;
     const dropped = previous?.requestContext?.omittedMessages ?? 0;
-    const retainedTurns = turns.length - dropped / 2;
+    const retainedTurns = turnCount - dropped / 2;
     const { contextSize, maxNewTokens, systemPrompt } = residentContext;
     if (retainedTurns > turnLimit && dropped > 0 && dropped % 2 === 0 && previous?.status === "complete" &&
         previous.role === "assistant" && previous.modelName === model.name && metrics?.context?.size === contextSize &&
@@ -827,26 +844,34 @@ export function textPromptHistory(history: TextMessage[], model: TextModel, resi
         !previous.generatedImage && !previous.generatedImages?.length && Number.isSafeInteger(metrics.inputTokens) && metrics.inputTokens > 0) {
       // Keep the same oldest turn if the measured prompt has room for the next exchange.
       // Budget one token per added UTF-8 byte, plus room for the template and server reserve.
-      const added = new TextEncoder().encode(previous.content + prompt.message.content + systemPrompt).length;
+      const added = new TextEncoder().encode(previous.content + prompt.content + systemPrompt).length;
       const reserved = Math.min(maxNewTokens, Math.floor(contextSize / 2));
       if (metrics.inputTokens + added + reserved + 384 <= contextSize) turnLimit = retainedTurns;
     }
   }
-  const recent = [prompt.message];
-  let characters = prompt.message.content.length;
+  const recent = [prompt];
+  let characters = prompt.content.length;
   let shortenedMessages = 0;
   let omittedAttachments = 0;
   // Shorten only the turns that can still fit in the outgoing context window.
-  for (const turn of turns.reverse()) {
+  for (let index = turnCount - 1; index >= 0; index -= 1) {
     if (recent.length >= turnLimit * 2 + 1) break;
-    const user = shortenHistoryMessage(turn.user);
-    const reply = shortenHistoryMessage(turn.reply);
-    const size = user.content.length + reply.content.length + (reply.generatedImage ? 2_000 : 0);
+    const user = history[userIndices[index]];
+    const reply = history[replyIndices[index]];
+    const userContent = historyMessageContent(user);
+    const replyContent = historyMessageContent(reply);
+    const userLength = promptPrefixLength(userContent);
+    const replyLength = promptPrefixLength(replyContent);
+    const artifact = reply.generatedImage;
+    const size = userLength + replyLength + (artifact?.name ? 2_000 : 0);
     if (characters + size > (gguf ? 200_000 : 80_000)) break;
     characters += size;
-    shortenedMessages += Number(user !== turn.user) + Number(reply !== turn.reply);
-    omittedAttachments += Number(turn.omittedAttachment);
-    recent.push(reply, user);
+    shortenedMessages += Number(userLength < userContent.length) + Number(replyLength < replyContent.length);
+    omittedAttachments += Number(!vision && !!(user.image || user.includedImage));
+    recent.push({
+      role: "assistant", content: replyContent.slice(0, replyLength), generatedImage: artifact?.name,
+      imageThreadId: artifact?.originThreadId ?? reply.imageThreadId,
+    }, historyUserMessage(user, userContent.slice(0, userLength), vision, includedImageOwners.get(userIndices[index])));
   }
   recent.reverse();
   let images = 0;
@@ -857,7 +882,7 @@ export function textPromptHistory(history: TextMessage[], model: TextModel, resi
     }
   }
   return { messages: recent, context: normalizeRequestContext({
-    omittedMessages: turns.length * 2 - (recent.length - 1), shortenedMessages, unansweredPrompts, omittedAttachments,
+    omittedMessages: turnCount * 2 - (recent.length - 1), shortenedMessages, unansweredPrompts, omittedAttachments,
   }) };
 }
 
