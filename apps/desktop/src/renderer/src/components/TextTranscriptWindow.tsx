@@ -63,7 +63,7 @@ function pageOf(node: Node | null, container: HTMLElement | null): number | null
   return page && container?.contains(page) ? Number(page.dataset.chatPage) : null;
 }
 
-const TranscriptPage = memo(function TranscriptPage({ index, first, last, estimate, windowed, cache, renderItem, storedCount, liveReply }: {
+interface TranscriptPageProps {
   index: number;
   first: string;
   last: string;
@@ -73,7 +73,9 @@ const TranscriptPage = memo(function TranscriptPage({ index, first, last, estima
   renderItem?: (index: number) => ReactElement;
   storedCount: number;
   liveReply?: ReactElement;
-}) {
+}
+
+const TranscriptPage = memo(function TranscriptPage({ index, first, last, estimate, windowed, cache, renderItem, storedCount, liveReply }: TranscriptPageProps) {
   const element = useRef<HTMLDivElement>(null);
   const mounted = !!renderItem;
   const cached = cache.get(index);
@@ -97,10 +99,12 @@ const TranscriptPage = memo(function TranscriptPage({ index, first, last, estima
     style={mounted ? undefined : { height: rememberedHeight }}>{liveReply ? [...rows, liveReply] : rows}</div>;
 });
 
-const TranscriptPageGroup = memo(function TranscriptPageGroup({ pages, liveReply }: {
-  pages: readonly ReactElement<{ liveReply?: ReactElement }>[];
+interface TranscriptPageGroupProps {
+  pages: readonly ReactElement<TranscriptPageProps>[];
   liveReply?: ReactElement;
-}) {
+}
+
+const TranscriptPageGroup = memo(function TranscriptPageGroup({ pages, liveReply }: TranscriptPageGroupProps) {
   if (!liveReply) return pages;
   const children = pages.slice();
   children[children.length - 1] = cloneElement(children[children.length - 1], { liveReply });
@@ -131,6 +135,10 @@ export const TextTranscriptWindow = memo(function TextTranscriptWindow({ threadI
   const [pinnedTailPages, setPinnedTailPages] = useState(1);
   const previousPinnedTailPages = useRef(pinnedTailPages);
   const previousWindowed = useRef(windowed);
+  const committedPages = useRef<{
+    pages: ReactElement<TranscriptPageProps>[];
+    groups: ReactElement<TranscriptPageGroupProps>[];
+  } | null>(null);
   const pages = useMemo(() => Array.from({ length: pageCount }, (_, index) => {
     const start = index * PAGE_SIZE;
     const page = items.slice(start, start + PAGE_SIZE);
@@ -256,24 +264,38 @@ export const TextTranscriptWindow = memo(function TextTranscriptWindow({ threadI
     };
   }, [keepFollowingTail, pageCount, pinnedTailPages, tailPages, windowed]);
 
-  // A token only changes the tail. Reuse page elements until their inputs change.
-  const pageElements = useMemo(() => pages.map((page, index) => {
-    const mounted = !windowed || !canDeferPages || index >= pageCount - tailPages || nearby.has(index) || nearTarget(index, revealPage) ||
-      nearTarget(index, restorePage) || index === focused || !!selection && index >= selection[0] && index <= selection[1];
-    const hasTail = hasLiveReply && index === pageCount - 1;
-    return <TranscriptPage key={index} index={index} first={page.first} last={page.last}
-      estimate={page.estimatedHeight} cache={cache.pages} windowed={windowed} renderItem={mounted ? renderItem : undefined}
-      storedCount={page.count - (hasTail ? 1 : 0)} />;
-  }), [cache, canDeferPages, focused, hasLiveReply, nearby, pageCount, pages, renderItem, restorePage, revealPage, selection, tailPages, windowed]);
-  // Keep each page in the same group as the chat grows so its rows can retain focus and selection.
-  const groups = useMemo(() => Array.from({ length: Math.ceil(pageElements.length / PAGES_PER_GROUP) }, (_, index) => {
-    const start = index * PAGES_PER_GROUP;
-    return <TranscriptPageGroup key={index} pages={pageElements.slice(start, start + PAGES_PER_GROUP)} />;
-  }), [pageElements]);
+  const layout = useMemo(() => {
+    const previous = committedPages.current;
+    const pageElements = pages.map((page, index): ReactElement<TranscriptPageProps> => {
+      const mounted = !windowed || !canDeferPages || index >= pageCount - tailPages || nearby.has(index) || nearTarget(index, revealPage) ||
+        nearTarget(index, restorePage) || index === focused || !!selection && index >= selection[0] && index <= selection[1];
+      const renderer = mounted ? renderItem : undefined;
+      const storedCount = page.count - Number(hasLiveReply && index === pageCount - 1);
+      const prior = previous?.pages[index];
+      // An offscreen placeholder has no row renderer. Appending a message or
+      // changing the live reply leaves its element stable.
+      if (prior && prior.props.first === page.first && prior.props.last === page.last &&
+          prior.props.estimate === page.estimatedHeight && prior.props.windowed === windowed &&
+          prior.props.renderItem === renderer && prior.props.storedCount === storedCount) return prior;
+      return <TranscriptPage key={index} index={index} first={page.first} last={page.last}
+        estimate={page.estimatedHeight} cache={cache.pages} windowed={windowed} renderItem={renderer} storedCount={storedCount} />;
+    });
+    const groups = Array.from({ length: Math.ceil(pageElements.length / PAGES_PER_GROUP) }, (_, index): ReactElement<TranscriptPageGroupProps> => {
+      const start = index * PAGES_PER_GROUP;
+      const children = pageElements.slice(start, start + PAGES_PER_GROUP);
+      const prior = previous?.groups[index];
+      // Stable groups let React skip unchanged sections when a turn arrives.
+      if (prior && prior.props.pages.length === children.length &&
+          children.every((page, offset) => page === prior.props.pages[offset])) return prior;
+      return <TranscriptPageGroup key={index} pages={children} />;
+    });
+    return { pages: pageElements, groups };
+  }, [cache, canDeferPages, focused, hasLiveReply, nearby, pageCount, pages, renderItem, restorePage, revealPage, selection, tailPages, windowed]);
+  useLayoutEffect(() => { committedPages.current = layout; }, [layout]);
   if (!pageCount) return null;
 
   // A stream update needs only the last group and its final page.
-  const children = liveReply ? groups.slice() : groups;
+  const children = liveReply ? layout.groups.slice() : layout.groups;
   if (liveReply) children[children.length - 1] = cloneElement(children[children.length - 1], { liveReply });
   return <div ref={root} className="text-transcript-pages" onFocusCapture={(event) => setFocused(pageOf(event.target, root.current))}
     onBlurCapture={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setFocused(null); }}>
