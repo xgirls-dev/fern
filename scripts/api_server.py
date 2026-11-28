@@ -1168,8 +1168,17 @@ def mark_tts_stopped(job_id: str) -> None:
     with TTS_JOB_LOCK:
         if TTS_JOB["id"] == job_id:
             TTS_JOB.update(status="stopped", finishedAt=time.time(), output=None, error=None)
-            TTS_JOB["logs"].append(f"[{time.strftime('%H:%M:%S')}] Audio job stopped.")
-            TTS_JOB["logs"] = TTS_JOB["logs"][-120:]
+            _append_tts_log_locked("Audio job stopped.")
+
+
+def _append_tts_log_locked(message: str, progress: bool = True) -> None:
+    elapsed = max(0, time.time() - (TTS_JOB.get("startedAt") or time.time()))
+    stamp = f"[{time.strftime('%H:%M:%S')} +{elapsed:.1f}s]"
+    key = "logs" if progress else "diagnostics"
+    TTS_JOB.setdefault(key, []).append(f"{stamp} {message}")
+    TTS_JOB[key] = TTS_JOB[key][-120:]
+    if progress:
+        TTS_JOB["phase"] = message
 
 
 def append_tts_log(message: str) -> None:
@@ -1177,16 +1186,8 @@ def append_tts_log(message: str) -> None:
     # Library warnings, tracebacks and conversion output remain inspectable.
     progress_prefix = "FERN_TTS_PROGRESS:"
     is_progress = message.startswith(progress_prefix)
-    if is_progress:
-        message = message[len(progress_prefix):]
     with TTS_JOB_LOCK:
-        elapsed = max(0, time.time() - (TTS_JOB.get("startedAt") or time.time()))
-        stamp = f"[{time.strftime('%H:%M:%S')} +{elapsed:.1f}s]"
-        key = "logs" if is_progress else "diagnostics"
-        TTS_JOB.setdefault(key, []).append(f"{stamp} {message}")
-        TTS_JOB[key] = TTS_JOB[key][-120:]
-        if is_progress:
-            TTS_JOB["phase"] = message
+        _append_tts_log_locked(message.removeprefix(progress_prefix), progress=is_progress)
 
 
 def tts_child_env(clean_python_env: bool = True) -> dict[str, str]:
@@ -1481,19 +1482,17 @@ def run_tts_setup(model: str, job_id: str, cancel_event: threading.Event) -> Non
                 raise TtsJobCancelled()
             if TTS_JOB["id"] == job_id:
                 TTS_JOB.update(status="complete", finishedAt=time.time(), error=None)
-        append_tts_log("FERN_TTS_PROGRESS:Model setup complete. Ready to generate speech.")
-    except TtsJobCancelled:
-        mark_tts_stopped(job_id)
+                _append_tts_log_locked("Model setup complete. Ready to generate speech.")
     except Exception as error:
-        if cancel_event.is_set():
-            mark_tts_stopped(job_id)
-            return
-        append_tts_log(str(error))
         summary = str(error).splitlines()[-1][:500] or "Model setup failed. Open Technical diagnostics for details."
         with TTS_JOB_LOCK:
-            if TTS_JOB["id"] == job_id:
+            cancelled = cancel_event.is_set() or isinstance(error, TtsJobCancelled)
+            if not cancelled and TTS_JOB["id"] == job_id:
                 TTS_JOB.update(status="failed", finishedAt=time.time(), error=summary)
-        append_tts_log(f"FERN_TTS_PROGRESS:Setup failed: {summary}")
+                _append_tts_log_locked(str(error), progress=False)
+                _append_tts_log_locked("Model setup failed.")
+        if cancelled:
+            mark_tts_stopped(job_id)
 
 
 def run_tts_generation(payload: dict[str, Any], job_id: str, cancel_event: threading.Event | None = None) -> None:
@@ -1525,21 +1524,18 @@ def run_tts_generation(payload: dict[str, Any], job_id: str, cancel_event: threa
                 elapsed = time.time() - (TTS_JOB.get("startedAt") or time.time())
                 result["generationSeconds"] = elapsed
                 TTS_JOB.update(status="complete", finishedAt=time.time(), output=result, error=None)
-        append_tts_log(f"FERN_TTS_PROGRESS:Take saved · {result.get('duration', 0):.1f}s audio · {elapsed:.1f}s total.")
-    except TtsJobCancelled:
-        TTS_GENERATION_WORKER.close()
-        (OUTPUTS / f"qwen3-tts-{job_id}.wav").unlink(missing_ok=True)
-        mark_tts_stopped(job_id)
+                _append_tts_log_locked(f"Take saved · {result.get('duration', 0):.1f}s audio · {elapsed:.1f}s total.")
     except Exception as error:
-        if cancel_event.is_set():
+        with TTS_JOB_LOCK:
+            cancelled = cancel_event.is_set() or isinstance(error, TtsJobCancelled)
+            if not cancelled and TTS_JOB["id"] == job_id:
+                TTS_JOB.update(status="failed", finishedAt=time.time(), error=str(error))
+                _append_tts_log_locked(str(error), progress=False)
+                _append_tts_log_locked("Speech generation failed.")
+        if cancelled:
             TTS_GENERATION_WORKER.close()
             (OUTPUTS / f"qwen3-tts-{job_id}.wav").unlink(missing_ok=True)
             mark_tts_stopped(job_id)
-            return
-        with TTS_JOB_LOCK:
-            if TTS_JOB["id"] == job_id:
-                TTS_JOB.update(status="failed", finishedAt=time.time(), error=str(error))
-        append_tts_log(f"FERN_TTS_PROGRESS:Generation failed: {error}")
 
 FLUX_JOB_LOCK = threading.Lock()
 FLUX_JOB: dict[str, Any] = {
@@ -3281,18 +3277,28 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if parsed.path == "/api/tts/stop":
+            try:
+                requested_job = self.read_json_body().get("jobId")
+            except ValueError as error:
+                self.send_json(400, {"error": str(error)})
+                return
+            process = None
             with TTS_JOB_LOCK:
+                if requested_job is not None and requested_job != TTS_JOB["id"]:
+                    self.send_json(409, {"error": "This audio job is no longer active."})
+                    return
                 if TTS_JOB["status"] not in ("running", "setting_up", "stopping"):
                     self.send_json(409, {"error": "No Qwen3-TTS job is running."})
                     return
                 TTS_JOB["status"] = "stopping"
-                cancel_event = TTS_CANCEL_EVENT
-            if cancel_event is not None:
-                cancel_event.set()
-            with TTS_PROCESS_LOCK:
-                process = TTS_ACTIVE_PROCESS
+                if TTS_CANCEL_EVENT is not None:
+                    TTS_CANCEL_EVENT.set()
+                if TTS_JOB["operation"] == "setup":
+                    with TTS_PROCESS_LOCK:
+                        process = TTS_ACTIVE_PROCESS
+                else:
+                    TTS_GENERATION_WORKER.interrupt()
             terminate_tts_process(process)
-            TTS_GENERATION_WORKER.interrupt()
             self.send_json(202, {"job": tts_snapshot()})
             return
 

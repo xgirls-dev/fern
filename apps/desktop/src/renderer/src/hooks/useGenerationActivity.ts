@@ -27,7 +27,7 @@ function readActivity(storageKey: string): ActivityJob[] {
   return [];
 }
 
-export function useGenerationActivity(workspace: "image" | "video", job: { id: string | null; logs?: readonly string[] } | undefined, resetRevision: number) {
+export function useGenerationActivity(workspace: "image" | "video" | "speech", job: { id: string | null; logs?: readonly string[] } | undefined, resetRevision: number) {
   const storageKey = `fern-${workspace}-activity`;
   const [history, setHistory] = useState(() => readActivity(storageKey));
   const reset = useRef({ revision: resetRevision, ignoredJobId: null as string | null });

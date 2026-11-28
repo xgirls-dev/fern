@@ -34,14 +34,14 @@ class TtsDownloadTests(unittest.TestCase):
  def test_corrupt_download_never_publishes_model(self):
   with tempfile.TemporaryDirectory() as tmp:
    root=Path(tmp);spec={'repo':'xgirls/fixture','revision':'a'*40,'folder':'base-0.6b-OV','bytes':4,'files':[self.file('bad.bin',b'good')]}
-   with patch.object(download,'catalog_spec',return_value=spec),patch.object(download.urllib.request,'urlopen',return_value=Response(b'evil')):
+   with patch.object(download.shutil,'disk_usage',return_value=SimpleNamespace(free=10**10)),patch.object(download,'catalog_spec',return_value=spec),patch.object(download.urllib.request,'urlopen',return_value=Response(b'evil')):
     with self.assertRaisesRegex(RuntimeError,'checksum'):download.install_model('base-0.6b',root,lambda _:None)
    self.assertFalse((root/spec['folder']).exists());self.assertFalse((root/(spec['folder']+'.download')/'bad.bin.part').exists())
  def test_complete_install_is_atomic_and_idempotent(self):
   with tempfile.TemporaryDirectory() as tmp:
    root=Path(tmp);files=[self.file(name,b'IR-fixture') for name in download.required_files('base-0.6b')]
    spec={'repo':'xgirls/fixture','revision':'a'*40,'folder':'base-0.6b-OV','bytes':sum(f['size'] for f in files),'files':files}
-   with patch.object(download,'catalog_spec',return_value=spec),patch.object(download.urllib.request,'urlopen',side_effect=lambda *a,**k:Response(b'IR-fixture')) as fetch:
+   with patch.object(download.shutil,'disk_usage',return_value=SimpleNamespace(free=10**10)),patch.object(download,'catalog_spec',return_value=spec),patch.object(download.urllib.request,'urlopen',side_effect=lambda *a,**k:Response(b'IR-fixture')) as fetch:
     folder=download.install_model('base-0.6b',root,lambda _:None);count=fetch.call_count
     download.install_model('base-0.6b',root,lambda _:None);self.assertEqual(fetch.call_count,count)
    self.assertTrue(download.model_ready(folder,'base-0.6b'));self.assertTrue(json.loads((folder/'.fern-tts-model.json').read_text())['verifiedSha256'])
@@ -69,6 +69,8 @@ class TtsDownloadTests(unittest.TestCase):
    api_server.run_tts_setup(model, 'test-setup', threading.Event())
    self.assertEqual(api_server.TTS_JOB['status'], 'failed')
    self.assertRegex(api_server.TTS_JOB['error'], r'Free at least [0-9.]+ GB')
+   self.assertTrue(api_server.TTS_JOB['logs'][-1].endswith('Model setup failed.'))
+   self.assertIn('Free at least', api_server.TTS_JOB['diagnostics'][-1])
    process.assert_not_called()
    close.assert_not_called()
 
@@ -89,6 +91,7 @@ class TtsDownloadTests(unittest.TestCase):
    ):
     api_server.run_tts_setup(model, 'test-setup', threading.Event())
     self.assertEqual(api_server.TTS_JOB['status'], 'complete')
+    self.assertTrue(api_server.TTS_JOB['logs'][-1].endswith('Model setup complete. Ready to generate speech.'))
     process.assert_called_once()
     self.assertIn('install-qwen3-tts.ps1', ' '.join(process.call_args.args[0]))
 

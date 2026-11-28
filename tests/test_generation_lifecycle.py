@@ -152,14 +152,19 @@ class GenerationLifecycleTests(unittest.TestCase):
                 previous["logs"] = list(api_server.TTS_JOB["logs"])
             previous_cancel = api_server.TTS_CANCEL_EVENT
             base = f"http://127.0.0.1:{server.server_port}"
-            def post(path):
-                body = json.dumps({"model": "custom-0.6b", "threadId": "test-audio", "text": "Hello", "device": "CPU"}).encode()
+            def post(path, **extra):
+                body = json.dumps({"model": "custom-0.6b", "threadId": "test-audio", "text": "Hello", "device": "CPU", **extra}).encode()
                 return json.load(urllib.request.urlopen(urllib.request.Request(base + path, data=body, headers={"Content-Type": "application/json"})))
             try:
                 with patch.object(api_server, "OUTPUTS", outputs), patch.object(api_server, "tts_model_ready", return_value=True), patch.object(api_server.TTS_GENERATION_WORKER, "generate", side_effect=generate), patch.object(api_server.TTS_GENERATION_WORKER, "interrupt", side_effect=interrupted.set), patch.object(api_server.TTS_GENERATION_WORKER, "close"):
                     first = post("/api/tts/generate")["job"]["id"]
                     self.assertTrue(started.wait(5))
-                    self.assertIn(post("/api/tts/stop")["job"]["status"], ("stopping", "stopped"))
+                    with self.assertRaises(urllib.error.HTTPError) as stale_stop:
+                        post("/api/tts/stop", jobId="previous")
+                    self.assertEqual(stale_stop.exception.code, 409)
+                    stale_stop.exception.close()
+                    self.assertFalse(interrupted.is_set())
+                    self.assertIn(post("/api/tts/stop", jobId=first)["job"]["status"], ("stopping", "stopped"))
                     for _ in range(50):
                         status = json.load(urllib.request.urlopen(base + "/api/tts/status"))
                         if status["status"] == "stopped":
@@ -167,6 +172,8 @@ class GenerationLifecycleTests(unittest.TestCase):
                         time.sleep(0.02)
                     self.assertEqual(status["id"], first)
                     self.assertEqual(status["status"], "stopped")
+                    self.assertEqual(status["phase"], "Audio job stopped.")
+                    self.assertTrue(status["logs"][-1].endswith("Audio job stopped."))
                     self.assertEqual(status["output"], None)
                     self.assertFalse((outputs / f"qwen3-tts-{first}.wav").exists())
                     with patch.object(api_server.TTS_GENERATION_WORKER, "generate", return_value={"name": "second.wav", "url": "/outputs/second.wav", "duration": 1, "sampleRate": 24000}):

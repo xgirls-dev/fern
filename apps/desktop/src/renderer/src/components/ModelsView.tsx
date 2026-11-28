@@ -136,7 +136,7 @@ export function ModelsView({ category: tab, onCategoryChange, text, audio, setup
               {showRequirements && <Button aria-describedby={requirementsId}
                 disabled={!audio.statusLoaded || Boolean(audio.statusError) || audio.busy || text.busy || settingUp}
                 onClick={() => void audio.setupModel(model.id)}>{settingUp ? "Installing…" : model.installed ? "Set up runtime" : "Install"}</Button>}
-              {settingUp && <Button onClick={() => void audio.stopJob()}>Cancel</Button>}
+              {settingUp && <Button disabled={audio.stopping} onClick={() => void audio.stopJob()}>{audio.stopping ? "Stopping…" : "Cancel"}</Button>}
             </ModelCardActions>
           </ModelCard>;
         })}</div>

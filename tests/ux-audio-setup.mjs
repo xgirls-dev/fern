@@ -26,6 +26,7 @@ try {
     Object.assign(state.ttsStatus, {
       id: `setup-${setupCalls.length}`, threadId: payload.threadId, model: payload.model, error: null,
       operation: "setup", status: "setting_up", phase: "Preparing the local speech environment.",
+      logs: ["Preparing the local speech environment."], diagnostics: [],
     });
     return route.fulfill({ status: 202, json: { job: state.ttsStatus } });
   });
@@ -88,7 +89,12 @@ try {
   await expect(page.getByText("Setting up model", { exact: true })).toBeVisible();
   assert.equal(setupCalls.length, 1);
   assert.equal(setupCalls[0].model, preset.id);
-  Object.assign(state.ttsStatus, { status: "failed", error: "Free at least 2.72 GB for the remaining speech model files." });
+  Object.assign(state.ttsStatus, {
+    status: "failed", phase: "Model setup failed.",
+    logs: ["Preparing the local speech environment.", "Model setup failed."],
+    error: "Free at least 2.72 GB for the remaining speech model files.",
+  });
+  await expect(page.locator(".tts-header").getByRole("status")).toHaveText("Setup failed");
   await expect(page.locator(".tts-footer-error")).toContainText("Free at least 2.72 GB");
   await expect(script).toHaveValue(draft);
   await setup.press("Enter");
@@ -96,11 +102,20 @@ try {
   assert.equal(setupCalls.length, 2);
   assert.deepEqual(setupCalls[1], setupCalls[0]);
   Object.assign(preset, { installed: true, ready: true });
-  Object.assign(state.ttsStatus, { status: "complete", environmentReady: true });
+  Object.assign(state.ttsStatus, {
+    status: "complete", environmentReady: true,
+    logs: ["Preparing the local speech environment.", "Model setup complete. Ready to generate speech."],
+  });
   await expect(button("Generate speech")).toBeEnabled();
   await expect(script).toHaveValue(draft);
   await expect(script).toBeFocused();
   assert.equal(generateCalls, 0, "Completing setup never sends the script for generation.");
+  const activity = page.getByRole("region", { name: "Activity terminal" });
+  await activity.getByRole("button", { name: /^Activity/ }).click();
+  const scrollback = activity.getByRole("region", { name: "Speech activity scrollback" });
+  await expect(scrollback).toContainText("Model setup failed.");
+  await expect(scrollback).toContainText("Model setup complete. Ready to generate speech.");
+  await expect(scrollback).not.toContainText("Free at least 2.72 GB");
   assert.deepEqual(errors, []);
   console.log("Speech setup explains the selected model and preserves the script and keyboard focus through completion.");
 } finally {

@@ -2,7 +2,7 @@ import ArrowDown from "lucide-react/dist/esm/icons/arrow-down.mjs";
 import Check from "lucide-react/dist/esm/icons/check.mjs";
 import Upload from "lucide-react/dist/esm/icons/upload.mjs";
 import X from "lucide-react/dist/esm/icons/x.mjs";
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import type { useQwen3Tts } from "../hooks/useQwen3Tts";
 import type { AudioOutput, QwenTtsModel } from "../lib/ttsThreads";
 import { Button, ChoiceCard, IconButton, Select, Textarea } from "./ui/controls";
@@ -10,6 +10,7 @@ import { AudioFeed } from "./AudioFeed";
 import { SpeechModelRequirements } from "./SpeechModelRequirements";
 import { TtsJobProgress } from "./TtsJobProgress";
 import { WorkspaceThreadTitle } from "./WorkspaceThreadTitle";
+import { Disclosure } from "./ui/Disclosure";
 
 type VoiceMode = "custom" | "clone" | "design";
 const modes: Array<{ id: VoiceMode; title: string; summary: string }> = [
@@ -28,8 +29,13 @@ const languages = ["Auto", "Chinese", "English", "Japanese", "Korean", "French",
 const speakers = ["Vivian", "Serena", "Uncle_fu", "Dylan", "Eric", "Ryan", "Aiden", "Ono_anna", "Sohee"];
 const outputLabel = (output: AudioOutput) => models.find((item) => item.id === output.model)?.label ?? "Qwen3-TTS";
 
-export function Qwen3TtsWorkspace({ studio, sidebarCollapsed, onOpenThreadSearch }: { studio: ReturnType<typeof useQwen3Tts>; sidebarCollapsed: boolean; onOpenThreadSearch: () => void }) {
-  const { activeThread, status, busy, error, updateThread } = studio;
+export function Qwen3TtsWorkspace({ studio, sidebarCollapsed, onOpenThreadSearch, activity }: {
+  studio: ReturnType<typeof useQwen3Tts>;
+  sidebarCollapsed: boolean;
+  onOpenThreadSearch: () => void;
+  activity: ReactNode;
+}) {
+  const { activeThread, status, busy, error, stopping, updateThread } = studio;
   const setupRequirementsId = useId();
   const scriptCountId = useId();
   const setupFocusThread = useRef<string | undefined>(undefined);
@@ -44,6 +50,14 @@ export function Qwen3TtsWorkspace({ studio, sidebarCollapsed, onOpenThreadSearch
   const setupNeeded = studio.statusLoaded && !studio.statusError && !modelReady && !setupUnavailable;
   const working = status.status === "running" || status.status === "setting_up" || status.status === "stopping";
   const workingHere = working && status.threadId === activeThread.id;
+  const diagnostics = status.threadId === activeThread.id ? status.diagnostics : undefined;
+  const failedHere = status.threadId === activeThread.id && status.status === "failed";
+  const availability = studio.statusError ? "Audio unavailable"
+    : !studio.statusLoaded ? "Checking audio"
+    : failedHere ? status.operation === "setup" ? "Setup failed" : "Generation failed"
+    : status.threadId === activeThread.id && status.status === "stopped" ? "Audio stopped"
+    : modelReady ? "Ready"
+    : setupUnavailable ? "Setup unavailable" : "Setup needed";
   const [revealTake, setRevealTake] = useState<{ name: string; token: number } | null>(null);
   const referenceFile = studio.referenceFiles[activeThread.id];
   const [referenceUrl, setReferenceUrl] = useState<string | undefined>();
@@ -126,7 +140,10 @@ export function Qwen3TtsWorkspace({ studio, sidebarCollapsed, onOpenThreadSearch
         />
         <span className="workspace-heading-divider" aria-hidden="true">/</span><span>Qwen3-TTS {model.size}</span>
       </div>
-      <div className="tts-header-actions"><span className={`tts-header-meta${working ? " is-working" : ""}`} role="status"><span className="tts-status-dot" aria-hidden="true" />{status.status === "stopping" ? "Stopping audio" : workingHere ? status.operation === "setup" ? "Setting up model" : "Generating take" : working ? "Audio busy" : studio.statusError ? "Audio unavailable" : status.status === "stopped" && status.threadId === activeThread.id ? "Audio stopped" : !studio.statusLoaded ? "Checking audio" : modelReady ? "Ready" : setupUnavailable ? "Setup unavailable" : "Setup needed"}</span>{working ? <Button variant="secondary" disabled={status.status === "stopping"} onClick={() => void studio.stopJob()}>{status.status === "stopping" ? "Stopping…" : "Stop audio"}</Button> : null}</div>
+      {working ? <TtsJobProgress
+        label={stopping ? "Stopping audio" : status.operation === "setup" ? "Setting up model" : "Generating take"}
+        phase={status.phase} startedAt={status.startedAt} stopping={stopping} onStop={() => void studio.stopJob()}
+      /> : <span className={`tts-header-meta${failedHere ? " tts-header-meta--failure" : ""}`} role="status">{availability}</span>}
     </header>
     {working && !workingHere ? <div className="tts-elsewhere" role="status"><span>A Qwen3-TTS {status.operation === "setup" ? "setup" : "generation"} is running in another thread.</span>{status.threadId && studio.threads.some((thread) => thread.id === status.threadId) ? <Button variant="ghost" className="tts-view-thread" onClick={() => studio.selectThread(status.threadId!)}>View running thread</Button> : null}</div> : null}
 
@@ -137,8 +154,10 @@ export function Qwen3TtsWorkspace({ studio, sidebarCollapsed, onOpenThreadSearch
         revealTake={revealTake}
         modelLabel={outputLabel}
         completion={latestTakeReady && dismissedCompletion !== status.id ? <div className="tts-completion" role="status"><div><strong>Your take is ready</strong></div><Button variant="secondary" onClick={() => { if (status.output) viewTake(status.output.name); }}>View take</Button><IconButton aria-label="Dismiss take notification" onClick={() => setDismissedCompletion(status.id)}><X size={16} /></IconButton></div> : null}
-        jobProgress={status.threadId === activeThread.id && status.operation ? <TtsJobProgress status={status} onStop={() => void studio.stopJob()} /> : null}
-        generation={{ running: workingHere, logs: status.logs, error: status.threadId === activeThread.id && status.operation === "generate" && status.status === "failed" ? status.error : null }}
+        diagnostics={diagnostics?.length ? <Disclosure className="tts-job-diagnostics" label={`Technical diagnostics (${diagnostics.length})`}>
+          <pre>{diagnostics.join("\n")}</pre>
+        </Disclosure> : null}
+        generating={workingHere && status.operation === "generate"}
         onUseText={(output) => { updateThread(activeThread.id, { text: output.prompt }); focusScript(); }}
         onReuseSetup={reuseSetup}
         onOpenComposer={focusScript}
@@ -180,11 +199,12 @@ export function Qwen3TtsWorkspace({ studio, sidebarCollapsed, onOpenThreadSearch
             <Button variant="primary" className="tts-generate-button" disabled={busy} aria-describedby={setupRequirementsId}
               onClick={() => { setupFocusThread.current = activeThread.id; void studio.setupModel(model.id); }}>Set up model</Button>
           </div> : <div className="tts-submit">
-            <span>{status.status === "stopping" ? "Stopping the current audio job" : working ? workingHere ? "This take is in progress" : "Another audio thread is busy" : studio.statusError ? "Audio service unavailable · retry above" : !studio.statusLoaded ? "Checking audio models…" : setupUnavailable ? setupUnavailable : !modelReady ? "Set up this model to continue" : !activeThread.text.trim() ? "Add a script to continue" : model.mode === "clone" && !referenceFile ? "Add a reference clip to continue" : model.mode === "clone" && fileError ? "Replace the reference clip to continue" : model.mode === "clone" && !referenceReady ? "Checking the reference clip…" : model.mode === "design" && !activeThread.designInstruction.trim() ? "Describe the voice to continue" : "Ctrl + Enter to generate"}</span>
+            <span>{stopping ? "Stopping the current audio job" : working ? workingHere ? "This take is in progress" : "Another audio thread is busy" : studio.statusError ? "Audio service unavailable · retry above" : !studio.statusLoaded ? "Checking audio models…" : setupUnavailable ? setupUnavailable : !modelReady ? "Set up this model to continue" : !activeThread.text.trim() ? "Add a script to continue" : model.mode === "clone" && !referenceFile ? "Add a reference clip to continue" : model.mode === "clone" && fileError ? "Replace the reference clip to continue" : model.mode === "clone" && !referenceReady ? "Checking the reference clip…" : model.mode === "design" && !activeThread.designInstruction.trim() ? "Describe the voice to continue" : "Ctrl + Enter to generate"}</span>
             <Button variant="primary" className="tts-generate-button" disabled={!canGenerate} onClick={() => void studio.generate()}>{workingHere && status.operation === "generate" ? "Generating…" : "Generate speech"}</Button>
           </div>}
         </div>
       </section>
     </div>
+    {activity}
   </section>;
 }
