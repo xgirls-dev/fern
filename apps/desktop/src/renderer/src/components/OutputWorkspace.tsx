@@ -12,7 +12,6 @@ interface Props {
   stateKey?: string;
   preview: ImageRecord | null;
   images: ImageRecord[];
-  logs: string[];
   running: boolean;
   onSelectPreview: (image: ImageRecord) => void;
   onRemix: (image: ImageRecord) => void;
@@ -23,10 +22,6 @@ interface Props {
   onOpenImage?: (image: ImageRecord, images: ImageRecord[]) => void;
   onSetupModel?: () => void;
   onCreateImage?: () => void;
-  onStop?: () => void;
-  phase?: string;
-  elapsed?: number | null;
-  stopping?: boolean;
 }
 interface View {
   query: string;
@@ -36,39 +31,11 @@ interface View {
   limit: number;
 }
 const views = new Map<string, View>();
-export function renderProgress(logs: string[]) {
-  let image = 1,
-    count = 1,
-    current = 0,
-    total = 0;
-  for (const line of logs) {
-    const batch = line.match(/Batch image (\d+)\/(\d+)/i);
-    if (batch) {
-      image = Number(batch[1]);
-      count = Number(batch[2]);
-      current = 0;
-      total = 0;
-    }
-    const step = line.match(/\bStep\s+(\d+)\s*\/\s*(\d+)/i);
-    if (step) {
-      current = Number(step[1]);
-      total = Number(step[2]);
-    }
-  }
-  return {
-    label: `Image ${image} of ${count} — ${total ? `step ${current} of ${total}` : "preparing…"}`,
-    percent: total || image > 1 ? Math.min(
-      99,
-      Math.round(((image - 1 + (total ? current / total : 0)) / count) * 100),
-    ) : null,
-  };
-}
 export function OutputWorkspace({
   mode,
   stateKey = mode,
   preview,
   images,
-  logs,
   running,
   onSelectPreview,
   onRemix,
@@ -79,10 +46,6 @@ export function OutputWorkspace({
   onOpenImage,
   onSetupModel,
   onCreateImage,
-  onStop,
-  phase,
-  elapsed,
-  stopping,
 }: Props) {
   const [view, setView] = useState<View>(
     () =>
@@ -146,7 +109,6 @@ export function OutputWorkspace({
     const query = view.query.trim().toLowerCase();
     return query ? sorted.filter((image) => `${image.name} ${image.prompt ?? ""}`.toLowerCase().includes(query)) : sorted;
   }, [sorted, view.query]);
-  const progress = renderProgress(logs);
   return (
     <section
       className={`output-workspace${gallery ? " output-workspace--gallery" : ""}${mode === "create" && gallery ? " output-workspace--recent" : ""}`}
@@ -160,25 +122,6 @@ export function OutputWorkspace({
           options={[{ value: "preview", label: "Preview" }, { value: "gallery", label: `Thread images ${images.length}` }]}
           onChange={(value) => setView((current) => ({ ...current, gallery: value === "gallery" }))}
         />
-      ) : null}
-      {running && mode === "create" ? (
-        <div className="generation-progress-strip">
-          <div className="generation-progress-header">
-            <span role="status">{stopping ? "Stopping generation…" : progress.percent === null ? phase ?? "Preparing image…" : progress.label}</span>
-            {elapsed != null ? <span className="generation-elapsed" role="timer">{elapsed}s elapsed</span> : null}
-            {onStop ? <Button variant="secondary" disabled={stopping} aria-label="Stop generation" onClick={onStop}>{stopping ? "Stopping…" : "Stop"}</Button> : null}
-          </div>
-          {progress.percent !== null && !stopping ? <div
-            className="render-progress-track"
-            role="progressbar"
-            aria-label={progress.label}
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-valuenow={progress.percent}
-          >
-            <span style={{ width: `${progress.percent}%` }} />
-          </div> : null}
-        </div>
       ) : null}
       {!gallery ? (
         <div className="output-preview-area">
@@ -213,19 +156,19 @@ export function OutputWorkspace({
                   Retry preview
                 </Button>
               </div>
-            ) : (
+            ) : !running ? (
               <div className="empty-state creation-welcome">
                 <h3>
-                  {running ? "Creating your image…" : onSetupModel ? "Set up image creation" : "What will you create?"}
+                  {onSetupModel ? "Set up image creation" : "What will you create?"}
                 </h3>
-                {!running && onSetupModel ? (
+                {onSetupModel ? (
                   <>
                     <p>Choose a model to run on this device. Your prompt stays here.</p>
                     <Button variant="primary" onClick={onSetupModel}>Set up an image model</Button>
                   </>
-                ) : !running ? <p>Describe your image in the prompt below.</p> : null}
+                ) : <p>Describe your image in the prompt below.</p>}
               </div>
-            )}
+            ) : null}
           </div>
           {preview ? (
             <>

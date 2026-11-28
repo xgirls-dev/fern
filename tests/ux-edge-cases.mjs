@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect } from "@playwright/test";
 import { fixture } from "./ui-fixture.mjs";
-const { page, state, errors, close } = await fixture();
+const { page, state, dir, errors, close } = await fixture();
 const uploadDir = await mkdtemp(join(tmpdir(), "fern-oversize-upload-"));
 const button = (name) => page.getByRole("button", { name, exact: true });
 try {
@@ -178,6 +178,14 @@ try {
     await logBody.evaluate((el) => el.scrollTop < 10),
   );
   await button("Jump to latest").click();
+  state.job = { ...state.job, id: "next-image", logs: ["Next image started"] };
+  await expect(logBody.getByText("Next image started", { exact: true })).toBeVisible();
+  await expect(logBody.getByText("A later entry", { exact: true })).toHaveCount(1);
+  await expect(terminal.getByRole("button", { name: /Activity/ })).toHaveAttribute("aria-expanded", "true");
+  await page.reload();
+  await expect(logBody.getByText("Next image started", { exact: true })).toBeVisible();
+  await expect(logBody.getByText("A later entry", { exact: true })).toHaveCount(1);
+  await page.screenshot({ path: `${dir}/image-activity-scrollback.png` });
   assert.deepEqual(errors, []);
   console.log(
     "PASS: cross-thread recipe Undo, recipe recovery after navigation, early reference limits/preservation, original reference restoration, OS errors, palette semantics, and log scroll retention.",
