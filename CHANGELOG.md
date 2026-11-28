@@ -6,15 +6,7 @@ lands directly on `main` instead of through labeled pull requests.
 
 ## [Unreleased]
 
-### Fixed
-
-- Verify the bundled Windows runtime before replacing the existing runtime during setup.
-- Resume a prepared Windows runtime upgrade after a restart and recover the prior runtime if setup is interrupted.
-- Open Linux windows with one title bar and keep the application menu within reach. Floating windows leave room for panels, and compact scaled Wayland windows open maximized.
-- Use native input composition on Linux desktops that offer the first Wayland text-input protocol, including Weston.
-- Return keyboard focus to the draft when opening the current chat from Commands, while keeping the transcript in place.
-
-## [0.1.49] - 2026-11-25
+## [0.1.49] - 2026-11-28
 
 ### Added
 
@@ -26,6 +18,9 @@ lands directly on `main` instead of through labeled pull requests.
 - Install the compact 491 MB Qwen2.5 0.5B Instruct model from CPU chat setup on Windows, Omarchy, and Apple Silicon.
 - Load compatible local `.safetensors` LoRAs in Z-Image Turbo on Intel Vulkan from Images or Chat.
 - Choose clips from 4 to 10 seconds with Wan 2.2 Turbo on Intel Vulkan. Longer renders show sampling and decoding progress and can be stopped.
+
+- Link a compatible SDXL diffusion GGUF checkpoint from Models and use it for image generation and editing on Intel Vulkan. Local LoRAs are available for the linked model.
+- Keep Activity available when moving between Video and Speech threads. Completed speech takes and their audio return after restarting the local service.
 
 ### Improved
 
@@ -51,6 +46,10 @@ lands directly on `main` instead of through labeled pull requests.
 - Reuse the processed prompt across follow-ups in long GGUF chats when the retained history still fits.
 - Start GGUF CPU chat directly on Apple Silicon by skipping Metal shader setup.
 
+- Keep generation titles and progress together in the image workspace. Video and Speech Activity keep their scrollback between jobs.
+- Open live reply updates as soon as the local service accepts the request. Reuse saved transcript rows to reduce work when sending in long chats.
+- Make local chat document lookup faster, show how much source material the model received, and keep Stop available during lookup.
+
 ### Fixed
 
 - Reopen Fern's window after a renderer crash while keeping the local service running. Windows users can launch with `--fern-software-rendering` if the window goes black during GPU inference.
@@ -75,6 +74,17 @@ lands directly on `main` instead of through labeled pull requests.
 - Return focus to the composer when resending an edited earlier prompt. The editor explains which messages are saved in Versions.
 - Keep the GGUF model loaded when Stop interrupts an in-progress chat summary after it starts generating text.
 - Preserve an unsent inline prompt edit with its conversation version when switching versions.
+
+- Settle quiet reply streams from the local service when the final update is delayed.
+- Restore saved model defaults as soon as the catalog loads, and keep typed drafts and reading position when switching between chats.
+- Keep search matches and keyboard focus in view after replies finish rendering.
+- Keep the GGUF engine available after stopping prompt preparation.
+
+- Verify the bundled Windows runtime before replacing the existing runtime during setup.
+- Resume a prepared Windows runtime upgrade after a restart and recover the prior runtime if setup is interrupted.
+- Open Linux windows with one title bar and keep the application menu within reach. Floating windows leave room for panels, and compact scaled Wayland windows open maximized.
+- Use native input composition on Linux desktops that offer the first Wayland text-input protocol, including Weston.
+- Return keyboard focus to the draft when opening the current chat from Commands, while keeping the transcript in place.
 
 Full changelog on [GitHub](https://github.com/xgirls-dev/fern/compare/v0.1.48...v0.1.49).
 
