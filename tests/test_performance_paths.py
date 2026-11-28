@@ -7,6 +7,7 @@ import tempfile
 import threading
 import time
 import unittest
+import wave
 from pathlib import Path
 from unittest.mock import patch
 
@@ -81,11 +82,29 @@ class PerformancePathsTest(unittest.TestCase):
             before = dict(api_server.TTS_JOB)
             api_server.TTS_JOB.update(id="perf-test", status="running", output=None, error=None)
         try:
-            with patch.object(api_server.TTS_GENERATION_WORKER, "generate", return_value={"url": "/outputs/test.wav", "name": "test.wav"}) as generate:
-                api_server.run_tts_generation({"model": "custom-0.6b", "device": "CPU", "text": "Hello"}, "perf-test")
-            self.assertEqual(generate.call_args.kwargs["key"], ("custom-0.6b", "CPU"))
-            self.assertIn("serve", generate.call_args.kwargs["command"])
-            self.assertEqual(api_server.TTS_JOB["status"], "complete")
+            with tempfile.TemporaryDirectory() as directory:
+                outputs = Path(directory)
+
+                def write_take(**kwargs):
+                    with wave.open(str(outputs / kwargs["request"]["outputName"]), "wb") as audio:
+                        audio.setparams((1, 2, 24000, 0, "NONE", "not compressed"))
+                        audio.writeframes(bytes(480))
+
+                with patch.object(api_server, "OUTPUTS", outputs), patch.object(
+                    api_server.TTS_GENERATION_WORKER, "generate", side_effect=write_take
+                ) as generate:
+                    for job_id in ("perf-test", "perf-repeat"):
+                        with api_server.TTS_JOB_LOCK:
+                            api_server.TTS_JOB.update(id=job_id, status="running")
+                        api_server.run_tts_generation({"model": "custom-0.6b", "device": "CPU", "text": "Hello"}, job_id)
+                        self.assertEqual(api_server.TTS_JOB["status"], "complete")
+                        self.assertTrue((outputs / f"qwen3-tts-{job_id}.wav").is_file())
+                cold, warm = [call.kwargs for call in generate.call_args_list]
+                self.assertEqual(cold["key"], ("custom-0.6b", "CPU"))
+                self.assertIn("serve", cold["command"])
+                self.assertEqual(cold["command"], warm["command"])
+                self.assertNotEqual(cold["request"]["outputName"], warm["request"]["outputName"])
+                self.assertFalse(list(outputs.glob(".speech-*")))
         finally:
             with api_server.TTS_JOB_LOCK:
                 api_server.TTS_JOB.clear()

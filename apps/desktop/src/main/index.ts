@@ -445,7 +445,7 @@ function registerIpc(): void {
   );
 
   const audioOutputPath = (audioName: unknown) => {
-    if (typeof audioName !== "string" || !/^qwen3-tts-\d+\.wav$/i.test(audioName))
+    if (typeof audioName !== "string" || !/^qwen3-tts-(?:\d+|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})\.wav$/i.test(audioName))
       throw new Error("Invalid audio output name.");
     return join(getOutputsDir(), audioName);
   };
