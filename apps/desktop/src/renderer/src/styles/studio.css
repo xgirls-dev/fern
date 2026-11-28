@@ -95,7 +95,7 @@ body {
 .text-message--user.text-message--editing { width: min(100%, 600px); max-width: 100%; }
 .text-message--editing > .text-user-bubble { width: 100%; padding: 12px; }
 .text-prompt-editor { display: grid; gap: 10px; }
-.text-prompt-editor textarea { min-height: 58px; max-height: 240px; resize: none; background: var(--background); font-size: 14px; line-height: 1.6; }
+.text-prompt-editor textarea { min-height: 58px; max-height: 240px; resize: none; background: var(--input-bg); font-size: 14px; line-height: 1.6; }
 .text-prompt-editor-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 6px; }
 .text-prompt-editor-actions .ui-button--primary { background: var(--chat-action); color: var(--chat-action-text); }
 .text-prompt-editor-actions .ui-button--primary:hover:not(:disabled) { background: color-mix(in srgb, var(--chat-action) 87%, var(--foreground)); }
@@ -289,6 +289,7 @@ body {
 .text-deletion-notice > span { color: var(--muted); font-size: 12px; line-height: 1.4; }
 .text-deletion-notice > .ui-button { color: var(--chat-action); }
 .text-composer { position: relative; padding: 14px 12px 10px; border: 1px solid var(--border-strong); border-radius: var(--ui-composer-radius); background: var(--composer-bg); box-shadow: var(--ui-composer-shadow); }
+.text-composer:has(> textarea:focus-visible) { background-color: color-mix(in srgb, var(--composer-bg) 90%, var(--foreground)); }
 .text-latest-reply-link { position: absolute; z-index: 2; inset-inline-end: 12px; inset-block-start: 8px; }
 .text-latest-reply-link:not(:focus) { clip-path: inset(50%); pointer-events: none; }
 .text-composer.is-file-over { border-color: var(--chat-action); outline: 2px solid var(--chat-action); outline-offset: 2px; }
@@ -298,7 +299,7 @@ body {
 /* Leave the reply visible when a long draft is open at the desktop minimum height. */
 .text-composer > textarea { display: block; width: 100%; min-height: 48px; max-height: clamp(72px, calc(72px + (100dvh - 520px) / 2), 200px); resize: none; padding: 0 4px 10px; border: 0; outline: none; background: transparent; color: var(--foreground); font-size: 14px; line-height: 1.6; }
 .text-composer > textarea::placeholder { color: var(--muted); }
-.text-workspace .text-composer > textarea:focus-visible { outline: none; }
+.text-composer > textarea:focus-visible { outline: none; background-color: transparent; }
 .text-composer-bottom { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .text-composer-model-controls { display: flex; flex: 1; min-width: 0; align-items: center; gap: 3px; }
 .text-composer-model-controls .text-response-mode { width: auto; min-width: 0; }

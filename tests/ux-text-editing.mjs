@@ -27,8 +27,17 @@ const conversation = page.getByRole("log", { name: "Conversation" });
 const editAt = (index) => conversation.getByRole("article", { name: "Your message" }).nth(index).getByRole("button", { name: "Edit message" });
 
 try {
+  if (await page.locator("html").getAttribute("data-theme") !== "dark") await button("Toggle theme").click();
   await editAt(1).click();
   await expect(edited).toBeFocused();
+  await edited.blur();
+  const shades = await edited.evaluate((field) => ({
+    input: getComputedStyle(field).backgroundColor,
+    surface: getComputedStyle(field.closest(".text-user-bubble")).backgroundColor,
+  }));
+  const shade = (color) => Number(color.match(/\d+/)?.[0]);
+  assert(shade(shades.input) >= shade(shades.surface), `The edit field is darker than its message bubble: ${JSON.stringify(shades)}`);
+  await edited.focus();
   await expect(editAt(0)).toBeDisabled();
   await expect(heading).toHaveText("Planning chat");
   await expect(composer).toHaveValue("My separate composer draft");
