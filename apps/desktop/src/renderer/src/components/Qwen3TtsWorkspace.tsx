@@ -99,8 +99,12 @@ export function Qwen3TtsWorkspace({ studio, sidebarCollapsed, onOpenThreadSearch
     setRevealTake((previous) => ({ name, token: (previous?.token ?? 0) + 1 }));
   };
   const latestTake = activeThread.outputs[0];
-  const latestTakeReady = status.status === "complete" && status.operation === "generate" && status.threadId === activeThread.id
-    && !!status.output && activeThread.outputs.some((output) => output.name === status.output?.name);
+  const recovered = studio.recoveredTake?.threadId === activeThread.id ? studio.recoveredTake : null;
+  const finished = status.status === "complete" && status.operation === "generate" && status.threadId === activeThread.id
+    && status.id && status.output ? { jobId: status.id, name: status.output.name } : null;
+  const completion = finished ?? recovered;
+  const showCompletion = completion && dismissedCompletion !== completion.jobId
+    && activeThread.outputs.some((output) => output.name === completion.name);
   const reuseSetup = (output: AudioOutput) => {
     const patch: Partial<typeof activeThread> = { text: output.prompt };
     if (output.model) patch.model = output.model;
@@ -153,7 +157,11 @@ export function Qwen3TtsWorkspace({ studio, sidebarCollapsed, onOpenThreadSearch
         thread={activeThread}
         revealTake={revealTake}
         modelLabel={outputLabel}
-        completion={latestTakeReady && dismissedCompletion !== status.id ? <div className="tts-completion" role="status"><div><strong>Your take is ready</strong></div><Button variant="secondary" onClick={() => { if (status.output) viewTake(status.output.name); }}>View take</Button><IconButton aria-label="Dismiss take notification" onClick={() => setDismissedCompletion(status.id)}><X size={16} /></IconButton></div> : null}
+        completion={showCompletion ? <div className="tts-completion" role="status">
+          <div><strong>{finished ? "Your take is ready" : "Recovered your audio take"}</strong></div>
+          <Button variant="secondary" onClick={() => viewTake(completion.name)}>View take</Button>
+          <IconButton aria-label="Dismiss take notification" onClick={() => setDismissedCompletion(completion.jobId)}><X size={16} /></IconButton>
+        </div> : null}
         diagnostics={diagnostics?.length ? <Disclosure className="tts-job-diagnostics" label={`Technical diagnostics (${diagnostics.length})`}>
           <pre>{diagnostics.join("\n")}</pre>
         </Disclosure> : null}

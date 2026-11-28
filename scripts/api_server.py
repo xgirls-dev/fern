@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import errno
 import hashlib
 import io
 import importlib.util
@@ -15,6 +16,7 @@ import re
 import shutil
 import sys
 import subprocess
+import tempfile
 import threading
 import time
 import uuid
@@ -58,6 +60,7 @@ import flux2_klein_text_encoder
 import lora_download
 from generation_worker import GenerationWorker, GenerationCancelled, tame_pony_inference_loop, custom_image_inference_loop
 from tts_generation_worker import TtsGenerationWorker
+from tts_outputs import read_take as read_tts_take, take_name as tts_take_name, valid_job_id as valid_tts_job_id
 from text_generation_process import TextGenerationProcess, TextWorkerError
 from text_model_registry import TextModelRegistry
 from text_model_download import DEFAULT_MODEL_ID as DEFAULT_TEXT_MODEL_ID
@@ -1497,6 +1500,12 @@ def run_tts_setup(model: str, job_id: str, cancel_event: threading.Event) -> Non
 
 def run_tts_generation(payload: dict[str, Any], job_id: str, cancel_event: threading.Event | None = None) -> None:
     cancel_event = cancel_event or threading.Event()
+
+    def log(message: str) -> None:
+        if cancel_event.is_set():
+            raise TtsJobCancelled()
+        append_tts_log(message)
+
     try:
         TEXT_GENERATION_WORKER.close()
         GENERATION_WORKER.close()
@@ -1509,32 +1518,37 @@ def run_tts_generation(payload: dict[str, Any], job_id: str, cancel_event: threa
             raise TtsJobCancelled()
         append_tts_log("FERN_TTS_PROGRESS:Preparing a new audio take.")
         python = TTS_ENV / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-        output_name = f"qwen3-tts-{job_id}.wav"
-        request = dict(payload, outputName=output_name)
-        result = TTS_GENERATION_WORKER.generate(key=(payload["model"], payload["device"]), command=[
-            str(python), "-u", str(SCRIPTS / "qwen3_tts_worker.py"), "serve", "--model", payload["model"],
-            "--model-root", str(TTS_MODEL_ROOT), "--outputs", str(OUTPUTS), "--device", payload["device"],
-        ], request=request, cwd=ROOT, env=tts_child_env(), log=append_tts_log)
-        if cancel_event.is_set():
-            raise TtsJobCancelled()
-        with TTS_JOB_LOCK:
-            if cancel_event.is_set():
-                raise TtsJobCancelled()
-            if TTS_JOB["id"] == job_id:
+        output_name = tts_take_name(job_id)
+        with tempfile.TemporaryDirectory(prefix=".speech-", dir=OUTPUTS) as directory:
+            staged = Path(directory) / f"{output_name}.part"
+            request = dict(payload, outputName=str(staged.relative_to(OUTPUTS)))
+            TTS_GENERATION_WORKER.generate(key=(payload["model"], payload["device"]), command=[
+                str(python), "-u", str(SCRIPTS / "qwen3_tts_worker.py"), "serve", "--model", payload["model"],
+                "--model-root", str(TTS_MODEL_ROOT), "--outputs", str(OUTPUTS), "--device", payload["device"],
+            ], request=request, cwd=ROOT, env=tts_child_env(), log=log)
+            result = read_tts_take(staged, published_name=output_name)
+            with TTS_JOB_LOCK:
+                if cancel_event.is_set():
+                    raise TtsJobCancelled()
+                if TTS_JOB["id"] != job_id:
+                    return
+                if not result:
+                    raise RuntimeError("The speech runtime did not save a complete WAV. Generate the take again.")
+                staged.replace(OUTPUTS / output_name)
                 elapsed = time.time() - (TTS_JOB.get("startedAt") or time.time())
                 result["generationSeconds"] = elapsed
                 TTS_JOB.update(status="complete", finishedAt=time.time(), output=result, error=None)
-                _append_tts_log_locked(f"Take saved · {result.get('duration', 0):.1f}s audio · {elapsed:.1f}s total.")
+                _append_tts_log_locked(f"Take saved · {result['duration']:.1f}s audio · {elapsed:.1f}s total.")
     except Exception as error:
         with TTS_JOB_LOCK:
             cancelled = cancel_event.is_set() or isinstance(error, TtsJobCancelled)
             if not cancelled and TTS_JOB["id"] == job_id:
-                TTS_JOB.update(status="failed", finishedAt=time.time(), error=str(error))
+                message = "Free up disk space and generate the take again." if isinstance(error, OSError) and error.errno == errno.ENOSPC else str(error)
+                TTS_JOB.update(status="failed", finishedAt=time.time(), error=message)
                 _append_tts_log_locked(str(error), progress=False)
                 _append_tts_log_locked("Speech generation failed.")
         if cancelled:
             TTS_GENERATION_WORKER.close()
-            (OUTPUTS / f"qwen3-tts-{job_id}.wav").unlink(missing_ok=True)
             mark_tts_stopped(job_id)
 
 FLUX_JOB_LOCK = threading.Lock()
@@ -2711,6 +2725,19 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(200, tts_snapshot())
             return
 
+        if parsed.path == "/api/tts/result":
+            job_id = urllib.parse.parse_qs(parsed.query).get("jobId", [""])[0]
+            if not valid_tts_job_id(job_id):
+                self.send_json(400, {"error": "Choose a valid speech job."})
+                return
+            try:
+                output = read_tts_take(OUTPUTS / tts_take_name(job_id))
+            except OSError:
+                self.send_json(503, {"error": "Could not read the saved speech take. Check the output folder and retry."}, no_store=True)
+                return
+            self.send_json(200, {"output": output}, no_store=True)
+            return
+
         if parsed.path == "/api/models":
             self.send_json(200, {"models": model_library_snapshot(), "customImageDownload": CUSTOM_IMAGE_DOWNLOAD.snapshot()})
             return
@@ -3308,6 +3335,9 @@ class Handler(BaseHTTPRequestHandler):
                 if unavailable:
                     raise ValueError(unavailable)
                 payload = self.read_json_body()
+                request_id = payload.get("requestId") if parsed.path.endswith("generate") else None
+                if request_id is not None and not valid_tts_job_id(request_id):
+                    raise ValueError("Choose a valid speech request id.")
                 if text_job_running() or flux_job_snapshot()["status"] == "running" or qwen_turbo_setup_running() or text_model_install_running():
                     raise ValueError("Stop the active image/text response or model setup before starting an audio job.")
                 model = payload.get("model")
@@ -3345,7 +3375,10 @@ class Handler(BaseHTTPRequestHandler):
                     if TTS_JOB["status"] in ("running", "setting_up", "stopping"):
                         self.send_json(409, {"error": "A Qwen3-TTS job is already running."})
                         return
-                    job_id = str(int(time.time() * 1000))
+                    job_id = request_id or str(uuid.uuid4())
+                    if generation is not None and (OUTPUTS / tts_take_name(job_id)).exists():
+                        self.send_json(409, {"error": "This speech request already has a saved take."})
+                        return
                     cancel_event = threading.Event()
                     TTS_CANCEL_EVENT = cancel_event
                     TTS_JOB.update(
@@ -3802,7 +3835,7 @@ def run_server(port: int = 8000, *, allow_cors: bool = False) -> None:
     except KeyboardInterrupt:
         pass
     finally:
-        for cancel_event in (FLUX_CANCEL_EVENT, TEXT_CANCEL_EVENT):
+        for cancel_event in (FLUX_CANCEL_EVENT, TEXT_CANCEL_EVENT, TTS_CANCEL_EVENT):
             if cancel_event is not None:
                 cancel_event.set()
         INTEL_MEDIA.interrupt()

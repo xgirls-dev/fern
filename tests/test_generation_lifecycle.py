@@ -1,9 +1,12 @@
 import sys
+import errno
 import time
 import tempfile
 import threading
 import unittest
 import urllib.request
+import uuid
+import wave
 import json
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -144,6 +147,10 @@ class GenerationLifecycleTests(unittest.TestCase):
                 started.set()
                 interrupted.wait(5)
                 return {"name": name, "url": f"/outputs/{name}", "duration": 1, "sampleRate": 24000}
+            def save_complete(**kwargs):
+                with wave.open(str(outputs / kwargs["request"]["outputName"]), "wb") as audio:
+                    audio.setparams((1, 2, 24000, 0, "NONE", "not compressed"))
+                    audio.writeframes(bytes(48000))
             server = ThreadingHTTPServer(("127.0.0.1", 0), api_server.Handler)
             serving = threading.Thread(target=server.serve_forever, daemon=True)
             serving.start()
@@ -157,8 +164,14 @@ class GenerationLifecycleTests(unittest.TestCase):
                 return json.load(urllib.request.urlopen(urllib.request.Request(base + path, data=body, headers={"Content-Type": "application/json"})))
             try:
                 with patch.object(api_server, "OUTPUTS", outputs), patch.object(api_server, "tts_model_ready", return_value=True), patch.object(api_server.TTS_GENERATION_WORKER, "generate", side_effect=generate), patch.object(api_server.TTS_GENERATION_WORKER, "interrupt", side_effect=interrupted.set), patch.object(api_server.TTS_GENERATION_WORKER, "close"):
-                    first = post("/api/tts/generate")["job"]["id"]
+                    first = str(uuid.uuid4())
+                    self.assertEqual(post("/api/tts/generate", requestId=first)["job"]["id"], first)
                     self.assertTrue(started.wait(5))
+                    with self.assertRaises(urllib.error.HTTPError) as duplicate:
+                        post("/api/tts/generate", requestId=first)
+                    self.assertEqual(duplicate.exception.code, 409)
+                    duplicate.exception.close()
+                    self.assertIsNone(json.load(urllib.request.urlopen(base + f"/api/tts/result?jobId={first}"))["output"])
                     with self.assertRaises(urllib.error.HTTPError) as stale_stop:
                         post("/api/tts/stop", jobId="previous")
                     self.assertEqual(stale_stop.exception.code, 409)
@@ -176,7 +189,8 @@ class GenerationLifecycleTests(unittest.TestCase):
                     self.assertTrue(status["logs"][-1].endswith("Audio job stopped."))
                     self.assertEqual(status["output"], None)
                     self.assertFalse((outputs / f"qwen3-tts-{first}.wav").exists())
-                    with patch.object(api_server.TTS_GENERATION_WORKER, "generate", return_value={"name": "second.wav", "url": "/outputs/second.wav", "duration": 1, "sampleRate": 24000}):
+                    self.assertFalse(list(outputs.glob(".speech-*")))
+                    with patch.object(api_server.TTS_GENERATION_WORKER, "generate", side_effect=save_complete) as completed:
                         second = post("/api/tts/generate")["job"]["id"]
                         for _ in range(50):
                             status = json.load(urllib.request.urlopen(base + "/api/tts/status"))
@@ -185,6 +199,23 @@ class GenerationLifecycleTests(unittest.TestCase):
                             time.sleep(0.02)
                         self.assertEqual(status["id"], second)
                         self.assertEqual(status["status"], "complete")
+                        completed.assert_called_once()
+                    with api_server.TTS_JOB_LOCK:
+                        api_server.TTS_JOB.update(id=None, status="idle", output=None)
+                    result = json.load(urllib.request.urlopen(base + f"/api/tts/result?jobId={second}"))["output"]
+                    self.assertEqual(result["name"], f"qwen3-tts-{second}.wav")
+                    self.assertEqual(result["sampleRate"], 24000)
+                    self.assertEqual(result["duration"], 1)
+                    with self.assertRaises(urllib.error.HTTPError) as published:
+                        post("/api/tts/generate", requestId=second)
+                    self.assertEqual(published.exception.code, 409)
+                    published.exception.close()
+                    target = outputs / result["name"]
+                    data = target.read_bytes()
+                    target.write_bytes(data[:-1])
+                    self.assertIsNone(json.load(urllib.request.urlopen(base + f"/api/tts/result?jobId={second}"))["output"])
+                    target.unlink()
+                    self.assertIsNone(json.load(urllib.request.urlopen(base + f"/api/tts/result?jobId={second}"))["output"])
             finally:
                 server.shutdown()
                 server.server_close()
@@ -192,6 +223,22 @@ class GenerationLifecycleTests(unittest.TestCase):
                     api_server.TTS_JOB.clear()
                     api_server.TTS_JOB.update(previous)
                 api_server.TTS_CANCEL_EVENT = previous_cancel
+
+    def test_tts_reports_low_disk_without_publishing_a_take(self):
+        with tempfile.TemporaryDirectory() as directory:
+            outputs = Path(directory)
+            with (
+                patch.object(api_server, "OUTPUTS", outputs),
+                patch.dict(api_server.TTS_JOB, id="low-disk", status="running", logs=[], diagnostics=[], output=None),
+                patch.object(api_server.tempfile, "TemporaryDirectory", side_effect=OSError(errno.ENOSPC, "Disk full")),
+                patch.object(api_server.TTS_GENERATION_WORKER, "generate") as generate,
+            ):
+                api_server.run_tts_generation({"model": "custom-0.6b", "device": "CPU", "text": "Hello"}, "low-disk")
+                self.assertEqual(api_server.TTS_JOB["status"], "failed")
+                self.assertIn("Free up disk space", api_server.TTS_JOB["error"])
+                self.assertIsNone(api_server.TTS_JOB["output"])
+                self.assertEqual(list(outputs.iterdir()), [])
+                generate.assert_not_called()
 
     def test_cancelled_result_is_not_published_to_gallery(self):
         with tempfile.TemporaryDirectory() as directory:

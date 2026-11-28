@@ -13,7 +13,7 @@ export interface TtsModelStatus {
   downloadIncludes?: string[];
 }
 interface TtsStatus { startedAt?: number | null; finishedAt?: number | null; diagnostics?: string[]; phase?: string | null; setupUnavailableReason?: string | null }
-interface TtsStatus { id: string | null; threadId: string | null; model: QwenTtsModel | null; status: "idle" | "setting_up" | "running" | "stopping" | "stopped" | "complete" | "failed"; operation: "setup" | "generate" | null; logs: string[]; output: Omit<AudioOutput, "prompt" | "createdAt"> | null; error: string | null; models: TtsModelStatus[]; environmentReady: boolean }
+interface TtsStatus { id: string | null; threadId: string | null; model: QwenTtsModel | null; status: "idle" | "setting_up" | "running" | "stopping" | "stopped" | "complete" | "failed"; operation: "setup" | "generate" | null; logs: string[]; output: (Omit<AudioOutput, "prompt" | "createdAt"> & { createdAt?: number }) | null; error: string | null; models: TtsModelStatus[]; environmentReady: boolean }
 
 function validateStatus(value: TtsStatus): TtsStatus {
   if (!value || !Array.isArray(value.models) || !Array.isArray(value.logs) || typeof value.status !== "string")
@@ -23,6 +23,7 @@ function validateStatus(value: TtsStatus): TtsStatus {
 
 const blankStatus: TtsStatus = { id: null, threadId: null, model: null, status: "idle", operation: null, logs: [], output: null, error: null, models: [], environmentReady: false };
 const PENDING_JOB_KEY = "fern-qwen3-tts-pending:v1";
+const INTERRUPTED_TAKE = "The audio job was interrupted before the take was saved. Your script is still available.";
 interface PendingAudioJob {
   id: string; threadId: string; text: string; model: QwenTtsModel; language: string;
   speaker: string; instruction: string; designInstruction: string; referenceText: string;
@@ -31,8 +32,13 @@ interface PendingAudioJob {
 function loadPendingJob(): PendingAudioJob | null {
   try {
     const value = JSON.parse(localStorage.getItem(PENDING_JOB_KEY) ?? "null") as PendingAudioJob | null;
-    return value && typeof value.id === "string" && typeof value.threadId === "string" && typeof value.text === "string" ? value : null;
+    return value && typeof value.id === "string" && /^(?:\d{13}|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})$/.test(value.id) &&
+      typeof value.threadId === "string" && typeof value.text === "string" ? value : null;
   } catch { return null; }
+}
+
+class TtsRequestError extends Error {
+  constructor(message: string, readonly status: number) { super(message); }
 }
 
 async function request<T>(path: string, body?: object): Promise<T> {
@@ -42,7 +48,7 @@ async function request<T>(path: string, body?: object): Promise<T> {
     body: body ? JSON.stringify(body) : undefined,
   });
   const data = await response.json().catch(() => ({ error: "The TTS service returned an unreadable response." }));
-  if (!response.ok) throw new Error(data.error || "Qwen3-TTS request failed.");
+  if (!response.ok) throw new TtsRequestError(data.error || "Qwen3-TTS request failed.", response.status);
   return data as T;
 }
 
@@ -53,6 +59,7 @@ export function useQwen3Tts(apiReady: boolean, computeDevice: "GPU" | "CPU" = "G
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const workspaceDirty = useRef(false);
   const pendingJob = useRef<PendingAudioJob | null>(loadPendingJob());
+  const admittingJob = useRef<string | null>(null);
   const [status, setStatus] = useState<TtsStatus>(blankStatus);
   const [busy, setBusy] = useState(false);
   const requestActive = useRef(false);
@@ -61,8 +68,23 @@ export function useQwen3Tts(apiReady: boolean, computeDevice: "GPU" | "CPU" = "G
   const [error, setError] = useState<string | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
   const [statusLoaded, setStatusLoaded] = useState(false);
+  const [recoveredTake, setRecoveredTake] = useState<{ jobId: string; threadId: string; name: string } | null>(null);
   const [referenceFiles, setReferenceFiles] = useState<Record<string, File>>({});
   const activeThread = workspace.threads.find((thread) => thread.id === workspace.activeId) ?? workspace.threads[0];
+
+  const flushWorkspace = useCallback(() => {
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = null;
+    if (!workspaceDirty.current) return true;
+    try {
+      saveAudioThreads(workspaceRef.current);
+      workspaceDirty.current = false;
+      return true;
+    } catch {
+      setError("Could not save audio threads. Free local storage before closing Fern.");
+      return false;
+    }
+  }, []);
 
   const commit = useCallback((update: (current: AudioThreadWorkspace) => AudioThreadWorkspace) => {
     const next = update(workspaceRef.current);
@@ -70,43 +92,59 @@ export function useQwen3Tts(apiReady: boolean, computeDevice: "GPU" | "CPU" = "G
     setWorkspace(next);
     workspaceDirty.current = true;
     if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => {
-      saveTimer.current = null;
-      try { saveAudioThreads(workspaceRef.current); workspaceDirty.current = false; }
-      catch { setError("Could not save audio threads. Free local storage before closing Fern."); }
-    }, 250);
+    saveTimer.current = setTimeout(flushWorkspace, 250);
+  }, [flushWorkspace]);
+
+  const clearPendingJob = useCallback((pending: PendingAudioJob) => {
+    if (pendingJob.current !== pending) return;
+    pendingJob.current = null;
+    try { localStorage.removeItem(PENDING_JOB_KEY); } catch { /* Thread data remains available in memory. */ }
   }, []);
 
-  const reconcileJob = useCallback((next: TtsStatus) => {
-    const pending = pendingJob.current;
-    if (!pending) return;
-    if (next.id === pending.id && next.status === "complete" && next.output) {
+  const reconcileJob = useCallback(async (next: TtsStatus, pending: PendingAudioJob | null) => {
+    if (!pending || pendingJob.current !== pending || admittingJob.current === pending.id) return false;
+    const matching = next.id === pending.id;
+    if (matching && (next.status === "setting_up" || next.status === "running" || next.status === "stopping")) return false;
+
+    const thread = workspaceRef.current.threads.find((item) => item.id === pending.threadId);
+    if (!thread) {
+      clearPendingJob(pending);
+      return false;
+    }
+    let take = matching && next.status === "complete" ? next.output : null;
+    if (!matching || (next.status === "complete" && !take)) {
+      const result = await request<{ output: TtsStatus["output"] }>(`/api/tts/result?jobId=${encodeURIComponent(pending.id)}`);
+      if (result.output === undefined) throw new Error("The audio service could not verify the saved take. Try again.");
+      take = result.output;
+    }
+    if (pendingJob.current !== pending) return false;
+    if (take) {
       const output: AudioOutput = {
-        ...next.output, prompt: pending.text, createdAt: Date.now(), model: pending.model,
+        ...take, prompt: pending.text, createdAt: take.createdAt ?? Date.now(), model: pending.model,
         language: pending.language, speaker: pending.speaker, instruction: pending.instruction,
         designInstruction: pending.designInstruction, referenceText: pending.referenceText,
         referenceFileName: pending.referenceFileName, device: pending.device,
       };
-      commit((current) => ({ ...current, threads: current.threads.map((thread) => thread.id === pending.threadId && !thread.outputs.some((item) => item.name === output.name) ? {
+      const alreadySaved = thread.outputs.some((item) => item.name === output.name);
+      if (!alreadySaved) commit((current) => ({ ...current, threads: current.threads.map((thread) => thread.id === pending.threadId ? {
         ...thread,
         title: !thread.renamed && thread.title === "New audio thread" ? pending.text.trim().slice(0, 60) : thread.title,
         outputs: [output, ...thread.outputs],
         updatedAt: Date.now(),
       } : thread) }));
+      if (!matching && !alreadySaved) setRecoveredTake({ jobId: pending.id, threadId: pending.threadId, name: output.name });
+      // A quit between this save and clearing the receipt can only cause another
+      // idempotent reconciliation. Clearing first can lose the take.
+      if (!flushWorkspace()) return true;
+    } else if (!matching) {
+      setError(INTERRUPTED_TAKE);
     }
-    if ((next.id === pending.id && (next.status === "complete" || next.status === "failed" || next.status === "stopped")) || next.status === "idle") {
-      pendingJob.current = null;
-      try { localStorage.removeItem(PENDING_JOB_KEY); } catch { /* Thread data remains available in memory. */ }
-    }
-  }, [commit]);
+    clearPendingJob(pending);
+    return Boolean(take);
+  }, [clearPendingJob, commit, flushWorkspace]);
 
   useEffect(() => {
-    const flush = () => {
-      if (!workspaceDirty.current) return;
-      if (saveTimer.current) clearTimeout(saveTimer.current);
-      try { saveAudioThreads(workspaceRef.current); workspaceDirty.current = false; }
-      catch { setError("Could not save audio threads. Free local storage before closing Fern."); }
-    };
+    const flush = () => { flushWorkspace(); };
     window.addEventListener("pagehide", flush);
     const onVisibilityChange = () => { if (document.visibilityState === "hidden") flush(); };
     document.addEventListener("visibilitychange", onVisibilityChange);
@@ -115,16 +153,17 @@ export function useQwen3Tts(apiReady: boolean, computeDevice: "GPU" | "CPU" = "G
       window.removeEventListener("pagehide", flush);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, []);
+  }, [flushWorkspace]);
 
   const refresh = useCallback(async () => {
     if (!getApiBaseUrl()) return false;
     try {
+      const pending = pendingJob.current;
       const next = validateStatus(await request<TtsStatus>("/api/tts/status"));
+      await reconcileJob(next, pending);
       setStatus(next);
       setStatusLoaded(true);
       setStatusError(null);
-      reconcileJob(next);
       return true;
     } catch (caught) {
       setStatusError(caught instanceof Error ? caught.message : "Could not reach the audio service.");
@@ -202,6 +241,7 @@ export function useQwen3Tts(apiReady: boolean, computeDevice: "GPU" | "CPU" = "G
     const thread = workspaceRef.current.threads.find((item) => item.id === id);
     if (!thread) return;
     if (jobRunning && status.threadId === id) throw new Error("Stop the audio job before deleting this thread.");
+    if (pendingJob.current?.threadId === id) throw new Error("Wait for the audio take to finish saving before deleting this thread.");
     if (typeof window.studio === "undefined") throw new Error("Audio deletion is available in the desktop app.");
     for (const output of thread.outputs) {
       await window.studio.deleteOutputAudio(output.name);
@@ -222,6 +262,7 @@ export function useQwen3Tts(apiReady: boolean, computeDevice: "GPU" | "CPU" = "G
     saveTimer.current = null;
     workspaceDirty.current = false;
     pendingJob.current = null;
+    setRecoveredTake(null);
     try { localStorage.removeItem(PENDING_JOB_KEY); } catch { /* The active workspace is still reset. */ }
     setReferenceFiles({});
     setError(null);
@@ -241,7 +282,7 @@ export function useQwen3Tts(apiReady: boolean, computeDevice: "GPU" | "CPU" = "G
     });
   }, []);
 
-  const waitForJob = useCallback(async (jobId: string) => {
+  const waitForJob = useCallback(async (jobId: string, operation: "setup" | "generate") => {
     let failures = 0;
     for (;;) {
       let next: TtsStatus;
@@ -257,8 +298,12 @@ export function useQwen3Tts(apiReady: boolean, computeDevice: "GPU" | "CPU" = "G
         continue;
       }
       setStatus(next);
-      reconcileJob(next);
-      if (next.id !== jobId) throw new Error("The audio job was interrupted. Check the service and try again.");
+      const pending = pendingJob.current?.id === jobId ? pendingJob.current : null;
+      const recovered = await reconcileJob(next, pending);
+      if (next.id !== jobId) {
+        if (recovered) return next;
+        throw new Error(operation === "setup" ? "Audio setup was interrupted. Try setup again." : INTERRUPTED_TAKE);
+      }
       if (next.status === "complete") return next;
       if (next.status === "stopped") return next;
       if (next.status === "failed") throw new Error(next.error || "Qwen3-TTS failed.");
@@ -274,7 +319,7 @@ export function useQwen3Tts(apiReady: boolean, computeDevice: "GPU" | "CPU" = "G
       const threadId = activeThread.id;
       const started = await request<{ job: TtsStatus }>("/api/tts/setup", { model, threadId });
       setStatus(started.job);
-      await waitForJob(started.job.id!);
+      await waitForJob(started.job.id!, "setup");
       await refresh();
     } catch (caught) { setError(caught instanceof Error ? caught.message : String(caught)); }
     finally { requestActive.current = false; setBusy(false); }
@@ -290,7 +335,15 @@ export function useQwen3Tts(apiReady: boolean, computeDevice: "GPU" | "CPU" = "G
     if (file && file.size > 12_000_000) { setError("Reference audio must be smaller than 12 MB."); return; }
     requestActive.current = true;
     setBusy(true); setError(null);
+    let admitted = false;
+    let pending: PendingAudioJob | undefined;
     try {
+      if (pendingJob.current) {
+        await refresh();
+        if (pendingJob.current) return;
+      }
+      // Keep the target thread and its last edit available before submitting.
+      flushWorkspace();
       let referenceAudio: string | undefined;
       if (file) referenceAudio = await new Promise<string>((resolve, reject) => {
         const reader = new FileReader();
@@ -300,19 +353,35 @@ export function useQwen3Tts(apiReady: boolean, computeDevice: "GPU" | "CPU" = "G
       });
       const threadId = thread.id;
       const requestedDevice = computeDevice === "CPU" ? "CPU" : "AUTO";
-      const started = await request<{ job: TtsStatus }>("/api/tts/generate", { model: thread.model, threadId, text: thread.text, language: thread.language, speaker: thread.speaker, instruction: thread.model === "voice-design-1.7b" ? thread.designInstruction : thread.instruction, referenceText: thread.referenceText, referenceAudio, device: requestedDevice });
-      const pending: PendingAudioJob = {
-        id: started.job.id!, threadId, text: thread.text, model: thread.model, language: thread.language,
+      pending = {
+        id: crypto.randomUUID(), threadId, text: thread.text, model: thread.model, language: thread.language,
         speaker: thread.speaker, instruction: thread.instruction, designInstruction: thread.designInstruction,
         referenceText: thread.referenceText, referenceFileName: file?.name, device: requestedDevice,
       };
       pendingJob.current = pending;
+      admittingJob.current = pending.id;
       try { localStorage.setItem(PENDING_JOB_KEY, JSON.stringify(pending)); } catch { /* The live job still completes in this window. */ }
+      const started = await request<{ job: TtsStatus }>("/api/tts/generate", {
+        requestId: pending.id, model: thread.model, threadId, text: thread.text, language: thread.language, speaker: thread.speaker,
+        instruction: thread.model === "voice-design-1.7b" ? thread.designInstruction : thread.instruction,
+        referenceText: thread.referenceText, referenceAudio, device: requestedDevice,
+      });
+      admitted = true;
+      admittingJob.current = null;
       setStatus(started.job);
-      await waitForJob(started.job.id!);
-    } catch (caught) { setError(caught instanceof Error ? caught.message : String(caught)); }
-    finally { requestActive.current = false; setBusy(false); await refresh(); }
-  }, [activeThread, computeDevice, referenceFiles, refresh, waitForJob]);
+      await waitForJob(pending.id, "generate");
+    } catch (caught) {
+      if (!pending || admitted || (caught instanceof TtsRequestError && caught.status === 400)) {
+        if (pending && !admitted) clearPendingJob(pending);
+        setError(caught instanceof Error ? caught.message : String(caught));
+      }
+    } finally {
+      admittingJob.current = null;
+      await refresh();
+      requestActive.current = false;
+      setBusy(false);
+    }
+  }, [activeThread, clearPendingJob, computeDevice, flushWorkspace, referenceFiles, refresh, waitForJob]);
 
   const stopJob = useCallback(async () => {
     const jobId = status.id;
@@ -334,5 +403,5 @@ export function useQwen3Tts(apiReady: boolean, computeDevice: "GPU" | "CPU" = "G
   }, [jobRunning, status.id, status.status]);
 
   const stopping = jobRunning && (status.status === "stopping" || (stoppingJobId !== null && stoppingJobId === status.id));
-  return { workspace, threads: workspace.threads, activeThread, status, statusLoaded, statusError, computeDevice, retryStatus: refresh, busy, error, clearError: () => setError(null), referenceFiles, setReferenceFile, updateThread, updateOutput, deleteOutput, newThread, selectThread, renameThread, archiveThread, deleteThread, resetWorkspace, setupModel, generate, stopJob, stopping };
+  return { workspace, threads: workspace.threads, activeThread, status, statusLoaded, statusError, computeDevice, retryStatus: refresh, busy, error, clearError: () => setError(null), referenceFiles, setReferenceFile, updateThread, updateOutput, deleteOutput, newThread, selectThread, renameThread, archiveThread, deleteThread, resetWorkspace, setupModel, generate, stopJob, stopping, recoveredTake };
 }

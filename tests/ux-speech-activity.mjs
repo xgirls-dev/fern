@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { expect } from "@playwright/test";
-import { fixture } from "./ui-fixture.mjs";
+import { fixture, silentWav } from "./ui-fixture.mjs";
 
 const { page, state, errors, dir, close } = await fixture();
 const button = (name) => page.getByRole("button", { name, exact: true });
@@ -16,15 +16,16 @@ const stoppedLine = "Audio job stopped.";
 const savedLine = "Take saved · 1.0s audio · 3.0s total.";
 const diagnostic = "Worker detail about a local reference file";
 const draft = "Fern keeps the activity for this take.";
-let jobs = 0;
+const jobs = [];
 const stopRequests = [];
 let releaseStop;
 
 try {
   await page.route("**/api/tts/generate", (route) => {
-    const { threadId, model } = route.request().postDataJSON();
+    const { threadId, model, requestId } = route.request().postDataJSON();
+    jobs.push(requestId);
     Object.assign(state.ttsStatus, {
-      id: `speech-job-${++jobs}`, threadId, model, status: "running", operation: "generate",
+      id: requestId, threadId, model, status: "running", operation: "generate",
       startedAt: Date.now() / 1000, finishedAt: null, phase: firstPhase,
       logs: [firstPhase], diagnostics: [diagnostic], error: null, output: null,
     });
@@ -36,19 +37,7 @@ try {
     state.ttsStatus.status = "stopping";
     return route.fulfill({ status: 202, json: { job: state.ttsStatus } });
   });
-  const wav = Buffer.alloc(44 + 48_000);
-  wav.write("RIFF");
-  wav.writeUInt32LE(wav.length - 8, 4);
-  wav.write("WAVEfmt ", 8);
-  wav.writeUInt32LE(16, 16);
-  wav.writeUInt16LE(1, 20);
-  wav.writeUInt16LE(1, 22);
-  wav.writeUInt32LE(24_000, 24);
-  wav.writeUInt32LE(48_000, 28);
-  wav.writeUInt16LE(2, 32);
-  wav.writeUInt16LE(16, 34);
-  wav.write("data", 36);
-  wav.writeUInt32LE(wav.length - 44, 40);
+  const wav = silentWav(24_000, 1);
   await page.route("**/audio/test-take.wav", (route) => route.fulfill({ contentType: "audio/wav", body: wav }));
 
   await button("New thread").click();
@@ -90,7 +79,7 @@ try {
 
   await stop.click();
   await expect(button("Stopping…")).toBeDisabled();
-  await expect.poll(() => stopRequests).toEqual([{ jobId: "speech-job-1" }]);
+  await expect.poll(() => stopRequests).toEqual([{ jobId: jobs[0] }]);
   releaseStop();
   await expect(button("Stopping…")).toBeDisabled();
   Object.assign(state.ttsStatus, { status: "stopped", logs: [firstPhase, renderPhase, stoppedLine] });

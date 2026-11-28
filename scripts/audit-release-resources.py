@@ -18,7 +18,7 @@ ALLOWED_BACKEND = {
     'intel_media.py', 'intel_media_catalog.json', 'intel_media_runtime.json',
     'apple_image.py', 'apple_image_catalog.json',
     'sana_sprint_worker.py', 'sana_sprint_requirements.txt', 'video_jobs.py',
-    'qwen3_tts_worker.py', 'tts_generation_worker.py',
+    'qwen3_tts_worker.py', 'tts_generation_worker.py', 'tts_outputs.py',
     'qwen21_turbo_openvino.py',
     'qwen21_turbo_download.py', 'qwen21_turbo_model_catalog.json',
     'tts_model_download.py', 'tts_model_catalog.json', 'requirements-qwen3-tts-runtime.txt',
