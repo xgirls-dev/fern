@@ -12,6 +12,7 @@ from model_catalog import INTEL_MEDIA_CATALOG
 
 
 VIDEO_JOB_ID = re.compile(r"[0-9]{13}-[a-f0-9]{8}")
+MAX_ACTIVITY_LINES = 120
 
 
 class VideoJobs:
@@ -22,7 +23,7 @@ class VideoJobs:
         self.posters = data / "references"
         self.outputs = outputs
         self.lock = threading.Lock()
-        self.job = {"id": None, "status": "idle", "phase": None, "output": None, "error": None}
+        self.job = {"id": None, "status": "idle", "phase": None, "logs": [], "output": None, "error": None}
         self.cancel = None
         self.worker = None
         self._recover_publications()
@@ -36,7 +37,13 @@ class VideoJobs:
 
     def clear(self):
         with self.lock:
-            self.job.update(id=None, status="idle", phase=None, output=None, error=None)
+            self.job.update(id=None, status="idle", phase=None, logs=[], output=None, error=None)
+
+    def _record_activity(self, message):
+        logs = self.job["logs"]
+        if not logs or logs[-1] != message:
+            # Replace the list so already returned snapshots don't change.
+            self.job["logs"] = [*logs[-(MAX_ACTIVITY_LINES - 1):], message]
 
     def history(self):
         records = []
@@ -66,7 +73,7 @@ class VideoJobs:
             identifier = f"{int(time.time() * 1000)}-{uuid.uuid4().hex[:8]}"
             event = threading.Event()
             self.cancel = event
-            self.job.update(id=identifier, status="running", phase="Preparing video…", output=None, error=None)
+            self.job.update(id=identifier, status="running", phase="Preparing video…", logs=["Preparing video…"], output=None, error=None)
             self.worker = threading.Thread(
                 target=self.run, args=(identifier, request, event, release_models), daemon=True,
             )
@@ -79,6 +86,7 @@ class VideoJobs:
                 return dict(self.job)
             self.cancel.set()
             self.job.update(status="stopping", phase="Stopping…")
+            self._record_activity("Stopping…")
             return dict(self.job)
 
     def close(self):
@@ -104,7 +112,7 @@ class VideoJobs:
             (self.metadata / f"{identifier}.json").unlink(missing_ok=True)
             (self.posters / f"wan-{identifier}.jpg").unlink(missing_ok=True)
             if self.job["id"] == identifier:
-                self.job.update(id=None, status="idle", phase=None, output=None, error=None)
+                self.job.update(id=None, status="idle", phase=None, logs=[], output=None, error=None)
 
     def _recover_publications(self):
         for stage in self.cache.glob("video-*"):
@@ -155,6 +163,7 @@ class VideoJobs:
             with self.lock:
                 if not event.is_set():
                     self.job["phase"] = message
+                    self._record_activity(message)
 
         try:
             release_models()
@@ -184,10 +193,12 @@ class VideoJobs:
                 publishing = True
                 self._publish(stage, identifier)
                 publishing = False
+                self._record_activity("Video saved.")
                 self.job.update(status="complete", phase=None, error=None, output=record)
         except Exception as error:
             with self.lock:
                 cancelled = event.is_set() and not publishing
+                self._record_activity("Generation stopped." if cancelled else "Video generation failed.")
                 self.job.update(
                     status="cancelled" if cancelled else "failed", phase=None, output=None,
                     error=None if cancelled else str(error),

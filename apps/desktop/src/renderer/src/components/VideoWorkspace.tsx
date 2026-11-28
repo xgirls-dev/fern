@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import Clapperboard from "lucide-react/dist/esm/icons/clapperboard.mjs";
 import Download from "lucide-react/dist/esm/icons/download.mjs";
 import ImagePlus from "lucide-react/dist/esm/icons/image-plus.mjs";
@@ -12,7 +12,7 @@ import { Button, ErrorMessage, InlineConfirmation, Input, PageHeader, Textarea }
 import { Select } from "./ui/Select";
 import "./VideoWorkspace.css";
 
-export function VideoWorkspace({ video, device, busyElsewhere, openModels, openCompute, backendFailure, backendConnecting, onRestartBackend }: {
+export function VideoWorkspace({ video, device, busyElsewhere, openModels, openCompute, backendFailure, backendConnecting, onRestartBackend, activity }: {
   video: ReturnType<typeof useVideo>;
   device: "GPU" | "CPU";
   busyElsewhere: boolean;
@@ -21,6 +21,7 @@ export function VideoWorkspace({ video, device, busyElsewhere, openModels, openC
   backendFailure: BackendFailure | null;
   backendConnecting: boolean;
   onRestartBackend?: () => Promise<void>;
+  activity: ReactNode;
 }) {
   const { clips, model, job, running, available, recovering, pending, interrupted, error, connectionError, reference, frames } = video;
   const format = model?.videoFormat;
@@ -189,5 +190,6 @@ export function VideoWorkspace({ video, device, busyElsewhere, openModels, openC
         </section>
       </div>
     </div>
+    {activity}
   </section>;
 }

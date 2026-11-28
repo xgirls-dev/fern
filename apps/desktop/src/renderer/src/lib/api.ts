@@ -431,6 +431,7 @@ export interface VideoJob {
   id: string | null;
   status: "idle" | "running" | "stopping" | "complete" | "cancelled" | "failed";
   phase: string | null;
+  logs?: string[];
   output: VideoClip | null;
   error: string | null;
 }

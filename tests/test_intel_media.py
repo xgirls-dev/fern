@@ -127,6 +127,9 @@ class IntelMediaTests(unittest.TestCase):
 
             def render(request, stage, event, progress):
                 self.assertEqual(request["frames"], 161)
+                progress("Loading Wan…")
+                progress("Loading Wan…")
+                progress("Writing WebM…")
                 source = stage / "video.webm"
                 source.write_bytes(b"rendered")
                 return source, 25.41
@@ -141,6 +144,8 @@ class IntelMediaTests(unittest.TestCase):
             if worker:
                 worker.join(timeout=5)
             self.assertEqual(jobs.snapshot()["status"], "complete")
+            self.assertEqual(job["logs"], ["Preparing video…"])
+            self.assertEqual(jobs.snapshot()["logs"], ["Preparing video…", "Loading Wan…", "Writing WebM…", "Video saved."])
             restored = VideoJobs(runtime, root / "cache", root / "data", root / "outputs")
             record, = restored.history()
             self.assertEqual(record["id"], job["id"])
@@ -177,6 +182,7 @@ class IntelMediaTests(unittest.TestCase):
                     if worker:
                         worker.join(timeout=5)
                 self.assertEqual(jobs.snapshot()["status"], "failed")
+                self.assertEqual(jobs.snapshot()["logs"][-1], "Video generation failed.")
                 self.assertEqual(jobs.history(), [])
 
                 restored = VideoJobs(runtime, *paths)
@@ -200,8 +206,11 @@ class IntelMediaTests(unittest.TestCase):
                 self.assertEqual(request["frames"], 21)
                 source = stage / "video.webm"
                 source.write_bytes(b"partial")
+                for step in range(125):
+                    progress(f"Frame {step}")
                 started.set()
                 event.wait(timeout=5)
+                progress("This update arrived after Stop")
                 return source, 0.05
 
             runtime.generate_video.side_effect = render
@@ -211,6 +220,7 @@ class IntelMediaTests(unittest.TestCase):
             self.assertEqual(jobs.stop()["status"], "stopping")
             jobs.close()
             self.assertEqual(jobs.snapshot()["status"], "cancelled")
+            self.assertEqual(jobs.snapshot()["logs"], [*(f"Frame {step}" for step in range(7, 125)), "Stopping…", "Generation stopped."])
             self.assertEqual(jobs.history(), [])
             self.assertFalse(list((root / "outputs").glob("*.webm")))
 

@@ -8,6 +8,7 @@ import { ResizeHandle } from "./ui/ResizeHandle";
 interface ActivityTerminalProps {
   jobs: readonly { id: string; lines: readonly string[] }[];
   running: boolean;
+  scrollbackLabel: string;
 }
 
 const EXPANDED_KEY = "fern-terminal-expanded";
@@ -19,7 +20,7 @@ const MIN_HEIGHT = 96;
 const MAX_HEIGHT = 420;
 const COLLAPSED_HEIGHT = 32;
 
-export const ActivityTerminal = memo(function ActivityTerminal({ jobs, running }: ActivityTerminalProps) {
+export const ActivityTerminal = memo(function ActivityTerminal({ jobs, running, scrollbackLabel }: ActivityTerminalProps) {
   const [expanded, setExpanded] = useState(() => {
     try {
       return (
@@ -135,7 +136,7 @@ export const ActivityTerminal = memo(function ActivityTerminal({ jobs, running }
           ref={bodyRef}
           tabIndex={0}
           role="region"
-          aria-label="Image activity scrollback"
+          aria-label={scrollbackLabel}
           onScroll={(event) => {
             const el = event.currentTarget;
             scrollTop.current = el.scrollTop;
@@ -153,7 +154,7 @@ export const ActivityTerminal = memo(function ActivityTerminal({ jobs, running }
           ) : null}
           {lineCount === 0 ? (
             <div className="activity-terminal-line activity-terminal-line--muted">
-              Waiting for generation activity…
+              {running ? "Waiting for generation activity…" : "No generation activity yet."}
             </div>
           ) : (
             jobs.map((job) => (
