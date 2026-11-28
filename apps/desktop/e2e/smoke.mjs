@@ -128,7 +128,7 @@ try {
     await verifyMacControls(page);
     coverage = "MLX canvas settings, seed popover, Models navigation, and chat creation";
   } else {
-    await verifyOpenVinoControls(page, modelIndexPath, customModelPath);
+    await verifyOpenVinoControls(page, modelIndexPath, customModelPath, bridge.platform);
     coverage = "multi-reference persistence, Models navigation, family and repository controls, dialog IPC, local model add/remove, composer model selection, cancellation, and source preservation";
   }
   await verifyChatHistory(page);
@@ -187,7 +187,7 @@ async function verifyMacControls(page) {
   await expect(page.getByRole("textbox", { name: "Message", exact: true })).toBeFocused();
 }
 
-async function verifyOpenVinoControls(page, modelIndexPath, customModelPath) {
+async function verifyOpenVinoControls(page, modelIndexPath, customModelPath, platform) {
   const referencePng = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=", "base64");
   await page.getByLabel("Reference image file").setInputFiles([{ name: "reference-one.png", mimeType: "image/png", buffer: referencePng }, { name: "reference-two.png", mimeType: "image/png", buffer: referencePng }]);
   await expect(page.locator(".composer-reference")).toHaveCount(2);
@@ -207,7 +207,10 @@ async function verifyOpenVinoControls(page, modelIndexPath, customModelPath) {
 
   const familyPicker = page.getByRole("combobox", { name: "Custom image model family" });
   await expect(familyPicker).toHaveText("Stable Diffusion XL");
-  await expect((await openSelect(familyPicker)).getByRole("option")).toHaveCount(6);
+  const families = ["Stable Diffusion 1.x / 2.x", "Stable Diffusion XL", "Stable Diffusion 3",
+    "FLUX.1", "FLUX.2 Klein", "Latent Consistency Model"];
+  if (platform === "win32") families.push("Stable Diffusion XL · GGUF", "Stable Diffusion XL · split GGUF");
+  await expect((await openSelect(familyPicker)).getByRole("option")).toHaveText(families);
   await familyPicker.press("Escape");
   await chooseSelectOption(familyPicker, "FLUX.2 Klein");
   await chooseSelectOption(familyPicker, "Stable Diffusion XL");
