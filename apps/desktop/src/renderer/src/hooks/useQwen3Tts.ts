@@ -56,6 +56,8 @@ export function useQwen3Tts(apiReady: boolean, computeDevice: "GPU" | "CPU" = "G
   const [status, setStatus] = useState<TtsStatus>(blankStatus);
   const [busy, setBusy] = useState(false);
   const requestActive = useRef(false);
+  const stopRequest = useRef<string | null>(null);
+  const [stoppingJobId, setStoppingJobId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
   const [statusLoaded, setStatusLoaded] = useState(false);
@@ -313,12 +315,24 @@ export function useQwen3Tts(apiReady: boolean, computeDevice: "GPU" | "CPU" = "G
   }, [activeThread, computeDevice, referenceFiles, refresh, waitForJob]);
 
   const stopJob = useCallback(async () => {
-    if (!jobRunning || status.status === "stopping") return;
+    const jobId = status.id;
+    if (!jobId || !jobRunning || status.status === "stopping" || stopRequest.current === jobId) return;
+    stopRequest.current = jobId;
+    setStoppingJobId(jobId);
     try {
-      const stopped = await request<{ job: TtsStatus }>("/api/tts/stop", {});
-      setStatus(stopped.job);
-    } catch (caught) { setError(caught instanceof Error ? caught.message : "Could not stop the audio job."); }
-  }, [jobRunning, status.status]);
+      const { job } = await request<{ job: TtsStatus }>("/api/tts/stop", { jobId });
+      setStatus((current) => current.id === jobId && job.id === jobId &&
+        (current.status === "running" || current.status === "setting_up" || current.status === "stopping") ? job : current);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not stop the audio job.");
+    } finally {
+      if (stopRequest.current === jobId) {
+        stopRequest.current = null;
+        setStoppingJobId(null);
+      }
+    }
+  }, [jobRunning, status.id, status.status]);
 
-  return { workspace, threads: workspace.threads, activeThread, status, statusLoaded, statusError, computeDevice, retryStatus: refresh, busy, error, clearError: () => setError(null), referenceFiles, setReferenceFile, updateThread, updateOutput, deleteOutput, newThread, selectThread, renameThread, archiveThread, deleteThread, resetWorkspace, setupModel, generate, stopJob };
+  const stopping = jobRunning && (status.status === "stopping" || (stoppingJobId !== null && stoppingJobId === status.id));
+  return { workspace, threads: workspace.threads, activeThread, status, statusLoaded, statusError, computeDevice, retryStatus: refresh, busy, error, clearError: () => setError(null), referenceFiles, setReferenceFile, updateThread, updateOutput, deleteOutput, newThread, selectThread, renameThread, archiveThread, deleteThread, resetWorkspace, setupModel, generate, stopJob, stopping };
 }

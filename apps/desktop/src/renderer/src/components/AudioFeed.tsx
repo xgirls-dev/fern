@@ -38,12 +38,12 @@ const filterOptions: Array<{ id: FeedFilter; label: string }> = [
 ];
 
 interface AudioFeedProps {
-  jobProgress?: ReactNode;
+  diagnostics?: ReactNode;
   completion?: ReactNode;
   thread: AudioThread;
   revealTake: { name: string; token: number } | null;
   modelLabel: (output: AudioOutput) => string;
-  generation: { running: boolean; logs: string[]; error: string | null };
+  generating: boolean;
   onUseText: (output: AudioOutput) => void;
   onReuseSetup: (output: AudioOutput) => string;
   onOpenComposer: () => void;
@@ -53,7 +53,7 @@ interface AudioFeedProps {
   onDeleteOutput: (name: string) => Promise<void>;
 }
 
-export function AudioFeed({ thread, revealTake, modelLabel, generation, jobProgress, completion, onUseText, onReuseSetup, onOpenComposer, setupNeeded, setupUnavailable, onUpdateOutput, onDeleteOutput }: AudioFeedProps) {
+export function AudioFeed({ thread, revealTake, modelLabel, generating, diagnostics, completion, onUseText, onReuseSetup, onOpenComposer, setupNeeded, setupUnavailable, onUpdateOutput, onDeleteOutput }: AudioFeedProps) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<FeedFilter>("all");
   const [sort, setSort] = useState<"newest" | "oldest">("newest");
@@ -157,7 +157,7 @@ export function AudioFeed({ thread, revealTake, modelLabel, generation, jobProgr
       <p>Listen, compare, and reuse.</p>
     </header>
     {completion}
-    {jobProgress}
+    {diagnostics}
 
     {thread.outputs.length > 1 || query || filter !== "all" ? <div className="audio-feed-tools">
       <label className="audio-feed-search"><Search size={15} aria-hidden="true" /><span className="sr-only">Search takes</span><Input type="search" value={query} placeholder="Search scripts or voices…" onChange={(event) => { setQuery(event.target.value); setLimit(12); }} /></label>
@@ -177,15 +177,12 @@ export function AudioFeed({ thread, revealTake, modelLabel, generation, jobProgr
 
     {notice ? <div className="audio-feed-notice" role="status"><span>{notice}</span><IconButton aria-label="Dismiss message" onClick={() => setNotice(null)}><X size={15} aria-hidden="true" /></IconButton></div> : null}
 
-    {generation.running && !jobProgress ? <article className="audio-take audio-take--pending" role="status" aria-label="Generating a new take">
+    {generating ? <article className="audio-take audio-take--pending">
       <div className="audio-take-pending-icon"><AudioLines size={23} aria-hidden="true" /></div>
-      <div><strong>Generating a new take</strong><p>Fern is preparing speech locally. The finished take will appear at the top of this feed.</p>
-        <Disclosure label="View progress"><pre>{generation.logs.slice(-8).join("\n") || "Starting…"}</pre></Disclosure>
-      </div>
+      <span>The new take will appear here.</span>
     </article> : null}
-    {generation.error ? <div className="audio-feed-failure" role="alert"><strong>Speech generation failed</strong><p>{generation.error}</p><span>Check the script and voice settings, then generate again.</span></div> : null}
 
-    {!thread.outputs.length && !generation.running ? <div className="audio-feed-empty">
+    {!thread.outputs.length && !generating ? <div className="audio-feed-empty">
       <strong>No takes yet</strong>
       <p>{setupUnavailable ?? (setupNeeded ? "Set up a voice model in the composer to create your first take." : "Your first take will appear here.")}</p>
       {!setupUnavailable && !setupNeeded ? <Button variant="secondary" onClick={onOpenComposer}>Write a script</Button> : null}

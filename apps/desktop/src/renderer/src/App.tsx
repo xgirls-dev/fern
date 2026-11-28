@@ -55,6 +55,7 @@ export function App() {
   const imageGpu = window.studio.platform === "darwin" ? "APPLE_GPU" : "INTEL_GPU";
   const imageGpuAvailable = studio.status?.model.adapters?.find((adapter) => adapter.id === imageGpu)?.available;
   const tts = useQwen3Tts(studio.ready, compute.device);
+  const speechActivity = useGenerationActivity("speech", tts.status, studio.resetRevision);
   const text = useTextChat(studio.ready, compute.device, imageGpuAvailable);
   const [threadSearchSession] = useState(createThreadSearchSession);
   useEffect(() => threadSearchSession.clear, [threadSearchSession]);
@@ -673,7 +674,10 @@ export function App() {
                 activity={<ActivityTerminal jobs={videoActivity} running={video.available && video.running} scrollbackLabel="Video activity scrollback" />} />
             </Suspense>
           ) : activeSection === "tts" ? (
-            <Suspense fallback={<div className="dashboard-loading" role="status">Opening audio workspace…</div>}><Qwen3TtsWorkspace studio={tts} sidebarCollapsed={sidebarIsCollapsed} onOpenThreadSearch={openAudioThreadSearch} /></Suspense>
+            <Suspense fallback={<div className="dashboard-loading" role="status">Opening audio workspace…</div>}>
+              <Qwen3TtsWorkspace studio={tts} sidebarCollapsed={sidebarIsCollapsed} onOpenThreadSearch={openAudioThreadSearch}
+                activity={<ActivityTerminal jobs={speechActivity} running={audioBusy} scrollbackLabel="Speech activity scrollback" />} />
+            </Suspense>
           ) : activeSection === "create" ? (
             <section
               className={`create-view${inspectorView ? " has-inspector" : ""}`}
