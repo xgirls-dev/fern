@@ -95,7 +95,6 @@ export function AudioFeed({ thread, revealTake, modelLabel, generating, diagnost
       const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
       card?.scrollIntoView({ block: "start", behavior: reduce ? "instant" : "smooth" });
       card?.querySelector<HTMLButtonElement>(".audio-take-play")?.focus({ preventScroll: true });
-      if (!reduce) card?.animate([{ outline: "2px solid var(--accent)" }, { outline: "2px solid transparent" }], { duration: 1800 });
       setPendingReveal(null);
     });
     return () => cancelAnimationFrame(frame);

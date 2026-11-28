@@ -50,8 +50,16 @@ try {
   await page.reload();
   releaseReceipt();
   await expect(page.getByText("Recovered your audio take", { exact: true })).toBeVisible();
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  const card = page.locator(".audio-take");
+  const play = button("Play Take 1");
+  const cardBorder = await card.evaluate((element) => getComputedStyle(element).borderTopColor);
+  const playBackground = await play.evaluate((element) => getComputedStyle(element).backgroundColor);
   await button("View take").press("Enter");
-  await expect(button("Play Take 1")).toBeFocused();
+  await expect(play).toBeFocused();
+  await expect(play).not.toHaveCSS("background-color", playBackground);
+  await expect(card).toHaveCSS("border-top-color", cardBorder);
+  await expect(card).toHaveCSS("outline-style", "none");
   await expect(script).toHaveValue(original);
   await expect.poll(() => page.evaluate((key) => localStorage.getItem(key), receiptKey)).toBeNull();
   const savedThreads = await page.evaluate((key) => JSON.parse(localStorage.getItem(key)), threadsKey);

@@ -4061,7 +4061,6 @@ textarea:focus {
 .tts-job-diagnostics pre { max-height: 220px; overflow: auto; padding: 12px; border-radius: 6px; background: var(--secondary-bg); color: var(--muted); font: 11px/1.7 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
 .audio-take-error { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: 12px; line-height: 1.5; }
 .audio-take-play:disabled { opacity: .5; cursor: wait; }
-.audio-take:focus-within { border-color: var(--accent); }
 .audio-take h4:focus { outline: none; }
 @media (max-width: 960px) {
   .dashboard.dashboard--tts { overflow: hidden; }
