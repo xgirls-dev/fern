@@ -33,6 +33,25 @@ try {
   await page.keyboard.press("Escape");
   await page.screenshot({ path: `${dir}/design-chat-first-run.png` });
 
+  const chatComposer = page.locator(".text-composer");
+  for (const theme of ["light", "dark"]) {
+    if (await page.locator("html").getAttribute("data-theme") !== theme) await button("Toggle theme").click();
+    await chat.blur();
+    const resting = await chatComposer.evaluate((element) => getComputedStyle(element).backgroundColor);
+    await chat.focus();
+    await page.keyboard.press("Tab");
+    await page.keyboard.press("Shift+Tab");
+    assert(await chat.evaluate((element) => element.matches(":focus-visible")));
+    await expect(chat).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+    await expect(chatComposer).not.toHaveCSS("background-color", resting);
+    await expect(chat).toHaveCSS("outline-style", "none");
+    await expect(chatComposer).toHaveCSS("outline-style", "none");
+    await page.mouse.move(0, 0);
+    await page.screenshot({ path: `${dir}/design-chat-focused-${theme}.png` });
+    await chat.blur();
+    await expect(chatComposer).toHaveCSS("background-color", resting);
+  }
+
   await button("Create image").click();
   const imagePrompt = page.getByRole("textbox", { name: "Image prompt", exact: true });
   await imagePrompt.waitFor();

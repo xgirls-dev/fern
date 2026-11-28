@@ -81,8 +81,14 @@ try {
 
   await button("Open split chat").click();
   await page.getByRole("dialog", { name: "Choose a chat", exact: true }).getByRole("button", { name: /^Handbook/ }).click();
-  await page.setViewportSize({ width: 864, height: 620 });
+  const left = page.getByRole("region", { name: "Left chat", exact: true });
   const right = page.getByRole("region", { name: "Right chat", exact: true });
+  if (captureScreens) {
+    await expect(left).toBeVisible();
+    await expect(right).toBeVisible();
+    await capture("09-wide-split");
+  }
+  await page.setViewportSize({ width: 864, height: 620 });
   await expect(hint(right)).toBeHidden();
   await send("Add a note to the handbook.", right);
   await expect(hint(right)).toHaveText("Esc to stop");
@@ -97,7 +103,6 @@ try {
   await button("Jump to latest message", right).click();
   await expect(status(right)).toHaveClass(/sr-only/);
   await capture("08-compact-split-loading");
-  const left = page.getByRole("region", { name: "Left chat", exact: true });
   const switcher = page.getByRole("group", { name: "Chat panes" });
   await composer(right).fill("Keep this draft beside the running reply.");
   await history.press("Home");
